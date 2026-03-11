@@ -17,7 +17,21 @@ cargo build --workspace
 ```
 
 The workspace uses Rust 1.78+ (edition 2024) and expects that you have the
-Bevy/Linux dependencies installed locally. From there you can## Running the game
+Bevy/Linux dependencies installed locally.
+
+## Visuals
+
+![Gameplay Screenshot 1](docs/screenshot_1.png)
+![Gameplay Screenshot 2](docs/screenshot_2.png)
+![Gameplay Screenshot 3](docs/screenshot_3.png)
+![Gameplay Screenshot 4](docs/screenshot_4.png)
+![Gameplay Screenshot 5](docs/screenshot_5.png)
+
+<video src="docs/gameplay_video.mp4" controls="controls" style="max-width: 100%;">
+  Your browser does not support the video tag.
+</video>
+
+## Running the game
 1. Download the Oni 2 (Angel Studios) ISO from the [Oni 2 Archive](https://wiki.oni2.net/Oni_2_(Angel_Studios)).
 2. Use 7zip to extract the contents of the ISO.
 3. Locate the `RB.DAT` file within the extracted archive.
