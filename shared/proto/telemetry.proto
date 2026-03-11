@@ -1,0 +1,42 @@
+syntax = "proto3";
+
+package telemetry;
+
+service TelemetryService {
+  // Batch send combat events
+  rpc SendEvents(SendEventsRequest) returns (SendEventsResponse);
+
+  // Run a SQL query against the telemetry data
+  rpc Query(QueryRequest) returns (QueryResponse);
+}
+
+message CombatEventProto {
+  string event_id = 1;
+  int64 timestamp_ms = 2;
+  string event_type = 3;
+  string attacker_id = 4;
+  string target_id = 5;
+  float damage = 6;
+  bool was_blocked = 7;
+  uint32 combo_count = 8;
+  string attack_kind = 9;
+  float position_x = 10;
+  float position_y = 11;
+  float position_z = 12;
+}
+
+message SendEventsRequest {
+  repeated CombatEventProto events = 1;
+}
+
+message SendEventsResponse {
+  uint32 events_received = 1;
+}
+
+message QueryRequest {
+  string sql = 1;
+}
+
+message QueryResponse {
+  string json_rows = 1;
+}

@@ -1,0 +1,29 @@
+[package]
+name = "rb-server"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+rb-shared = { path = "../shared" }
+
+serde.workspace = true
+serde_json.workspace = true
+chrono.workspace = true
+uuid.workspace = true
+tokio.workspace = true
+
+axum = "0.8"
+tower-http = { version = "0.6", features = ["cors"] }
+tracing = "0.1"
+tracing-subscriber = "0.3"
+
+arrow = { version = "57", features = ["prettyprint", "chrono-tz"] }
+parquet = { version = "57", features = ["arrow", "async"] }
+datafusion = "52"
+arrow-json = "57"
+
+tonic = "0.12"
+prost = "0.13"
+
+[dev-dependencies]
+tempfile = "3"

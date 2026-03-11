@@ -1,0 +1,22 @@
+[package]
+name = "rb-game"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+rb-shared = { path = "../shared" }
+
+serde.workspace = true
+serde_json.workspace = true
+chrono.workspace = true
+uuid.workspace = true
+tokio.workspace = true
+
+bevy = "0.18"
+avian3d = "0.5"
+rand = "0.9"
+crossbeam-channel = "0.5"
+tonic = "0.12"
+prost = "0.13"
+image = "0.25"
+flate2 = "1.1.9"

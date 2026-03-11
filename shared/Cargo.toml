@@ -1,0 +1,17 @@
+[package]
+name = "rb-shared"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+chrono.workspace = true
+uuid.workspace = true
+arrow = { version = "57", features = ["prettyprint", "chrono-tz"] }
+prost = "0.13"
+tonic = "0.12"
+
+[build-dependencies]
+tonic-build = "0.12"
+protox = "0.7"

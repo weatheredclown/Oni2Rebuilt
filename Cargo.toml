@@ -1,0 +1,19 @@
+[workspace]
+resolver = "2"
+members = ["game", "server", "shared"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+
+# Optimize dependencies in dev builds (Bevy is unusably slow otherwise).
+# Your game code stays unoptimized for fast iteration + debuggability.
+[profile.dev.package."*"]
+opt-level = 2
+
+[workspace.dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+chrono = { version = "0.4", features = ["serde"] }
+uuid = { version = "1", features = ["v4", "serde"] }
+tokio = { version = "1", features = ["full"] }
