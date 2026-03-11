@@ -17,16 +17,20 @@ cargo build --workspace
 ```
 
 The workspace uses Rust 1.78+ (edition 2024) and expects that you have the
-Bevy/Linux dependencies installed locally. From there you can run either binary:
+Bevy/Linux dependencies installed locally. From there you can## Running the game
+1. Download the Oni 2 (Angel Studios) ISO from the [Oni 2 Archive](https://wiki.oni2.net/Oni_2_(Angel_Studios)).
+2. Use 7zip to extract the contents of the ISO.
+3. Locate the `RB.DAT` file within the extracted archive.
+4. Pass the relative or absolute path of the directory containing `RB.DAT` to `rb-game` via the `--dat` flag.
 
-```
-cargo run -p rb-game -- --help
-cargo run -p rb-server
+```sh
+cargo run --bin rb-game -- --dat path/to/extracted/iso/dir
 ```
 
-Assets are intentionally kept out of the repository. Point the game to your
-local Oni 2 dump through the CLI options or configuration files already present
-in the `game` crate.
+Optionally, you can also inject custom raw files to override the `RB.DAT` archive using the `--path` flag:
+```sh
+cargo run --bin rb-game -- --dat path/to/extracted/iso/dir --path path/to/raw/assets/dir
+```
 
 ## Repo Layout
 
