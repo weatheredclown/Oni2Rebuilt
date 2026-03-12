@@ -14,7 +14,5 @@ pub struct InputState {
     pub grab: bool,
     pub jump: bool,
     pub yaw_delta: f32,
-    pub pickup: bool,
-    pub drop_weapon: bool,
     pub attack_direction: f32,
 }

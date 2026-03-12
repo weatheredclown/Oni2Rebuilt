@@ -83,19 +83,32 @@ pub fn camera_follow_system(
             let right = Vec3::new(-rig.free_yaw.cos(), 0.0, rig.free_yaw.sin()).normalize();
             let mut velocity = Vec3::ZERO;
 
-            if keyboard.pressed(KeyCode::KeyW) { velocity -= forward; }
-            if keyboard.pressed(KeyCode::KeyS) { velocity += forward; }
-            if keyboard.pressed(KeyCode::KeyA) { velocity += right; }
-            if keyboard.pressed(KeyCode::KeyD) { velocity -= right; }
-            if keyboard.pressed(KeyCode::ShiftLeft) { velocity += Vec3::Y; }
-            if keyboard.pressed(KeyCode::ControlLeft) { velocity -= Vec3::Y; }
+            if keyboard.pressed(KeyCode::KeyW) {
+                velocity -= forward;
+            }
+            if keyboard.pressed(KeyCode::KeyS) {
+                velocity += forward;
+            }
+            if keyboard.pressed(KeyCode::KeyA) {
+                velocity += right;
+            }
+            if keyboard.pressed(KeyCode::KeyD) {
+                velocity -= right;
+            }
+            if keyboard.pressed(KeyCode::ShiftLeft) {
+                velocity += Vec3::Y;
+            }
+            if keyboard.pressed(KeyCode::ControlLeft) {
+                velocity -= Vec3::Y;
+            }
 
             if velocity.length_squared() > 0.0 {
                 velocity = velocity.normalize() * speed * dt;
                 cam_tf.translation += velocity;
             }
 
-            cam_tf.rotation = Quat::from_rotation_y(rig.free_yaw) * Quat::from_rotation_x(rig.free_pitch);
+            cam_tf.rotation =
+                Quat::from_rotation_y(rig.free_yaw) * Quat::from_rotation_x(rig.free_pitch);
             continue;
         }
 
@@ -184,16 +197,27 @@ pub fn camera_follow_system(
     }
 }
 
-/// Toggle visibility of prototype elements (capsules, weapons, HUD) with F6.
+/// Toggle visibility of prototype elements (capsules, combat markers, HUD) with F6.
 pub fn prototype_toggle_system(
     keyboard: Res<ButtonInput<KeyCode>>,
     mut visible: ResMut<PrototypeVisible>,
     mut proto_query: Query<&mut Visibility, With<PrototypeElement>>,
-    mut hud_query: Query<&mut Visibility, (With<Node>, With<crate::menu::InGameEntity>, Without<PrototypeElement>)>,
+    mut hud_query: Query<
+        &mut Visibility,
+        (
+            With<Node>,
+            With<crate::menu::InGameEntity>,
+            Without<PrototypeElement>,
+        ),
+    >,
 ) {
     if keyboard.just_pressed(KeyCode::F6) {
         visible.0 = !visible.0;
-        let vis = if visible.0 { Visibility::Inherited } else { Visibility::Hidden };
+        let vis = if visible.0 {
+            Visibility::Inherited
+        } else {
+            Visibility::Hidden
+        };
         for mut v in &mut proto_query {
             *v = vis;
         }

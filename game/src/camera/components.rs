@@ -1,6 +1,6 @@
 use bevy::prelude::*;
 
-/// Marker for prototype gameplay elements (capsules, weapons, HUD) that can be toggled with F6.
+/// Marker for prototype gameplay elements (capsules, combat markers, HUD) that can be toggled with F6.
 #[derive(Component)]
 pub struct PrototypeElement;
 

@@ -41,23 +41,21 @@ pub fn player_input_system(
         input.blocking = keyboard.pressed(KeyCode::ShiftLeft);
         input.grab = keyboard.just_pressed(KeyCode::KeyE);
         input.jump = keyboard.just_pressed(KeyCode::Space);
-        input.pickup = keyboard.just_pressed(KeyCode::KeyF);
-        input.drop_weapon = keyboard.just_pressed(KeyCode::KeyQ);
-
         // Directional attacks: Ctrl + A/D/S/W
-        input.attack_direction = if keyboard.pressed(KeyCode::ControlLeft) || keyboard.pressed(KeyCode::ControlRight) {
-            if keyboard.pressed(KeyCode::KeyA) {
-                -std::f32::consts::FRAC_PI_2 // left
-            } else if keyboard.pressed(KeyCode::KeyD) {
-                std::f32::consts::FRAC_PI_2 // right
-            } else if keyboard.pressed(KeyCode::KeyS) {
-                std::f32::consts::PI // behind
+        input.attack_direction =
+            if keyboard.pressed(KeyCode::ControlLeft) || keyboard.pressed(KeyCode::ControlRight) {
+                if keyboard.pressed(KeyCode::KeyA) {
+                    -std::f32::consts::FRAC_PI_2 // left
+                } else if keyboard.pressed(KeyCode::KeyD) {
+                    std::f32::consts::FRAC_PI_2 // right
+                } else if keyboard.pressed(KeyCode::KeyS) {
+                    std::f32::consts::PI // behind
+                } else {
+                    0.0 // forward (default)
+                }
             } else {
-                0.0 // forward (default)
-            }
-        } else {
-            0.0
-        };
+                0.0
+            };
 
         block.is_blocking = input.blocking;
     }
@@ -87,10 +85,7 @@ pub fn player_mouse_look_system(
 
 /// Moves the player based on InputState using physics velocity (runs in FixedUpdate).
 pub fn player_movement_system(
-    mut query: Query<
-        (&InputState, &Transform, &mut LinearVelocity, &mut Fighter),
-        With<Player>,
-    >,
+    mut query: Query<(&InputState, &Transform, &mut LinearVelocity, &mut Fighter), With<Player>>,
 ) {
     for (input, transform, mut velocity, mut fighter) in &mut query {
         // Reset jumps when grounded

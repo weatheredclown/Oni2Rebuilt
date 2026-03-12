@@ -143,8 +143,8 @@ impl ActiveAttack {
         }
     }
 
-    /// Creates an attack modified by weapon stats (melee modifiers).
-    pub fn new_with_weapon(
+    /// Creates an attack modified by scalar combat modifiers.
+    pub fn new_with_modifiers(
         class: AttackClass,
         strength: AttackStrength,
         target: AttackTarget,
