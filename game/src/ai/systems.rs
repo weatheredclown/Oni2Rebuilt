@@ -154,8 +154,11 @@ pub fn ai_decision_system(
                 ai.decision_timer -= dt;
                 if ai.decision_timer <= 0.0 {
                     // Decide whether to attack
-                    let attack_chance = ai.aggression * (1.0 - (distance / effective_attack_range).min(1.0)) + 0.2;
-                    if rng.random_range(0.0..1.0) < attack_chance && distance <= effective_attack_range {
+                    let attack_chance =
+                        ai.aggression * (1.0 - (distance / effective_attack_range).min(1.0)) + 0.2;
+                    if rng.random_range(0.0..1.0) < attack_chance
+                        && distance <= effective_attack_range
+                    {
                         // Can't attack if already attacking, in cooldown, or reacting
                         if attack_state.active_attack.is_none()
                             && now >= attack_state.cooldown_until
@@ -172,11 +175,8 @@ pub fn ai_decision_system(
                                 (AttackClass::Kick, AttackStrength::High, AttackTarget::Head)
                             };
 
-                            let attack = ActiveAttack::new_with_weapon(
-                                class,
-                                strength,
-                                target,
-                                1.0, // Damage mtplr
+                            let attack = ActiveAttack::new_with_modifiers(
+                                class, strength, target, 1.0, // Damage mtplr
                                 1.0, // Speed mtplr
                                 0.0, // AI always attacks forward for now
                             );
@@ -260,7 +260,8 @@ pub fn ai_movement_system(
 
                 // Close/retreat to maintain preferred range
                 let range_diff = distance - ai.preferred_range;
-                let close_component = dir_to_target * range_diff.clamp(-1.0, 1.0) * CIRCLE_CLOSE_SPEED;
+                let close_component =
+                    dir_to_target * range_diff.clamp(-1.0, 1.0) * CIRCLE_CLOSE_SPEED;
 
                 let desired = strafe_dir * CIRCLE_STRAFE_SPEED + close_component;
                 velocity.x = desired.x;

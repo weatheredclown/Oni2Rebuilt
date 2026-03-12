@@ -31,10 +31,8 @@ pub fn attack_input_system(
             continue;
         }
 
-        // For ranged weapons: light_attack is handled by ranged_attack_system.
-        // Heavy attack with ranged = melee bash at fist-level damage.
         let attack = if input.light_attack {
-            Some(ActiveAttack::new_with_weapon(
+            Some(ActiveAttack::new_with_modifiers(
                 AttackClass::Punch,
                 AttackStrength::Low,
                 AttackTarget::Body,
@@ -43,14 +41,14 @@ pub fn attack_input_system(
                 input.attack_direction,
             ))
         } else if input.heavy_attack {
-                Some(ActiveAttack::new_with_weapon(
-                    AttackClass::Kick,
-                    AttackStrength::High,
-                    AttackTarget::Head,
-                    1.0, // dmg
-                    1.0, // spd
-                    input.attack_direction,
-                ))
+            Some(ActiveAttack::new_with_modifiers(
+                AttackClass::Kick,
+                AttackStrength::High,
+                AttackTarget::Head,
+                1.0, // dmg
+                1.0, // spd
+                input.attack_direction,
+            ))
         } else {
             None
         };
@@ -138,8 +136,8 @@ pub fn hit_detection_system(
 
         let effective_hit_radius = HIT_RADIUS;
 
-        // Compute fist local position based on phase, with weapon range extension
-        let fist_extended_weapon = FIST_EXTENDED + Vec3::new(0.0, 0.0, 0.0);
+        // Compute fist local position based on phase, with range extension
+        let fist_extended = FIST_EXTENDED + Vec3::new(0.0, 0.0, 0.0);
 
         let fist_local = match phase {
             AttackPhase::Startup => {
@@ -148,9 +146,9 @@ pub fn hit_detection_system(
                 } else {
                     1.0
                 };
-                FIST_REST.lerp(fist_extended_weapon, t)
+                FIST_REST.lerp(fist_extended, t)
             }
-            AttackPhase::Active => fist_extended_weapon,
+            AttackPhase::Active => fist_extended,
             AttackPhase::Recovery | AttackPhase::Done => continue,
         };
 
@@ -163,8 +161,7 @@ pub fn hit_detection_system(
 
         let fist_world = attacker_tf.translation + attacker_tf.rotation * rotated_fist;
 
-        for (target_entity, target_tf, mut health, mut block_state, target_fighter) in
-            &mut targets
+        for (target_entity, target_tf, mut health, mut block_state, target_fighter) in &mut targets
         {
             if target_entity == *attacker_entity {
                 continue;
@@ -206,8 +203,7 @@ pub fn hit_detection_system(
             let mut was_blocked = false;
 
             if block_state.is_blocking {
-                let attack_dir =
-                    (attacker_tf.translation - target_tf.translation).normalize();
+                let attack_dir = (attacker_tf.translation - target_tf.translation).normalize();
                 let target_facing = target_fighter.facing.normalize();
                 let dot = (-target_facing).dot(attack_dir);
                 let angle = dot.clamp(-1.0, 1.0).acos();
@@ -265,8 +261,7 @@ pub fn hit_detection_system(
                     AttackStrength::High => ReactionKind::Knockback,
                     AttackStrength::Super => ReactionKind::Knockdown,
                 };
-                let dir =
-                    (target_tf.translation - attacker_tf.translation).normalize();
+                let dir = (target_tf.translation - attacker_tf.translation).normalize();
                 reaction_writer.write(HitReactionMessage {
                     entity: target_entity,
                     kind: reaction_kind,
@@ -278,7 +273,7 @@ pub fn hit_detection_system(
 }
 
 /// Fist visual system - updates fist mesh visibility, position, material, and scale pulse.
-/// Supports directional attacks via direction_offset rotation and weapon range extension.
+/// Supports directional attacks via direction_offset rotation and range extension.
 pub fn fist_visual_system(
     fighters: Query<(&AttackState, &Children)>,
     mut fist_query: Query<
@@ -432,9 +427,7 @@ pub fn grab_input_system(
         if !input.grab {
             continue;
         }
-        if attack_state.active_attack.is_some()
-            || reaction.active.is_some()
-            || grab.phase.is_some()
+        if attack_state.active_attack.is_some() || reaction.active.is_some() || grab.phase.is_some()
         {
             continue;
         }
@@ -524,8 +517,7 @@ pub fn grab_system(
                 }
             }
             GrabPhase::Throwing => {
-                let throw_dir =
-                    (target_tf.translation - grabber_pos).normalize();
+                let throw_dir = (target_tf.translation - grabber_pos).normalize();
 
                 target_health.current = (target_health.current - GRAB_DAMAGE).max(0.0);
 
@@ -583,31 +575,31 @@ pub fn hit_reaction_system(
             // Apply knockback as an immediate velocity change
             match msg.kind {
                 ReactionKind::Knockback => {
-                    let knockback_dir = Vec3::new(msg.direction.x, 0.0, msg.direction.z)
-                        .normalize_or_zero();
+                    let knockback_dir =
+                        Vec3::new(msg.direction.x, 0.0, msg.direction.z).normalize_or_zero();
                     let impulse = knockback_dir * 8.0 + Vec3::Y * 2.0;
                     velocity.x += impulse.x;
                     velocity.y += impulse.y;
                     velocity.z += impulse.z;
                 }
                 ReactionKind::Knockdown => {
-                    let knockback_dir = Vec3::new(msg.direction.x, 0.0, msg.direction.z)
-                        .normalize_or_zero();
+                    let knockback_dir =
+                        Vec3::new(msg.direction.x, 0.0, msg.direction.z).normalize_or_zero();
                     let impulse = knockback_dir * 12.0 + Vec3::Y * 4.0;
                     velocity.x += impulse.x;
                     velocity.y += impulse.y;
                     velocity.z += impulse.z;
                 }
                 ReactionKind::Flinch => {
-                    let knockback_dir = Vec3::new(msg.direction.x, 0.0, msg.direction.z)
-                        .normalize_or_zero();
+                    let knockback_dir =
+                        Vec3::new(msg.direction.x, 0.0, msg.direction.z).normalize_or_zero();
                     let impulse = knockback_dir * 3.0;
                     velocity.x += impulse.x;
                     velocity.z += impulse.z;
                 }
                 ReactionKind::GuardBreak => {
-                    let knockback_dir = Vec3::new(msg.direction.x, 0.0, msg.direction.z)
-                        .normalize_or_zero();
+                    let knockback_dir =
+                        Vec3::new(msg.direction.x, 0.0, msg.direction.z).normalize_or_zero();
                     let impulse = knockback_dir * 5.0;
                     velocity.x += impulse.x;
                     velocity.z += impulse.z;
@@ -722,9 +714,7 @@ pub fn telemetry_combat_system(
 }
 
 /// Updates Fighter.is_grounded based on ShapeCaster ground detection.
-pub fn ground_detection_system(
-    mut query: Query<(&mut Fighter, &ShapeHits)>,
-) {
+pub fn ground_detection_system(mut query: Query<(&mut Fighter, &ShapeHits)>) {
     for (mut fighter, hits) in &mut query {
         fighter.is_grounded = !hits.is_empty();
     }
