@@ -1,6 +1,6 @@
 use bevy::prelude::*;
 
-use crate::oni2_loader::utils::parse::{extract_xml_base_attr, extract_xml_attr, parse_vec3};
+use crate::oni2_loader::utils::parse::{extract_xml_base_attr, extract_xml_attr, parse_vec3, extract_xml_block};
 
 /// Parsed actor from a layout XML file.
 pub struct LayoutActor {
@@ -65,6 +65,37 @@ fn resolve_template_chain(path: &str, template_dir: &str) -> Vec<String> {
     chain
 }
 
+/// Helper: Collect a single component's properties by merging the extracted blocks across the template hierarchy.
+/// Returns None if the component is never actually declared in the actor's specific templates (outside of components.xml).
+fn extract_component(chain: &[String], has_components_xml: bool, tag: &str) -> Option<String> {
+    // Determine if the component is actually declared by the actor/templates
+    let mut explicitly_declared = false;
+    for (i, content) in chain.iter().enumerate() {
+        if !(i == 0 && has_components_xml) {
+            let open_tag = format!("<{}", tag);
+            if content.contains(&open_tag) {
+                explicitly_declared = true;
+                break;
+            }
+        }
+    }
+
+    if !explicitly_declared {
+        return None;
+    }
+
+    // Merge the blocks from base to derived
+    let mut merged = String::new();
+    for content in chain {
+        if let Some(block) = extract_xml_block(content, tag) {
+            merged.push_str(&block);
+            merged.push_str("\n"); // Separate for extract_xml_attr safety
+        }
+    }
+
+    Some(merged)
+}
+
 /// Parse an actor XML file, resolving full template inheritance chain.
 /// Template values are base; actor values override. Supports multi-level inheritance.
 pub fn parse_actor_xml(dir: &str, filename: &str, template_dir: &str) -> Option<LayoutActor> {
@@ -87,59 +118,63 @@ pub fn parse_actor_xml(dir: &str, filename: &str, template_dir: &str) -> Option<
         has_components_xml = true;
     }
 
-    // Merge attributes: iterate from base to derived, later values override
+    // Extract core actor properties from the raw content hierarchy
     let mut entity_type: Option<String> = None;
     let mut position = Vec3::ZERO;
     let mut orientation = Vec3::ZERO;
+    
+    // Core property extraction is done via block extraction from 'Prop' and 'Entity' first if they exist,
+    // but the old code grabbed attributes globally. We will use a safe global grab for position/orientation
+    // since they are heavily nested and commonly exist in 'Prop' or the root.
+    for content in &chain {
+        // Fallback or override values
+        if let Some(v) = extract_xml_attr(content, "EntityType") { entity_type = Some(v); }
+        if let Some(v) = extract_xml_attr(content, "Position").and_then(|s| parse_vec3(&s)) { position = v; }
+        if let Some(v) = extract_xml_attr(content, "Orientation").and_then(|s| parse_vec3(&s)) { orientation = v; }
+    }
+
+    // Now extract specific Component Blocks
+    // This safely pulls out ONLY the declared components and defaults
+    let creature_block = extract_component(&chain, has_components_xml, "Creature");
+    let animator_block = extract_component(&chain, has_components_xml, "Animator");
+    let curve_block = extract_component(&chain, has_components_xml, "Curve");
+    let scroni_block = extract_component(&chain, has_components_xml, "ScrOni");
+        
+    // Extract Animator props
     let mut animator_type: Option<String> = None;
-    let mut is_creature = false;
+    if let Some(block) = animator_block {
+        if let Some(v) = extract_xml_attr(&block, "AnimatorType") {
+            animator_type = Some(v);
+        }
+    }
+
+    // Extract Creature props
+    let mut is_creature = creature_block.is_some();
     let mut is_player = false;
+    if let Some(block) = &creature_block {
+        if let Some(v) = extract_xml_attr(block, "Player") {
+            is_player = v == "1";
+        }
+    }
+    
+    // Extract Curve props
     let mut curve_name: Option<String> = None;
     let mut curve_look_xz = false;
     let mut curve_ping_pong = false;
     let mut curve_speed = 0.0f32;
+    if let Some(block) = curve_block {
+        if let Some(v) = extract_xml_attr(&block, "CurveName") { curve_name = Some(v); }
+        if let Some(v) = extract_xml_attr(&block, "LookAlongXZPlane") { curve_look_xz = v == "1"; }
+        if let Some(v) = extract_xml_attr(&block, "PingPong") { curve_ping_pong = v == "1"; }
+        if let Some(v) = extract_xml_attr(&block, "Speed") { curve_speed = v.parse().unwrap_or(0.0); }
+    }
+    
+    // Extract ScrOni props
     let mut script_filename: Option<String> = None;
     let mut script_main: Option<String> = None;
-
-    for (i, content) in chain.iter().enumerate() {
-        if content.contains("<Creature") && !(i == 0 && has_components_xml) {
-            is_creature = true;
-        }
-        if let Some(v) = extract_xml_attr(content, "EntityType") {
-            entity_type = Some(v);
-        }
-        if let Some(v) = extract_xml_attr(content, "Position").and_then(|s| parse_vec3(&s)) {
-            position = v;
-        }
-        if let Some(v) = extract_xml_attr(content, "Orientation").and_then(|s| parse_vec3(&s)) {
-            orientation = v;
-        }
-        if let Some(v) = extract_xml_attr(content, "AnimatorType") {
-            animator_type = Some(v);
-        }
-        if let Some(v) = extract_xml_attr(content, "Player") {
-            is_player = v == "1";
-        }
-        // Curve component attributes
-        if let Some(v) = extract_xml_attr(content, "CurveName") {
-            curve_name = Some(v);
-        }
-        if let Some(v) = extract_xml_attr(content, "LookAlongXZPlane") {
-            curve_look_xz = v == "1";
-        }
-        if let Some(v) = extract_xml_attr(content, "PingPong") {
-            curve_ping_pong = v == "1";
-        }
-        if let Some(v) = extract_xml_attr(content, "Speed") {
-            curve_speed = v.parse().unwrap_or(0.0);
-        }
-        // ScrOni component attributes
-        if let Some(v) = extract_xml_attr(content, "Filename") {
-            script_filename = Some(v);
-        }
-        if let Some(v) = extract_xml_attr(content, "MainScript") {
-            script_main = Some(v);
-        }
+    if let Some(block) = scroni_block {
+        if let Some(v) = extract_xml_attr(&block, "Filename") { script_filename = Some(v); }
+        if let Some(v) = extract_xml_attr(&block, "MainScript") { script_main = Some(v); }
     }
 
     let entity_type = entity_type?;

@@ -13,6 +13,7 @@ pub enum Value {
     String(String),
     Vector(Vec3),
     Actor(Entity),
+    ActorList(Vec<Entity>, usize),
     None,
 }
 
@@ -70,6 +71,7 @@ pub enum ExecState {
 pub struct ScriptMessage {
     pub msg: String,
     pub from: Entity,
+    pub to: Entity,
     pub args: Vec<Value>,
 }
 
@@ -94,6 +96,23 @@ pub enum BlockingAction {
     WaitingForCurve,
     /// Internal: waiting for a non-looping animation to finish playing.
     WaitingForAnimation,
+    /// Request to the ECS system to query entities and return an actor list.
+    Find { list_var: String, conditions: Vec<(String, Value)>, range: Option<f32> },
+}
+
+#[derive(Debug, Clone)]
+pub enum SysRequest {
+    TextureMovie { target_name: String, action: super::ast::TextureMovieAction, arg: Value },
+}
+
+#[derive(Event, Debug, Clone)]
+pub enum ScrOniSysEvent {
+    TextureMovie {
+        script_entity: Entity,
+        target_name: String,
+        action: super::ast::TextureMovieAction,
+        arg: Value,
+    },
 }
 
 /// Execution context for a single script. Holds variables and program counter state.
@@ -109,6 +128,10 @@ pub struct ScriptExec {
     pub blocking: Option<BlockingAction>,
     /// Incoming message queue.
     pub message_queue: Vec<ScriptMessage>,
+    /// Outgoing message queue.
+    pub outgoing_messages: Vec<ScriptMessage>,
+    /// Requests to the ECS system to perform engine-level actions.
+    pub sys_requests: Vec<SysRequest>,
     /// The entity this script is attached to.
     pub owner: Entity,
     /// Game time when script started (for timed operations).
@@ -135,7 +158,7 @@ impl ScriptExec {
                 VarType::String => Value::String(String::new()),
                 VarType::Timer => Value::Float(0.0),
                 VarType::Label => Value::String(String::new()),
-                VarType::ActorList => Value::None,
+                VarType::ActorList => Value::ActorList(Vec::new(), 0),
             };
             variables.insert(var.name.clone(), val);
         }
@@ -148,6 +171,8 @@ impl ScriptExec {
             loop_stack: Vec::new(),
             blocking: None,
             message_queue: Vec::new(),
+            outgoing_messages: Vec::new(),
+            sys_requests: Vec::new(),
             owner,
             start_time,
         }
@@ -495,9 +520,48 @@ impl ScriptExec {
                 self.variables.insert(decl.name.clone(), val);
             }
 
+            Stmt::Find { list_var, conditions, range } => {
+                let eval_conds = conditions.iter().map(|(k, e)| (k.clone(), self.eval_expr(e, now))).collect();
+                let eval_range = range.as_ref().map(|e| self.eval_expr(e, now).as_float());
+                self.blocking = Some(BlockingAction::Find {
+                    list_var: list_var.clone(),
+                    conditions: eval_conds,
+                    range: eval_range,
+                });
+                self.state = ExecState::Blocked;
+            }
+
+            Stmt::TextureMovie { name, pass: _, action, arg } => {
+                let target_name = self.eval_expr(name, now).as_string();
+                let arg_val = self.eval_expr(arg, now);
+                self.sys_requests.push(SysRequest::TextureMovie {
+                    target_name,
+                    action: *action,
+                    arg: arg_val,
+                });
+            }
+
+            Stmt::SendMessage { msg, to, with } => {
+                let msg_str = self.eval_expr(msg, now).as_string();
+                let target = self.eval_expr(to, now);
+                if let Value::Actor(entity) = target {
+                    let mut args = Vec::new();
+                    for a in with {
+                        args.push(self.eval_expr(a, now));
+                    }
+                    self.outgoing_messages.push(ScriptMessage {
+                        msg: msg_str,
+                        from: self.owner,
+                        to: entity,
+                        args,
+                    });
+                }
+            }
+
             // Stubs for commands we don't execute yet
             _ => {
-                // Silently ignore unimplemented commands for now
+                // Non-silently ignore unimplemented commands for now
+                info!("Unimplemented command: {:?}", stmt);
             }
         }
     }
@@ -511,7 +575,7 @@ impl ScriptExec {
 
     // ---- Expression evaluation ----
 
-    fn eval_expr(&self, expr: &Expr, now: f64) -> Value {
+    fn eval_expr(&mut self, expr: &Expr, now: f64) -> Value {
         match expr {
             Expr::IntLit(i) => Value::Int(*i),
             Expr::FloatLit(f) => Value::Float(*f),
@@ -539,13 +603,55 @@ impl ScriptExec {
                 let r = self.eval_expr(right, now);
                 eval_binop(*op, &l, &r)
             }
-            Expr::Call { name, args: _ } => {
+            Expr::Call { name, args } => {
                 let lower = name.to_lowercase();
                 match lower.as_str() {
                     "clock" => Value::Float(now as f32),
                     "random" => Value::Int(rand::random::<i32>().abs() % 100),
                     "randomrange" => Value::Int(0), // stub
                     "randomrangefloat" => Value::Float(0.0), // stub
+                    "receivemessage" => {
+                        if let Some(msg_expr) = args.get(0) {
+                            let target_msg = self.eval_expr(msg_expr, now).as_string();
+                            if let Some(idx) = self.message_queue.iter().position(|m| m.msg == target_msg) {
+                                self.message_queue.remove(idx);
+                                return Value::Int(1);
+                            }
+                        }
+                        Value::Int(0)
+                    }
+                    "first" => {
+                        if let Some(Expr::Var(list_name)) = args.get(0) {
+                            if let Some(Value::ActorList(entities, _)) = self.variables.get(list_name) {
+                                let updated = entities.clone();
+                                if let Some(&first_ent) = updated.first() {
+                                    self.variables.insert(list_name.clone(), Value::ActorList(updated, 1));
+                                    return Value::Actor(first_ent);
+                                } else {
+                                    self.variables.insert(list_name.clone(), Value::ActorList(updated, 0));
+                                    return Value::None;
+                                }
+                            }
+                        }
+                        Value::None
+                    }
+                    "next" => {
+                        if let Some(Expr::Var(list_name)) = args.get(0) {
+                            if let Some(Value::ActorList(entities, idx)) = self.variables.get(list_name) {
+                                let updated = entities.clone();
+                                let current_idx = *idx;
+                                if current_idx < updated.len() {
+                                    let ent = updated[current_idx];
+                                    self.variables.insert(list_name.clone(), Value::ActorList(updated, current_idx + 1));
+                                    return Value::Actor(ent);
+                                } else {
+                                    self.variables.insert(list_name.clone(), Value::ActorList(updated, current_idx));
+                                    return Value::None;
+                                }
+                            }
+                        }
+                        Value::None
+                    }
                     _ => Value::None,
                 }
             }
@@ -619,12 +725,73 @@ pub struct ScrOniScript {
 
 /// Bevy system: tick all ScrOni scripts each frame.
 pub fn scroni_tick_system(
-    mut query: Query<(Entity, &mut ScrOniScript)>,
+    mut commands: Commands,
+    mut query: Query<(Entity, &mut ScrOniScript, &Transform)>,
+    all_entities: Query<(Entity, &Transform, Option<&Name>)>,
     time: Res<Time>,
 ) {
     let now = time.elapsed_secs_f64();
-    for (_entity, mut script) in &mut query {
+    let mut all_messages = Vec::new();
+
+    for (entity, mut script, transform) in &mut query {
         script.exec.tick(now);
+
+        // Handle Find request
+        if let Some(BlockingAction::Find { list_var, conditions, range }) = script.exec.blocking.clone() {
+            let mut found = Vec::new();
+            let my_pos = transform.translation;
+            let max_dist = range.unwrap_or(9999.0);
+
+            for (other_ent, other_tf, name_opt) in &all_entities {
+                if entity == other_ent { continue; }
+
+                let dist = my_pos.distance(other_tf.translation);
+                if dist <= max_dist {
+                    let mut matches_all = true;
+                    for (k, v) in &conditions {
+                        let k_lower = k.to_lowercase();
+                        if k_lower == "name" || k_lower == "group" {
+                            let expected_name = v.as_string();
+                            let actual_name = name_opt.map(|n| n.as_str()).unwrap_or("");
+                            if actual_name != expected_name {
+                                matches_all = false;
+                                break;
+                            }
+                        }
+                    }
+                    if matches_all {
+                        found.push(other_ent);
+                    }
+                }
+            }
+
+            script.exec.variables.insert(list_var, Value::ActorList(found, 0));
+            script.exec.clear_blocking();
+            // Tick again to resume immediately
+            script.exec.tick(now);
+        }
+
+        for req in script.exec.sys_requests.drain(..) {
+            match req {
+                SysRequest::TextureMovie { target_name, action, arg } => {
+                    commands.trigger(ScrOniSysEvent::TextureMovie {
+                        script_entity: entity,
+                        target_name,
+                        action,
+                        arg,
+                    });
+                }
+            }
+        }
+
+        all_messages.append(&mut script.exec.outgoing_messages);
+    }
+
+    // Deliver messages
+    for msg in all_messages {
+        if let Ok((_, mut target_script, _)) = query.get_mut(msg.to) {
+            target_script.exec.message_queue.push(msg);
+        }
     }
 }
 
@@ -637,4 +804,49 @@ pub fn load_script_file(dir: &str, filename: &str) -> Result<ScriptFile, String>
             let msgs: Vec<String> = errors.iter().map(|e| e.to_string()).collect();
             format!("Compile errors in {}/{}:\n{}", dir, filename, msgs.join("\n"))
         })
+}
+
+/// Observer to handle ScrOni system requests (like TextureMovie)
+pub fn texture_movie_system(
+    trigger: On<ScrOniSysEvent>,
+    children_query: Query<&Children>,
+    mut materials_query: Query<&mut MeshMaterial3d<StandardMaterial>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    texture_collections: Res<crate::oni2_loader::TextureCollections>,
+) {
+    let ev = (*trigger).clone();
+    if let ScrOniSysEvent::TextureMovie { script_entity, target_name, action, arg } = ev {
+        match action {
+            super::ast::TextureMovieAction::SetFrame => {
+                let frame = arg.as_int() as usize;
+                
+                // Get preloaded texture handle directly from the collections resource
+                if let Some(frames) = texture_collections.collections.get(&target_name) {
+                    if frame < frames.len() {
+                        let tex_handle = frames[frame].clone();
+                        let mut stack = vec![script_entity];
+                        while let Some(ent) = stack.pop() {
+                            if let Ok(mut mat_handle) = materials_query.get_mut(ent) {
+                                if let Some(old_mat) = materials.get(&mat_handle.0) {
+                                    let mut new_mat = old_mat.clone();
+                                    new_mat.base_color_texture = Some(tex_handle.clone());
+                                    new_mat.base_color = Color::WHITE;
+                                    let new_handle = materials.add(new_mat);
+                                    mat_handle.0 = new_handle;
+                                }
+                            }
+                            if let Ok(children) = children_query.get(ent) {
+                                stack.extend(children.iter());
+                            }
+                        }
+                    } else {
+                        warn!("TextureMovie SetFrame {} out of bounds for {}", frame, target_name);
+                    }
+                } else {
+                    warn!("TextureMovie: No preloaded textures found for {}", target_name);
+                }
+            }
+            _ => {}
+        }
+    }
 }

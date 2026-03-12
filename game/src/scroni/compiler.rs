@@ -344,6 +344,9 @@ impl Compiler {
             // Fog
             TokenCode::SetFogType => { self.advance(); Stmt::SetFogType(self.parse_expr()) }
 
+            TokenCode::Find => self.parse_find(),
+            TokenCode::TextureMovie => self.parse_texture_movie(),
+
             _ => {
                 // Unknown command — skip token and collect trailing exprs until next command
                 let cmd = self.peek().text.clone();
@@ -553,6 +556,62 @@ impl Compiler {
             None
         };
         Stmt::PlayAmbientSound { name, volume }
+    }
+
+    fn parse_find(&mut self) -> Stmt {
+        self.advance(); // skip 'find'
+        let list_var = self.peek().text.clone();
+        self.advance();
+
+        let mut conditions = Vec::new();
+        let mut range = None;
+
+        while self.code() != TokenCode::Range && !self.at_end() && !is_command_start(self.code()) {
+            let key = self.peek().text.clone();
+            self.advance(); // e.g. 'status' or 'name' or 'group'
+            
+            // Sometimes there's an 'is' or '=' between key and value
+            if self.code() == TokenCode::Is || self.code() == TokenCode::Equal {
+                self.advance();
+            }
+
+            let val = self.parse_expr();
+            conditions.push((key, val));
+            
+            // Optional comma between conditions
+            self.skip_if(TokenCode::Comma);
+        }
+
+        if self.skip_if(TokenCode::Range) {
+            range = Some(self.parse_expr());
+        }
+
+        Stmt::Find { list_var, conditions, range }
+    }
+
+    fn parse_texture_movie(&mut self) -> Stmt {
+        self.advance(); // skip 'TextureMovie'
+        let name = self.parse_expr();
+
+        let pass = if self.skip_if(TokenCode::Pass) {
+            Some(self.parse_expr())
+        } else {
+            None
+        };
+
+        let action = if self.skip_if(TokenCode::SetFrame) {
+            TextureMovieAction::SetFrame
+        } else if self.skip_if(TokenCode::SetRate) {
+            TextureMovieAction::SetRate
+        } else {
+            // Default to SetFrame if omitted but an arg follows, or error
+            self.error("Expected SetFrame or SetRate after TextureMovie".into());
+            TextureMovieAction::SetFrame
+        };
+
+        let arg = self.parse_expr();
+
+        Stmt::TextureMovie { name, pass, action, arg }
     }
 
     // ---- Expression parsing (Pratt-style precedence climbing) ----

@@ -148,6 +148,8 @@ fn main() {
         app.insert_resource(oni2_loader::FogEnabled);
     }
 
+    app.add_observer(scroni::vm::texture_movie_system);
+
     app
     .add_systems(
         OnEnter(AppState::InGame),
@@ -240,6 +242,7 @@ fn main() {
 
 fn setup_scene(
     mut commands: Commands,
+    asset_server: Res<AssetServer>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut images: ResMut<Assets<Image>>,
@@ -336,6 +339,7 @@ fn setup_scene(
         let entity_base_str = "Entity".to_string();
         oni2_loader::load_layout(
             &mut commands,
+            &asset_server,
             &mut meshes,
             &mut materials,
             &mut images,

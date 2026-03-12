@@ -86,7 +86,6 @@ impl Vfs for DiskVfs {
         let resolved = self.resolve(&path);
         match fs::read(&resolved) {
             Ok(data) => {
-                info!("VFS Read (HIT): {}", path);
                 Ok(data)
             }
             Err(e) => {
@@ -101,7 +100,6 @@ impl Vfs for DiskVfs {
         let resolved = self.resolve(&path);
         match fs::read_to_string(&resolved) {
             Ok(data) => {
-                info!("VFS ReadString (HIT): {}", path);
                 Ok(data)
             }
             Err(e) => {
@@ -120,7 +118,6 @@ impl Vfs for DiskVfs {
             return Err(dir_res.unwrap_err());
         }
         
-        info!("VFS ReadDir (HIT): {}", path);
         let mut result = Vec::new();
         for entry in dir_res.unwrap() {
             let entry = entry?;
@@ -156,7 +153,6 @@ impl Vfs for DiskVfs {
         let path = if dir.is_empty() { filename.to_string() } else { format!("{}/{}", dir, filename) };
         let exists = Path::new(&self.resolve(&path)).exists();
         if exists {
-            info!("VFS Exists (HIT): {}", path);
         } else {
             warn!("VFS Exists (MISS): {}", path);
         }

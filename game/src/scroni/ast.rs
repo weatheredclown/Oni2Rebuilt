@@ -145,6 +145,12 @@ pub enum Stmt {
     /// `sendgroupmembersmessage <string> to <expr>`
     SendGroupMembersMessage { msg: Expr, to: Expr },
 
+    /// `find <var> [conditions...] range <expr>`
+    Find { list_var: String, conditions: Vec<(String, Expr)>, range: Option<Expr> },
+
+    /// `TextureMovie <string> [pass <expr>] <action> <expr>`
+    TextureMovie { name: Expr, pass: Option<Expr>, action: TextureMovieAction, arg: Expr },
+
     /// `SetHealth <expr>`
     SetHealth(Expr),
     /// `ResetHealth`
@@ -252,4 +258,10 @@ pub enum BinOp {
     Or,
     Dot,   // dot product
     Cross, // cross product
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TextureMovieAction {
+    SetFrame,
+    SetRate,
 }

@@ -59,6 +59,13 @@ pub struct LayoutPaths {
     pub curves: Vec<(String, Vec<Vec3>)>,
 }
 
+/// Global mapping of Texture Collection (.tc) files loaded during layout setup.
+/// Maps entity type (e.g., "ProximityMine") to a list of preloaded texture handles by frame index.
+#[derive(Resource, Default)]
+pub struct TextureCollections {
+    pub collections: std::collections::HashMap<String, Vec<Handle<Image>>>,
+}
+
 /// Marker resource: fog rendering is enabled (--fog flag).
 #[derive(Resource)]
 pub struct FogEnabled;
@@ -343,6 +350,7 @@ pub struct LayoutPlayerInfo {
 /// Returns info about the player creature if one was found (Player="1").
 pub fn load_layout(
     commands: &mut Commands,
+    asset_server: &AssetServer,
     meshes: &mut ResMut<Assets<Mesh>>,
     materials: &mut ResMut<Assets<StandardMaterial>>,
     images: &mut ResMut<Assets<Image>>,
@@ -392,6 +400,8 @@ pub fn load_layout(
     let assets_base = if parts.is_empty() { String::new() } else { parts.join("/") };
     let template_dir = format!("{}/template", assets_base);
 
+    let mut texture_collections = TextureCollections::default();
+
     let mut spawned = 0;
     let mut creatures = 0;
     let mut skipped = 0;
@@ -413,6 +423,54 @@ pub fn load_layout(
 
         // Find the entity directory
         let entity_dir = format!("{}/{}", entity_base, actor.entity_type);
+        
+        // Try parsing .sha to find .tc (Texture Collection) and preload textures
+        if !texture_collections.collections.contains_key(&actor.entity_type) {
+            let sha_filename = format!("{}.sha", actor.entity_type);
+            let mut frames = Vec::new();
+            
+            if let Ok(sha_content) = crate::vfs::read_to_string(&entity_dir, &sha_filename) {
+                let mut tc_name = None;
+                for line in sha_content.lines() {
+                    let trimmed = line.trim();
+                    if trimmed.starts_with("texcluster ") {
+                        let parts: Vec<&str> = trimmed.split_whitespace().collect();
+                        if parts.len() >= 2 {
+                            tc_name = Some(parts[1].to_string());
+                            break;
+                        }
+                    }
+                }
+                
+                if let Some(mut tc) = tc_name {
+                    if !tc.to_lowercase().ends_with(".tc") {
+                        tc.push_str(".tc");
+                    }
+                    if let Ok(tc_content) = crate::vfs::read_to_string(&entity_dir, &tc) {
+                        for line in tc_content.lines() {
+                            let trimmed = line.trim();
+                            if trimmed.is_empty() || trimmed.starts_with("version:") || trimmed.starts_with("texCount:") {
+                                continue;
+                            }
+                            
+                            // Load the texture handle using the asset server
+                            let tex_name = match trimmed.strip_suffix(".tex") {
+                                Some(stripped) => stripped.to_string(),
+                                None => trimmed.to_string(),
+                            };
+                            
+                            // We use load_tga_texture from the texture parser as it correctly reads from VFS
+                            // and falls back to decoding .tex natively instead of depending on Bevy AssetServer.
+                            if let Some(tex_handle) = load_tga_texture(&entity_dir, &tex_name, images) {
+                                frames.push(tex_handle);
+                            }
+                        }
+                        info!("Loaded Texture Collection for {}: {} frames", actor.entity_type, frames.len());
+                    }
+                }
+            }
+            texture_collections.collections.insert(actor.entity_type.clone(), frames);
+        }
 
         if actor.is_creature {
             // Position already in Bevy coordinates (Z negated at parse time)
@@ -491,43 +549,43 @@ pub fn load_layout(
             ) {
                 // Attach CurveFollower if actor references a named curve
                 if let Some(ref cname) = actor.curve_name {
-                    if let Some((_, pts)) = layout_paths.curves.iter()
-                        .find(|(name, _)| name.eq_ignore_ascii_case(cname))
-                    {
-                        if pts.len() >= 4 {
-                            let curve = NurbsCurve::new(pts.clone());
-                            // If the actor has a script, let the script drive the curve
-                            // (start idle, reached_target=true so first GotoCurvePhase is picked up).
-                            // Otherwise use default behavior.
-                            let has_script = actor.script_filename.is_some();
-                            let speed = if has_script {
-                                0.0 // script will set speed via GotoCurvePhase
-                            } else if actor.curve_speed > 0.0 {
-                                actor.curve_speed
+                        if let Some((_, pts)) = layout_paths.curves.iter()
+                            .find(|(name, _)| name.eq_ignore_ascii_case(cname))
+                        {
+                            if pts.len() >= 4 {
+                                let curve = NurbsCurve::new(pts.clone());
+                                // If the actor has a script, let the script drive the curve
+                                // (start idle, reached_target=true so first GotoCurvePhase is picked up).
+                                // Otherwise use default behavior.
+                                let has_script = actor.script_filename.is_some();
+                                let speed = if has_script {
+                                    0.0 // script will set speed via GotoCurvePhase
+                                } else if actor.curve_speed > 0.0 {
+                                    actor.curve_speed
+                                } else {
+                                    0.2 // 1.0 / 5.0 seconds
+                                };
+                                commands.entity(entity).insert(CurveFollower {
+                                    curve,
+                                    phase: 0.0,
+                                    speed,
+                                    target_phase: if has_script { 0.0 } else { 1.0 },
+                                    wrap_around: if has_script { false } else { !actor.curve_ping_pong },
+                                    ping_pong: actor.curve_ping_pong,
+                                    look_along_xz: actor.curve_look_xz,
+                                    reached_target: has_script, // true so script's first command is picked up
+                                });
+                                info!("Attached CurveFollower '{}' to {} ({} control points)",
+                                    cname, actor.entity_type, pts.len());
                             } else {
-                                0.2 // 1.0 / 5.0 seconds
-                            };
-                            commands.entity(entity).insert(CurveFollower {
-                                curve,
-                                phase: 0.0,
-                                speed,
-                                target_phase: if has_script { 0.0 } else { 1.0 },
-                                wrap_around: if has_script { false } else { !actor.curve_ping_pong },
-                                ping_pong: actor.curve_ping_pong,
-                                look_along_xz: actor.curve_look_xz,
-                                reached_target: has_script, // true so script's first command is picked up
-                            });
-                            info!("Attached CurveFollower '{}' to {} ({} control points)",
-                                cname, actor.entity_type, pts.len());
+                                warn!("Curve '{}' has {} points (need >= 4), skipping",
+                                    cname, pts.len());
+                            }
                         } else {
-                            warn!("Curve '{}' has {} points (need >= 4), skipping",
-                                cname, pts.len());
+                            warn!("Curve '{}' not found in layout.paths for {}",
+                                cname, actor.entity_type);
                         }
-                    } else {
-                        warn!("Curve '{}' not found in layout.paths for {}",
-                            cname, actor.entity_type);
                     }
-                }
 
                 // Attach ScrOni script if actor has a <ScrOni> component
                 if let Some(ref filename) = actor.script_filename {
@@ -571,6 +629,9 @@ pub fn load_layout(
     if !layout_paths.curves.is_empty() {
         commands.insert_resource(layout_paths);
     }
+    
+    // Insert TextureCollections resource for the texture_movie_system observer
+    commands.insert_resource(texture_collections);
 
     // Load lights, fog, skyhat
     load_layout_lights(commands, meshes, materials, images, layout_dir);
@@ -1146,7 +1207,7 @@ pub fn load_anim_library(
     let mut skipped_missing = 0;
 
     for (alias, anim_name) in &alias_map {
-        let mut anim_file = format!("{}/{}.anim", entity_dir, anim_name);
+        let anim_file = format!("{}/{}.anim", entity_dir, anim_name);
         
         let data = match crate::vfs::read("", &anim_file) {
             Ok(d) => d,
@@ -1852,7 +1913,18 @@ pub fn spawn_oni2_entity_with_rotation(
         let mut m: Option<Oni2Model> = None;
 
         // Try standard (PS2) LOD model first (bone-local vertices, supports animation)
-        let mod_path = format!("{}/{}", dir, model_file);
+        let mut mod_path = format!("{}/{}", dir, model_file);
+        if !crate::vfs::exists("", &mod_path) {
+            // Check for LOD 0 fallback (e.g. FinitePlane_LODs.mod -> FinitePlane_LODs0.mod)
+            if model_file.ends_with(".mod") {
+                let fallback = model_file.replace(".mod", "0.mod");
+                let fallback_path = format!("{}/{}", dir, fallback);
+                if crate::vfs::exists("", &fallback_path) {
+                    mod_path = fallback_path;
+                }
+            }
+        }
+
         if crate::vfs::exists("", &mod_path) {
             if let Some(mut model) = load_mod_file(&mod_path) {
                 // PS2 binary v2.10 is bone-local despite using the same format as win32
