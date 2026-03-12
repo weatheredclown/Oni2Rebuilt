@@ -1,14 +1,15 @@
 mod ai;
 mod camera;
 mod combat;
-mod dave_vfs;
+mod filesystem;
 mod hud;
 mod menu;
 mod oni2_loader;
 mod player;
 mod scroni;
 mod telemetry;
-mod vfs;
+pub use filesystem::dave_vfs;
+pub use filesystem::vfs;
 
 use avian3d::prelude::*;
 use bevy::diagnostic::{FrameTimeDiagnosticsPlugin, DiagnosticsStore};
