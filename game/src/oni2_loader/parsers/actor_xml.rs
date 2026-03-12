@@ -69,9 +69,22 @@ fn resolve_template_chain(path: &str, template_dir: &str) -> Vec<String> {
 /// Template values are base; actor values override. Supports multi-level inheritance.
 pub fn parse_actor_xml(dir: &str, filename: &str, template_dir: &str) -> Option<LayoutActor> {
     let full_path = format!("{}/{}", dir, filename);
-    let chain = resolve_template_chain(&full_path, template_dir);
+    let mut chain = resolve_template_chain(&full_path, template_dir);
     if chain.is_empty() {
         return None;
+    }
+
+    // Prepend components.xml as the root defaults if available
+    let root_dir = "";
+    let mut has_components_xml = false;
+    if let Ok(comp) = crate::vfs::read_to_string(root_dir, "components.xml")
+        .or_else(|_| crate::vfs::read_to_string(template_dir, "components.xml"))
+        .or_else(|_| crate::vfs::read_to_string("Entity", "components.xml"))
+        .or_else(|_| crate::vfs::read_to_string("template", "components.xml"))
+    {
+        // Insert at index 0 so it's processed first and later files override it
+        chain.insert(0, comp);
+        has_components_xml = true;
     }
 
     // Merge attributes: iterate from base to derived, later values override
@@ -88,8 +101,8 @@ pub fn parse_actor_xml(dir: &str, filename: &str, template_dir: &str) -> Option<
     let mut script_filename: Option<String> = None;
     let mut script_main: Option<String> = None;
 
-    for content in &chain {
-        if content.contains("<Creature") {
+    for (i, content) in chain.iter().enumerate() {
+        if content.contains("<Creature") && !(i == 0 && has_components_xml) {
             is_creature = true;
         }
         if let Some(v) = extract_xml_attr(content, "EntityType") {

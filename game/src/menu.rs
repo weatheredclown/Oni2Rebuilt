@@ -46,18 +46,13 @@ impl Plugin for MenuPlugin {
 fn scan_layouts() -> Vec<String> {
     let target_dir = "layout".to_string();
     let mut names = Vec::new();
-    println!("scan_layouts: calling read_dir('{}')", target_dir);
     match crate::vfs::read_dir(&target_dir) {
         Ok(entries) => {
-            println!("scan_layouts: read_dir Ok! {} entries", entries.len());
             for entry in entries {
                 if entry.is_dir {
                     if let Some(name) = entry.path.split('/').last() {
-                        println!("scan_layouts: Keeping dir layout '{}'", name);
                         names.push(name.to_string());
                     }
-                } else {
-                    println!("scan_layouts: Dropping file entry '{}'", entry.path);
                 }
             }
         }
