@@ -461,7 +461,7 @@ pub fn load_layout(
                             
                             // We use load_tga_texture from the texture parser as it correctly reads from VFS
                             // and falls back to decoding .tex natively instead of depending on Bevy AssetServer.
-                            if let Some(tex_handle) = load_tga_texture(&entity_dir, &tex_name, images) {
+                            if let Some((tex_handle, _)) = load_tga_texture(&entity_dir, &tex_name, images) {
                                 frames.push(tex_handle);
                             }
                         }
@@ -855,7 +855,7 @@ fn load_skyhat(
         } else {
             model.materials.get(mat_idx).and_then(|oni_mat| {
                 oni_mat.texture_name.as_ref().and_then(|tex_name| {
-                    load_tga_texture(layout_path, tex_name, images)
+                    load_tga_texture(layout_path, tex_name, images).map(|(handle, _)| handle)
                 })
             })
         };
@@ -893,7 +893,7 @@ fn find_sky_texture(
             if name.contains("sky") {
                 if name.ends_with(".tex") && !name.ends_with(".tex.tga") {
                     if let Ok(tex_bytes) = crate::vfs::read("", &entry.path) {
-                        if let Some((width, height, rgba)) = decode_tex(&tex_bytes) {
+                        if let Some((width, height, rgba, _)) = decode_tex(&tex_bytes) {
                             info!("Loaded sky texture: {} ({}x{})", entry.path, width, height);
                             let mut image = Image::new(
                                 bevy::render::render_resource::Extent3d { width, height, depth_or_array_layers: 1 },
@@ -913,7 +913,7 @@ fn find_sky_texture(
                         }
                     }
                 } else if name.ends_with(".tex.tga") || name.ends_with(".tga") {
-                    if let Some(handle) = load_tga_file(&entry.path, images) {
+                    if let Some((handle, _)) = load_tga_file(&entry.path, images) {
                         info!("Loaded sky texture: {}", entry.path);
                         return Some(handle);
                     }
@@ -1778,14 +1778,19 @@ pub fn spawn_mod_file(
     let sub_meshes = build_meshes_by_material(&model);
 
     let bevy_materials: Vec<Handle<StandardMaterial>> = model.materials.iter().map(|oni_mat| {
-        let texture_handle = oni_mat.texture_name.as_ref().and_then(|tex_name| {
-            load_tga_texture(dir, tex_name, images)
-        });
+        let (texture_handle, has_alpha) = match oni_mat.texture_name.as_ref() {
+            Some(tex_name) => match load_tga_texture(dir, tex_name, images) {
+                Some((h, alpha)) => (Some(h), alpha),
+                None => (None, false)
+            },
+            None => (None, false)
+        };
         let diffuse = Color::srgb(oni_mat.diffuse[0], oni_mat.diffuse[1], oni_mat.diffuse[2]);
         materials.add(StandardMaterial {
             base_color: if texture_handle.is_some() { Color::WHITE } else { diffuse },
             base_color_texture: texture_handle,
             cull_mode: None,
+            alpha_mode: if has_alpha { AlphaMode::Blend } else { AlphaMode::Opaque },
             ..default()
         })
     }).collect();
@@ -2134,9 +2139,13 @@ pub fn spawn_oni2_entity_with_rotation(
 
     // Load textures and create Bevy materials for each ONI2 material
     let bevy_materials: Vec<Handle<StandardMaterial>> = model.materials.iter().map(|oni_mat| {
-        let texture_handle = oni_mat.texture_name.as_ref().and_then(|tex_name| {
-            load_tga_texture(dir, tex_name, images)
-        });
+        let (texture_handle, has_alpha) = match oni_mat.texture_name.as_ref() {
+            Some(tex_name) => match load_tga_texture(dir, tex_name, images) {
+                Some((h, alpha)) => (Some(h), alpha),
+                None => (None, false)
+            },
+            None => (None, false)
+        };
 
         let diffuse = Color::srgb(oni_mat.diffuse[0], oni_mat.diffuse[1], oni_mat.diffuse[2]);
 
@@ -2144,6 +2153,7 @@ pub fn spawn_oni2_entity_with_rotation(
             base_color: if texture_handle.is_some() { Color::WHITE } else { diffuse },
             base_color_texture: texture_handle,
             cull_mode: None,
+            alpha_mode: if has_alpha { AlphaMode::Blend } else { AlphaMode::Opaque },
             ..default()
         })
     }).collect();
@@ -2344,11 +2354,19 @@ fn spawn_oni2_creature(
 }
 
 /// Load texture for an entity: tries .tex (native), then .tex.tga (pre-converted).
-fn load_tga_file(path: &str, images: &mut ResMut<Assets<Image>>) -> Option<Handle<Image>> {
+fn load_tga_file(path: &str, images: &mut ResMut<Assets<Image>>) -> Option<(Handle<Image>, bool)> {
     let bytes = crate::vfs::read("", path).ok()?;
     let dyn_image = image::load_from_memory_with_format(&bytes, image::ImageFormat::Tga).ok()?;
     let rgba = dyn_image.to_rgba8();
     let (width, height) = rgba.dimensions();
+
+    let mut has_alpha = false;
+    for p in rgba.pixels() {
+        if p[3] < 255 {
+            has_alpha = true;
+            break;
+        }
+    }
 
     let mut image = Image::new(
         bevy::render::render_resource::Extent3d {
@@ -2368,7 +2386,7 @@ fn load_tga_file(path: &str, images: &mut ResMut<Assets<Image>>) -> Option<Handl
             ..default()
         },
     );
-    Some(images.add(image))
+    Some((images.add(image), has_alpha))
 }
 
 /// Setup a minimal scene for animation preview (testanim mode).
