@@ -143,25 +143,56 @@ fn cleanup_loading_screen(
     }
 }
 
-fn scan_layouts() -> Vec<String> {
+fn scan_layouts() -> Vec<(String, String)> {
     let target_dir = "layout".to_string();
-    let mut names = Vec::new();
+    let mut all_folders = Vec::new();
     match crate::vfs::read_dir(&target_dir) {
         Ok(entries) => {
             for entry in entries {
                 if entry.is_dir {
                     if let Some(name) = entry.path.split('/').last() {
-                        names.push(name.to_string());
+                        all_folders.push(name.to_string());
                     }
                 }
             }
         }
         Err(e) => {
-            println!("scan_layouts: read_dir Err: {}", e);
+            info!("scan_layouts: read_dir Err: {}", e);
         }
     }
-    names.sort();
-    names
+
+    let mut descriptions = std::collections::HashMap::new();
+    if let Ok(content) = crate::vfs::read_to_string("Settings", "rb.gamedata") {
+        for line in content.lines() {
+            if let Some(desc_idx) = line.find(" DESCRIPTION \"") {
+                let folder = line[..desc_idx].trim().to_string();
+                let desc_start = desc_idx + " DESCRIPTION \"".len();
+                if let Some(desc_end) = line[desc_start..].find('"') {
+                    let desc = line[desc_start..desc_start + desc_end].to_string();
+                    descriptions.insert(folder, desc);
+                }
+            }
+        }
+    }
+
+    let mut with_desc = Vec::new();
+    let mut without_desc = Vec::new();
+
+    for folder in all_folders {
+        if let Some(desc) = descriptions.get(&folder) {
+            with_desc.push((folder, desc.clone()));
+        } else {
+            without_desc.push((folder.clone(), folder));
+        }
+    }
+
+    // Sort layouts with descriptions alphabetically by description
+    with_desc.sort_by(|a, b| a.1.cmp(&b.1));
+    // Sort remaining layouts alphabetically by folder name
+    without_desc.sort_by(|a, b| a.1.cmp(&b.1));
+
+    with_desc.extend(without_desc);
+    with_desc
 }
 
 fn setup_menu(mut commands: Commands) {
@@ -211,7 +242,7 @@ fn setup_menu(mut commands: Commands) {
                 ScrollableList,
             ))
             .with_children(|list| {
-                for name in &layouts {
+                for (folder_name, display_name) in &layouts {
                     list.spawn((
                         Button,
                         Node {
@@ -221,11 +252,11 @@ fn setup_menu(mut commands: Commands) {
                             ..default()
                         },
                         BackgroundColor(Color::srgb(0.2, 0.2, 0.25)),
-                        LayoutButton(name.clone()),
+                        LayoutButton(folder_name.clone()),
                     ))
                     .with_children(|btn| {
                         btn.spawn((
-                            Text::new(name.as_str()),
+                            Text::new(display_name.as_str()),
                             TextFont {
                                 font_size: 20.0,
                                 ..default()
