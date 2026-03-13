@@ -66,6 +66,24 @@ pub struct TextureCollections {
     pub collections: std::collections::HashMap<String, Vec<Handle<Image>>>,
 }
 
+/// Context for the currently loaded layout, allowing dynamic spawning of actors later.
+#[derive(Resource, Clone)]
+pub struct LayoutContext {
+    pub layout_dir: String,
+    pub entity_base: String,
+    pub basic_types: std::collections::HashSet<String>,
+}
+
+/// A struct to bundle all asset mutators required for spawning entities.
+pub struct SpawnAssets<'a, 'commands, 'c1, 'c2, 'c3, 'c4, 'c5> {
+    pub commands: &'a mut Commands<'commands, 'c1>,
+    pub meshes: &'a mut ResMut<'c2, Assets<Mesh>>,
+    pub materials: &'a mut ResMut<'c3, Assets<StandardMaterial>>,
+    pub images: &'a mut ResMut<'c4, Assets<Image>>,
+    pub skinned_mesh_ibp: &'a mut ResMut<'c5, Assets<SkinnedMeshInverseBindposes>>,
+    pub texture_collections: &'a mut TextureCollections,
+}
+
 /// Marker resource: fog rendering is enabled (--fog flag).
 #[derive(Resource)]
 pub struct FogEnabled;
@@ -402,6 +420,14 @@ pub fn load_layout(
 
     let mut texture_collections = TextureCollections::default();
 
+    // Insert LayoutContext for dynamic spawning by scripts
+    let layout_ctx = LayoutContext {
+        layout_dir: layout_path.to_string(),
+        entity_base: entity_base.to_string(),
+        basic_types,
+    };
+    commands.insert_resource(layout_ctx.clone());
+
     let mut spawned = 0;
     let mut creatures = 0;
     let mut skipped = 0;
@@ -412,212 +438,38 @@ pub fn load_layout(
             continue; // skip count line and blank lines
         }
 
-        // Parse the actor XML file (with template resolution)
-        let actor = match parse_actor_xml(layout_path, &format!("{}.xml", actor_name), &template_dir) {
-            Some(a) => a,
-            None => {
-                skipped += 1;
-                continue;
-            }
+        let mut spawn_assets = SpawnAssets {
+            commands,
+            meshes,
+            materials,
+            images,
+            skinned_mesh_ibp,
+            texture_collections: &mut texture_collections,
         };
 
-        // Find the entity directory
-        let entity_dir = format!("{}/{}", entity_base, actor.entity_type);
-        
-        // Try parsing .sha to find .tc (Texture Collection) and preload textures
-        if !texture_collections.collections.contains_key(&actor.entity_type) {
-            let sha_filename = format!("{}.sha", actor.entity_type);
-            let mut frames = Vec::new();
-            
-            if let Ok(sha_content) = crate::vfs::read_to_string(&entity_dir, &sha_filename) {
-                let mut tc_name = None;
-                for line in sha_content.lines() {
-                    let trimmed = line.trim();
-                    if trimmed.starts_with("texcluster ") {
-                        let parts: Vec<&str> = trimmed.split_whitespace().collect();
-                        if parts.len() >= 2 {
-                            tc_name = Some(parts[1].to_string());
-                            break;
-                        }
-                    }
-                }
-                
-                if let Some(mut tc) = tc_name {
-                    if !tc.to_lowercase().ends_with(".tc") {
-                        tc.push_str(".tc");
-                    }
-                    if let Ok(tc_content) = crate::vfs::read_to_string(&entity_dir, &tc) {
-                        for line in tc_content.lines() {
-                            let trimmed = line.trim();
-                            if trimmed.is_empty() || trimmed.starts_with("version:") || trimmed.starts_with("texCount:") {
-                                continue;
-                            }
-                            
-                            // Load the texture handle using the asset server
-                            let tex_name = match trimmed.strip_suffix(".tex") {
-                                Some(stripped) => stripped.to_string(),
-                                None => trimmed.to_string(),
-                            };
-                            
-                            // We use load_tga_texture from the texture parser as it correctly reads from VFS
-                            // and falls back to decoding .tex natively instead of depending on Bevy AssetServer.
-                            if let Some((tex_handle, _)) = load_tga_texture(&entity_dir, &tex_name, images) {
-                                frames.push(tex_handle);
-                            }
-                        }
-                        info!("Loaded Texture Collection for {}: {} frames", actor.entity_type, frames.len());
-                    }
-                }
-            }
-            texture_collections.collections.insert(actor.entity_type.clone(), frames);
-        }
-
-        if actor.is_creature {
-            // Position already in Bevy coordinates (Z negated at parse time)
-            let position = actor.position;
-            // 180° Y rotation flips X and Z rotation directions
-            let rotation = Quat::from_rotation_x(-actor.orientation.x.to_radians())
-                * Quat::from_rotation_y(actor.orientation.y.to_radians())
-                * Quat::from_rotation_z(-actor.orientation.z.to_radians());
-
-            if let Some(ref anim_type) = actor.animator_type {
-                info!("Creature {} type={} animator={} player={}",
-                    actor_name, actor.entity_type, anim_type, actor.is_player);
-            }
-
-            if let Some(entity) = spawn_oni2_creature(
-                commands, meshes, materials, images, skinned_mesh_ibp,
-                &entity_dir,
-                position,
-                rotation,
-                actor_name,
-                &actor.entity_type,
-                actor.animator_type.as_deref(),
-                &assets_base,
-            ) {
+        if let Some((entity, actor)) = spawn_layout_actor(
+            &mut spawn_assets,
+            actor_name,
+            &layout_ctx,
+            &layout_paths,
+            None,
+        ) {
+            if actor.is_creature {
+                creatures += 1;
                 if actor.is_player && player_info.is_none() {
                     player_info = Some(LayoutPlayerInfo {
                         entity,
-                        position,
+                        position: actor.position,
                         entity_type: actor.entity_type.clone(),
                         animator_type: actor.animator_type.clone().unwrap_or_default(),
                     });
-                } else {
-                    // Non-player creature: attach AI + combat components
-                    commands.entity(entity).insert((
-                        crate::combat::components::Enemy,
-                        crate::ai::components::AiFighter::default(),
-                        crate::combat::components::Fighter::default(),
-                        crate::combat::components::FighterId(uuid::Uuid::new_v4()),
-                        crate::combat::components::Health::new(100.0),
-                    ));
-                    commands.entity(entity).insert((
-                        crate::combat::components::AttackState::default(),
-                        crate::combat::components::BlockState::new(),
-                        crate::combat::components::ComboTracker::default(),
-                        crate::combat::components::SuperMeter::default(),
-                        crate::combat::components::GrabState::default(),
-                        crate::combat::components::HitReaction::default(),
-                        crate::combat::components::AboutToBeHit::default(),
-                    ));
-                    commands.entity(entity).insert(crate::camera::components::PrototypeElement);
                 }
+            } else {
+                spawned += 1;
             }
-            creatures += 1;
         } else {
-            // Static entity (BASICENTITY check)
-            let is_basic = basic_types.iter().any(|t| t.eq_ignore_ascii_case(&actor.entity_type));
-            if !is_basic {
-                skipped += 1;
-                continue;
-            }
-
-            let position = actor.position;
-            // 180° Y rotation flips X and Z rotation directions
-            let rotation = Quat::from_rotation_x(-actor.orientation.x.to_radians())
-                * Quat::from_rotation_y(actor.orientation.y.to_radians())
-                * Quat::from_rotation_z(-actor.orientation.z.to_radians());
-
-            if let Some(entity) = spawn_oni2_entity_with_rotation(
-                commands, meshes, materials, images, skinned_mesh_ibp,
-                &entity_dir,
-                position,
-                rotation,
-                &actor.entity_type,
-                None,
-                Some(&actor.entity_type),
-            ) {
-                // Attach CurveFollower if actor references a named curve
-                if let Some(ref cname) = actor.curve_name {
-                        if let Some((_, pts)) = layout_paths.curves.iter()
-                            .find(|(name, _)| name.eq_ignore_ascii_case(cname))
-                        {
-                            if pts.len() >= 4 {
-                                let curve = NurbsCurve::new(pts.clone());
-                                // If the actor has a script, let the script drive the curve
-                                // (start idle, reached_target=true so first GotoCurvePhase is picked up).
-                                // Otherwise use default behavior.
-                                let has_script = actor.script_filename.is_some();
-                                let speed = if has_script {
-                                    0.0 // script will set speed via GotoCurvePhase
-                                } else if actor.curve_speed > 0.0 {
-                                    actor.curve_speed
-                                } else {
-                                    0.2 // 1.0 / 5.0 seconds
-                                };
-                                commands.entity(entity).insert(CurveFollower {
-                                    curve,
-                                    phase: 0.0,
-                                    speed,
-                                    target_phase: if has_script { 0.0 } else { 1.0 },
-                                    wrap_around: if has_script { false } else { !actor.curve_ping_pong },
-                                    ping_pong: actor.curve_ping_pong,
-                                    look_along_xz: actor.curve_look_xz,
-                                    reached_target: has_script, // true so script's first command is picked up
-                                });
-                                info!("Attached CurveFollower '{}' to {} ({} control points)",
-                                    cname, actor.entity_type, pts.len());
-                            } else {
-                                warn!("Curve '{}' has {} points (need >= 4), skipping",
-                                    cname, pts.len());
-                            }
-                        } else {
-                            warn!("Curve '{}' not found in layout.paths for {}",
-                                cname, actor.entity_type);
-                        }
-                    }
-
-                // Attach ScrOni script if actor has a <ScrOni> component
-                if let Some(ref filename) = actor.script_filename {
-                    if let Some(ref main_script) = actor.script_main {
-                        let (script_dir, script_fname) = resolve_script_path(layout_path, filename);
-                        match scroni::vm::load_script_file(&script_dir, &script_fname) {
-                            Ok(file) => {
-                                if let Some(script_def) = file.scripts.iter()
-                                    .find(|s| s.name.eq_ignore_ascii_case(main_script))
-                                {
-                                    let exec = scroni::vm::ScriptExec::new(
-                                        script_def.clone(), entity, 0.0,
-                                    );
-                                    commands.entity(entity).insert(
-                                        scroni::vm::ScrOniScript { exec },
-                                    );
-                                    info!("Attached ScrOni script '{}:{}' to {}",
-                                        filename, main_script, actor.entity_type);
-                                } else {
-                                    warn!("Script '{}' not found in {}/{} (available: {})",
-                                        main_script, script_dir, script_fname,
-                                        file.scripts.iter().map(|s| s.name.as_str()).collect::<Vec<_>>().join(", "));
-                                }
-                            }
-                            Err(e) => {
-                                warn!("Failed to compile script {}/{}: {}", script_dir, script_fname, e);
-                            }
-                        }
-                    }
-                }
-            }
-            spawned += 1;
+            // Not spawned because it failed to parse or wasn't a basic type
+            skipped += 1;
         }
     }
     info!("Layout: spawned {} entities, {} creatures, skipped {}", spawned, creatures, skipped);
@@ -637,6 +489,212 @@ pub fn load_layout(
     load_layout_lights(commands, meshes, materials, images, layout_dir);
 
     player_info
+}
+
+/// Spawns a single actor by name, parsing its XML internally. Can override position.
+pub fn spawn_layout_actor(
+    assets: &mut SpawnAssets,
+    actor_name: &str,
+    layout_ctx: &LayoutContext,
+    layout_paths: &LayoutPaths,
+    pos_override: Option<Vec3>,
+) -> Option<(Entity, LayoutActor)> {
+    
+    // Find template dir
+    let template_dir = "template".to_string();
+
+    // Parse the actor XML
+    let actor = match crate::oni2_loader::parsers::actor_xml::parse_actor_xml(&layout_ctx.layout_dir, &format!("{}.xml", actor_name), &template_dir) {
+        Some(a) => a,
+        None => return None,
+    };
+
+    // Find the entity directory
+    let entity_dir = format!("{}/{}", layout_ctx.entity_base, actor.entity_type);
+    
+    // Try parsing .sha to find .tc (Texture Collection) and preload textures
+    if !assets.texture_collections.collections.contains_key(&actor.entity_type) {
+        let sha_filename = format!("{}.sha", actor.entity_type);
+        let mut frames = Vec::new();
+        
+        if let Ok(sha_content) = crate::vfs::read_to_string(&entity_dir, &sha_filename) {
+            let mut tc_name = None;
+            for line in sha_content.lines() {
+                let trimmed = line.trim();
+                if trimmed.starts_with("texcluster ") {
+                    let parts: Vec<&str> = trimmed.split_whitespace().collect();
+                    if parts.len() >= 2 {
+                        tc_name = Some(parts[1].to_string());
+                        break;
+                    }
+                }
+            }
+            
+            if let Some(mut tc) = tc_name {
+                if !tc.to_lowercase().ends_with(".tc") {
+                    tc.push_str(".tc");
+                }
+                if let Ok(tc_content) = crate::vfs::read_to_string(&entity_dir, &tc) {
+                    for line in tc_content.lines() {
+                        let trimmed = line.trim();
+                        if trimmed.is_empty() || trimmed.starts_with("version:") || trimmed.starts_with("texCount:") {
+                            continue;
+                        }
+                        
+                        // Load the texture handle using the asset server
+                        let tex_name = match trimmed.strip_suffix(".tex") {
+                            Some(stripped) => stripped.to_string(),
+                            None => trimmed.to_string(),
+                        };
+                        
+                        if let Some((tex_handle, _)) = load_tga_texture(&entity_dir, &tex_name, assets.images) {
+                            frames.push(tex_handle);
+                        }
+                    }
+                    info!("Loaded Texture Collection for {}: {} frames", actor.entity_type, frames.len());
+                }
+            }
+        }
+        assets.texture_collections.collections.insert(actor.entity_type.clone(), frames);
+    }
+
+    if actor.is_creature {
+        // Position already in Bevy coordinates (Z negated at parse time)
+        let position = pos_override.unwrap_or(actor.position);
+        // 180° Y rotation flips X and Z rotation directions
+        let rotation = Quat::from_rotation_x(-actor.orientation.x.to_radians())
+            * Quat::from_rotation_y(actor.orientation.y.to_radians())
+            * Quat::from_rotation_z(-actor.orientation.z.to_radians());
+
+        if let Some(ref anim_type) = actor.animator_type {
+            info!("Creature {} type={} animator={} player={}",
+                actor_name, actor.entity_type, anim_type, actor.is_player);
+        }
+
+        if let Some(entity) = spawn_oni2_creature(
+            assets.commands, assets.meshes, assets.materials, assets.images, assets.skinned_mesh_ibp,
+            &entity_dir,
+            position,
+            rotation,
+            actor_name,
+            &actor.entity_type,
+            actor.animator_type.as_deref(),
+            &layout_ctx.entity_base,
+        ) {
+            if !actor.is_player {
+                // Non-player creature: attach AI + combat components
+                assets.commands.entity(entity).insert((
+                    crate::combat::components::Enemy,
+                    crate::ai::components::AiFighter::default(),
+                    crate::combat::components::Fighter::default(),
+                    crate::combat::components::FighterId(uuid::Uuid::new_v4()),
+                    crate::combat::components::Health::new(100.0),
+                ));
+                assets.commands.entity(entity).insert((
+                    crate::combat::components::AttackState::default(),
+                    crate::combat::components::BlockState::new(),
+                    crate::combat::components::ComboTracker::default(),
+                    crate::combat::components::SuperMeter::default(),
+                    crate::combat::components::GrabState::default(),
+                    crate::combat::components::HitReaction::default(),
+                    crate::combat::components::AboutToBeHit::default(),
+                ));
+                assets.commands.entity(entity).insert(crate::camera::components::PrototypeElement);
+            }
+            return Some((entity, actor));
+        }
+    } else {
+        // Static entity (BASICENTITY check)
+        let is_basic = layout_ctx.basic_types.contains(&actor.entity_type) || layout_ctx.basic_types.iter().any(|t| t.eq_ignore_ascii_case(&actor.entity_type));
+        if !is_basic {
+            return None;
+        }
+
+        let position = pos_override.unwrap_or(actor.position);
+        // 180° Y rotation flips X and Z rotation directions
+        let rotation = Quat::from_rotation_x(-actor.orientation.x.to_radians())
+            * Quat::from_rotation_y(actor.orientation.y.to_radians())
+            * Quat::from_rotation_z(-actor.orientation.z.to_radians());
+
+        if let Some(entity) = spawn_oni2_entity_with_rotation(
+            assets.commands, assets.meshes, assets.materials, assets.images, assets.skinned_mesh_ibp,
+            &entity_dir,
+            position,
+            rotation,
+            &actor.entity_type,
+            None,
+            Some(&actor.entity_type),
+        ) {
+            // Attach CurveFollower if actor references a named curve
+            if let Some(ref cname) = actor.curve_name {
+                    if let Some((_, pts)) = layout_paths.curves.iter()
+                        .find(|(name, _)| name.eq_ignore_ascii_case(cname))
+                    {
+                        if pts.len() >= 4 {
+                            let curve = NurbsCurve::new(pts.clone());
+                            let has_script = actor.script_filename.is_some();
+                            let speed = if has_script {
+                                0.0 // script will set speed via GotoCurvePhase
+                            } else if actor.curve_speed > 0.0 {
+                                actor.curve_speed
+                            } else {
+                                0.2 // 1.0 / 5.0 seconds
+                            };
+                            assets.commands.entity(entity).insert(CurveFollower {
+                                curve,
+                                phase: 0.0,
+                                speed,
+                                target_phase: if has_script { 0.0 } else { 1.0 },
+                                wrap_around: if has_script { false } else { !actor.curve_ping_pong },
+                                ping_pong: actor.curve_ping_pong,
+                                look_along_xz: actor.curve_look_xz,
+                                reached_target: has_script, 
+                            });
+                            info!("Attached CurveFollower '{}' to {} ({} control points)",
+                                cname, actor.entity_type, pts.len());
+                        } else {
+                            warn!("Curve '{}' has {} points (need >= 4), skipping",
+                                cname, pts.len());
+                        }
+                    } else {
+                        warn!("Curve '{}' not found in layout.paths for {}",
+                            cname, actor.entity_type);
+                    }
+                }
+
+            // Attach ScrOni script if actor has a <ScrOni> component
+            if let Some(ref filename) = actor.script_filename {
+                if let Some(ref main_script) = actor.script_main {
+                    let (script_dir, script_fname) = resolve_script_path(&layout_ctx.layout_dir, filename);
+                    match scroni::vm::load_script_file(&script_dir, &script_fname) {
+                        Ok(file) => {
+                            if let Some(script_def) = file.scripts.iter()
+                                .find(|s| s.name.eq_ignore_ascii_case(main_script))
+                            {
+                                let exec = scroni::vm::ScriptExec::new(
+                                    script_def.clone(), entity, 0.0,
+                                );
+                                assets.commands.entity(entity).insert(
+                                    scroni::vm::ScrOniScript { exec },
+                                );
+                                info!("Attached ScrOni script '{}:{}' to {}",
+                                    filename, main_script, actor.entity_type);
+                            } else {
+                                warn!("Script '{}' not found in {}/{} (available: {})",
+                                    main_script, script_dir, script_fname,
+                                    file.scripts.iter().map(|s| s.name.as_str()).collect::<Vec<_>>().join(", "));
+                            }
+                        }
+                        Err(e) => {
+                            warn!("Failed to compile script {}/{}: {}", script_dir, script_fname, e);
+                        }
+                    }
+                }
+            }
+            return Some((entity, actor));
+        }
+    }
+    None
 }
 
 
@@ -2272,7 +2330,7 @@ pub fn spawn_oni2_entity_with_rotation(
 /// Spawn a creature (animated entity) from the layout.
 /// All creatures get a physics capsule + animation library.
 /// Returns the entity so the caller can attach player or AI components.
-fn spawn_oni2_creature(
+pub fn spawn_oni2_creature(
     commands: &mut Commands,
     meshes: &mut ResMut<Assets<Mesh>>,
     materials: &mut ResMut<Assets<StandardMaterial>>,
@@ -2284,11 +2342,10 @@ fn spawn_oni2_creature(
     actor_name: &str,
     entity_type: &str,
     animator_type: Option<&str>,
-    assets_base: &str,
+    entity_base: &str,
 ) -> Option<Entity> {
     let anim_name = animator_type.unwrap_or(entity_type);
 
-    let entity_base = format!("{}/Entity", assets_base);
     let anim_entity_dir = format!("{}/{}", entity_base, anim_name);
 
     // Spawn above intended position; ground_snap_system will find solid ground

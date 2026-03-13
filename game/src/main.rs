@@ -148,7 +148,7 @@ fn main() {
         app.insert_resource(oni2_loader::FogEnabled);
     }
 
-    app.add_observer(scroni::vm::texture_movie_system);
+    app.add_observer(scroni::vm::scroni_sys_event_observer);
 
     app
     .add_systems(
