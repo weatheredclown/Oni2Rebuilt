@@ -231,7 +231,7 @@ fn main() {
         app.insert_state(AppState::InGame);
     } else if let Some(layout_name) = cli_layout {
         app.insert_resource(SelectedLayout(layout_name));
-        app.insert_state(AppState::InGame);
+        app.insert_state(AppState::LoadingLayout);
     } else {
         app.init_state::<AppState>();
     }
