@@ -1,4 +1,5 @@
 use super::*;
+use crate::oni2_loader::parsers::texture::load_tga_texture;
 
 #[derive(Component)]
 pub struct CreatureRenderOffset {

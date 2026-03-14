@@ -1,4 +1,6 @@
 use super::*;
+use crate::oni2_loader::parsers::texture::decode_tex;
+use crate::oni2_loader::parsers::texture::load_tga_texture;
 
 pub struct LayoutPlayerInfo {
     pub entity: Entity,
