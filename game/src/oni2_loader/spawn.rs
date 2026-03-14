@@ -1,5 +1,6 @@
 use super::*;
 
+#[derive(Component)]
 pub struct CreatureRenderOffset {
     /// Y offset to align feet with capsule bottom (negative = down)
     pub y_offset: f32,
