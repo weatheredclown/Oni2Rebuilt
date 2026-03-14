@@ -104,6 +104,7 @@ pub enum BlockingAction {
 pub enum SysRequest {
     TextureMovie { target_name: String, action: super::ast::TextureMovieAction, arg: Value },
     Spawn { script: String, assign_to: Option<String>, at: Option<Vec3>, name: Option<String> },
+    Teleport { target: Entity, to: Option<Vec3>, face: Option<f32> },
 }
 
 #[derive(Event, Debug, Clone)]
@@ -120,6 +121,11 @@ pub enum ScrOniSysEvent {
         assign_to: Option<String>,
         at: Option<Vec3>,
         name: Option<String>,
+    },
+    Teleport {
+        target: Entity,
+        to: Option<Vec3>,
+        face: Option<f32>,
     },
 }
 
@@ -147,8 +153,56 @@ pub struct ScriptExec {
 }
 
 #[derive(Debug, Clone)]
-pub struct ScroniContext<'a, 'w, 's> {
-    pub all_entities: &'a Query<'w, 's, (Entity, &'static Transform, Option<&'static Name>)>,
+pub struct ScroniContext<'a, 'w_e, 's_e, 'w_t, 's_t> {
+    pub all_entities: &'a Query<'w_e, 's_e, (Entity, &'static Transform, Option<&'static Name>)>,
+    pub triggers: &'a Query<'w_t, 's_t, &'static BroadcastTrigger>,
+}
+
+#[derive(Component, Default)]
+pub struct BroadcastTrigger {
+    pub radius: f32,
+    pub inside: std::collections::HashSet<Entity>,
+    pub just_entered: std::collections::HashSet<Entity>,
+    pub just_exited: std::collections::HashSet<Entity>,
+    pub world_center: Vec3,
+}
+
+pub fn update_broadcast_triggers(
+    mut triggers: Query<(Entity, &mut BroadcastTrigger, &GlobalTransform)>,
+    targets: Query<(Entity, &GlobalTransform)>,
+) {
+    for (trigger_ent, mut trigger, trigger_tf) in &mut triggers {
+        let center = trigger_tf.translation();
+        trigger.world_center = center;
+        let r_sq = trigger.radius * trigger.radius;
+
+        let mut currently_inside = std::collections::HashSet::new();
+
+        for (target_ent, target_tf) in &targets {
+            if target_ent == trigger_ent { continue; }
+            if target_tf.translation().distance_squared(center) <= r_sq {
+                currently_inside.insert(target_ent);
+            }
+        }
+
+        trigger.just_entered.clear();
+        trigger.just_exited.clear();
+
+        for ent in &currently_inside {
+            if !trigger.inside.contains(ent) {
+                trigger.just_entered.insert(*ent);
+            }
+        }
+
+        let old_inside = trigger.inside.clone();
+        for ent in &old_inside {
+            if !currently_inside.contains(ent) {
+                trigger.just_exited.insert(*ent);
+            }
+        }
+
+        trigger.inside = currently_inside;
+    }
 }
 
 pub enum LoopState {
@@ -569,6 +623,24 @@ impl ScriptExec {
                     });
                 }
             }
+            Stmt::Teleport { target, to, face } => {
+                if let Value::Actor(ent) = self.eval_expr(target, now, ctx) {
+                    let to_vec = to.as_ref().map(|e| {
+                        match self.eval_expr(e, now, ctx) {
+                            Value::Vector(v) => v,
+                            _ => Vec3::ZERO,
+                        }
+                    });
+                    let face_float = face.as_ref().map(|e| self.eval_expr(e, now, ctx).as_float());
+                    
+                    self.sys_requests.push(SysRequest::Teleport {
+                        target: ent,
+                        to: to_vec,
+                        face: face_float,
+                    });
+                }
+            }
+
             Stmt::Spawn { script, assign_to, at, name } => {
                 let script_str = self.eval_expr(script, now, ctx).as_string();
                 let assign = assign_to.clone();
@@ -628,6 +700,24 @@ impl ScriptExec {
                     _ => Value::Int(0),
                 }
             }
+            Expr::VectorLit(x_expr, y_expr, z_expr) => {
+                let x = self.eval_expr(x_expr, now, ctx).as_float();
+                let y = self.eval_expr(y_expr, now, ctx).as_float();
+                let z = self.eval_expr(z_expr, now, ctx).as_float();
+                Value::Vector(Vec3::new(x, y, z))
+            }
+            Expr::FieldAccess { base, field } => {
+                let base_val = self.eval_expr(base, now, ctx);
+                match base_val {
+                    Value::Vector(v) => match field.as_str() {
+                        "x" | "X" => Value::Float(v.x),
+                        "y" | "Y" => Value::Float(v.y),
+                        "z" | "Z" => Value::Float(v.z),
+                        _ => Value::None,
+                    },
+                    _ => Value::None,
+                }
+            }
             Expr::BinOp { op, left, right } => {
                 let l = self.eval_expr(left, now, ctx);
                 let r = self.eval_expr(right, now, ctx);
@@ -640,6 +730,42 @@ impl ScriptExec {
                     "random" => Value::Int(rand::random::<i32>().abs() % 100),
                     "randomrange" => Value::Int(0), // stub
                     "randomrangefloat" => Value::Float(0.0), // stub
+                    "triggerentered" => {
+                        let trig_ent = args.get(0).map(|e| self.eval_expr(e, now, ctx));
+                        let targ_ent = args.get(1).map(|e| self.eval_expr(e, now, ctx));
+                        if let (Some(Value::Actor(t)), Some(Value::Actor(e))) = (trig_ent, targ_ent) {
+                            if let Ok(trigger) = ctx.triggers.get(t) {
+                                if trigger.just_entered.contains(&e) {
+                                    return Value::Int(1);
+                                }
+                            }
+                        }
+                        Value::Int(0)
+                    }
+                    "triggerexited" => {
+                        let trig_ent = args.get(0).map(|e| self.eval_expr(e, now, ctx));
+                        let targ_ent = args.get(1).map(|e| self.eval_expr(e, now, ctx));
+                        if let (Some(Value::Actor(t)), Some(Value::Actor(e))) = (trig_ent, targ_ent) {
+                            if let Ok(trigger) = ctx.triggers.get(t) {
+                                if trigger.just_exited.contains(&e) {
+                                    return Value::Int(1);
+                                }
+                            }
+                        }
+                        Value::Int(0)
+                    }
+                    "triggerinside" => {
+                        let trig_ent = args.get(0).map(|e| self.eval_expr(e, now, ctx));
+                        let targ_ent = args.get(1).map(|e| self.eval_expr(e, now, ctx));
+                        if let (Some(Value::Actor(t)), Some(Value::Actor(e))) = (trig_ent, targ_ent) {
+                            if let Ok(trigger) = ctx.triggers.get(t) {
+                                if trigger.inside.contains(&e) {
+                                    return Value::Int(1);
+                                }
+                            }
+                        }
+                        Value::Int(0)
+                    }
                     "receivemessage" => {
                         if let Some(msg_expr) = args.get(0) {
                             let target_msg = self.eval_expr(msg_expr, now, ctx).as_string();
@@ -766,20 +892,24 @@ pub struct ScrOniScript {
     pub exec: ScriptExec,
 }
 
+
+
 /// Bevy system: tick all ScrOni scripts each frame.
 pub fn scroni_tick_system(
     mut commands: Commands,
     mut query: Query<(Entity, &mut ScrOniScript, &Transform)>,
     all_entities: Query<(Entity, &'static Transform, Option<&'static Name>)>,
+    triggers: Query<&'static BroadcastTrigger>,
     time: Res<Time>,
 ) {
     let now = time.elapsed_secs_f64();
     let mut all_messages = Vec::new();
 
-    let mut ctx = ScroniContext {
-        all_entities: &all_entities,
-    };
     for (entity, mut script, transform) in &mut query {
+        let mut ctx = ScroniContext {
+            all_entities: &all_entities,
+            triggers: &triggers,
+        };
         script.exec.tick(now, &mut ctx);
 
         // Handle Find request
@@ -836,6 +966,13 @@ pub fn scroni_tick_system(
                         name,
                     });
                 }
+                SysRequest::Teleport { target, to, face } => {
+                    commands.trigger(ScrOniSysEvent::Teleport {
+                        target,
+                        to,
+                        face,
+                    });
+                }
             }
         }
 
@@ -865,6 +1002,7 @@ pub fn load_script_file(dir: &str, filename: &str) -> Result<ScriptFile, String>
 pub fn scroni_sys_event_observer(
     trigger: On<ScrOniSysEvent>,
     mut commands: Commands,
+    mut transform_query: Query<&mut Transform>,
     children_query: Query<&Children>,
     mut materials_query: Query<&mut MeshMaterial3d<StandardMaterial>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
@@ -911,7 +1049,7 @@ pub fn scroni_sys_event_observer(
                 _ => {}
             }
         }
-        ScrOniSysEvent::Spawn { script_entity, script, assign_to, at, name } => {
+        ScrOniSysEvent::Spawn { script_entity: _, script, assign_to, at, name } => {
             info!("Received spawn request: script={}, at={:?}, name={:?}", script, at, name);
             
             let pos = at.unwrap_or(Vec3::ZERO);
@@ -958,6 +1096,18 @@ pub fn scroni_sys_event_observer(
 
             if let Some(var_name) = assign_to {
                 warn!("Assigning spawn result to {} is not yet supported synchronously.", var_name);
+            }
+        }
+        ScrOniSysEvent::Teleport { target, to, face } => {
+            if let Ok(mut transform) = transform_query.get_mut(target) {
+                if let Some(pos) = to {
+                    transform.translation = pos;
+                }
+                if let Some(angles_y) = face {
+                    let rad = angles_y.to_radians();
+                    let current_rot = transform.rotation.to_euler(EulerRot::YXZ);
+                    transform.rotation = Quat::from_euler(EulerRot::YXZ, rad, current_rot.1, current_rot.2);
+                }
             }
         }
     }

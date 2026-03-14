@@ -135,8 +135,8 @@ pub enum Stmt {
     Spawn { script: Expr, assign_to: Option<String>, at: Option<Expr>, name: Option<Expr> },
     /// `destroy`
     Destroy,
-    /// `teleport <expr>`
-    Teleport(Expr),
+    /// `teleport <expr> [to <vector>] [face <expr>]`
+    Teleport { target: Expr, to: Option<Expr>, face: Option<Expr> },
 
     /// `sendmessage <string> to <expr> [with <expr>, ...]`
     SendMessage { msg: Expr, to: Expr, with: Vec<Expr> },
@@ -239,6 +239,10 @@ pub enum Expr {
     Exists(Option<Box<Expr>>),
     /// Parenthesized expression
     Paren(Box<Expr>),
+    /// Vector literal: `{ x, y, z }`
+    VectorLit(Box<Expr>, Box<Expr>, Box<Expr>),
+    /// Field access: `<expr>.<field>` (e.g., `loc.x`)
+    FieldAccess { base: Box<Expr>, field: String },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

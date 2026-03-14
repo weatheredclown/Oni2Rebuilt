@@ -33,7 +33,7 @@ pub fn get_assets_path() -> &'static str {
 }
 
 pub fn get_assets_dat() -> &'static str {
-    ASSETS_DAT.get().map(|s| s.as_str()).unwrap_or("oni2/RB.DAT")
+    ASSETS_DAT.get().map(|s| s.as_str()).unwrap_or("RB.DAT")
 }
 
 /// Resource indicating sandbox mode (flat ground + model, no layout).
@@ -97,16 +97,16 @@ fn main() {
     let dave_path_str = get_assets_dat();
     let dave_path = std::path::Path::new(dave_path_str);
         
-    if cli_dat.is_some() && dave_path.exists() {
+    if dave_path.exists() {
         println!("Found Dave archive at {:?}, enabling DaveVfs", dave_path);
         match dave_vfs::DaveVfs::new(dave_path_str) {
             Ok(dave_vfs) => {
                 if cli_path.is_some() {
-                    println!("Both --path and --dat provided. Using FallbackVfs (Disk primary, Dave fallback).");
+                    println!("--path provided. Using FallbackVfs (Disk primary, Dave fallback).");
                     let fallback = Box::new(vfs::FallbackVfs::new(disk_vfs, Box::new(dave_vfs)));
                     vfs::set_vfs(fallback);
                 } else {
-                    println!("Only --dat provided. Using DaveVfs exclusively.");
+                    println!("No --path provided. Using DaveVfs exclusively.");
                     vfs::set_vfs(Box::new(dave_vfs));
                 }
             }
@@ -184,6 +184,7 @@ fn main() {
             oni2_loader::apply_fog_to_camera
                 .run_if(resource_exists::<oni2_loader::FogEnabled>),
             oni2_loader::update_skyhat,
+            scroni::vm::update_broadcast_triggers.before(scroni::vm::scroni_tick_system),
             scroni::vm::scroni_tick_system,
             oni2_loader::scroni_curve_bridge_system,
             oni2_loader::curve_follower_system,

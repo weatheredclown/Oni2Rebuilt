@@ -25,6 +25,8 @@ pub struct LayoutActor {
     pub script_filename: Option<String>,
     /// ScrOni entry-point script name (from <ScrOni><MainScript>).
     pub script_main: Option<String>,
+    /// Radius from <BroadcastTrigger><Radius>
+    pub broadcast_radius: Option<f32>,
 }
 
 /// Resolve the full template chain for an actor XML file.
@@ -139,6 +141,7 @@ pub fn parse_actor_xml(dir: &str, filename: &str, template_dir: &str) -> Option<
     let animator_block = extract_component(&chain, has_components_xml, "Animator");
     let curve_block = extract_component(&chain, has_components_xml, "Curve");
     let scroni_block = extract_component(&chain, has_components_xml, "ScrOni");
+    let broadcast_block = extract_component(&chain, has_components_xml, "BroadcastTrigger");
         
     // Extract Animator props
     let mut animator_type: Option<String> = None;
@@ -177,7 +180,24 @@ pub fn parse_actor_xml(dir: &str, filename: &str, template_dir: &str) -> Option<
         if let Some(v) = extract_xml_attr(&block, "MainScript") { script_main = Some(v); }
     }
 
-    let entity_type = entity_type?;
+    // Extract BroadcastTrigger props
+    let mut broadcast_radius: Option<f32> = None;
+    if let Some(block) = broadcast_block {
+        if let Some(v) = extract_xml_attr(&block, "Radius") {
+            broadcast_radius = v.parse().ok();
+        }
+    }
+
+    // If an entity type isn't explicitly defined, try to fall back to the filename or a generic name.
+    // Layout actors like 'actor_SpawnTrigger_01' might just have components without a base template.
+    let entity_type = entity_type.unwrap_or_else(|| {
+        let base_name = filename.strip_suffix(".xml").unwrap_or(filename);
+        if base_name.starts_with("actor_") {
+            base_name.to_string()
+        } else {
+            "generic_trigger".to_string()
+        }
+    });
 
     // Convert from left-handed to right-handed: 180° Y rotation (negate X and Z)
     let position = Vec3::new(-position.x, position.y, -position.z);
@@ -195,5 +215,6 @@ pub fn parse_actor_xml(dir: &str, filename: &str, template_dir: &str) -> Option<
         curve_speed,
         script_filename,
         script_main,
+        broadcast_radius,
     })
 }

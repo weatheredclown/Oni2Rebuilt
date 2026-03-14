@@ -306,7 +306,7 @@ impl Compiler {
             // Actor management
             TokenCode::Spawn => self.parse_spawn(),
             TokenCode::Destroy => { self.advance(); Stmt::Destroy }
-            TokenCode::Teleport => { self.advance(); Stmt::Teleport(self.parse_expr()) }
+            TokenCode::Teleport => self.parse_teleport(),
 
             // Messaging
             TokenCode::SendMessage => self.parse_send_message(),
@@ -377,8 +377,7 @@ impl Compiler {
         let condition = self.parse_expr();
         self.skip_if(TokenCode::Then);
         let then_branch = Box::new(self.parse_stmt());
-        let else_branch = if self.code() == TokenCode::Else {
-            self.advance();
+        let else_branch = if self.skip_if(TokenCode::Else) {
             Some(Box::new(self.parse_stmt()))
         } else {
             None
@@ -506,6 +505,27 @@ impl Compiler {
         let at = if self.skip_if(TokenCode::At) { Some(self.parse_expr()) } else { None };
         let name = if self.skip_if(TokenCode::Name) { Some(self.parse_expr()) } else { None };
         Stmt::Spawn { script, assign_to, at, name }
+    }
+
+    fn parse_teleport(&mut self) -> Stmt {
+        self.advance(); // consume `teleport`
+        let target = self.parse_expr();
+        let mut to = None;
+        let mut face = None;
+
+        loop {
+            if self.code() == TokenCode::To {
+                self.advance();
+                to = Some(self.parse_expr());
+            } else if self.code() == TokenCode::Face {
+                self.advance();
+                face = Some(self.parse_expr());
+            } else {
+                break;
+            }
+        }
+
+        Stmt::Teleport { target, to, face }
     }
 
     fn parse_send_message(&mut self) -> Stmt {
@@ -707,8 +727,29 @@ impl Compiler {
                 self.advance();
                 Expr::Negate(Box::new(self.parse_unary()))
             }
-            _ => self.parse_primary(),
+            _ => self.parse_postfix(),
         }
+    }
+
+    fn parse_postfix(&mut self) -> Expr {
+        let mut base = self.parse_primary();
+        
+        // Handle field access like `loc.x`
+        while self.code() == TokenCode::Period {
+            self.advance();
+            if self.code() == TokenCode::Identifier || (!matches!(self.code(), TokenCode::IntegerConstant | TokenCode::FloatConstant | TokenCode::StringConstant | TokenCode::Eof | TokenCode::Begin | TokenCode::End | TokenCode::Whenever | TokenCode::Sequence | TokenCode::Comma | TokenCode::LeftParen | TokenCode::RightParen | TokenCode::LeftCurlyBracket | TokenCode::RightCurlyBracket | TokenCode::Colon | TokenCode::Period | TokenCode::Plus | TokenCode::Minus | TokenCode::Star | TokenCode::Slash | TokenCode::Percent | TokenCode::Equal | TokenCode::NotEqual | TokenCode::Greater | TokenCode::GreaterOrEqual | TokenCode::Less | TokenCode::LessOrEqual | TokenCode::Cross)) {
+                let field = self.peek().text.clone();
+                self.advance();
+                base = Expr::FieldAccess {
+                    base: Box::new(base),
+                    field,
+                };
+            } else {
+                self.error("expected field name after '.'".into());
+            }
+        }
+        
+        base
     }
 
     fn parse_primary(&mut self) -> Expr {
@@ -748,6 +789,16 @@ impl Compiler {
                 self.skip_if(TokenCode::RightParen);
                 Expr::Paren(Box::new(expr))
             }
+            TokenCode::LeftCurlyBracket => {
+                self.advance(); // skip '{'
+                let x = self.parse_expr();
+                self.skip_if(TokenCode::Comma);
+                let y = self.parse_expr();
+                self.skip_if(TokenCode::Comma);
+                let z = self.parse_expr();
+                self.skip_if(TokenCode::RightCurlyBracket);
+                Expr::VectorLit(Box::new(x), Box::new(y), Box::new(z))
+            }
             // Query functions that look like function calls
             TokenCode::Location | TokenCode::Direction | TokenCode::Distance
             | TokenCode::Health | TokenCode::Guid | TokenCode::Status
@@ -785,29 +836,30 @@ impl Compiler {
             => {
                 self.parse_call_expr()
             }
-            TokenCode::Identifier => {
-                let name = self.peek().text.clone();
-                self.advance();
-                // Check for function call: name(...)
-                if self.code() == TokenCode::LeftParen {
-                    self.advance();
-                    let mut args = Vec::new();
-                    if self.code() != TokenCode::RightParen {
-                        args.push(self.parse_expr());
-                        while self.skip_if(TokenCode::Comma) {
-                            args.push(self.parse_expr());
-                        }
-                    }
-                    self.skip_if(TokenCode::RightParen);
-                    Expr::Call { name, args }
-                } else {
-                    Expr::Var(name)
-                }
-            }
             _ => {
-                self.error(format!("expected expression, found {:?} '{}'", self.code(), self.peek().text));
-                self.advance();
-                Expr::IntLit(0)
+                if !matches!(self.code(), TokenCode::IntegerConstant | TokenCode::FloatConstant | TokenCode::StringConstant | TokenCode::Eof | TokenCode::Begin | TokenCode::End | TokenCode::Whenever | TokenCode::Sequence | TokenCode::Comma | TokenCode::LeftParen | TokenCode::RightParen | TokenCode::LeftCurlyBracket | TokenCode::RightCurlyBracket | TokenCode::Colon | TokenCode::Period | TokenCode::Plus | TokenCode::Minus | TokenCode::Star | TokenCode::Slash | TokenCode::Percent | TokenCode::Equal | TokenCode::NotEqual | TokenCode::Greater | TokenCode::GreaterOrEqual | TokenCode::Less | TokenCode::LessOrEqual | TokenCode::Cross) {
+                    let name = self.peek().text.clone();
+                    self.advance();
+                    // Check for function call: name(...)
+                    if self.code() == TokenCode::LeftParen {
+                        self.advance();
+                        let mut args = Vec::new();
+                        if self.code() != TokenCode::RightParen {
+                            args.push(self.parse_expr());
+                            while self.skip_if(TokenCode::Comma) {
+                                args.push(self.parse_expr());
+                            }
+                        }
+                        self.skip_if(TokenCode::RightParen);
+                        Expr::Call { name, args }
+                    } else {
+                        Expr::Var(name)
+                    }
+                } else {
+                    self.error(format!("expected expression, found {:?} '{}'", self.code(), self.peek().text));
+                    self.advance();
+                    Expr::IntLit(0)
+                }
             }
         }
     }
@@ -835,6 +887,17 @@ impl Compiler {
                 args.push(self.parse_expr());
             }
         }
+
+        // Parse trailing 'with' kwargs for message query expressions
+        if name.eq_ignore_ascii_case("receivemessage") || name.eq_ignore_ascii_case("receiveaction") {
+            if self.skip_if(TokenCode::With) {
+                args.push(self.parse_expr());
+                while self.skip_if(TokenCode::Comma) {
+                    args.push(self.parse_expr());
+                }
+            }
+        }
+
         Expr::Call { name, args }
     }
 }

@@ -368,7 +368,7 @@ pub struct LayoutPlayerInfo {
 /// Returns info about the player creature if one was found (Player="1").
 pub fn load_layout(
     commands: &mut Commands,
-    asset_server: &AssetServer,
+    _asset_server: &AssetServer,
     meshes: &mut ResMut<Assets<Mesh>>,
     materials: &mut ResMut<Assets<StandardMaterial>>,
     images: &mut ResMut<Assets<Image>>,
@@ -416,7 +416,7 @@ pub fn load_layout(
     parts.pop();
     parts.pop();
     let assets_base = if parts.is_empty() { String::new() } else { parts.join("/") };
-    let template_dir = format!("{}/template", assets_base);
+    let _template_dir = format!("{}/template", assets_base);
 
     let mut texture_collections = TextureCollections::default();
 
@@ -604,9 +604,10 @@ pub fn spawn_layout_actor(
             return Some((entity, actor));
         }
     } else {
-        // Static entity (BASICENTITY check)
+        // Static entity (BASICENTITY check) or trigger (has broadcast_radius)
         let is_basic = layout_ctx.basic_types.contains(&actor.entity_type) || layout_ctx.basic_types.iter().any(|t| t.eq_ignore_ascii_case(&actor.entity_type));
-        if !is_basic {
+        let is_trigger = actor.broadcast_radius.is_some();
+        if !is_basic && !is_trigger {
             return None;
         }
 
@@ -616,15 +617,27 @@ pub fn spawn_layout_actor(
             * Quat::from_rotation_y(actor.orientation.y.to_radians())
             * Quat::from_rotation_z(-actor.orientation.z.to_radians());
 
-        if let Some(entity) = spawn_oni2_entity_with_rotation(
-            assets.commands, assets.meshes, assets.materials, assets.images, assets.skinned_mesh_ibp,
-            &entity_dir,
-            position,
-            rotation,
-            &actor.entity_type,
-            None,
-            Some(&actor.entity_type),
-        ) {
+        let entity = if is_basic {
+            spawn_oni2_entity_with_rotation(
+                assets.commands, assets.meshes, assets.materials, assets.images, assets.skinned_mesh_ibp,
+                &entity_dir,
+                position,
+                rotation,
+                &actor.entity_type,
+                None,
+                Some(&actor.entity_type),
+            )
+        } else {
+            // It's just a trigger without a visual model, so spawn an empty entity
+            Some(assets.commands.spawn((
+                Transform::from_translation(position).with_rotation(rotation),
+                GlobalTransform::default(),
+                Name::new(actor.entity_type.clone()),
+                crate::menu::InGameEntity,
+            )).id())
+        };
+
+        if let Some(entity) = entity {
             // Attach CurveFollower if actor references a named curve
             if let Some(ref cname) = actor.curve_name {
                     if let Some((_, pts)) = layout_paths.curves.iter()
@@ -664,33 +677,48 @@ pub fn spawn_layout_actor(
 
             // Attach ScrOni script if actor has a <ScrOni> component
             if let Some(ref filename) = actor.script_filename {
-                if let Some(ref main_script) = actor.script_main {
-                    let (script_dir, script_fname) = resolve_script_path(&layout_ctx.layout_dir, filename);
-                    match scroni::vm::load_script_file(&script_dir, &script_fname) {
-                        Ok(file) => {
-                            if let Some(script_def) = file.scripts.iter()
-                                .find(|s| s.name.eq_ignore_ascii_case(main_script))
-                            {
-                                let exec = scroni::vm::ScriptExec::new(
-                                    script_def.clone(), entity, 0.0,
-                                );
-                                assets.commands.entity(entity).insert(
-                                    scroni::vm::ScrOniScript { exec },
-                                );
-                                info!("Attached ScrOni script '{}:{}' to {}",
-                                    filename, main_script, actor.entity_type);
-                            } else {
-                                warn!("Script '{}' not found in {}/{} (available: {})",
-                                    main_script, script_dir, script_fname,
-                                    file.scripts.iter().map(|s| s.name.as_str()).collect::<Vec<_>>().join(", "));
-                            }
+                let default_main = std::path::Path::new(filename)
+                    .file_stem()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or("")
+                    .to_string();
+                let main_script = actor.script_main.as_ref().unwrap_or(&default_main);
+                
+                let (script_dir, script_fname) = resolve_script_path(&layout_ctx.layout_dir, filename);
+                match scroni::vm::load_script_file(&script_dir, &script_fname) {
+                    Ok(file) => {
+                        if let Some(script_def) = file.scripts.iter()
+                            .find(|s| s.name.eq_ignore_ascii_case(main_script))
+                        {
+                            let exec = scroni::vm::ScriptExec::new(
+                                script_def.clone(), entity, 0.0,
+                            );
+                            assets.commands.entity(entity).insert(
+                                scroni::vm::ScrOniScript { exec },
+                            );
+                            info!("Attached ScrOni script '{}:{}' to {}",
+                                filename, main_script, actor.entity_type);
+                        } else {
+                            warn!("Script '{}' not found in {}/{} (available: {})",
+                                main_script, script_dir, script_fname,
+                                file.scripts.iter().map(|s| s.name.as_str()).collect::<Vec<_>>().join(", "));
                         }
-                        Err(e) => {
-                            warn!("Failed to compile script {}/{}: {}", script_dir, script_fname, e);
-                        }
+                    }
+                    Err(e) => {
+                        warn!("Failed to compile script {}/{}: {}", script_dir, script_fname, e);
                     }
                 }
             }
+            
+            // Attach BroadcastTrigger if present
+            if let Some(radius) = actor.broadcast_radius {
+                assets.commands.entity(entity).insert(crate::scroni::vm::BroadcastTrigger {
+                    radius,
+                    ..Default::default()
+                });
+                info!("Attached BroadcastTrigger (radius {}) to {} at position {:?}", radius, actor.entity_type, position);
+            }
+
             return Some((entity, actor));
         }
     }
@@ -1505,7 +1533,8 @@ pub fn toggle_debug_skeleton(
 
 /// Draw skeleton bones as lines from child to parent, with spheres at joints.
 pub fn debug_draw_skeleton(
-    query: Query<(&Transform, &Oni2DebugSkeleton)>,
+    query: Query<(&Transform, &Oni2DebugSkeleton, Option<&CreatureRenderOffset>)>,
+    trigger_query: Query<&crate::scroni::vm::BroadcastTrigger>,
     mut gizmos: Gizmos,
     visible: Res<DebugSkeletonVisible>,
 ) {
@@ -1515,10 +1544,12 @@ pub fn debug_draw_skeleton(
     let bone_color = Color::srgb(1.0, 1.0, 0.0);
     let joint_color = Color::srgb(1.0, 0.3, 0.0);
 
-    for (transform, skel) in &query {
+    for (transform, skel, offset) in &query {
+        let base_offset = offset.map_or(Vec3::ZERO, |o| Vec3::new(0.0, o.y_offset, 0.0));
+
         // Draw lines from each bone to its parent
         for (i, parent_idx) in skel.parent_indices.iter().enumerate() {
-            let pos = skel.positions[i];
+            let pos = skel.positions[i] + base_offset;
             let world_pos = transform.transform_point(pos);
 
             // Draw joint sphere
@@ -1526,11 +1557,22 @@ pub fn debug_draw_skeleton(
 
             // Draw line to parent
             if let Some(pi) = parent_idx {
-                let parent_pos = skel.positions[*pi];
+                let parent_pos = skel.positions[*pi] + base_offset;
                 let world_parent = transform.transform_point(parent_pos);
                 gizmos.line(world_pos, world_parent, bone_color);
             }
         }
+    }
+
+    let trigger_color = Color::srgba(1.0, 0.5, 0.0, 0.5); // Semi-transparent orange
+    
+    let trigger_count = trigger_query.iter().count();
+    println!("DEBUG DRAW SKELETON: Found {} triggers to draw (visible = {})", trigger_count, visible.0);
+
+    for trigger in &trigger_query {
+        let world_pos = trigger.world_center;
+        println!("  -> Drawing trigger at {:?} with radius {}", world_pos, trigger.radius);
+        gizmos.sphere(Isometry3d::from_translation(world_pos), trigger.radius, trigger_color);
     }
 }
 
@@ -1971,7 +2013,6 @@ pub fn spawn_oni2_entity_with_rotation(
     // Read and parse the .mod file
     // Prefer win32 binary LOD model (world-space vertices, correct bone count).
     // Fall back to standard binary LOD, then text base model.
-    let mut loaded_anim: Option<Oni2Animation> = None;
     let model = if let Some(ref model_file) = entity_type.model_file {
         let mut m: Option<Oni2Model> = None;
 
@@ -2028,15 +2069,6 @@ pub fn spawn_oni2_entity_with_rotation(
                 info!("Converted world-space vertices to bone-local ({} verts)", model.vertices.len());
             }
 
-            // Load explicit animation if provided (e.g. TestAnim scene)
-            if let Some(ap) = anim_path {
-                if let Ok(anim_data) = crate::vfs::read("", ap) {
-                    if let Some(anim) = parse_anim(&anim_data) {
-                        info!("Loaded animation from {}: {} frames", ap, anim.num_frames);
-                        loaded_anim = Some(anim);
-                    }
-                }
-            }
         }
 
         m
