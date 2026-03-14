@@ -30,7 +30,7 @@ use crate::oni2_loader::parsers::layout::*;
 use crate::oni2_loader::parsers::mesh::*;
 use crate::oni2_loader::parsers::model::*;
 use crate::oni2_loader::parsers::skeleton::*;
-use crate::oni2_loader::parsers::texture::*;
+use crate::oni2_loader::parsers::texture::load_tga_file as texture_load_tga_file;
 use crate::oni2_loader::parsers::types::*;
 use crate::oni2_loader::utils::bone::*;
 use crate::scroni;
