@@ -255,7 +255,7 @@ pub fn scroni_curve_bridge_system(
 }
 
 /// Info about a spawned player creature from the layout.
-
+#[derive(Component)]
 pub struct Oni2DebugBounds {
     pub vertices: Vec<Vec3>, // bound vertices in local space (Z-negated)
     pub edges: Vec<[u32; 2]>,
