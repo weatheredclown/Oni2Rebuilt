@@ -1,5 +1,7 @@
 use super::*;
+use bevy::prelude::Resource;
 
+#[derive(Resource)]
 pub struct TestAnimMode(pub String);
 
 /// Marker component for the testanim HUD text node.
