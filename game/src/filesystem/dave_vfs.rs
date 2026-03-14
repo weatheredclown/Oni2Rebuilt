@@ -193,8 +193,16 @@ impl Vfs for DaveVfs {
                 // To avoid cloning all entries every time, we copy the metadata
                 let mut list = Vec::new();
                 for e in v {
+                    let full_path = if search.is_empty() {
+                        e.path.clone()
+                    } else {
+                        // Use the original search term to preserve its case
+                        let clean_path = if path.starts_with('/') { &path[1..] } else { path };
+                        format!("{}/{}", clean_path, e.path)
+                    };
+
                     list.push(VfsEntry {
-                        path: e.path.clone(),
+                        path: full_path,
                         is_dir: e.is_dir,
                         is_file: e.is_file,
                     });

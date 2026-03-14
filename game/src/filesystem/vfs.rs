@@ -67,7 +67,7 @@ impl Vfs for FallbackVfs {
 
         // Deduplicate
         for fb_entry in fallback_entries {
-            if !primary_entries.iter().any(|p| p.path == fb_entry.path) {
+            if !primary_entries.iter().any(|p| p.path.eq_ignore_ascii_case(&fb_entry.path)) {
                 primary_entries.push(fb_entry);
             }
         }
