@@ -1,5 +1,6 @@
 use super::*;
 
+#[derive(Resource)]
 pub struct LayoutFogSettings {
     pub color: Color,
     pub start: f32,
