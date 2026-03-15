@@ -129,6 +129,14 @@ pub enum ScrOniSysEvent {
     },
 }
 
+#[derive(Debug, Clone)]
+pub struct CallFrame {
+    pub script: ScriptDef,
+    pub variables: HashMap<String, Value>,
+    pub seq_pc: usize,
+    pub loop_stack: Vec<LoopState>,
+}
+
 /// Execution context for a single script. Holds variables and program counter state.
 pub struct ScriptExec {
     pub script: ScriptDef,
@@ -138,6 +146,10 @@ pub struct ScriptExec {
     pub seq_pc: usize,
     /// Stack of loop state for nested control flow.
     pub loop_stack: Vec<LoopState>,
+    /// Call stack for Stack / Return behavior.
+    pub call_stack: Vec<CallFrame>,
+    /// Other scripts in the same file that can be Switched / Stacked to.
+    pub available_scripts: HashMap<String, ScriptDef>,
     /// Current blocking action waiting to complete.
     pub blocking: Option<BlockingAction>,
     /// Incoming message queue.
@@ -205,6 +217,7 @@ pub fn update_broadcast_triggers(
     }
 }
 
+#[derive(Debug, Clone)]
 pub enum LoopState {
     Forever { body: Vec<Stmt>, pc: usize },
     While { condition: Expr, body: Vec<Stmt>, pc: usize },
@@ -235,6 +248,8 @@ impl ScriptExec {
             state: ExecState::Running,
             seq_pc: 0,
             loop_stack: Vec::new(),
+            call_stack: Vec::new(),
+            available_scripts: HashMap::new(),
             blocking: None,
             message_queue: Vec::new(),
             outgoing_messages: Vec::new(),
@@ -313,7 +328,14 @@ impl ScriptExec {
 
         // Fell off end of sequence
         if self.seq_pc >= sequence.len() && self.loop_stack.is_empty() && self.state == ExecState::Running {
-            self.state = ExecState::Done;
+            if let Some(frame) = self.call_stack.pop() {
+                self.script = frame.script;
+                self.variables = frame.variables;
+                self.seq_pc = frame.seq_pc;
+                self.loop_stack = frame.loop_stack;
+            } else {
+                self.state = ExecState::Done;
+            }
         }
     }
 
@@ -458,7 +480,14 @@ impl ScriptExec {
                 self.state = ExecState::Yielded;
             }
             Stmt::Done => {
-                self.state = ExecState::Done;
+                if let Some(frame) = self.call_stack.pop() {
+                    self.script = frame.script;
+                    self.variables = frame.variables;
+                    self.seq_pc = frame.seq_pc;
+                    self.loop_stack = frame.loop_stack;
+                } else {
+                    self.state = ExecState::Done;
+                }
             }
             Stmt::Home => {
                 // Reset to beginning of sequence
@@ -658,6 +687,60 @@ impl ScriptExec {
                     at: at_pos,
                     name: target_name,
                 });
+            }
+
+            Stmt::Stack(name_expr) => {
+                let name = self.eval_expr(name_expr, now, ctx).as_string();
+                if let Some(new_script) = self.available_scripts.get(&name).cloned() {
+                    self.call_stack.push(CallFrame {
+                        script: self.script.clone(),
+                        variables: self.variables.clone(),
+                        seq_pc: self.seq_pc,
+                        loop_stack: self.loop_stack.clone(),
+                    });
+                    self.script = new_script;
+                    self.variables.clear();
+                    for var in &self.script.variables {
+                        let val = match var.var_type {
+                            VarType::Integer => Value::Int(0),
+                            VarType::Float => Value::Float(0.0),
+                            VarType::Vector => Value::Vector(Vec3::ZERO),
+                            VarType::String => Value::String(String::new()),
+                            VarType::Timer => Value::Float(0.0),
+                            VarType::Label => Value::String(String::new()),
+                            VarType::ActorList => Value::ActorList(Vec::new(), 0),
+                        };
+                        self.variables.insert(var.name.clone(), val);
+                    }
+                    self.seq_pc = 0;
+                    self.loop_stack.clear();
+                } else {
+                    warn!("Stack: Script '{}' not found in available scripts.", name);
+                }
+            }
+
+            Stmt::Switch(name_expr) => {
+                let name = self.eval_expr(name_expr, now, ctx).as_string();
+                if let Some(new_script) = self.available_scripts.get(&name).cloned() {
+                    self.script = new_script;
+                    self.variables.clear();
+                    for var in &self.script.variables {
+                        let val = match var.var_type {
+                            VarType::Integer => Value::Int(0),
+                            VarType::Float => Value::Float(0.0),
+                            VarType::Vector => Value::Vector(Vec3::ZERO),
+                            VarType::String => Value::String(String::new()),
+                            VarType::Timer => Value::Float(0.0),
+                            VarType::Label => Value::String(String::new()),
+                            VarType::ActorList => Value::ActorList(Vec::new(), 0),
+                        };
+                        self.variables.insert(var.name.clone(), val);
+                    }
+                    self.seq_pc = 0;
+                    self.loop_stack.clear();
+                } else {
+                    warn!("Switch: Script '{}' not found in available scripts.", name);
+                }
             }
 
             // Stubs for commands we don't execute yet
