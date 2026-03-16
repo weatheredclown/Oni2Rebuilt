@@ -93,17 +93,17 @@ pub enum Stmt {
     /// `SetCurveLookAlongDirection <expr>`
     SetCurveLookAlongDirection(Expr),
 
-    /// `PlayAnimation <string> [hold] [rate <expr>]`
-    PlayAnimation { name: Expr, hold: bool, rate: Option<Expr> },
-    /// `PlayActionAnimation <string> [hold]`
-    PlayActionAnimation { name: Expr, hold: bool },
+    /// `PlayAnimation <string> [hold] [rate <expr>] [for <expr>]`
+    PlayAnimation { name: Expr, hold: bool, rate: Option<Expr>, duration: Option<Expr> },
+    /// `PlayActionAnimation <string> [hold] [for <expr>]`
+    PlayActionAnimation { name: Expr, hold: bool, duration: Option<Expr> },
     /// `ControlAnimation <string> ...`
     ControlAnimation { name: Expr },
 
     /// `face <expr> [in <expr>]`
     Face { target: Expr, seconds: Option<Expr> },
-    /// `goto <expr> [within <expr>] [speed <expr>]`
-    GotoPoint { target: Expr, within: Option<Expr>, speed: Option<Expr> },
+    /// `goto <expr> [within <expr>] [speed <expr>] [for <expr>]`
+    GotoPoint { target: Expr, within: Option<Expr>, speed: Option<Expr>, duration: Option<Expr> },
     /// `fight`
     Fight,
     /// `shoot`

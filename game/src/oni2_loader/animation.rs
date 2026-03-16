@@ -188,7 +188,7 @@ pub fn scroni_curve_bridge_system(
                             }
                         }
                     }
-                    scroni::vm::BlockingAction::PlayAnimation { name, hold, rate } => {
+                    scroni::vm::BlockingAction::PlayAnimation { name, hold, rate, .. } => {
                         if let Some(lib) = anim_lib.as_ref() {
                             if let Some(ref mut state) = anim_state.as_deref_mut() {
                                 let name = name.clone();

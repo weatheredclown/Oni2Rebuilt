@@ -286,6 +286,7 @@ impl Compiler {
 
             // Movement / combat (blocking)
             TokenCode::Idle => { self.advance(); Stmt::Idle(self.parse_expr()) }
+            TokenCode::For => { self.advance(); Stmt::Idle(self.parse_expr()) }
             TokenCode::Face => self.parse_face(),
             TokenCode::Goto => self.parse_goto(),
             TokenCode::Fight => { self.advance(); Stmt::Fight }
@@ -508,20 +509,22 @@ impl Compiler {
         let name = self.parse_expr();
         let hold = self.skip_if(TokenCode::Hold);
         let rate = if self.skip_if(TokenCode::Rate) { Some(self.parse_expr()) } else { None };
-        Stmt::PlayAnimation { name, hold, rate }
+        let duration = if self.skip_if(TokenCode::For) { Some(self.parse_expr()) } else { None };
+        Stmt::PlayAnimation { name, hold, rate, duration }
     }
 
     fn parse_play_action_animation(&mut self) -> Stmt {
         self.advance();
         let name = self.parse_expr();
         let hold = self.skip_if(TokenCode::Hold);
-        Stmt::PlayActionAnimation { name, hold }
+        let duration = if self.skip_if(TokenCode::For) { Some(self.parse_expr()) } else { None };
+        Stmt::PlayActionAnimation { name, hold, duration }
     }
 
     fn parse_face(&mut self) -> Stmt {
         self.advance();
         let target = self.parse_expr();
-        let seconds = if self.skip_if(TokenCode::In) { Some(self.parse_expr()) } else { None };
+        let seconds = if self.skip_if(TokenCode::In) || self.skip_if(TokenCode::For) { Some(self.parse_expr()) } else { None };
         Stmt::Face { target, seconds }
     }
 
@@ -530,7 +533,8 @@ impl Compiler {
         let target = self.parse_expr();
         let within = if self.skip_if(TokenCode::Within) { Some(self.parse_expr()) } else { None };
         let speed = if self.skip_if(TokenCode::Speed) { Some(self.parse_expr()) } else { None };
-        Stmt::GotoPoint { target, within, speed }
+        let duration = if self.skip_if(TokenCode::For) { Some(self.parse_expr()) } else { None };
+        Stmt::GotoPoint { target, within, speed, duration }
     }
 
     fn parse_spawn(&mut self) -> Stmt {
@@ -983,7 +987,7 @@ fn is_command_start(code: TokenCode) -> bool {
         | TokenCode::GotoCurvePhase | TokenCode::SetCurvePhase | TokenCode::SetCurveSpeed
         | TokenCode::SetCurvePingPong | TokenCode::SetCurve
         | TokenCode::PlayAnimation | TokenCode::PlayActionAnimation
-        | TokenCode::Idle | TokenCode::Face | TokenCode::Goto
+        | TokenCode::Idle | TokenCode::For | TokenCode::Face | TokenCode::Goto
         | TokenCode::Fight | TokenCode::Shoot | TokenCode::Patrol | TokenCode::Follow
         | TokenCode::Stack | TokenCode::Switch | TokenCode::ChildStack | TokenCode::ChildSwitch
         | TokenCode::SendMessage | TokenCode::Spawn | TokenCode::Destroy

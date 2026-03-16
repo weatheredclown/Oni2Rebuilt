@@ -83,8 +83,8 @@ pub enum BlockingAction {
     GotoCurveKnot { knot: i32, seconds: f32 },
     GotoCurveLerp { target: f32, seconds: f32 },
     Face { target: Value, seconds: Option<f32> },
-    GotoPoint { target: Value, within: Option<f32>, speed: Option<f32> },
-    PlayAnimation { name: String, hold: bool, rate: Option<f32> },
+    GotoPoint { target: Value, within: Option<f32>, speed: Option<f32>, duration: Option<f32> },
+    PlayAnimation { name: String, hold: bool, rate: Option<f32>, duration: Option<f32> },
     Fight,
     Shoot,
     Patrol(Value),
@@ -326,22 +326,26 @@ impl ScriptExec {
         }
 
         // Continue sequence from PC
-        let sequence = self.script.sequence.clone();
-        while self.seq_pc < sequence.len() && self.state == ExecState::Running {
-            let stmt = &sequence[self.seq_pc];
-            self.seq_pc += 1;
-            self.exec_stmt(stmt, now, ctx);
-        }
-
-        // Fell off end of sequence
-        if self.seq_pc >= sequence.len() && self.loop_stack.is_empty() && self.state == ExecState::Running {
-            if let Some(frame) = self.call_stack.pop() {
-                self.script = frame.script;
-                self.variables = frame.variables;
-                self.seq_pc = frame.seq_pc;
-                self.loop_stack = frame.loop_stack;
+        while self.state == ExecState::Running {
+            if self.seq_pc < self.script.sequence.len() {
+                let stmt = self.script.sequence[self.seq_pc].clone();
+                self.seq_pc += 1;
+                self.exec_stmt(&stmt, now, ctx);
             } else {
-                self.state = ExecState::Done;
+                // Fell off end of sequence
+                if self.loop_stack.is_empty() {
+                    if let Some(frame) = self.call_stack.pop() {
+                        self.script = frame.script;
+                        self.variables = frame.variables;
+                        self.seq_pc = frame.seq_pc;
+                        self.loop_stack = frame.loop_stack;
+                    } else {
+                        self.state = ExecState::Done;
+                        break;
+                    }
+                } else {
+                    break; // Should not happen, but break to be safe
+                }
             }
         }
     }
@@ -522,6 +526,7 @@ impl ScriptExec {
                 // Reset to beginning of sequence
                 self.seq_pc = 0;
                 self.loop_stack.clear();
+                self.state = ExecState::Yielded; // Yield to prevent executing rest of old block
             }
             Stmt::Log(exprs) => {
                 let parts: Vec<String> = exprs.iter().map(|e| {
@@ -561,17 +566,25 @@ impl ScriptExec {
                 self.blocking = Some(BlockingAction::Face { target: t, seconds: s });
                 self.state = ExecState::Blocked;
             }
-            Stmt::GotoPoint { target, within, speed } => {
+            Stmt::GotoPoint { target, within, speed, duration } => {
                 let t = self.eval_expr(target, now, ctx);
                 let w = within.as_ref().map(|e| self.eval_expr(e, now, ctx).as_float());
                 let s = speed.as_ref().map(|e| self.eval_expr(e, now, ctx).as_float());
-                self.blocking = Some(BlockingAction::GotoPoint { target: t, within: w, speed: s });
+                let d = duration.as_ref().map(|e| self.eval_expr(e, now, ctx).as_float());
+                self.blocking = Some(BlockingAction::GotoPoint { target: t, within: w, speed: s, duration: d });
                 self.state = ExecState::Blocked;
             }
-            Stmt::PlayAnimation { name, hold, rate } => {
+            Stmt::PlayAnimation { name, hold, rate, duration } => {
                 let n = self.eval_expr(name, now, ctx).as_string();
                 let r = rate.as_ref().map(|e| self.eval_expr(e, now, ctx).as_float());
-                self.blocking = Some(BlockingAction::PlayAnimation { name: n, hold: *hold, rate: r });
+                let d = duration.as_ref().map(|e| self.eval_expr(e, now, ctx).as_float());
+                self.blocking = Some(BlockingAction::PlayAnimation { name: n, hold: *hold, rate: r, duration: d });
+                self.state = ExecState::Blocked;
+            }
+            Stmt::PlayActionAnimation { name, hold, duration } => {
+                let n = self.eval_expr(name, now, ctx).as_string();
+                let d = duration.as_ref().map(|e| self.eval_expr(e, now, ctx).as_float());
+                self.blocking = Some(BlockingAction::PlayAnimation { name: n, hold: *hold, rate: None, duration: d });
                 self.state = ExecState::Blocked;
             }
             Stmt::Fight => {
@@ -744,6 +757,7 @@ impl ScriptExec {
                     }
                     self.seq_pc = 0;
                     self.loop_stack.clear();
+                    self.state = ExecState::Yielded; // Yield to prevent executing rest of old block
                 } else {
                     warn!("Stack: Script '{}' not found in available scripts.", name);
                 }
@@ -769,6 +783,7 @@ impl ScriptExec {
                     }
                     self.seq_pc = 0;
                     self.loop_stack.clear();
+                    self.state = ExecState::Yielded; // Yield to prevent executing rest of old block
                 } else {
                     warn!("Switch: Script '{}' not found in available scripts.", name);
                 }
