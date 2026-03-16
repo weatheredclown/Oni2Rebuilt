@@ -27,9 +27,7 @@ Bevy/Linux dependencies installed locally.
 ![Gameplay Screenshot 4](docs/screenshot_4.png)
 ![Gameplay Screenshot 5](docs/screenshot_5.png)
 
-<video src="docs/gameplay_video.mp4" controls="controls" style="max-width: 100%;">
-  Your browser does not support the video tag.
-</video>
+![Video 1](docs/kno_run.gif)
 
 ## Running the game
 1. Download the Oni 2 (Angel Studios) ISO from the [Oni 2 Archive](https://wiki.oni2.net/Oni_2_(Angel_Studios)).
