@@ -217,6 +217,11 @@ pub enum Stmt {
     /// Inline variable declaration: `integer x = <expr>`
     InlineVarDecl(VarDecl),
 
+    /// `at <expr> <expr>`
+    At(Expr, Expr),
+    /// `drawtext <expr>`
+    DrawText(Expr),
+
     /// Catch-all for commands we parse but don't fully implement yet.
     /// Stores the command name and any trailing arguments.
     Unimplemented { command: String, args: Vec<Expr> },

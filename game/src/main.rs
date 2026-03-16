@@ -148,7 +148,8 @@ fn main() {
         app.insert_resource(oni2_loader::FogEnabled);
     }
 
-    app.add_observer(scroni::vm::scroni_sys_event_observer);
+    app.init_resource::<scroni::vm::ScroniTextState>()
+       .add_observer(scroni::vm::scroni_sys_event_observer);
 
     app
     .add_systems(
@@ -186,6 +187,7 @@ fn main() {
             oni2_loader::update_skyhat,
             scroni::vm::update_broadcast_triggers.before(scroni::vm::scroni_tick_system),
             scroni::vm::scroni_tick_system,
+            scroni::vm::cleanup_scroni_text,
             oni2_loader::scroni_curve_bridge_system,
             oni2_loader::curve_follower_system,
         )
@@ -464,6 +466,7 @@ fn setup_scene(
         Camera3d::default(),
         Transform::from_xyz(0.0, 8.0, -12.0).looking_at(Vec3::new(0.0, 1.0, 0.0), Vec3::Y),
         scoped,
+        IsDefaultUiCamera,
         CameraRig {
             target: player_id,
             mode: camera::components::CameraMode::MouseLook,
@@ -598,6 +601,7 @@ fn setup_formation_scene(
     commands.spawn((
         Camera3d::default(),
         Transform::from_xyz(0.0, 2.0, 5.0),
+        IsDefaultUiCamera,
         FreeCamera {
             yaw: 0.0,
             pitch: -0.1,

@@ -106,6 +106,8 @@ pub enum SysRequest {
     Spawn { script: String, assign_to: Option<String>, at: Option<Vec3>, name: Option<String> },
     Teleport { target: Entity, to: Option<Vec3>, face: Option<f32> },
     CameraSetPackage(String),
+    DrawText(String),
+    At(f32, f32),
 }
 
 #[derive(Event, Debug, Clone)]
@@ -129,6 +131,8 @@ pub enum ScrOniSysEvent {
         face: Option<f32>,
     },
     CameraSetPackage(String),
+    DrawText(String),
+    At(f32, f32),
 }
 
 #[derive(Debug, Clone)]
@@ -774,6 +778,15 @@ impl ScriptExec {
                 let pkg_name = self.eval_expr(expr, now, ctx).as_string();
                 self.sys_requests.push(SysRequest::CameraSetPackage(pkg_name));
             }
+            Stmt::At(x_expr, y_expr) => {
+                let x = self.eval_expr(x_expr, now, ctx).as_float();
+                let y = self.eval_expr(y_expr, now, ctx).as_float();
+                self.sys_requests.push(SysRequest::At(x, y));
+            }
+            Stmt::DrawText(text_expr) => {
+                let text = self.eval_expr(text_expr, now, ctx).as_string();
+                self.sys_requests.push(SysRequest::DrawText(text));
+            }
             Stmt::CameraReset => {
                 info!("VM: CameraReset (unimplemented)");
             }
@@ -1120,6 +1133,12 @@ pub fn scroni_tick_system(
                 SysRequest::CameraSetPackage(pkg_name) => {
                     commands.trigger(ScrOniSysEvent::CameraSetPackage(pkg_name));
                 }
+                SysRequest::At(x, y) => {
+                    commands.trigger(ScrOniSysEvent::At(x, y));
+                }
+                SysRequest::DrawText(text) => {
+                    commands.trigger(ScrOniSysEvent::DrawText(text));
+                }
             }
         }
 
@@ -1145,6 +1164,30 @@ pub fn load_script_file(dir: &str, filename: &str) -> Result<ScriptFile, String>
         })
 }
 
+#[derive(Resource, Default)]
+pub struct ScroniTextState {
+    pub current_x: f32,
+    pub current_y: f32,
+}
+
+#[derive(Component)]
+pub struct ScroniTextElement {
+    pub expires_at: f64,
+}
+
+pub fn cleanup_scroni_text(
+    mut commands: Commands,
+    query: Query<(Entity, &ScroniTextElement)>,
+    time: Res<Time>,
+) {
+    let now = time.elapsed_secs_f64();
+    for (entity, text_element) in &query {
+        if now > text_element.expires_at {
+            commands.entity(entity).despawn();
+        }
+    }
+}
+
 /// Observer to handle ScrOni system requests (like TextureMovie)
 pub fn scroni_sys_event_observer(
     trigger: On<ScrOniSysEvent>,
@@ -1160,9 +1203,40 @@ pub fn scroni_sys_event_observer(
     layout_context: Option<Res<crate::oni2_loader::LayoutContext>>,
     layout_paths: Option<Res<crate::oni2_loader::LayoutPaths>>,
     mut active_camera_package: Option<ResMut<crate::oni2_loader::ActiveCameraPackage>>,
+    mut scroni_text_state: ResMut<ScroniTextState>,
+    time: Res<Time>,
 ) {
     let ev = (*trigger).clone();
     match ev {
+        ScrOniSysEvent::At(x, y) => {
+            scroni_text_state.current_x = x;
+            scroni_text_state.current_y = y;
+        }
+        ScrOniSysEvent::DrawText(text) => {
+            // Coordinate system is top-left based, so (0.5, 0.5) is center.
+            let px = scroni_text_state.current_x * 100.0;
+            let py = scroni_text_state.current_y * 100.0;
+            
+            commands.spawn((
+                Text::new(text),
+                TextFont {
+                    font_size: 24.0,
+                    ..default()
+                },
+                TextColor(Color::WHITE),
+                Node {
+                    position_type: PositionType::Absolute,
+                    left: Val::Percent(px),
+                    top: Val::Percent(py),
+                    ..default()
+                },
+                crate::menu::InGameEntity,
+                ScroniTextElement {
+                    // Ephemeral: lasts slightly longer than 1 frame at 60fps (16ms)
+                    expires_at: time.elapsed_secs_f64() + 0.05,
+                },
+            ));
+        }
         ScrOniSysEvent::CameraSetPackage(pkg_name) => {
             if let Some(mut active_pkg) = active_camera_package {
                 info!("Changing active camera package from {} to {}", active_pkg.name, pkg_name);

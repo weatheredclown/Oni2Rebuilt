@@ -356,6 +356,14 @@ impl Compiler {
 
             TokenCode::Find => self.parse_find(),
             TokenCode::TextureMovie => self.parse_texture_movie(),
+            TokenCode::At => { 
+                self.advance(); 
+                let x = self.parse_expr(); 
+                self.skip_if(TokenCode::Comma);
+                let y = self.parse_expr(); 
+                Stmt::At(x, y) 
+            }
+            TokenCode::DrawText => { self.advance(); Stmt::DrawText(self.parse_expr()) }
 
             _ => {
                 // Unknown command — skip token and collect trailing exprs until next command
@@ -980,6 +988,7 @@ fn is_command_start(code: TokenCode) -> bool {
         | TokenCode::Stack | TokenCode::Switch | TokenCode::ChildStack | TokenCode::ChildSwitch
         | TokenCode::SendMessage | TokenCode::Spawn | TokenCode::Destroy
         | TokenCode::End | TokenCode::Eof
+        | TokenCode::DrawText | TokenCode::At
     )
 }
 
