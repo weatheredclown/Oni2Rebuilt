@@ -31,6 +31,7 @@ pub enum VarType {
     Timer,
     Label,
     ActorList,
+    Child,
 }
 
 /// A block is a list of statements (commands).
@@ -197,12 +198,21 @@ pub enum Stmt {
     SetFogType(Expr),
     SetFogRange { min: Expr, max: Expr },
     SetFogColor { r: Expr, g: Expr, b: Expr, a: Expr },
+    SetFogClamp { args: Vec<Expr> },
+    SetFogPalettePower { args: Vec<Expr> },
+    
+    /// Global Screen commands
+    SetFullScreenColor { args: Vec<Expr> },
+    SetUpdateState(Expr),
 
     /// HUD
     SetHud { args: Vec<Expr> },
 
     /// `ControlHead <keyword> [<expr>]`
     ControlHead { args: Vec<Expr> },
+
+    /// `add <expr> to <var>`
+    AddToList { expr: Expr, list: String },
 
     /// Inline variable declaration: `integer x = <expr>`
     InlineVarDecl(VarDecl),

@@ -177,6 +177,7 @@ impl Compiler {
             TokenCode::Timer => VarType::Timer,
             TokenCode::Label => VarType::Label,
             TokenCode::ActorList => VarType::ActorList,
+            TokenCode::Child => VarType::Child,
             _ => {
                 self.error(format!("expected type keyword, found {:?}", self.code()));
                 return None;
@@ -303,6 +304,9 @@ impl Compiler {
             TokenCode::ChildHome => { self.advance(); Stmt::ChildHome }
             TokenCode::ChildStop => { self.advance(); Stmt::ChildStop }
 
+            // Lists
+            TokenCode::Add => self.parse_add(),
+
             // Actor management
             TokenCode::Spawn => self.parse_spawn(),
             TokenCode::Destroy => { self.advance(); Stmt::Destroy }
@@ -343,6 +347,12 @@ impl Compiler {
 
             // Fog
             TokenCode::SetFogType => { self.advance(); Stmt::SetFogType(self.parse_expr()) }
+            TokenCode::SetFogClamp => self.parse_generic_args(TokenCode::SetFogClamp, |args| Stmt::SetFogClamp { args }),
+            TokenCode::SetFogPalettePower => self.parse_generic_args(TokenCode::SetFogPalettePower, |args| Stmt::SetFogPalettePower { args }),
+
+            // Global
+            TokenCode::SetFullScreenColor => self.parse_generic_args(TokenCode::SetFullScreenColor, |args| Stmt::SetFullScreenColor { args }),
+            TokenCode::SetUpdateState => { self.advance(); Stmt::SetUpdateState(self.parse_expr()) }
 
             TokenCode::Find => self.parse_find(),
             TokenCode::TextureMovie => self.parse_texture_movie(),
@@ -363,6 +373,18 @@ impl Compiler {
 
     // ---- Specific statement parsers ----
 
+    fn parse_generic_args<F>(&mut self, _code: TokenCode, constructor: F) -> Stmt 
+    where F: FnOnce(Vec<Expr>) -> Stmt
+    {
+        self.advance();
+        let mut args = Vec::new();
+        while !self.at_end() && is_expr_start(self.code()) {
+            args.push(self.parse_expr());
+            self.skip_if(TokenCode::Comma);
+        }
+        constructor(args)
+    }
+
     fn parse_set(&mut self) -> Stmt {
         self.advance(); // skip 'set'
         let var = self.peek().text.clone();
@@ -370,6 +392,18 @@ impl Compiler {
         self.skip_if(TokenCode::To); // skip 'to'
         let value = self.parse_expr();
         Stmt::Set { var, value }
+    }
+
+    fn parse_add(&mut self) -> Stmt {
+        self.advance(); // skip 'add'
+        let expr = self.parse_expr();
+        self.skip_if(TokenCode::To); // skip 'to'
+        
+        // Target list can be an identifier or a keyword
+        let list = self.peek().text.clone();
+        self.advance();
+        
+        Stmt::AddToList { expr, list }
     }
 
     fn parse_if(&mut self) -> Stmt {
@@ -906,7 +940,7 @@ fn is_var_type(code: TokenCode) -> bool {
     matches!(code,
         TokenCode::Integer | TokenCode::Float | TokenCode::Vector
         | TokenCode::StringKw | TokenCode::Timer | TokenCode::Label
-        | TokenCode::ActorList
+        | TokenCode::ActorList | TokenCode::Child
     )
 }
 
@@ -914,7 +948,7 @@ fn is_expr_start(code: TokenCode) -> bool {
     matches!(code,
         TokenCode::IntegerConstant | TokenCode::FloatConstant
         | TokenCode::StringConstant | TokenCode::Identifier
-        | TokenCode::LeftParen | TokenCode::Me | TokenCode::Player
+        | TokenCode::LeftParen | TokenCode::LeftCurlyBracket | TokenCode::Me | TokenCode::Player
         | TokenCode::Not | TokenCode::Minus
         | TokenCode::Location | TokenCode::Direction | TokenCode::Distance
         | TokenCode::Health | TokenCode::Guid | TokenCode::Status

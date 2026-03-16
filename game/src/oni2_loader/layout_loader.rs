@@ -140,6 +140,35 @@ pub fn load_layout(
     // Insert TextureCollections resource for the texture_movie_system observer
     commands.insert_resource(texture_collections);
 
+    // Load camera packages and parameters
+    let mut camera_packages = CameraPackages {
+        packages: crate::oni2_loader::parsers::camera::parse_campacknew(layout_dir),
+    };
+    let mut camera_sets = CameraParameterSets::default();
+    
+    // We only need to load the xml files referenced in the packages
+    let mut files_to_load = std::collections::HashSet::new();
+    for pkg in camera_packages.packages.values() {
+        if !pkg.navigation.is_empty() { files_to_load.insert(pkg.navigation.clone()); }
+        if !pkg.targeting.is_empty() { files_to_load.insert(pkg.targeting.clone()); }
+        if !pkg.fighting.is_empty() { files_to_load.insert(pkg.fighting.clone()); }
+    }
+
+    for file_base in files_to_load {
+        let xml_name = format!("{}.xml", file_base);
+        if let Some(params) = crate::oni2_loader::parsers::camera::parse_camera_xml(layout_dir, &xml_name) {
+            camera_sets.sets.insert(file_base, params);
+        } else {
+            warn!("Failed to load camera xml: {}", xml_name);
+        }
+    }
+
+    info!("Layout: loaded {} camera packages, {} parameter sets", camera_packages.packages.len(), camera_sets.sets.len());
+
+    commands.insert_resource(camera_packages);
+    commands.insert_resource(camera_sets);
+    commands.insert_resource(ActiveCameraPackage::default());
+
     // Load lights, fog, skyhat
     load_layout_lights(commands, meshes, materials, images, layout_dir);
 

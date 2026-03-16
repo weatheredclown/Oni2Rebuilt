@@ -50,6 +50,10 @@ pub fn camera_follow_system(
     mouse_button: Res<ButtonInput<MouseButton>>,
     accumulated_motion: Res<bevy::input::mouse::AccumulatedMouseMotion>,
     scroll: Res<AccumulatedMouseScroll>,
+    active_camera_package: Option<Res<crate::oni2_loader::environment::ActiveCameraPackage>>,
+    camera_packages: Option<Res<crate::oni2_loader::environment::CameraPackages>>,
+    camera_sets: Option<Res<crate::oni2_loader::environment::CameraParameterSets>>,
+    enemies_query: Query<(&Transform, &crate::combat::components::Fighter), (Without<crate::player::components::Player>, Without<CameraRig>)>,
 ) {
     let dt = time.delta_secs();
 
@@ -130,6 +134,53 @@ pub fn camera_follow_system(
                 cam_tf.look_at(target_pos + Vec3::Y * 1.0, Vec3::Y);
             }
             CameraMode::SmartFollow => {
+                // Check camera packages and parameters to determine state and params
+                let mut fov = 50.0;
+                let mut follow_distance = rig.follow_distance;
+                let mut height_offset = rig.height;
+                let mut inner_dz = rig.dead_zone_inner;
+                let mut outer_dz = rig.dead_zone_outer;
+                let mut spin_thresh = rig.spin_threshold;
+                let mut z_lerp_rates = rig.zone_lerp_rates;
+
+                if let (Some(active_pkg), Some(pkgs), Some(sets)) = (&active_camera_package, &camera_packages, &camera_sets) {
+                    if let Some(pkg) = pkgs.packages.get(&active_pkg.name) {
+                        // Check if we should be in Fight mode
+                        let mut in_fight = false;
+                        for (enemy_tf, _enemy_fighter) in &enemies_query {
+                            if enemy_tf.translation.distance(target_pos) <= pkg.fight_mode_radius {
+                                in_fight = true;
+                                break;
+                            }
+                        }
+
+                        let set_name = if in_fight && !pkg.fighting.is_empty() {
+                            &pkg.fighting
+                        } else if !pkg.navigation.is_empty() {
+                            &pkg.navigation
+                        } else {
+                            ""
+                        };
+
+                        if let Some(params) = sets.sets.get(set_name) {
+                            fov = params.fov;
+                            follow_distance = params.distance;
+                            inner_dz = if in_fight { params.inner_radius } else { params.dead_zone_inner_radius };
+                            outer_dz = if in_fight { params.outer_radius } else { params.dead_zone_outer_radius };
+                            spin_thresh = params.spin_threshold;
+                            
+                            if !in_fight {
+                                z_lerp_rates = [
+                                    params.lerp_rate_azimuth_zone1,
+                                    params.lerp_rate_azimuth_zone2,
+                                    params.lerp_rate_azimuth_zone3,
+                                    params.lerp_rate_azimuth_zone4,
+                                ];
+                            }
+                        }
+                    }
+                }
+
                 // Zone-based auto-follow camera (from rb's camnewFollow)
                 let facing = fighter.facing;
                 let new_target_azimuth = facing.x.atan2(facing.z);
@@ -162,13 +213,13 @@ pub fn camera_follow_system(
                 let focus_dist = cam_xz.distance(target_xz);
 
                 // Only update azimuth if outside dead zone
-                if focus_dist > rig.dead_zone_inner {
+                if focus_dist > inner_dz {
                     rig.target_azimuth = new_target_azimuth;
                     let t = (lerp_rate * dt).clamp(0.0, 1.0);
                     rig.current_azimuth += heading_diff * t;
 
                     // Spin threshold: snap on sharp turn
-                    if abs_diff > rig.spin_threshold {
+                    if abs_diff > spin_thresh && spin_thresh > 0.0 {
                         rig.current_azimuth +=
                             heading_diff * (lerp_rate * 2.0 * dt).clamp(0.0, 1.0);
                     }
@@ -180,11 +231,11 @@ pub fn camera_follow_system(
                 let total_azimuth = rig.current_azimuth + rig.bump_angle;
 
                 // Compute final camera position from azimuth + follow_distance + height
-                let behind_x = total_azimuth.sin() * rig.follow_distance;
-                let behind_z = total_azimuth.cos() * rig.follow_distance;
+                let behind_x = total_azimuth.sin() * follow_distance;
+                let behind_z = total_azimuth.cos() * follow_distance;
                 let desired_pos = Vec3::new(
                     target_pos.x + behind_x,
-                    target_pos.y + rig.height,
+                    target_pos.y + height_offset,
                     target_pos.z + behind_z,
                 );
 

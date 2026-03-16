@@ -132,6 +132,10 @@ pub enum CreatureMovementAnim {
     Stand,
     Walk,
     Run,
+    WalkLeft,
+    WalkRight,
+    RunLeft,
+    RunRight,
 }
 
 /// Pick stand/walk/run animations based on horizontal velocity for all creatures.
@@ -141,20 +145,39 @@ pub fn creature_movement_anim_system(
         &mut Oni2AnimState,
         &mut CreatureMovementAnim,
         &LinearVelocity,
+        &GlobalTransform,
     )>,
 ) {
     const WALK_THRESHOLD: f32 = 0.5;
     const RUN_THRESHOLD: f32 = 3.0;
 
-    for (library, mut anim_state, mut move_anim, vel) in &mut creatures {
+    for (library, mut anim_state, mut move_anim, vel, transform) in &mut creatures {
         let horiz_speed = Vec2::new(vel.x, vel.z).length();
 
-        let desired = if horiz_speed < WALK_THRESHOLD {
-            CreatureMovementAnim::Stand
-        } else if horiz_speed < RUN_THRESHOLD {
-            CreatureMovementAnim::Walk
+        // Get character forward and right directions
+        let forward = transform.forward().xz().normalize_or_zero();
+        let right = transform.right().xz().normalize_or_zero();
+
+        let vel_xz = Vec2::new(vel.x, vel.z);
+        let forward_speed = vel_xz.dot(forward);
+        let right_speed = vel_xz.dot(-right);
+
+        let desired = if forward_speed.abs() > right_speed.abs() {
+            if horiz_speed < WALK_THRESHOLD {
+                CreatureMovementAnim::Stand
+            } else if horiz_speed < RUN_THRESHOLD {
+                if forward_speed > 0.0 { CreatureMovementAnim::Walk } else { CreatureMovementAnim::Walk } // TODO: backwards walk
+            } else {
+                if forward_speed > 0.0 { CreatureMovementAnim::Run } else { CreatureMovementAnim::Run }   // TODO: backwards run
+            }
         } else {
-            CreatureMovementAnim::Run
+            if horiz_speed < WALK_THRESHOLD {
+                CreatureMovementAnim::Stand
+            } else if horiz_speed < RUN_THRESHOLD {
+                if right_speed > 0.0 { CreatureMovementAnim::WalkRight } else { CreatureMovementAnim::WalkLeft }
+            } else {
+                if right_speed > 0.0 { CreatureMovementAnim::RunRight } else { CreatureMovementAnim::RunLeft }
+            }
         };
 
         if *move_anim != desired {
@@ -162,6 +185,10 @@ pub fn creature_movement_anim_system(
                 CreatureMovementAnim::Stand => "ANIMNAV_STAND",
                 CreatureMovementAnim::Walk => "ANIMNAV_WLK_FORWARD",
                 CreatureMovementAnim::Run => "ANIMNAV_RUN_FORWARD",
+                CreatureMovementAnim::WalkLeft => "ANIMNAV_STRAFE_LEFT",
+                CreatureMovementAnim::WalkRight => "ANIMNAV_STRAFE_RIGHT",
+                CreatureMovementAnim::RunLeft => "ANIMNAV_STRAFE_LEFT_JOG",
+                CreatureMovementAnim::RunRight => "ANIMNAV_STRAFE_RIGHT_JOG",
             };
             if library.play(alias, &mut anim_state) {
                 *move_anim = desired;

@@ -20,6 +20,29 @@ pub struct TextureCollections {
     pub collections: std::collections::HashMap<String, Vec<Handle<Image>>>,
 }
 
+#[derive(Resource, Default)]
+pub struct CameraPackages {
+    pub packages: std::collections::HashMap<String, crate::oni2_loader::parsers::camera::CameraPackageDef>,
+}
+
+#[derive(Resource, Default)]
+pub struct CameraParameterSets {
+    pub sets: std::collections::HashMap<String, crate::oni2_loader::parsers::camera::CameraParameterSet>,
+}
+
+#[derive(Resource)]
+pub struct ActiveCameraPackage {
+    pub name: String,
+}
+
+impl Default for ActiveCameraPackage {
+    fn default() -> Self {
+        Self {
+            name: "DEFAULT_PACKAGE".to_string(),
+        }
+    }
+}
+
 /// Context for the currently loaded layout, allowing dynamic spawning of actors later.
 #[derive(Resource, Clone)]
 pub struct LayoutContext {

@@ -105,6 +105,7 @@ pub enum SysRequest {
     TextureMovie { target_name: String, action: super::ast::TextureMovieAction, arg: Value },
     Spawn { script: String, assign_to: Option<String>, at: Option<Vec3>, name: Option<String> },
     Teleport { target: Entity, to: Option<Vec3>, face: Option<f32> },
+    CameraSetPackage(String),
 }
 
 #[derive(Event, Debug, Clone)]
@@ -127,6 +128,7 @@ pub enum ScrOniSysEvent {
         to: Option<Vec3>,
         face: Option<f32>,
     },
+    CameraSetPackage(String),
 }
 
 #[derive(Debug, Clone)]
@@ -238,6 +240,7 @@ impl ScriptExec {
                 VarType::Timer => Value::Float(0.0),
                 VarType::Label => Value::String(String::new()),
                 VarType::ActorList => Value::ActorList(Vec::new(), 0),
+                VarType::Child => Value::Int(0),
             };
             variables.insert(var.name.clone(), val);
         }
@@ -438,6 +441,28 @@ impl ScriptExec {
             Stmt::Set { var, value } => {
                 let val = self.eval_expr(value, now, ctx);
                 self.variables.insert(var.clone(), val);
+            }
+            Stmt::AddToList { expr, list } => {
+                let val = self.eval_expr(expr, now, ctx);
+                let entry = self.variables.entry(list.clone()).or_insert_with(|| Value::ActorList(Vec::new(), 0));
+                
+                // Ensure it's treated as an ActorList even if it was mistakenly initialized as Int(0)
+                if let Value::Int(0) = entry {
+                    *entry = Value::ActorList(Vec::new(), 0);
+                }
+
+                if let Value::ActorList(vec, _) = entry {
+                    if let Value::Actor(ent) = val {
+                        vec.push(ent);
+                    } else if let Value::Int(guid) = val {
+                        // Sometimes guids are pushed to lists directly. For now, represent guid as a dummy entity
+                        // or just ignore until we map guids to entities correctly.
+                        // Assuming val is somehow resolved to entity or we store raw IDs.
+                        // For Bevy Ents:
+                        // Bevy entities are IDs, you can construct them with from_bits or from_raw depending on version.
+                        vec.push(Entity::from_bits(guid as u64));
+                    }
+                }
             }
             Stmt::If { condition, then_branch, else_branch } => {
                 let cond = self.eval_expr(condition, now, ctx);
@@ -709,6 +734,7 @@ impl ScriptExec {
                             VarType::Timer => Value::Float(0.0),
                             VarType::Label => Value::String(String::new()),
                             VarType::ActorList => Value::ActorList(Vec::new(), 0),
+                            VarType::Child => Value::Int(0),
                         };
                         self.variables.insert(var.name.clone(), val);
                     }
@@ -733,6 +759,7 @@ impl ScriptExec {
                             VarType::Timer => Value::Float(0.0),
                             VarType::Label => Value::String(String::new()),
                             VarType::ActorList => Value::ActorList(Vec::new(), 0),
+                            VarType::Child => Value::Int(0),
                         };
                         self.variables.insert(var.name.clone(), val);
                     }
@@ -741,6 +768,40 @@ impl ScriptExec {
                 } else {
                     warn!("Switch: Script '{}' not found in available scripts.", name);
                 }
+            }
+
+            Stmt::CameraSetPackage(expr) => {
+                let pkg_name = self.eval_expr(expr, now, ctx).as_string();
+                self.sys_requests.push(SysRequest::CameraSetPackage(pkg_name));
+            }
+            Stmt::CameraReset => {
+                info!("VM: CameraReset (unimplemented)");
+            }
+            Stmt::CameraMode(expr) => {
+                let mode = self.eval_expr(expr, now, ctx).as_string();
+                info!("VM: CameraMode {} (unimplemented)", mode);
+            }
+            Stmt::CameraLetterbox(expr) => {
+                let b = self.eval_expr(expr, now, ctx).as_int();
+                info!("VM: CameraLetterbox {} (unimplemented)", b);
+            }
+
+            Stmt::SetFogType(expr) => {
+                let fog_type = self.eval_expr(expr, now, ctx).as_string();
+                info!("VM: SetFogType {} (unimplemented)", fog_type);
+            }
+            Stmt::SetFogClamp { args } => {
+                info!("VM: SetFogClamp {:?} (unimplemented)", args);
+            }
+            Stmt::SetFogPalettePower { args } => {
+                info!("VM: SetFogPalettePower {:?} (unimplemented)", args);
+            }
+            Stmt::SetFullScreenColor { args } => {
+                info!("VM: SetFullScreenColor {:?} (unimplemented)", args);
+            }
+            Stmt::SetUpdateState(expr) => {
+                let state = self.eval_expr(expr, now, ctx).as_string();
+                info!("VM: SetUpdateState {} (unimplemented)", state);
             }
 
             // Stubs for commands we don't execute yet
@@ -1056,6 +1117,9 @@ pub fn scroni_tick_system(
                         face,
                     });
                 }
+                SysRequest::CameraSetPackage(pkg_name) => {
+                    commands.trigger(ScrOniSysEvent::CameraSetPackage(pkg_name));
+                }
             }
         }
 
@@ -1095,9 +1159,18 @@ pub fn scroni_sys_event_observer(
     mut texture_collections: ResMut<crate::oni2_loader::TextureCollections>,
     layout_context: Option<Res<crate::oni2_loader::LayoutContext>>,
     layout_paths: Option<Res<crate::oni2_loader::LayoutPaths>>,
+    mut active_camera_package: Option<ResMut<crate::oni2_loader::ActiveCameraPackage>>,
 ) {
     let ev = (*trigger).clone();
     match ev {
+        ScrOniSysEvent::CameraSetPackage(pkg_name) => {
+            if let Some(mut active_pkg) = active_camera_package {
+                info!("Changing active camera package from {} to {}", active_pkg.name, pkg_name);
+                active_pkg.name = pkg_name;
+            } else {
+                warn!("CameraSetPackage called but no ActiveCameraPackage resource found.");
+            }
+        }
         ScrOniSysEvent::TextureMovie { script_entity, target_name, action, arg } => {
             match action {
                 super::ast::TextureMovieAction::SetFrame => {
