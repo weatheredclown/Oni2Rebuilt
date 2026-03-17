@@ -802,6 +802,24 @@ impl ScriptExec {
                 let text = self.eval_expr(text_expr, now, ctx).as_string();
                 self.sys_requests.push(SysRequest::DrawText(text));
             }
+            Stmt::Sound { args } => {
+                info!("VM: Sound {:?} (unimplemented)", args);
+            }
+            Stmt::AmbientSound { args } => {
+                info!("VM: AmbientSound {:?} (unimplemented)", args);
+            }
+            Stmt::PlayAmbientSound { name, volume } => {
+                let n = self.eval_expr(name, now, ctx).as_string();
+                let v = volume.as_ref().map(|e| self.eval_expr(e, now, ctx).as_float());
+                info!("VM: PlayAmbientSound {} {:?} (unimplemented)", n, v);
+            }
+            Stmt::MusicPlay(expr) => {
+                let m = self.eval_expr(expr, now, ctx).as_string();
+                info!("VM: MusicPlay {} (unimplemented)", m);
+            }
+            Stmt::MusicStop => {
+                info!("VM: MusicStop (unimplemented)");
+            }
             Stmt::CameraReset => {
                 info!("VM: CameraReset (unimplemented)");
             }
@@ -813,10 +831,25 @@ impl ScriptExec {
                 let b = self.eval_expr(expr, now, ctx).as_int();
                 info!("VM: CameraLetterbox {} (unimplemented)", b);
             }
+            Stmt::CameraFollowActor { args } => { info!("VM: CameraFollowActor {:?} (unimplemented)", args); }
+            Stmt::CameraTrackActor { args } => { info!("VM: CameraTrackActor {:?} (unimplemented)", args); }
+            Stmt::CameraTrackPoint { args } => { info!("VM: CameraTrackPoint {:?} (unimplemented)", args); }
+            Stmt::CameraMoveToActor { args } => { info!("VM: CameraMoveToActor {:?} (unimplemented)", args); }
+            Stmt::CameraMoveToPoint { args } => { info!("VM: CameraMoveToPoint {:?} (unimplemented)", args); }
+            Stmt::CameraCutToActor { args } => { info!("VM: CameraCutToActor {:?} (unimplemented)", args); }
+            Stmt::CameraCutToPoint { args } => { info!("VM: CameraCutToPoint {:?} (unimplemented)", args); }
+            Stmt::CameraSetFOV { args } => { info!("VM: CameraSetFOV {:?} (unimplemented)", args); }
+            Stmt::CameraShake => { info!("VM: CameraShake (unimplemented)"); }
 
             Stmt::SetFogType(expr) => {
                 let fog_type = self.eval_expr(expr, now, ctx).as_string();
                 info!("VM: SetFogType {} (unimplemented)", fog_type);
+            }
+            Stmt::SetFogRange { min, max } => {
+                info!("VM: SetFogRange {:?} {:?} (unimplemented)", min, max);
+            }
+            Stmt::SetFogColor { args } => {
+                info!("VM: SetFogColor {:?} (unimplemented)", args);
             }
             Stmt::SetFogClamp { args } => {
                 info!("VM: SetFogClamp {:?} (unimplemented)", args);
@@ -827,9 +860,10 @@ impl ScriptExec {
             Stmt::SetFullScreenColor { args } => {
                 info!("VM: SetFullScreenColor {:?} (unimplemented)", args);
             }
-            Stmt::SetUpdateState(expr) => {
-                let state = self.eval_expr(expr, now, ctx).as_string();
-                info!("VM: SetUpdateState {} (unimplemented)", state);
+            Stmt::SetUpdateState { target, state } => {
+                let target_val = self.eval_expr(target, now, ctx).as_string();
+                let state_val = self.eval_expr(state, now, ctx).as_string();
+                info!("VM: SetUpdateState {} {} (unimplemented)", target_val, state_val);
             }
 
             // Stubs for commands we don't execute yet
@@ -854,6 +888,18 @@ impl ScriptExec {
             Expr::IntLit(i) => Value::Int(*i),
             Expr::FloatLit(f) => Value::Float(*f),
             Expr::StringLit(s) => Value::String(s.clone()),
+            Expr::List(exprs) => {
+                let mut ents = Vec::new();
+                for e in exprs {
+                    let v = self.eval_expr(e, now, ctx);
+                    if let Value::Actor(ent) = v {
+                        ents.push(ent);
+                    } else if let Value::Int(guid) = v {
+                        ents.push(Entity::from_bits(guid as u64));
+                    }
+                }
+                Value::ActorList(ents, 0)
+            }
             Expr::Var(name) => {
                 self.variables.get(name).cloned().unwrap_or(Value::None)
             }

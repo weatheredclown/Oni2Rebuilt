@@ -176,19 +176,19 @@ pub enum Stmt {
     CameraReset,
     CameraMode(Expr),
     CameraLetterbox(Expr),
-    CameraFollowActor(Expr),
-    CameraTrackActor(Expr),
-    CameraTrackPoint(Expr),
-    CameraMoveToActor { actor: Expr, seconds: Option<Expr> },
-    CameraMoveToPoint { point: Expr, seconds: Option<Expr> },
-    CameraCutToActor(Expr),
-    CameraCutToPoint(Expr),
-    CameraSetFOV(Expr),
+    CameraFollowActor { args: Vec<Expr> },
+    CameraTrackActor { args: Vec<Expr> },
+    CameraTrackPoint { args: Vec<Expr> },
+    CameraMoveToActor { args: Vec<Expr> },
+    CameraMoveToPoint { args: Vec<Expr> },
+    CameraCutToActor { args: Vec<Expr> },
+    CameraCutToPoint { args: Vec<Expr> },
+    CameraSetFOV { args: Vec<Expr> },
     CameraSetPackage(Expr),
     CameraShake,
 
     /// Sound commands
-    Sound(Expr),
+    Sound { args: Vec<Expr> },
     PlayAmbientSound { name: Expr, volume: Option<Expr> },
     AmbientSound { args: Vec<Expr> },
     MusicPlay(Expr),
@@ -197,13 +197,13 @@ pub enum Stmt {
     /// Fog commands
     SetFogType(Expr),
     SetFogRange { min: Expr, max: Expr },
-    SetFogColor { r: Expr, g: Expr, b: Expr, a: Expr },
+    SetFogColor { args: Vec<Expr> },
     SetFogClamp { args: Vec<Expr> },
     SetFogPalettePower { args: Vec<Expr> },
     
     /// Global Screen commands
     SetFullScreenColor { args: Vec<Expr> },
-    SetUpdateState(Expr),
+    SetUpdateState { target: Expr, state: Expr },
 
     /// HUD
     SetHud { args: Vec<Expr> },
@@ -256,6 +256,8 @@ pub enum Expr {
     Paren(Box<Expr>),
     /// Vector literal: `{ x, y, z }`
     VectorLit(Box<Expr>, Box<Expr>, Box<Expr>),
+    /// Comma-separated list of expressions (e.g. `1, 2, 3`)
+    List(Vec<Expr>),
     /// Field access: `<expr>.<field>` (e.g., `loc.x`)
     FieldAccess { base: Box<Expr>, field: String },
 }

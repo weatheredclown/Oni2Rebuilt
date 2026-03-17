@@ -204,10 +204,19 @@ impl Compiler {
             return None;
         };
 
-        // Optional initializer: `= <expr>`
+        // Optional initializer: `= <expr> [, <expr>...]`
         let initializer = if self.code() == TokenCode::Equal {
             self.advance();
-            Some(self.parse_expr())
+            let mut first = self.parse_expr();
+            if self.code() == TokenCode::Comma {
+                let mut list = vec![first];
+                while self.skip_if(TokenCode::Comma) {
+                    list.push(self.parse_expr());
+                }
+                Some(Expr::List(list))
+            } else {
+                Some(first)
+            }
         } else {
             None
         };
@@ -333,27 +342,38 @@ impl Compiler {
             TokenCode::CameraReset => { self.advance(); Stmt::CameraReset }
             TokenCode::CameraMode => { self.advance(); Stmt::CameraMode(self.parse_expr()) }
             TokenCode::CameraLetterbox => { self.advance(); Stmt::CameraLetterbox(self.parse_expr()) }
-            TokenCode::CameraFollowActor => { self.advance(); Stmt::CameraFollowActor(self.parse_expr()) }
-            TokenCode::CameraTrackActor => { self.advance(); Stmt::CameraTrackActor(self.parse_expr()) }
-            TokenCode::CameraTrackPoint => { self.advance(); Stmt::CameraTrackPoint(self.parse_expr()) }
-            TokenCode::CameraSetFOV => { self.advance(); Stmt::CameraSetFOV(self.parse_expr()) }
+            TokenCode::CameraFollowActor => self.parse_generic_args(TokenCode::CameraFollowActor, |args| Stmt::CameraFollowActor { args }),
+            TokenCode::CameraTrackActor => self.parse_generic_args(TokenCode::CameraTrackActor, |args| Stmt::CameraTrackActor { args }),
+            TokenCode::CameraTrackPoint => self.parse_generic_args(TokenCode::CameraTrackPoint, |args| Stmt::CameraTrackPoint { args }),
+            TokenCode::CameraMoveToActor => self.parse_generic_args(TokenCode::CameraMoveToActor, |args| Stmt::CameraMoveToActor { args }),
+            TokenCode::CameraMoveToPoint => self.parse_generic_args(TokenCode::CameraMoveToPoint, |args| Stmt::CameraMoveToPoint { args }),
+            TokenCode::CameraCutToActor => self.parse_generic_args(TokenCode::CameraCutToActor, |args| Stmt::CameraCutToActor { args }),
+            TokenCode::CameraCutToPoint => self.parse_generic_args(TokenCode::CameraCutToPoint, |args| Stmt::CameraCutToPoint { args }),
+            TokenCode::CameraSetFOV => self.parse_generic_args(TokenCode::CameraSetFOV, |args| Stmt::CameraSetFOV { args }),
             TokenCode::CameraSetPackage => { self.advance(); Stmt::CameraSetPackage(self.parse_expr()) }
             TokenCode::CameraShake => { self.advance(); Stmt::CameraShake }
 
             // Sound
-            TokenCode::Sound => { self.advance(); Stmt::Sound(self.parse_expr()) }
+            TokenCode::Sound => self.parse_generic_args(TokenCode::Sound, |args| Stmt::Sound { args }),
             TokenCode::PlayAmbientSound => self.parse_play_ambient_sound(),
+            TokenCode::AmbientSound => self.parse_generic_args(TokenCode::AmbientSound, |args| Stmt::AmbientSound { args }),
             TokenCode::MusicPlay => { self.advance(); Stmt::MusicPlay(self.parse_expr()) }
             TokenCode::MusicStop => { self.advance(); Stmt::MusicStop }
 
             // Fog
             TokenCode::SetFogType => { self.advance(); Stmt::SetFogType(self.parse_expr()) }
+            TokenCode::SetFogColor => self.parse_generic_args(TokenCode::SetFogColor, |args| Stmt::SetFogColor { args }),
             TokenCode::SetFogClamp => self.parse_generic_args(TokenCode::SetFogClamp, |args| Stmt::SetFogClamp { args }),
             TokenCode::SetFogPalettePower => self.parse_generic_args(TokenCode::SetFogPalettePower, |args| Stmt::SetFogPalettePower { args }),
 
             // Global
             TokenCode::SetFullScreenColor => self.parse_generic_args(TokenCode::SetFullScreenColor, |args| Stmt::SetFullScreenColor { args }),
-            TokenCode::SetUpdateState => { self.advance(); Stmt::SetUpdateState(self.parse_expr()) }
+            TokenCode::SetUpdateState => { 
+                self.advance(); 
+                let target = self.parse_expr();
+                let state = self.parse_expr();
+                Stmt::SetUpdateState { target, state }
+            }
 
             TokenCode::Find => self.parse_find(),
             TokenCode::TextureMovie => self.parse_texture_movie(),
@@ -399,7 +419,18 @@ impl Compiler {
         let var = self.peek().text.clone();
         self.advance(); // skip identifier
         self.skip_if(TokenCode::To); // skip 'to'
-        let value = self.parse_expr();
+        
+        let first = self.parse_expr();
+        let value = if self.code() == TokenCode::Comma {
+            let mut list = vec![first];
+            while self.skip_if(TokenCode::Comma) {
+                list.push(self.parse_expr());
+            }
+            Expr::List(list)
+        } else {
+            first
+        };
+        
         Stmt::Set { var, value }
     }
 
@@ -736,7 +767,7 @@ impl Compiler {
         let mut left = self.parse_multiplicative();
         loop {
             let op = match self.code() {
-                TokenCode::Plus | TokenCode::Add => BinOp::Add,
+                TokenCode::Plus => BinOp::Add,
                 TokenCode::Minus => BinOp::Sub,
                 _ => break,
             };
@@ -993,6 +1024,11 @@ fn is_command_start(code: TokenCode) -> bool {
         | TokenCode::SendMessage | TokenCode::Spawn | TokenCode::Destroy
         | TokenCode::End | TokenCode::Eof
         | TokenCode::DrawText | TokenCode::At
+        | TokenCode::CameraFollowActor | TokenCode::CameraTrackActor | TokenCode::CameraTrackPoint
+        | TokenCode::CameraMoveToActor | TokenCode::CameraMoveToPoint
+        | TokenCode::CameraCutToActor | TokenCode::CameraCutToPoint | TokenCode::CameraSetFOV
+        | TokenCode::CameraShake | TokenCode::Sound | TokenCode::AmbientSound
+        | TokenCode::SetFogColor | TokenCode::SetFogClamp | TokenCode::SetFogPalettePower | TokenCode::SetFogType
     )
 }
 
