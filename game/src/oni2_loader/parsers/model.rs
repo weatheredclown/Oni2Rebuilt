@@ -1332,6 +1332,9 @@ fn parse_blocks(data: &[u8], start_off: usize, end_off: usize, n_adjuncts: usize
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::oni2_loader::parsers::skeleton::parse_skel;
+    use crate::oni2_loader::parsers::animation::parse_anim;
+    use crate::oni2_loader::animation::load_anim_library;
 
     #[test]
     fn test_file_structure_analysis() {
@@ -2355,10 +2358,11 @@ mod tests {
         eprintln!("{:-<80}", "");
 
         let mut entries: Vec<_> = crate::vfs::read_dir(base).expect("read dir")
+            .into_iter()
             .filter_map(|e| e.ok())
-            .filter(|e| e.path().extension().map_or(false, |ext| ext == "anim"))
+            .filter(|e: &crate::vfs::VfsEntry| e.path().extension().map_or(false, |ext| ext == "anim"))
             .collect();
-        entries.sort_by_key(|e| e.file_name());
+        entries.sort_by_key(|e: &crate::vfs::VfsEntry| e.file_name());
 
         let mut count_match = 0;
         let mut count_mismatch = 0;
@@ -2405,7 +2409,7 @@ mod tests {
 
         use crate::oni2_loader::{load_anim_library, AnimId};
 
-        let library = load_anim_library(entity_dir, "kno", &skel, assets_base);
+        let library = load_anim_library(entity_dir, "kno", &skel);
 
         eprintln!("Loaded {} animations into library", library.anims.len());
         let mut aliases: Vec<&str> = library.aliases();

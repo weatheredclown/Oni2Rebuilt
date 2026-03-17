@@ -8,6 +8,8 @@ mod oni2_loader;
 mod player;
 mod scroni;
 mod telemetry;
+mod fx_system;
+mod projectile_system;
 pub use filesystem::dave_vfs;
 pub use filesystem::vfs;
 
@@ -140,6 +142,8 @@ fn main() {
     .add_plugins(ai::AiPlugin)
     .add_plugins(camera::CameraPlugin)
     .add_plugins(hud::HudPlugin)
+    .add_plugins(fx_system::FxPlugin)
+    .add_plugins(projectile_system::ProjectilePlugin)
     .insert_resource(oni2_loader::DebugBoundsVisible(false))
     .insert_resource(oni2_loader::DebugSkeletonVisible(false))
     .insert_resource(oni2_loader::PointCloudMode(false));
@@ -216,7 +220,7 @@ fn main() {
             oni2_loader::orbit_camera_system,
         ).run_if(in_state(AppState::InGame).and(resource_exists::<TestAnimMode>)),
     )
-    .add_systems(Startup, (setup_fps_counter, disable_physics_debug))
+    .add_systems(Startup, (setup_fps_counter, disable_physics_debug, oni2_loader::load_global_registries))
     .add_systems(Update, (update_fps_counter, toggle_physics_debug));
 
     if diagnostics_mode {
@@ -250,6 +254,7 @@ fn setup_scene(
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut images: ResMut<Assets<Image>>,
     mut skinned_mesh_ibp: ResMut<Assets<bevy::mesh::skinning::SkinnedMeshInverseBindposes>>,
+    mut entity_lib: ResMut<crate::oni2_loader::registries::EntityLibrary>,
     selected_layout: Option<Res<SelectedLayout>>,
     sandbox: Option<Res<SandboxMode>>,
 ) {
@@ -333,6 +338,7 @@ fn setup_scene(
             &mut materials,
             &mut images,
             &mut skinned_mesh_ibp,
+            &mut entity_lib,
             &entity_path_kno,
             Vec3::new(0.0, 2.0, 0.0),
             "kno",
@@ -347,6 +353,7 @@ fn setup_scene(
             &mut materials,
             &mut images,
             &mut skinned_mesh_ibp,
+            &mut entity_lib,
             &layout_path,
             &entity_base_str,
         )
@@ -513,6 +520,7 @@ fn setup_formation_scene(
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut images: ResMut<Assets<Image>>,
     mut skinned_mesh_ibp: ResMut<Assets<bevy::mesh::skinning::SkinnedMeshInverseBindposes>>,
+    mut entity_lib: ResMut<crate::oni2_loader::registries::EntityLibrary>,
 ) {
     let scoped = InGameEntity;
 
@@ -566,6 +574,7 @@ fn setup_formation_scene(
             &mut materials,
             &mut images,
             &mut skinned_mesh_ibp,
+            &mut entity_lib,
             entity_dir,
             pos,
             name,

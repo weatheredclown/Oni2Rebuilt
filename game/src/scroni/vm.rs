@@ -108,6 +108,7 @@ pub enum SysRequest {
     CameraSetPackage(String),
     DrawText(String),
     At(f32, f32),
+    MakeFx { script_entity: Entity, name: String, at: Option<Vec3> },
 }
 
 #[derive(Event, Debug, Clone)]
@@ -133,6 +134,11 @@ pub enum ScrOniSysEvent {
     CameraSetPackage(String),
     DrawText(String),
     At(f32, f32),
+    MakeFx {
+        script_entity: Entity,
+        name: String,
+        at: Option<Vec3>,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -731,6 +737,29 @@ impl ScriptExec {
                 });
             }
 
+            Stmt::MakeFx { name, at } => {
+                let fx_name = self.eval_expr(name, now, ctx).as_string();
+                let fx_pos = at.as_ref().map(|e| {
+                    match self.eval_expr(e, now, ctx) {
+                        Value::Vector(v) => v,
+                        Value::Actor(ent) => {
+                            if let Ok((_, tf, _)) = ctx.all_entities.get(ent) {
+                                tf.translation
+                            } else {
+                                Vec3::ZERO
+                            }
+                        }
+                        _ => Vec3::ZERO,
+                    }
+                });
+
+                self.sys_requests.push(SysRequest::MakeFx {
+                    script_entity: self.owner,
+                    name: fx_name,
+                    at: fx_pos,
+                });
+            }
+
             Stmt::Stack(name_expr) => {
                 let name = self.eval_expr(name_expr, now, ctx).as_string();
                 if let Some(new_script) = self.available_scripts.get(&name).cloned() {
@@ -1200,6 +1229,13 @@ pub fn scroni_tick_system(
                 SysRequest::DrawText(text) => {
                     commands.trigger(ScrOniSysEvent::DrawText(text));
                 }
+                SysRequest::MakeFx { script_entity, name, at } => {
+                    commands.trigger(ScrOniSysEvent::MakeFx {
+                        script_entity,
+                        name,
+                        at,
+                    });
+                }
             }
         }
 
@@ -1266,6 +1302,7 @@ pub fn scroni_sys_event_observer(
     mut active_camera_package: Option<ResMut<crate::oni2_loader::ActiveCameraPackage>>,
     mut scroni_text_state: ResMut<ScroniTextState>,
     time: Res<Time>,
+    mut entity_lib: ResMut<crate::oni2_loader::registries::EntityLibrary>,
 ) {
     let ev = (*trigger).clone();
     match ev {
@@ -1353,6 +1390,7 @@ pub fn scroni_sys_event_observer(
                     materials: &mut materials,
                     images: &mut images,
                     skinned_mesh_ibp: &mut skinned_mesh_ibp,
+                    entity_lib: &mut entity_lib,
                     texture_collections: &mut texture_collections,
                 };
                 
@@ -1400,6 +1438,13 @@ pub fn scroni_sys_event_observer(
                     transform.rotation = Quat::from_euler(EulerRot::YXZ, rad, current_rot.1, current_rot.2);
                 }
             }
+        }
+        ScrOniSysEvent::MakeFx { script_entity, name, at } => {
+            commands.trigger(crate::fx_system::SpawnFx {
+                name: name,
+                at: at,
+                parent: Some(script_entity),
+            });
         }
     }
 }

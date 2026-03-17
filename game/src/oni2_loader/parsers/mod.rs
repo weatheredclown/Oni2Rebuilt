@@ -10,3 +10,7 @@ pub mod actor_xml;
 pub mod texture;
 pub mod mesh;
 pub mod camera;
+pub mod settings;
+pub mod projectile;
+pub mod effect;
+pub mod particle;

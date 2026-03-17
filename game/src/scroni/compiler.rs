@@ -321,6 +321,7 @@ impl Compiler {
             TokenCode::Spawn => self.parse_spawn(),
             TokenCode::Destroy => { self.advance(); Stmt::Destroy }
             TokenCode::Teleport => self.parse_teleport(),
+            TokenCode::MakeFX => self.parse_make_fx(),
 
             // Messaging
             TokenCode::SendMessage => self.parse_send_message(),
@@ -582,6 +583,13 @@ impl Compiler {
         let at = if self.skip_if(TokenCode::At) { Some(self.parse_expr()) } else { None };
         let name = if self.skip_if(TokenCode::Name) { Some(self.parse_expr()) } else { None };
         Stmt::Spawn { script, assign_to, at, name }
+    }
+
+    fn parse_make_fx(&mut self) -> Stmt {
+        self.advance(); // consume `makefx`
+        let name = self.parse_expr();
+        let at = if self.skip_if(TokenCode::At) { Some(self.parse_expr()) } else { None };
+        Stmt::MakeFx { name, at }
     }
 
     fn parse_teleport(&mut self) -> Stmt {

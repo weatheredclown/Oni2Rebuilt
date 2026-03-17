@@ -27,6 +27,8 @@ pub struct LayoutActor {
     pub script_main: Option<String>,
     /// Radius from <BroadcastTrigger><Radius>
     pub broadcast_radius: Option<f32>,
+    /// FXType for initial environmental particle systems (e.g. bcnozzlegassesHigh)
+    pub fx_type: Option<String>,
 }
 
 /// Resolve the full template chain for an actor XML file.
@@ -199,6 +201,18 @@ pub fn parse_actor_xml(dir: &str, filename: &str, template_dir: &str) -> Option<
         }
     });
 
+    // Extract FXType (e.g. <FXType value="bcnozzlegassesHigh"/>)
+    let mut fx_type: Option<String> = None;
+    for content in &chain {
+        // Look for standalone FXType tag since it's sometimes just sitting by itself
+        let fx_block = extract_xml_block(content, "FXType");
+        if let Some(block) = fx_block {
+            if let Some(v) = extract_xml_attr(&block, "value") {
+                fx_type = Some(v);
+            }
+        }
+    }
+
     // Convert from left-handed to right-handed: 180° Y rotation (negate X and Z)
     let position = Vec3::new(-position.x, position.y, -position.z);
 
@@ -216,5 +230,6 @@ pub fn parse_actor_xml(dir: &str, filename: &str, template_dir: &str) -> Option<
         script_filename,
         script_main,
         broadcast_radius,
+        fx_type,
     })
 }

@@ -138,6 +138,8 @@ pub enum Stmt {
     Destroy,
     /// `teleport <expr> [to <vector>] [face <expr>]`
     Teleport { target: Expr, to: Option<Expr>, face: Option<Expr> },
+    /// `makefx <string> [at <expr>]`
+    MakeFx { name: Expr, at: Option<Expr> },
 
     /// `sendmessage <string> to <expr> [with <expr>, ...]`
     SendMessage { msg: Expr, to: Expr, with: Vec<Expr> },

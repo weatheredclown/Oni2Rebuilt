@@ -7,6 +7,7 @@ pub mod parsers;
 pub mod spawn;
 pub mod testanim;
 pub mod utils;
+pub mod registries;
 
 pub use animation::*;
 pub use components::*;
@@ -14,6 +15,7 @@ pub use environment::*;
 pub use layout_loader::*;
 pub use spawn::*;
 pub use testanim::*;
+pub use registries::*;
 
 use avian3d::prelude::*;
 use bevy::mesh::skinning::{SkinnedMesh, SkinnedMeshInverseBindposes};

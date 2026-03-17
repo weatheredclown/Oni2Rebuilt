@@ -255,14 +255,14 @@ pub fn scroni_curve_bridge_system(
 }
 
 /// Info about a spawned player creature from the layout.
-#[derive(Component)]
+#[derive(Component, Clone)]
 pub struct Oni2DebugBounds {
     pub vertices: Vec<Vec3>, // bound vertices in local space (Z-negated)
     pub edges: Vec<[u32; 2]>,
 }
 
 /// Debug component storing skeleton bone positions and parent links for gizmo rendering.
-#[derive(Component)]
+#[derive(Component, Clone)]
 pub struct Oni2DebugSkeleton {
     pub positions: Vec<Vec3>, // bone world positions (Z-negated for Bevy)
     pub parent_indices: Vec<Option<usize>>,
@@ -329,7 +329,7 @@ macro_rules! anim_id {
 
 /// Animation library mapping AnimId hashes to loaded animations.
 /// Built from .anims + .apkg package files.
-#[derive(Component)]
+#[derive(Component, Clone)]
 pub struct Oni2AnimLibrary {
     pub anims: std::collections::HashMap<AnimId, Oni2Animation>,
     /// Reverse map for debug: hash -> original alias string

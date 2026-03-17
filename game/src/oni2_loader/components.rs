@@ -1,6 +1,12 @@
 use bevy::prelude::*;
 use super::curve::NurbsCurve;
 
+/// Marker component for ONI2-loaded entities.
+#[derive(Component, Debug, Clone)]
+pub struct Oni2Entity {
+    pub name: String,
+}
+
 /// Component for entities that follow a NURBS curve path.
 #[derive(Component)]
 pub struct CurveFollower {
@@ -14,8 +20,9 @@ pub struct CurveFollower {
     pub reached_target: bool,
 }
 
-/// Marker component for ONI2-loaded entities.
+/// Component indicating this entity should emit a specific Particle/FX system (from layout XML).
 #[derive(Component)]
-pub struct Oni2Entity {
-    pub name: String,
+pub struct ActorFxType {
+    pub fx_name: String,
 }
+

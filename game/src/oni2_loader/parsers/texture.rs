@@ -112,7 +112,7 @@ pub fn decode_tex(data: &[u8]) -> Option<(u32, u32, Vec<u8>, bool)> {
 }
 
 /// Load texture for an entity: tries .tex (native), then .tex.tga (pre-converted).
-pub fn load_tga_file(dir: &str, filename: &str, images: &mut ResMut<Assets<Image>>) -> Option<(Handle<Image>, bool)> {
+pub fn load_tga_file(dir: &str, filename: &str, images: &mut Assets<Image>) -> Option<(Handle<Image>, bool)> {
     let bytes = crate::vfs::read(dir, filename).ok()?;
     let dyn_image = image::load_from_memory_with_format(&bytes, image::ImageFormat::Tga).ok()?;
     let rgba = dyn_image.to_rgba8();
@@ -150,7 +150,7 @@ pub fn load_tga_file(dir: &str, filename: &str, images: &mut ResMut<Assets<Image
 pub fn load_tga_texture(
     entity_dir: &str,
     texture_name: &str,
-    images: &mut ResMut<Assets<Image>>,
+    images: &mut Assets<Image>,
 ) -> Option<(Handle<Image>, bool)> {
     // Try native .tex format first
     let tex_filename = format!("{}.tex", texture_name);

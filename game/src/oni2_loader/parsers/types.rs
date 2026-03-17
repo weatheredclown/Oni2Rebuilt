@@ -47,7 +47,7 @@ pub struct Oni2Adjunct {
 
 // === Parsed .bnd file data ===
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Oni2Bound {
     pub vertices: Vec<[f32; 3]>,
     pub centroid: [f32; 3],

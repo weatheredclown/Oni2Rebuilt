@@ -279,7 +279,7 @@ pub fn spawn_mod_file(
     let mut ec = commands.spawn((
         transform,
         Visibility::Visible,
-        Oni2Entity {
+        crate::oni2_loader::Oni2Entity {
             name: label.to_string(),
         },
         Name::new(label.to_string()),
@@ -324,6 +324,7 @@ pub fn spawn_oni2_entity(
     materials: &mut ResMut<Assets<StandardMaterial>>,
     images: &mut ResMut<Assets<Image>>,
     skinned_mesh_ibp: &mut ResMut<Assets<SkinnedMeshInverseBindposes>>,
+    entity_lib: &mut ResMut<crate::oni2_loader::registries::EntityLibrary>,
     entity_dir: &str,
     position: Vec3,
     name: &str,
@@ -334,6 +335,7 @@ pub fn spawn_oni2_entity(
         materials,
         images,
         skinned_mesh_ibp,
+        entity_lib,
         entity_dir,
         position,
         Quat::IDENTITY,
@@ -345,19 +347,16 @@ pub fn spawn_oni2_entity(
 
 /// Load an ONI2 entity from a directory and spawn it with position and rotation.
 /// If `anim_path` is provided, load that specific anim file instead of the default.
-pub fn spawn_oni2_entity_with_rotation(
-    commands: &mut Commands,
-    meshes: &mut ResMut<Assets<Mesh>>,
-    materials: &mut ResMut<Assets<StandardMaterial>>,
-    images: &mut ResMut<Assets<Image>>,
-    skinned_mesh_ibp: &mut ResMut<Assets<SkinnedMeshInverseBindposes>>,
+
+pub fn load_oni2_entity_type(
+    meshes: &mut Assets<Mesh>,
+    materials: &mut Assets<StandardMaterial>,
+    images: &mut Assets<Image>,
+    skinned_mesh_ibp: &mut Assets<SkinnedMeshInverseBindposes>,
     entity_dir: &str,
-    position: Vec3,
-    rotation: Quat,
     name: &str,
-    anim_path: Option<&str>,
     entity_type_name: Option<&str>,
-) -> Option<Entity> {
+) -> Option<crate::oni2_loader::registries::Oni2EntityType> {
     let dir = entity_dir;
 
     // Read Entity.type
@@ -372,11 +371,6 @@ pub fn spawn_oni2_entity_with_rotation(
             match crate::vfs::read_to_string("", &skel_path) {
                 Ok(skel_content) => {
                     let skel = parse_skel(&skel_content);
-                    info!(
-                        "Loaded skeleton: {} bones from {}",
-                        skel.positions.len(),
-                        skel_path
-                    );
                     Some(skel)
                 }
                 Err(e) => {
@@ -388,25 +382,15 @@ pub fn spawn_oni2_entity_with_rotation(
                 }
             }
         }
-        None => {
-            info!(
-                "Entity '{}' has no skeleton file defined in {}/Entity.type; skipping animation features.",
-                name, dir
-            );
-            None
-        }
+        None => None
     };
 
     // Read and parse the .mod file
-    // Prefer win32 binary LOD model (world-space vertices, correct bone count).
-    // Fall back to standard binary LOD, then text base model.
     let model = if let Some(ref model_file) = entity_type.model_file {
         let mut m: Option<Oni2Model> = None;
 
-        // Try standard (PS2) LOD model first (bone-local vertices, supports animation)
         let mut mod_path = format!("{}/{}", dir, model_file);
         if !crate::vfs::exists("", &mod_path) {
-            // Check for LOD 0 fallback (e.g. FinitePlane_LODs.mod -> FinitePlane_LODs0.mod)
             if model_file.ends_with(".mod") {
                 let fallback = model_file.replace(".mod", "0.mod");
                 let fallback_path = format!("{}/{}", dir, fallback);
@@ -418,45 +402,32 @@ pub fn spawn_oni2_entity_with_rotation(
 
         if crate::vfs::exists("", &mod_path) {
             if let Some(mut model) = super::layout_loader::load_mod_file(&mod_path) {
-                // PS2 binary v2.10 is bone-local despite using the same format as win32
                 model.world_space_verts = false;
-                info!("Using PS2 model {}", mod_path);
                 m = Some(model);
             }
         }
 
-        // Fallback: text base model
         if m.is_none() {
             let base_mod = format!("{}/{}.mod", dir, name);
             if crate::vfs::exists("", &base_mod) {
                 if let Some(text_model) = super::layout_loader::load_mod_file(&base_mod) {
-                    info!("Falling back to text model {}", base_mod);
                     m = Some(text_model);
                 }
             }
         }
 
-        // Last resort: win32 binary LOD model (world-space vertices)
         if m.is_none() {
             let win32_mod = format!("{}/win32_{}", dir, model_file);
             if crate::vfs::exists("", &win32_mod) {
                 if let Some(model) = super::layout_loader::load_mod_file(&win32_mod) {
-                    // win32 models have world-space verts — world_space_verts stays true
-                    info!("Using win32 model {} (world-space vertices)", win32_mod);
                     m = Some(model);
                 }
             }
         }
 
-        // Convert world-space vertices to bone-local using skeleton bind pose.
-        // This normalizes all model formats (win32, PS2, ASCII) to bone-local.
         if let (Some(model), Some(skel)) = (&mut m, &skeleton) {
             if model.world_space_verts {
                 convert_world_to_bone_local(model, skel);
-                info!(
-                    "Converted world-space vertices to bone-local ({} verts)",
-                    model.vertices.len()
-                );
             }
         }
 
@@ -476,7 +447,6 @@ pub fn spawn_oni2_entity_with_rotation(
         }
     };
 
-    // Bound vertices already in Bevy coordinates (Z negated at parse time)
     let bound_verts: Vec<Vec3> = bound
         .as_ref()
         .map(|b| {
@@ -487,38 +457,13 @@ pub fn spawn_oni2_entity_with_rotation(
         })
         .unwrap_or_default();
     let bound_edges: Vec<[u32; 2]> = bound.as_ref().map(|b| b.edges.clone()).unwrap_or_default();
-
-    // Build trimesh collider from bound quads (thin shell, not solid volume).
-    // Convex hull fills the interior and blocks raycasts/physics through the
-    // bounding volume — trimesh only collides at the actual faces.
     let bound_quads: Vec<[u32; 4]> = bound.as_ref().map(|b| b.quads.clone()).unwrap_or_default();
 
-    let collider = if !bound_verts.is_empty() && !bound_quads.is_empty() {
-        // Split quads into triangles
-        let mut tri_indices: Vec<[u32; 3]> = Vec::with_capacity(bound_quads.len() * 2);
-        for q in &bound_quads {
-            tri_indices.push([q[0], q[1], q[2]]);
-            tri_indices.push([q[0], q[2], q[3]]);
-        }
-        Collider::try_trimesh(bound_verts.clone(), tri_indices).unwrap_or_else(|_| {
-            Collider::convex_hull(bound_verts.clone())
-                .unwrap_or_else(|| Collider::cuboid(1.0, 1.0, 1.0))
-        })
-    } else if !bound_verts.is_empty() {
-        // No quads — fall back to convex hull
-        Collider::convex_hull(bound_verts.clone())
-            .unwrap_or_else(|| Collider::cuboid(1.0, 1.0, 1.0))
-    } else {
-        Collider::cuboid(1.0, 1.0, 1.0)
-    };
-
-    let debug_bounds = Oni2DebugBounds {
+    let debug_bounds = crate::oni2_loader::spawn::Oni2DebugBounds {
         vertices: bound_verts,
         edges: bound_edges,
     };
 
-    // Build debug skeleton component if skeleton was loaded
-    // Use animated bone positions from the model if available, else bind pose
     let debug_skeleton = skeleton.as_ref().map(|skel| {
         let positions = if let Some(ref m) = model {
             if !m.bone_world_positions.is_empty() {
@@ -538,21 +483,13 @@ pub fn spawn_oni2_entity_with_rotation(
                 .map(|p| Vec3::new(-p[0], p[1], -p[2]))
                 .collect()
         };
-        Oni2DebugSkeleton {
+        crate::oni2_loader::spawn::Oni2DebugSkeleton {
             positions,
             parent_indices: skel.parent_indices.clone(),
             names: skel.names.clone(),
         }
     });
 
-    // Load explicitly requested animation, if any
-    let loaded_anim = anim_path.and_then(|path| {
-        crate::vfs::read("", path)
-            .ok()
-            .and_then(|data| parse_anim(&data))
-    });
-
-    // Load animation library from .anims + .apkg packages if skeleton available
     let library = if let Some(ref skel) = skeleton {
         let lib = load_anim_library(entity_dir, entity_type_name.unwrap_or(name), skel);
         if !lib.anims.is_empty() {
@@ -564,53 +501,25 @@ pub fn spawn_oni2_entity_with_rotation(
         None
     };
 
-    let transform = Transform::from_translation(position).with_rotation(rotation);
+    let use_gpu_skinning = skeleton.is_some() && library.is_some();
 
-    let Some(model) = model else {
-        // No model — spawn collider-only placeholder
-        let mut ec = commands.spawn((
-            transform,
-            RigidBody::Static,
-            collider,
-            Oni2Entity {
-                name: name.to_string(),
-            },
-            Name::new(name.to_string()),
-            debug_bounds,
-            InGameEntity,
-        ));
-        if let Some(ds) = debug_skeleton {
-            ec.insert(ds);
-        }
-        return Some(ec.id());
-    };
-
-    // Determine if this entity is skinned (has skeleton + animation)
-    let default_anim = loaded_anim.or_else(|| {
-        library
-            .as_ref()
-            .and_then(|lib| lib.anims.values().next().cloned())
-    });
-
-    let use_gpu_skinning = skeleton.is_some() && default_anim.is_some();
-
-    // Build meshes: skinned (with joint attributes) or static
-    let sub_meshes = if use_gpu_skinning {
-        build_skinned_meshes_by_material(&model, skeleton.as_ref().unwrap())
-    } else {
-        // Static entities still need CPU-positioned vertices for initial pose
-        // Set bind-pose bone positions for the one-time build
-        if let Some(ref skel) = skeleton {
-            let mut m = model.clone();
-            m.bone_world_positions = skel.positions.clone();
-            m.bone_rotations = vec![[0.0, 0.0, 0.0, 1.0]; skel.positions.len()];
-            build_meshes_by_material(&m)
+    let sub_meshes = if let Some(ref m) = model {
+        if use_gpu_skinning {
+            build_skinned_meshes_by_material(m, skeleton.as_ref().unwrap())
         } else {
-            build_meshes_by_material(&model)
+            if let Some(ref skel) = skeleton {
+                let mut model_copy = m.clone();
+                model_copy.bone_world_positions = skel.positions.clone();
+                model_copy.bone_rotations = vec![[0.0, 0.0, 0.0, 1.0]; skel.positions.len()];
+                build_meshes_by_material(&model_copy)
+            } else {
+                build_meshes_by_material(m)
+            }
         }
+    } else {
+        Vec::new()
     };
 
-    // Compute inverse bind poses for GPU skinning
     let ibp_handle = if use_gpu_skinning {
         let inverse_bind_poses =
             super::animation::compute_inverse_bind_poses(skeleton.as_ref().unwrap());
@@ -619,67 +528,141 @@ pub fn spawn_oni2_entity_with_rotation(
         None
     };
 
-    // Load textures and create Bevy materials for each ONI2 material
-    let bevy_materials: Vec<Handle<StandardMaterial>> = model
-        .materials
-        .iter()
-        .map(|oni_mat| {
-            let (texture_handle, has_alpha) = match oni_mat.texture_name.as_ref() {
-                Some(tex_name) => match load_tga_texture(dir, tex_name, images) {
-                    Some((h, alpha)) => (Some(h), alpha),
+    let bevy_materials: Vec<Handle<StandardMaterial>> = if let Some(ref m) = model {
+        m.materials
+            .iter()
+            .map(|oni_mat| {
+                let (texture_handle, has_alpha) = match oni_mat.texture_name.as_ref() {
+                    Some(tex_name) => match crate::oni2_loader::parsers::texture::load_tga_texture(dir, tex_name, images) {
+                        Some((h, alpha)) => (Some(h), alpha),
+                        None => (None, false),
+                    },
                     None => (None, false),
-                },
-                None => (None, false),
-            };
+                };
 
-            let diffuse = Color::srgb(oni_mat.diffuse[0], oni_mat.diffuse[1], oni_mat.diffuse[2]);
+                let diffuse = Color::srgb(oni_mat.diffuse[0], oni_mat.diffuse[1], oni_mat.diffuse[2]);
 
-            materials.add(StandardMaterial {
-                base_color: if texture_handle.is_some() {
-                    Color::WHITE
-                } else {
-                    diffuse
-                },
-                base_color_texture: texture_handle,
-                cull_mode: None,
-                alpha_mode: if has_alpha {
-                    AlphaMode::Blend
-                } else {
-                    AlphaMode::Opaque
-                },
-                ..default()
+                materials.add(StandardMaterial {
+                    base_color: if texture_handle.is_some() {
+                        Color::WHITE
+                    } else {
+                        diffuse
+                    },
+                    base_color_texture: texture_handle,
+                    cull_mode: None,
+                    alpha_mode: if has_alpha {
+                        AlphaMode::Blend
+                    } else {
+                        AlphaMode::Opaque
+                    },
+                    ..default()
+                })
             })
-        })
-        .collect();
+            .collect()
+    } else {
+        Vec::new()
+    };
 
-    // Fallback material if no materials defined
+    Some(crate::oni2_loader::registries::Oni2EntityType {
+        name: name.to_string(),
+        sub_meshes: sub_meshes.into_iter().map(|(id, mesh)| (id, meshes.add(mesh))).collect(),
+        materials: bevy_materials,
+        skeleton,
+        inverse_bind_poses: ibp_handle,
+        bounds: debug_bounds,
+        bound_quads,
+        anim_library: library,
+        debug_skeleton,
+    })
+}
+
+pub fn spawn_oni2_entity_with_rotation(
+    commands: &mut Commands,
+    meshes: &mut ResMut<Assets<Mesh>>,
+    materials: &mut ResMut<Assets<StandardMaterial>>,
+    images: &mut ResMut<Assets<Image>>,
+    skinned_mesh_ibp: &mut ResMut<Assets<SkinnedMeshInverseBindposes>>,
+    entity_lib: &mut ResMut<crate::oni2_loader::registries::EntityLibrary>,
+    entity_dir: &str,
+    position: Vec3,
+    rotation: Quat,
+    name: &str,
+    anim_path: Option<&str>,
+    entity_type_name: Option<&str>,
+) -> Option<Entity> {
+    let dir = entity_dir;
+    
+    // 1. Get or load the EntityType
+    let cache_key = dir.to_string();
+    if !entity_lib.entities.contains_key(&cache_key) {
+        if let Some(loaded) = load_oni2_entity_type(
+            meshes.as_mut(),
+            materials.as_mut(),
+            images.as_mut(),
+            skinned_mesh_ibp.as_mut(),
+            entity_dir,
+            name,
+            entity_type_name
+        ) {
+            entity_lib.entities.insert(cache_key.clone(), loaded);
+        } else {
+            // Provide a fast path log here if it utterly failed to read Entity.type
+            warn!("Failed to load EntityType data for {}", dir);
+            return None;
+        }
+    }
+    let ent_type = entity_lib.entities.get(&cache_key)?;
+
+    // 2. Build Collider from bounds on the fly
+    let collider = if !ent_type.bounds.vertices.is_empty() && !ent_type.bound_quads.is_empty() {
+        let mut tri_indices: Vec<[u32; 3]> = Vec::with_capacity(ent_type.bound_quads.len() * 2);
+        for q in &ent_type.bound_quads {
+            tri_indices.push([q[0], q[1], q[2]]);
+            tri_indices.push([q[0], q[2], q[3]]);
+        }
+        Collider::try_trimesh(ent_type.bounds.vertices.clone(), tri_indices).unwrap_or_else(|_| {
+            Collider::convex_hull(ent_type.bounds.vertices.clone())
+                .unwrap_or_else(|| Collider::cuboid(1.0, 1.0, 1.0))
+        })
+    } else if !ent_type.bounds.vertices.is_empty() {
+        Collider::convex_hull(ent_type.bounds.vertices.clone())
+            .unwrap_or_else(|| Collider::cuboid(1.0, 1.0, 1.0))
+    } else {
+        Collider::cuboid(1.0, 1.0, 1.0)
+    };
+
+    let transform = Transform::from_translation(position).with_rotation(rotation);
+
+    // Fallback material if missing
     let fallback_mat = materials.add(StandardMaterial {
         base_color: Color::srgb(0.5, 0.5, 0.5),
         ..default()
     });
 
-    // Spawn parent entity with transform, convex hull collider directly on parent
     let mut ec = commands.spawn((
         transform,
         Visibility::Visible,
         RigidBody::Static,
         collider,
-        Oni2Entity {
+        crate::oni2_loader::Oni2Entity {
             name: name.to_string(),
         },
         Name::new(name.to_string()),
-        debug_bounds,
+        ent_type.bounds.clone(),
         InGameEntity,
     ));
-    if let Some(ds) = debug_skeleton {
-        ec.insert(ds);
+
+    if let Some(ref ds) = ent_type.debug_skeleton {
+        ec.insert(ds.clone());
     }
 
     let parent_entity = ec.id();
 
-    // Spawn joint entities for GPU skinning (flat hierarchy, all children of parent)
+    // 3. Spawning skeleton and animation
+    let use_gpu_skinning = ent_type.skeleton.is_some() && ent_type.anim_library.is_some();
+
     let joint_entities = if use_gpu_skinning {
-        let skel = skeleton.as_ref().unwrap();
+        let skel = ent_type.skeleton.as_ref().unwrap();
         let num_bones = skel.positions.len();
         let mut joints = Vec::with_capacity(num_bones);
         for _ in 0..num_bones {
@@ -694,11 +677,23 @@ pub fn spawn_oni2_entity_with_rotation(
         Vec::new()
     };
 
-    // Attach animation state and library when skeleton is available
-    if let Some(ref skel) = skeleton {
+    // Determine the default animation
+    // Note: anim_path logic isn't preserved directly inside Oni2EntityType as it specifies instance overrides,
+    // so we parse the single instance animation requested right now natively
+    let loaded_anim = anim_path.and_then(|path| {
+        crate::vfs::read("", path)
+            .ok()
+            .and_then(|data| parse_anim(&data))
+    });
+
+    let default_anim = loaded_anim.or_else(|| {
+        ent_type.anim_library.as_ref().and_then(|lib| lib.anims.values().next().cloned())
+    });
+
+    if let Some(ref skel) = ent_type.skeleton {
         if let Some(anim) = default_anim {
             let looping = anim.is_loop;
-            commands.entity(parent_entity).insert(Oni2AnimState {
+            commands.entity(parent_entity).insert(crate::oni2_loader::animation::Oni2AnimState {
                 anim,
                 skeleton: skel.clone(),
                 current_time: 0.0,
@@ -707,16 +702,14 @@ pub fn spawn_oni2_entity_with_rotation(
                 looping,
                 speed_multiplier: 1.0,
                 pending_step: 0,
-                last_rendered_time: -1.0, // force first render
+                last_rendered_time: -1.0,
                 joint_entities: joint_entities.clone(),
                 base_rotation: rotation,
                 current_frame: Vec::new(),
             });
         } else if !joint_entities.is_empty() {
-            // No animation yet, but we have a skeleton — create a paused AnimState
-            // so PlayAnimation from scripts can populate it later
-            commands.entity(parent_entity).insert(Oni2AnimState {
-                anim: Oni2Animation::default(),
+            commands.entity(parent_entity).insert(crate::oni2_loader::animation::Oni2AnimState {
+                anim: crate::oni2_loader::Oni2Animation::default(),
                 skeleton: skel.clone(),
                 current_time: 0.0,
                 fps: 20.0,
@@ -731,27 +724,25 @@ pub fn spawn_oni2_entity_with_rotation(
             });
         }
 
-        if let Some(library) = library {
-            commands.entity(parent_entity).insert(library);
+        if let Some(ref lib) = ent_type.anim_library {
+            commands.entity(parent_entity).insert(lib.clone());
         }
     }
 
-    // Spawn mesh children per material
-    for (mat_idx, mesh) in sub_meshes {
-        let mat_handle = bevy_materials
-            .get(mat_idx)
+    // 4. Mesh sub_meshes
+    for (mat_idx, mesh_handle) in &ent_type.sub_meshes {
+        let mat_handle = ent_type.materials
+            .get(*mat_idx)
             .cloned()
             .unwrap_or_else(|| fallback_mat.clone());
 
-        let mesh_handle = meshes.add(mesh);
         let mut mesh_ec = commands.spawn((
-            Mesh3d(mesh_handle),
+            Mesh3d(mesh_handle.clone()),
             MeshMaterial3d(mat_handle),
             Transform::default(),
         ));
 
-        // Attach SkinnedMesh component for GPU skinning
-        if let Some(ref ibp) = ibp_handle {
+        if let Some(ref ibp) = ent_type.inverse_bind_poses {
             mesh_ec.insert(SkinnedMesh {
                 inverse_bindposes: ibp.clone(),
                 joints: joint_entities.clone(),
@@ -765,15 +756,13 @@ pub fn spawn_oni2_entity_with_rotation(
     Some(parent_entity)
 }
 
-/// Spawn a creature (animated entity) from the layout.
-/// All creatures get a physics capsule + animation library.
-/// Returns the entity so the caller can attach player or AI components.
 pub fn spawn_oni2_creature(
     commands: &mut Commands,
     meshes: &mut ResMut<Assets<Mesh>>,
     materials: &mut ResMut<Assets<StandardMaterial>>,
     images: &mut ResMut<Assets<Image>>,
     skinned_mesh_ibp: &mut ResMut<Assets<SkinnedMeshInverseBindposes>>,
+    entity_lib: &mut ResMut<crate::oni2_loader::registries::EntityLibrary>,
     entity_dir: &str,
     position: Vec3,
     rotation: Quat,
@@ -789,13 +778,13 @@ pub fn spawn_oni2_creature(
     // Spawn above intended position; ground_snap_system will find solid ground
     let spawn_position = position + Vec3::Y * 2.0;
 
-    // Spawn the visual entity
     let entity = spawn_oni2_entity_with_rotation(
         commands,
         meshes,
         materials,
         images,
         skinned_mesh_ibp,
+        entity_lib,
         entity_dir,
         spawn_position,
         rotation,

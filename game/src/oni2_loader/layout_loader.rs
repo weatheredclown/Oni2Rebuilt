@@ -18,6 +18,7 @@ pub fn load_layout(
     materials: &mut ResMut<Assets<StandardMaterial>>,
     images: &mut ResMut<Assets<Image>>,
     skinned_mesh_ibp: &mut ResMut<Assets<SkinnedMeshInverseBindposes>>,
+    entity_lib: &mut ResMut<crate::oni2_loader::registries::EntityLibrary>,
     layout_dir: &str,
     entity_base_dir: &str,
 ) -> Option<LayoutPlayerInfo> {
@@ -92,7 +93,8 @@ pub fn load_layout(
             meshes,
             materials,
             images,
-            skinned_mesh_ibp,
+            skinned_mesh_ibp: &mut *skinned_mesh_ibp,
+            entity_lib: &mut *entity_lib,
             texture_collections: &mut texture_collections,
         };
 
@@ -282,6 +284,7 @@ pub fn spawn_layout_actor(
             assets.materials,
             assets.images,
             assets.skinned_mesh_ibp,
+            assets.entity_lib,
             &entity_dir,
             position,
             rotation,
@@ -317,14 +320,15 @@ pub fn spawn_layout_actor(
         }
     } else {
         // Static entity (BASICENTITY check) or trigger (has broadcast_radius)
-        let is_basic = layout_ctx.basic_types.contains(&actor.entity_type)
+        let mut is_basic = layout_ctx.basic_types.contains(&actor.entity_type)
             || layout_ctx
                 .basic_types
                 .iter()
                 .any(|t| t.eq_ignore_ascii_case(&actor.entity_type));
         let is_trigger = actor.broadcast_radius.is_some();
         if !is_basic && !is_trigger {
-            return None;
+            // User feedback: missing entity types from layout.et should be loaded on demand as basic entities
+            is_basic = true;
         }
 
         let position = pos_override.unwrap_or(actor.position);
@@ -340,6 +344,7 @@ pub fn spawn_layout_actor(
                 assets.materials,
                 assets.images,
                 assets.skinned_mesh_ibp,
+                assets.entity_lib,
                 &entity_dir,
                 position,
                 rotation,
@@ -481,6 +486,14 @@ pub fn spawn_layout_actor(
                     "Attached BroadcastTrigger (radius {}) to {} at position {:?}",
                     radius, actor.entity_type, position
                 );
+            }
+
+            // Attach FXType component if present
+            if let Some(ref fx) = actor.fx_type {
+                assets.commands.entity(entity).insert(crate::oni2_loader::components::ActorFxType {
+                    fx_name: fx.clone(),
+                });
+                info!("Attached FXType '{}' to {}", fx, actor.entity_type);
             }
 
             return Some((entity, actor));
