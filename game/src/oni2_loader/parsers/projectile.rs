@@ -132,6 +132,66 @@ pub struct BulletCasingDef {
     pub initial_velocity: Vec3,
 }
 
+impl ProjectileDef {
+    pub fn lifetime(&self) -> f32 {
+        match self {
+            Self::Basic(d) => d.life_time,
+            Self::Actor(d) => d.life_time,
+            Self::Model(d) => d.life_time,
+            Self::Shard(d) => d.life_time,
+            Self::Rocket(d) => d.inner_def.lifetime(),
+            Self::BulletCasing(_) => 2.0, // Default for casings
+        }
+    }
+
+    pub fn explode_on_timeout(&self) -> bool {
+        match self {
+            Self::Basic(d) => d.explode_on_time_out,
+            Self::Model(d) => d.explode_on_time_out,
+            _ => false,
+        }
+    }
+
+    pub fn gravity_factor(&self) -> f32 {
+        match self {
+            Self::Basic(d) => d.gravity_factor,
+            Self::Actor(d) => d.gravity_factor,
+            Self::Model(d) => d.gravity_factor,
+            Self::Shard(d) => d.gravity_factor,
+            Self::Rocket(_) => 1.0, 
+            Self::BulletCasing(_) => 1.0,
+        }
+    }
+
+    pub fn flight_fx(&self) -> Option<String> {
+        match self {
+            Self::Basic(d) => d.flight_fx.clone(),
+            Self::Model(d) => d.flight_fx.clone(),
+            Self::Rocket(d) => d.burn_fx.clone(),
+            _ => None,
+        }
+    }
+
+    pub fn explode_fx(&self) -> Option<String> {
+        match self {
+            Self::Basic(d) => d.explosion_fx.clone(),
+            Self::Model(d) => d.explosion_fx.clone(),
+            _ => None,
+        }
+    }
+
+    pub fn proj_class(&self) -> &'static str {
+        match self {
+            Self::Basic(_) => "BasicProjectile",
+            Self::Actor(_) => "ActorProjectile",
+            Self::Model(_) => "ModelProjectile",
+            Self::Shard(_) => "Shard",
+            Self::Rocket(_) => "Rocket",
+            Self::BulletCasing(_) => "BulletCasing",
+        }
+    }
+}
+
 // Helper to extract properties cleanly
 pub trait SettingsExt {
     fn get_f32(&self, key: &str, default: f32) -> f32;

@@ -1,5 +1,6 @@
 use bevy::prelude::*;
-use crate::oni2_loader::registries::{ProjLibrary, ProjectileDef, HitType, ExplosionMatrix};
+use crate::oni2_loader::parsers::projectile::{ProjectileDef, HitType, ExplosionMatrix};
+use crate::oni2_loader::registries::ProjLibrary;
 use crate::fx_system::SpawnFx;
 
 #[derive(Event, Debug, Clone)]
@@ -30,8 +31,8 @@ pub struct Lifetime {
     pub explode_on_timeout: bool,
 }
 
-#[derive(Event)]
-pub struct ImpactEvent {
+#[derive(Message)]
+pub struct ImpactMessage {
     pub hit_entity: Option<Entity>,
     pub hit_position: Vec3,
     pub hit_normal: Vec3,
@@ -44,7 +45,7 @@ pub struct ProjectilePlugin;
 
 impl Plugin for ProjectilePlugin {
     fn build(&self, app: &mut App) {
-        app.add_event::<ImpactEvent>()
+        app.add_message::<ImpactMessage>()
            .add_observer(handle_spawn_projectile)
            .add_systems(Update, (
                projectile_kinematics_system,
@@ -73,20 +74,20 @@ fn handle_spawn_projectile(
             },
             LinearVelocity(ev.velocity),
             Lifetime {
-                timer: Timer::from_seconds(def.lifetime.max(0.1), TimerMode::Once),
-                explode_on_timeout: def.explode_on_timeout,
+                timer: Timer::from_seconds(def.lifetime().max(0.1), TimerMode::Once),
+                explode_on_timeout: def.explode_on_timeout(),
             },
         ));
 
         // Add tumbling rotation based on the class tumbling rate if applicable
-        if def.proj_class.to_lowercase() == "modelprojectile" {
+        if def.proj_class().to_lowercase() == "modelprojectile" {
             // Placeholder: tumble rate logic based on game data
             ec.insert(TumblingRotation(Vec3::new(2.0, 1.0, 0.5))); // Generic tumble
         }
 
         let entity = ec.id();
 
-        if let Some(ref fx) = def.flight_fx {
+        if let Some(ref fx) = def.flight_fx() {
             commands.trigger(SpawnFx {
                 name: fx.clone(),
                 at: None,
@@ -106,7 +107,7 @@ fn projectile_kinematics_system(
     let gravity = Vec3::new(0.0, -9.81, 0.0);
 
     for (mut transform, mut velocity, tumble, instance) in &mut query {
-        let grav_force = gravity * instance.def.gravity_factor;
+        let grav_force = gravity * instance.def.gravity_factor();
         velocity.0 += grav_force * dt;
         transform.translation += velocity.0 * dt;
 
@@ -136,7 +137,7 @@ fn projectile_lifetime_system(
     for (entity, transform, instance, mut lifetime) in &mut query {
         if lifetime.timer.tick(time.delta()).just_finished() {
             if lifetime.explode_on_timeout {
-                if let Some(ref explode_fx) = instance.def.explode_fx {
+                if let Some(ref explode_fx) = instance.def.explode_fx() {
                     commands.trigger(SpawnFx {
                         name: explode_fx.clone(),
                         at: Some(transform.translation),
@@ -144,16 +145,16 @@ fn projectile_lifetime_system(
                     });
                 }
             }
-            commands.entity(entity).despawn_recursive();
+            commands.entity(entity).despawn();
         }
     }
 }
 
 fn damage_router_system(
-    mut events: EventReader<ImpactEvent>,
+    mut messages: MessageReader<ImpactMessage>,
     mut health_query: Query<&mut crate::combat::components::Health>,
 ) {
-    for ev in events.read() {
+    for ev in messages.read() {
         if let Some(hit_entity) = ev.hit_entity {
             if let Ok(mut health) = health_query.get_mut(hit_entity) {
                 health.current -= ev.damage;
