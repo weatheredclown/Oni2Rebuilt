@@ -163,6 +163,22 @@ impl ProjectileDef {
         }
     }
 
+    pub fn damage(&self) -> &super::projectile::DamageDef {
+        match self {
+            Self::Basic(d) => &d.damage,
+            Self::Model(d) => &d.damage,
+            // Fallback to static static default for types without direct damage
+            _ => {
+                static DEFAULT_DAMAGE: super::projectile::DamageDef = super::projectile::DamageDef {
+                    hit_points: 0.0,
+                    impulse: 0.0,
+                    hit_type: super::projectile::HitType::Unknown,
+                };
+                &DEFAULT_DAMAGE
+            }
+        }
+    }
+
     pub fn flight_fx(&self) -> Option<String> {
         match self {
             Self::Basic(d) => d.flight_fx.clone(),

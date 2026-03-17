@@ -1,3 +1,4 @@
+use avian3d::prelude::*;
 use bevy::prelude::*;
 use crate::oni2_loader::parsers::projectile::{ProjectileDef, HitType, ExplosionMatrix};
 use crate::oni2_loader::registries::ProjLibrary;
@@ -122,11 +123,47 @@ fn projectile_kinematics_system(
 fn projectile_collision_system(
     mut commands: Commands,
     query: Query<(Entity, &Transform, &LinearVelocity, &ProjectileInstance)>,
-    // TODO: Need physics raycasting, using rapier or simple distance checks for now
+    spatial_query: SpatialQuery,
+    mut impact_writer: MessageWriter<ImpactMessage>,
+    time: Res<Time>,
 ) {
-    // For now, no-op since physics integration is required.
-    // In actual implementation, cast a ray from prev_position to current_position.
-    // If hit checking team: if hit_actor.team == instance.team { continue; }
+    let dt = time.delta_secs();
+
+    for (entity, transform, velocity, instance) in &query {
+        let current_pos = transform.translation;
+        let prev_pos = current_pos - velocity.0 * dt;
+        let direction = velocity.0.normalize_or_zero();
+        let distance = velocity.0.length() * dt;
+
+        if distance < 0.001 {
+            continue;
+        }
+
+        let filter = SpatialQueryFilter::from_excluded_entities([entity, instance.owner]);
+
+        if let Some(hit) = spatial_query.cast_ray(prev_pos, direction, distance, true, &filter) {
+            let hit_pos = prev_pos + direction * hit.distance;
+
+            impact_writer.write(ImpactMessage {
+                hit_entity: Some(hit.entity),
+                hit_position: hit_pos,
+                hit_normal: hit.normal,
+                hit_type: instance.def.damage().hit_type,
+                damage: instance.def.damage().hit_points,
+                impulse: direction * instance.def.damage().impulse,
+            });
+
+            if let Some(ref explode_fx) = instance.def.explode_fx() {
+                commands.trigger(SpawnFx {
+                    name: explode_fx.clone(),
+                    at: Some(hit_pos),
+                    parent: None,
+                });
+            }
+
+            commands.entity(entity).despawn_recursive();
+        }
+    }
 }
 
 fn projectile_lifetime_system(
