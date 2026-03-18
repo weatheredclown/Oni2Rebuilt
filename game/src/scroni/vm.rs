@@ -1332,7 +1332,6 @@ pub fn cleanup_scroni_text(
     let now = time.elapsed_secs_f64();
     for (entity, text_element, text) in &query {
         if now > text_element.expires_at {
-            info!("Despawning text element: {}", text.as_str());
             commands.entity(entity).despawn();
         }
     }
@@ -1367,7 +1366,6 @@ pub fn scroni_sys_event_observer(
             // Coordinate system is top-left based, so (0.5, 0.5) is center.
             let px = scroni_text_state.current_x * 100.0;
             let py = scroni_text_state.current_y * 100.0;
-            info!("Drawing text: {} at ({}, {})", text, px, py);
             
             commands.spawn((
                 Text::new(text),
