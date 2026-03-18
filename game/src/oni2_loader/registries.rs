@@ -25,6 +25,7 @@ pub struct Oni2EntityType {
     pub inverse_bind_poses: Option<Handle<SkinnedMeshInverseBindposes>>,
     pub bounds: Oni2DebugBounds,
     pub bound_quads: Vec<[u32; 4]>,
+    pub bound_tris: Vec<[u32; 3]>,
     pub anim_library: Option<Oni2AnimLibrary>,
     pub debug_skeleton: Option<crate::oni2_loader::Oni2DebugSkeleton>,
 }

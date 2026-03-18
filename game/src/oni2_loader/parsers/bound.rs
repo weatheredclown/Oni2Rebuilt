@@ -5,6 +5,7 @@ pub fn parse_bound(content: &str) -> Oni2Bound {
     let mut centroid = [0.0; 3];
     let mut edges = Vec::new();
     let mut quads = Vec::new();
+    let mut tris = Vec::new();
 
     for line in content.lines() {
         let trimmed = line.trim();
@@ -39,6 +40,14 @@ pub fn parse_bound(content: &str) -> Oni2Bound {
                 let d: u32 = parts[4].parse().unwrap_or(0);
                 quads.push([a, b, c, d]);
             }
+        } else if trimmed.starts_with("tri ") {
+            let parts: Vec<&str> = trimmed.split_whitespace().collect();
+            if parts.len() >= 4 {
+                let a: u32 = parts[1].parse().unwrap_or(0);
+                let b: u32 = parts[2].parse().unwrap_or(0);
+                let c: u32 = parts[3].parse().unwrap_or(0);
+                tris.push([a, b, c]);
+            }
         }
     }
 
@@ -50,5 +59,5 @@ pub fn parse_bound(content: &str) -> Oni2Bound {
     centroid[0] = -centroid[0];
     centroid[2] = -centroid[2];
 
-    Oni2Bound { vertices, centroid, edges, quads }
+    Oni2Bound { vertices, centroid, edges, quads, tris }
 }

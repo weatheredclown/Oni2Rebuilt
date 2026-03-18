@@ -53,6 +53,7 @@ pub struct Oni2Bound {
     pub centroid: [f32; 3],
     pub edges: Vec<[u32; 2]>,
     pub quads: Vec<[u32; 4]>,
+    pub tris: Vec<[u32; 3]>,
 }
 
 // === Parsed .skel file data ===

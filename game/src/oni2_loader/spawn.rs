@@ -69,8 +69,8 @@ pub fn ground_snap_system(
 
         for offset in &probe_offsets {
             let probe_pos = origin + *offset;
-            // Cast from well above down to well below
-            let ray_origin = Vec3::new(probe_pos.x, origin.y + 50.0, probe_pos.z);
+            // Cast from slightly above down to well below
+            let ray_origin = Vec3::new(probe_pos.x, origin.y + 1.0, probe_pos.z);
 
             if let Some(hit) = spatial_query.cast_ray(ray_origin, Dir3::NEG_Y, 100.0, true, &filter)
             {
@@ -475,6 +475,7 @@ pub fn load_oni2_entity_type(
         .unwrap_or_default();
     let bound_edges: Vec<[u32; 2]> = bound.as_ref().map(|b| b.edges.clone()).unwrap_or_default();
     let bound_quads: Vec<[u32; 4]> = bound.as_ref().map(|b| b.quads.clone()).unwrap_or_default();
+    let bound_tris: Vec<[u32; 3]> = bound.as_ref().map(|b| b.tris.clone()).unwrap_or_default();
 
     let debug_bounds = crate::oni2_loader::spawn::Oni2DebugBounds {
         vertices: bound_verts,
@@ -588,6 +589,7 @@ pub fn load_oni2_entity_type(
         inverse_bind_poses: ibp_handle,
         bounds: debug_bounds,
         bound_quads,
+        bound_tris,
         anim_library: library,
         debug_skeleton,
     })
@@ -631,11 +633,14 @@ pub fn spawn_oni2_entity_with_rotation(
     let ent_type = entity_lib.entities.get(&cache_key)?;
 
     // 2. Build Collider from bounds on the fly
-    let collider = if !ent_type.bounds.vertices.is_empty() && !ent_type.bound_quads.is_empty() {
-        let mut tri_indices: Vec<[u32; 3]> = Vec::with_capacity(ent_type.bound_quads.len() * 2);
+    let collider = if !ent_type.bounds.vertices.is_empty() && (!ent_type.bound_quads.is_empty() || !ent_type.bound_tris.is_empty()) {
+        let mut tri_indices: Vec<[u32; 3]> = Vec::with_capacity(ent_type.bound_quads.len() * 2 + ent_type.bound_tris.len());
         for q in &ent_type.bound_quads {
             tri_indices.push([q[0], q[1], q[2]]);
             tri_indices.push([q[0], q[2], q[3]]);
+        }
+        for t in &ent_type.bound_tris {
+            tri_indices.push(*t);
         }
         Collider::try_trimesh(ent_type.bounds.vertices.clone(), tri_indices).unwrap_or_else(|_| {
             Collider::convex_hull(ent_type.bounds.vertices.clone())
