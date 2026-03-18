@@ -161,7 +161,7 @@ fn projectile_collision_system(
                 });
             }
 
-            commands.entity(entity).despawn_recursive();
+            commands.entity(entity).despawn();
         }
     }
 }
