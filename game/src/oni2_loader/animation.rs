@@ -719,8 +719,23 @@ pub fn frame_lerp(state: &mut Oni2AnimState, idx_a: usize, idx_b: usize, t: f32)
     let a = &anim.frames[idx_a];
     let b = &anim.frames[idx_b];
     let len = current_frame.len().min(a.len()).min(b.len());
+    
+    // For single-channel, it's a pure rotation track (Y-rot). 
+    // For multi-channel, 0..=2 are root translations, 3+ are rotations.
+    let rot_start_idx = if len == 1 { 0 } else { 3 };
+    
     for i in 0..len {
-        current_frame[i] = a[i] + (b[i] - a[i]) * t;
+        if i >= rot_start_idx {
+            // Shortest path interpolation for angles
+            let mut diff = (b[i] - a[i]).rem_euclid(std::f32::consts::TAU);
+            if diff > std::f32::consts::PI {
+                diff -= std::f32::consts::TAU;
+            }
+            current_frame[i] = a[i] + diff * t;
+        } else {
+            // Linear interpolation for translations
+            current_frame[i] = a[i] + (b[i] - a[i]) * t;
+        }
     }
 }
 
