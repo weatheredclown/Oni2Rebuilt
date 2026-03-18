@@ -57,7 +57,7 @@ pub struct Oni2Bound {
 
 // === Parsed .skel file data ===
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct Oni2Skeleton {
     pub positions: Vec<[f32; 3]>,
     pub parent_indices: Vec<Option<usize>>,

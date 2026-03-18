@@ -707,43 +707,31 @@ pub fn spawn_oni2_entity_with_rotation(
         ent_type.anim_library.as_ref().and_then(|lib| lib.anims.values().next().cloned())
     });
 
-    if let Some(ref skel) = ent_type.skeleton {
-        if let Some(anim) = default_anim {
-            let looping = anim.is_loop;
-            commands.entity(parent_entity).insert(crate::oni2_loader::animation::Oni2AnimState {
-                anim,
-                skeleton: skel.clone(),
-                current_time: 0.0,
-                fps: 20.0,
-                paused: false,
-                looping,
-                speed_multiplier: 1.0,
-                pending_step: 0,
-                last_rendered_time: -1.0,
-                joint_entities: joint_entities.clone(),
-                base_rotation: rotation,
-                current_frame: Vec::new(),
-            });
-        } else if !joint_entities.is_empty() {
-            commands.entity(parent_entity).insert(crate::oni2_loader::animation::Oni2AnimState {
-                anim: crate::oni2_loader::Oni2Animation::default(),
-                skeleton: skel.clone(),
-                current_time: 0.0,
-                fps: 20.0,
-                paused: true,
-                looping: false,
-                speed_multiplier: 1.0,
-                pending_step: 0,
-                last_rendered_time: -1.0,
-                joint_entities: joint_entities.clone(),
-                base_rotation: rotation,
-                current_frame: Vec::new(),
-            });
-        }
+    // Insert AnimState and Library even if there is no skeleton (for root-motion only animations)
+    let has_anim = default_anim.is_some() || !joint_entities.is_empty();
+    if has_anim {
+        let skel = ent_type.skeleton.clone().unwrap_or_default();
+        let current_anim = default_anim.unwrap_or_default();
+        let looping = current_anim.is_loop;
+        
+        commands.entity(parent_entity).insert(crate::oni2_loader::animation::Oni2AnimState {
+            anim: current_anim,
+            skeleton: skel,
+            current_time: 0.0,
+            fps: 20.0,
+            paused: false,
+            looping,
+            speed_multiplier: 1.0,
+            pending_step: 0,
+            last_rendered_time: -1.0,
+            joint_entities: joint_entities.clone(),
+            base_rotation: rotation,
+            current_frame: Vec::new(),
+        });
+    }
 
-        if let Some(ref lib) = ent_type.anim_library {
-            commands.entity(parent_entity).insert(lib.clone());
-        }
+    if let Some(ref lib) = ent_type.anim_library {
+        commands.entity(parent_entity).insert(lib.clone());
     }
 
     // 4. Mesh sub_meshes

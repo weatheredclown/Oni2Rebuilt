@@ -1409,6 +1409,7 @@ pub fn scroni_sys_event_observer(
     mut scroni_text_state: ResMut<ScroniTextState>,
     time: Res<Time>,
     mut entity_lib: ResMut<crate::oni2_loader::registries::EntityLibrary>,
+    mut camera_query: Query<&mut crate::camera::components::CameraRig>,
 ) {
     let ev = (*trigger).clone();
     match ev {
@@ -1449,6 +1450,10 @@ pub fn scroni_sys_event_observer(
                 }
             } else {
                 warn!("CameraSetPackage called but no ActiveCameraPackage resource found.");
+            }
+            // Transition camera script to SmartFollow mode
+            for mut rig in &mut camera_query {
+                rig.mode = crate::camera::components::CameraMode::SmartFollow;
             }
         }
         ScrOniSysEvent::TextureMovie { script_entity, target_name, action, arg } => {

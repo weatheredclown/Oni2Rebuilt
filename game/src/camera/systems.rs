@@ -42,7 +42,11 @@ pub fn camera_follow_system(
         Without<crate::player::components::Player>,
     >,
     target_query: Query<
-        (&Transform, &crate::combat::components::Fighter),
+        (
+            &Transform,
+            &crate::combat::components::Fighter,
+            Option<&crate::player::components::InputState>,
+        ),
         With<crate::player::components::Player>,
     >,
     time: Res<Time>,
@@ -116,7 +120,7 @@ pub fn camera_follow_system(
             continue;
         }
 
-        let Ok((target_tf, fighter)) = target_query.get(rig.target) else {
+        let Ok((target_tf, fighter, input_opt)) = target_query.get(rig.target) else {
             continue;
         };
 
@@ -206,47 +210,50 @@ pub fn camera_follow_system(
                     rig.current_azimuth += manual_yaw;
                     rig.target_azimuth = rig.current_azimuth;
                 } else {
-                    // Zone-based auto-follow camera (from rb's camnewFollow)
-                    let facing = fighter.facing;
-                    let new_target_azimuth = facing.x.atan2(facing.z);
+                    let is_moving = input_opt.map_or(false, |i| i.movement.length_squared() > 0.01);
+                    if is_moving {
+                        // Zone-based auto-follow camera (from rb's camnewFollow)
+                        let facing = fighter.facing;
+                        let new_target_azimuth = facing.x.atan2(facing.z);
 
-                    // Compute heading difference, normalized to [-PI, PI]
-                    let mut heading_diff = new_target_azimuth - rig.current_azimuth;
-                    while heading_diff > std::f32::consts::PI {
-                        heading_diff -= 2.0 * std::f32::consts::PI;
-                    }
-                    while heading_diff < -std::f32::consts::PI {
-                        heading_diff += 2.0 * std::f32::consts::PI;
-                    }
+                        // Compute heading difference, normalized to [-PI, PI]
+                        let mut heading_diff = new_target_azimuth - rig.current_azimuth;
+                        while heading_diff > std::f32::consts::PI {
+                            heading_diff -= 2.0 * std::f32::consts::PI;
+                        }
+                        while heading_diff < -std::f32::consts::PI {
+                            heading_diff += 2.0 * std::f32::consts::PI;
+                        }
 
-                    let abs_diff = heading_diff.abs();
+                        let abs_diff = heading_diff.abs();
 
-                    // Determine zone lerp rate
-                    let lerp_rate = if abs_diff < rig.zone_thresholds[0] {
-                        rig.zone_lerp_rates[0]
-                    } else if abs_diff < rig.zone_thresholds[1] {
-                        rig.zone_lerp_rates[1]
-                    } else if abs_diff < rig.zone_thresholds[2] {
-                        rig.zone_lerp_rates[2]
-                    } else {
-                        rig.zone_lerp_rates[3]
-                    };
+                        // Determine zone lerp rate
+                        let lerp_rate = if abs_diff < rig.zone_thresholds[0] {
+                            rig.zone_lerp_rates[0]
+                        } else if abs_diff < rig.zone_thresholds[1] {
+                            rig.zone_lerp_rates[1]
+                        } else if abs_diff < rig.zone_thresholds[2] {
+                            rig.zone_lerp_rates[2]
+                        } else {
+                            rig.zone_lerp_rates[3]
+                        };
 
-                    // Dead zone: compute horizontal distance from current camera XZ to target XZ
-                    let cam_xz = Vec3::new(cam_tf.translation.x, 0.0, cam_tf.translation.z);
-                    let target_xz = Vec3::new(target_pos.x, 0.0, target_pos.z);
-                    let focus_dist = cam_xz.distance(target_xz);
+                        // Dead zone: compute horizontal distance from current camera XZ to target XZ
+                        let cam_xz = Vec3::new(cam_tf.translation.x, 0.0, cam_tf.translation.z);
+                        let target_xz = Vec3::new(target_pos.x, 0.0, target_pos.z);
+                        let focus_dist = cam_xz.distance(target_xz);
 
-                    // Only update azimuth if outside dead zone
-                    if focus_dist > inner_dz {
-                        rig.target_azimuth = new_target_azimuth;
-                        let t = (lerp_rate * dt).clamp(0.0, 1.0);
-                        rig.current_azimuth += heading_diff * t;
+                        // Only update azimuth if outside dead zone
+                        if focus_dist > inner_dz {
+                            rig.target_azimuth = new_target_azimuth;
+                            let t = (lerp_rate * dt).clamp(0.0, 1.0);
+                            rig.current_azimuth += heading_diff * t;
 
-                        // Spin threshold: snap on sharp turn
-                        if abs_diff > spin_thresh && spin_thresh > 0.0 {
-                            rig.current_azimuth +=
-                                heading_diff * (lerp_rate * 2.0 * dt).clamp(0.0, 1.0);
+                            // Spin threshold: snap on sharp turn
+                            if abs_diff > spin_thresh && spin_thresh > 0.0 {
+                                rig.current_azimuth +=
+                                    heading_diff * (lerp_rate * 2.0 * dt).clamp(0.0, 1.0);
+                            }
                         }
                     }
                 }
