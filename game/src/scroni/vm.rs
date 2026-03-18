@@ -180,6 +180,7 @@ pub struct ScriptExec {
 pub struct ScroniContext<'a, 'w_e, 's_e, 'w_t, 's_t> {
     pub all_entities: &'a Query<'w_e, 's_e, (Entity, &'static Transform, Option<&'static Name>)>,
     pub triggers: &'a Query<'w_t, 's_t, &'static BroadcastTrigger>,
+    pub player: Option<Entity>,
 }
 
 #[derive(Component, Default)]
@@ -933,7 +934,13 @@ impl ScriptExec {
                 self.variables.get(name).cloned().unwrap_or(Value::None)
             }
             Expr::Me => Value::Actor(self.owner),
-            Expr::Player => Value::None, // resolved externally
+            Expr::Player => {
+                if let Some(p) = ctx.player {
+                    Value::Actor(p)
+                } else {
+                    Value::None
+                }
+            }
             Expr::Paren(inner) => self.eval_expr(inner, now, ctx),
             Expr::Not(inner) => {
                 let v = self.eval_expr(inner, now, ctx);
@@ -977,6 +984,48 @@ impl ScriptExec {
                     "random" => Value::Int(rand::random::<i32>().abs() % 100),
                     "randomrange" => Value::Int(0), // stub
                     "randomrangefloat" => Value::Float(0.0), // stub
+                    "location" => {
+                        let target = args.get(0).map(|e| self.eval_expr(e, now, ctx));
+                        if let Some(Value::Actor(act)) = target {
+                            if let Ok((_, tf, _)) = ctx.all_entities.get(act) {
+                                return Value::Vector(tf.translation);
+                            }
+                        }
+                        Value::None
+                    }
+                    "distance" => {
+                        let arg1 = args.get(0).map(|e| self.eval_expr(e, now, ctx));
+                        let arg2 = args.get(1).map(|e| self.eval_expr(e, now, ctx));
+                        
+                        let resolve_pos = |val: Value| -> Option<Vec3> {
+                            match val {
+                                Value::Vector(v) => Some(v),
+                                Value::Actor(act) => {
+                                    if let Ok((_, tf, _)) = ctx.all_entities.get(act) {
+                                        Some(tf.translation)
+                                    } else {
+                                        None
+                                    }
+                                }
+                                _ => None
+                            }
+                        };
+                        
+                        let mut p1 = arg1.and_then(resolve_pos);
+                        let mut p2 = arg2.and_then(resolve_pos);
+                        
+                        if p1.is_some() && p2.is_none() {
+                            if let Ok((_, my_tf, _)) = ctx.all_entities.get(self.owner) {
+                                p2 = p1;
+                                p1 = Some(my_tf.translation);
+                            }
+                        }
+                        
+                        if let (Some(a), Some(b)) = (p1, p2) {
+                            return Value::Float(a.distance(b));
+                        }
+                        Value::Float(99999.0)
+                    }
                     "triggerentered" => {
                         let trig_ent = args.get(0).map(|e| self.eval_expr(e, now, ctx));
                         let targ_ent = args.get(1).map(|e| self.eval_expr(e, now, ctx));
@@ -1148,14 +1197,17 @@ pub fn scroni_tick_system(
     all_entities: Query<(Entity, &'static Transform, Option<&'static Name>)>,
     triggers: Query<&'static BroadcastTrigger>,
     time: Res<Time>,
+    player_query: Query<Entity, With<crate::player::components::Player>>,
 ) {
     let now = time.elapsed_secs_f64();
     let mut all_messages = Vec::new();
+    let player_ent = player_query.iter().next();
 
     for (entity, mut script, transform) in &mut query {
         let mut ctx = ScroniContext {
             all_entities: &all_entities,
             triggers: &triggers,
+            player: player_ent,
         };
         script.exec.tick(now, &mut ctx);
 
@@ -1274,12 +1326,13 @@ pub struct ScroniTextElement {
 
 pub fn cleanup_scroni_text(
     mut commands: Commands,
-    query: Query<(Entity, &ScroniTextElement)>,
+    query: Query<(Entity, &ScroniTextElement, &Text)>,
     time: Res<Time>,
 ) {
     let now = time.elapsed_secs_f64();
-    for (entity, text_element) in &query {
+    for (entity, text_element, text) in &query {
         if now > text_element.expires_at {
+            info!("Despawning text element: {}", text.as_str());
             commands.entity(entity).despawn();
         }
     }
@@ -1314,6 +1367,7 @@ pub fn scroni_sys_event_observer(
             // Coordinate system is top-left based, so (0.5, 0.5) is center.
             let px = scroni_text_state.current_x * 100.0;
             let py = scroni_text_state.current_y * 100.0;
+            info!("Drawing text: {} at ({}, {})", text, px, py);
             
             commands.spawn((
                 Text::new(text),

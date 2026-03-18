@@ -111,7 +111,11 @@ fn handle_actor_fx_attachments(
         let lower_name = fx_type.fx_name.to_lowercase();
         if let Some(_fx_def) = fx_lib.effects.get(&lower_name) {
             info!("Attaching FX {} to entity {:?}", fx_type.fx_name, entity);
-            // Spawn particle system as a child of `entity`
+            commands.trigger(SpawnFx {
+                name: fx_type.fx_name.clone(),
+                at: None,
+                parent: Some(entity),
+            });
         } else {
             warn!("ActorFxType: Effect '{}' not found in FxLibrary", fx_type.fx_name);
         }
