@@ -1551,7 +1551,7 @@ pub fn cleanup_scroni_text(
 pub fn scroni_sys_event_observer(
     trigger: On<ScrOniSysEvent>,
     mut commands: Commands,
-    mut transform_query: Query<&mut Transform>,
+    mut transform_query: Query<(&mut Transform, Option<&mut avian3d::prelude::LinearVelocity>)>,
     children_query: Query<&Children>,
     mut materials_query: Query<&mut MeshMaterial3d<StandardMaterial>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
@@ -1697,14 +1697,23 @@ pub fn scroni_sys_event_observer(
             }
         }
         ScrOniSysEvent::Teleport { target, to, face } => {
-            if let Ok(mut transform) = transform_query.get_mut(target) {
+            if let Ok((mut transform, mut opt_vel)) = transform_query.get_mut(target) {
                 if let Some(pos) = to {
-                    transform.translation = pos;
+                    let bevy_pos = Vec3::new(-pos.x, pos.y, -pos.z);
+                    transform.translation = bevy_pos;
+                    commands.entity(target).insert(crate::oni2_loader::spawn::NeedsGroundSnap {
+                        origin: bevy_pos,
+                        wait_frames: 4,
+                    });
                 }
                 if let Some(angles_y) = face {
                     let rad = angles_y.to_radians();
                     let current_rot = transform.rotation.to_euler(EulerRot::YXZ);
                     transform.rotation = Quat::from_euler(EulerRot::YXZ, rad, current_rot.1, current_rot.2);
+                }
+                
+                if let Some(vel) = opt_vel.as_deref_mut() {
+                    vel.0 = Vec3::ZERO;
                 }
             }
         }
