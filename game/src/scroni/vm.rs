@@ -18,6 +18,19 @@ pub enum Value {
 }
 
 impl Value {
+    pub fn default_for_type(var_type: &VarType) -> Self {
+        match var_type {
+            VarType::Integer => Value::Int(0),
+            VarType::Float => Value::Float(0.0),
+            VarType::Vector => Value::Vector(Vec3::ZERO),
+            VarType::String => Value::String(String::new()),
+            VarType::Timer => Value::Float(0.0),
+            VarType::Label => Value::String(String::new()),
+            VarType::ActorList => Value::ActorList(Vec::new(), 0),
+            VarType::Child => Value::Int(0),
+        }
+    }
+
     pub fn as_float(&self) -> f32 {
         match self {
             Value::Int(i) => *i as f32,
@@ -151,22 +164,57 @@ pub struct CallFrame {
     pub loop_stack: Vec<LoopState>,
 }
 
-/// Execution context for a single script. Holds variables and program counter state.
-pub struct ScriptExec {
+#[derive(Debug, Clone)]
+pub struct ScrOniThread {
+    pub thread_id: u32,
+    pub parent_thread_id: Option<u32>,
     pub script: ScriptDef,
     pub variables: HashMap<String, Value>,
     pub state: ExecState,
-    /// Program counter into the sequence block (index of next statement to execute).
     pub seq_pc: usize,
-    /// Stack of loop state for nested control flow.
     pub loop_stack: Vec<LoopState>,
-    /// Call stack for Stack / Return behavior.
     pub call_stack: Vec<CallFrame>,
-    /// Other scripts in the same file that can be Switched / Stacked to.
-    pub available_scripts: HashMap<String, ScriptDef>,
-    /// Current blocking action waiting to complete.
     pub blocking: Option<BlockingAction>,
-    /// Incoming message queue.
+    pub start_time: f64,
+}
+
+impl ScrOniThread {
+    pub fn new(thread_id: u32, parent_thread_id: Option<u32>, script: ScriptDef, start_time: f64) -> Self {
+        let mut variables = HashMap::new();
+        for var in &script.variables {
+            if var.is_parent { continue; } // Do not allocate locally if inherited
+            variables.insert(var.name.clone(), Value::default_for_type(&var.var_type));
+        }
+
+        Self {
+            thread_id,
+            parent_thread_id,
+            script,
+            variables,
+            state: ExecState::Running,
+            seq_pc: 0,
+            loop_stack: Vec::new(),
+            call_stack: Vec::new(),
+            blocking: None,
+            start_time,
+        }
+    }
+
+    pub fn clear_blocking(&mut self) {
+        self.blocking = None;
+        if self.state == ExecState::Blocked {
+            self.state = ExecState::Running;
+        }
+    }
+}
+
+/// Execution context for a script block. Holds the main thread and all concurrent child threads.
+pub struct ScriptExec {
+    pub main_thread: ScrOniThread,
+    pub child_threads: Vec<ScrOniThread>,
+    pub next_thread_id: u32,
+    
+    pub available_scripts: HashMap<String, ScriptDef>,
     pub message_queue: Vec<ScriptMessage>,
     /// Outgoing message queue.
     pub outgoing_messages: Vec<ScriptMessage>,
@@ -174,8 +222,6 @@ pub struct ScriptExec {
     pub sys_requests: Vec<SysRequest>,
     /// The entity this script is attached to.
     pub owner: Entity,
-    /// Game time when script started (for timed operations).
-    pub start_time: f64,
 }
 
 #[derive(Debug, Clone)]
@@ -243,99 +289,151 @@ pub enum LoopState {
 
 impl ScriptExec {
     pub fn new(script: ScriptDef, owner: Entity, start_time: f64) -> Self {
-        let mut variables = HashMap::new();
-        for var in &script.variables {
-            let val = match var.var_type {
-                VarType::Integer => Value::Int(0),
-                VarType::Float => Value::Float(0.0),
-                VarType::Vector => Value::Vector(Vec3::ZERO),
-                VarType::String => Value::String(String::new()),
-                VarType::Timer => Value::Float(0.0),
-                VarType::Label => Value::String(String::new()),
-                VarType::ActorList => Value::ActorList(Vec::new(), 0),
-                VarType::Child => Value::Int(0),
-            };
-            variables.insert(var.name.clone(), val);
-        }
-
         Self {
-            script,
-            variables,
-            state: ExecState::Running,
-            seq_pc: 0,
-            loop_stack: Vec::new(),
-            call_stack: Vec::new(),
+            main_thread: ScrOniThread::new(0, None, script, start_time),
+            child_threads: Vec::new(),
+            next_thread_id: 1,
             available_scripts: HashMap::new(),
-            blocking: None,
             message_queue: Vec::new(),
             outgoing_messages: Vec::new(),
             sys_requests: Vec::new(),
             owner,
-            start_time,
         }
+    }
+
+    pub fn all_threads_mut(&mut self) -> impl Iterator<Item = &mut ScrOniThread> {
+        std::iter::once(&mut self.main_thread).chain(self.child_threads.iter_mut())
+    }
+
+    pub fn get_thread(&self, tid: u32) -> &ScrOniThread {
+        if tid == 0 {
+            &self.main_thread
+        } else {
+            self.child_threads.iter().find(|t| t.thread_id == tid).unwrap()
+        }
+    }
+
+    pub fn get_thread_mut(&mut self, tid: u32) -> &mut ScrOniThread {
+        if tid == 0 {
+            &mut self.main_thread
+        } else {
+            self.child_threads.iter_mut().find(|t| t.thread_id == tid).unwrap()
+        }
+    }
+
+    pub fn get_var(&self, tid: u32, name: &str) -> Value {
+        let thread = self.get_thread(tid);
+        if let Some(v) = thread.variables.get(name) {
+            return v.clone();
+        }
+        if let Some(pid) = thread.parent_thread_id {
+            return self.get_var(pid, name);
+        }
+        Value::None
+    }
+
+    pub fn set_var(&mut self, tid: u32, name: String, val: Value) {
+        if self.get_thread(tid).variables.contains_key(&name) {
+            self.get_thread_mut(tid).variables.insert(name, val);
+            return;
+        }
+        
+        let mut current = self.get_thread(tid).parent_thread_id;
+        while let Some(pid) = current {
+            if self.get_thread(pid).variables.contains_key(&name) {
+                self.get_thread_mut(pid).variables.insert(name, val);
+                return;
+            }
+            current = self.get_thread(pid).parent_thread_id;
+        }
+
+        self.get_thread_mut(tid).variables.insert(name, val);
     }
 
     /// Execute one frame's worth of the script. Returns the execution state.
     /// The whenever block runs first, then the sequence block resumes.
     pub fn tick(&mut self, now: f64, ctx: &mut ScroniContext) -> ExecState {
-        if self.state == ExecState::Done {
-            return ExecState::Done;
-        }
+        // Execute main thread
+        self.tick_thread(0, now, ctx);
 
-        // Check if blocking action completed
-        if let Some(ref action) = self.blocking {
-            match action {
-                BlockingAction::Idle { end_time } => {
-                    if now >= *end_time {
-                        self.blocking = None;
-                    } else {
-                        return ExecState::Blocked;
-                    }
-                }
-                // Other blocking actions are resolved externally by the game systems
-                _ => return ExecState::Blocked,
+        let mut i = 0;
+        while i < self.child_threads.len() {
+            let tid = self.child_threads[i].thread_id;
+            self.tick_thread(tid, now, ctx);
+
+            if self.child_threads[i].state == ExecState::Done {
+                self.child_threads.remove(i);
+            } else {
+                i += 1;
             }
         }
 
-        self.state = ExecState::Running;
+        self.main_thread.state
+    }
+
+    fn tick_thread(&mut self, tid: u32, now: f64, ctx: &mut ScroniContext) {
+        let state = self.get_thread(tid).state;
+        if state == ExecState::Done {
+            return;
+        }
+
+        // Check if blocking action completed
+        if let Some(ref action) = self.get_thread(tid).blocking.clone() {
+            match action {
+                BlockingAction::Idle { end_time } => {
+                    if now >= *end_time {
+                        self.get_thread_mut(tid).blocking = None;
+                    } else {
+                        self.get_thread_mut(tid).state = ExecState::Blocked;
+                        return;
+                    }
+                }
+                // Other blocking actions are resolved externally by the game systems
+                _ => {
+                    self.get_thread_mut(tid).state = ExecState::Blocked;
+                    return;
+                }
+            }
+        }
+
+        self.get_thread_mut(tid).state = ExecState::Running;
 
         // Run whenever block (non-blocking, runs every frame)
-        if let Some(ref whenever) = self.script.whenever.clone() {
-            for stmt in whenever {
-                self.exec_stmt(stmt, now, ctx);
-                if self.state == ExecState::Yielded {
-                    self.state = ExecState::Running; // reset for sequence
+        let whenever = self.get_thread(tid).script.whenever.clone();
+        if let Some(ref whenever_stmts) = whenever {
+            for stmt in whenever_stmts {
+                self.exec_stmt(tid, stmt, now, ctx);
+                if self.get_thread(tid).state == ExecState::Yielded {
+                    self.get_thread_mut(tid).state = ExecState::Running; // reset for sequence
                     break;
                 }
             }
         }
 
         // Run sequence block from current PC
-        self.run_sequence(now, ctx);
-
-        self.state
+        self.run_sequence(tid, now, ctx);
     }
 
-    fn run_sequence(&mut self, now: f64, ctx: &mut ScroniContext) {
+    fn run_sequence(&mut self, tid: u32, now: f64, ctx: &mut ScroniContext) {
         loop {
             // If we're inside a loop, continue that loop
-            while !self.loop_stack.is_empty() {
-                if self.state != ExecState::Running {
+            while !self.get_thread(tid).loop_stack.is_empty() {
+                if self.get_thread(tid).state != ExecState::Running {
                     return;
                 }
                 
-                let top_idx = self.loop_stack.len() - 1;
-                let mut ls = self.loop_stack.remove(top_idx);
-                let pre_len = self.loop_stack.len();
+                let top_idx = self.get_thread(tid).loop_stack.len() - 1;
+                let mut ls = self.get_thread_mut(tid).loop_stack.remove(top_idx);
+                let pre_len = self.get_thread(tid).loop_stack.len();
                 
-                let (active, push_back) = self.step_loop(&mut ls, now, ctx);
+                let (active, push_back) = self.step_loop(tid, &mut ls, now, ctx);
                 
                 if push_back {
-                    self.loop_stack.insert(pre_len, ls);
+                    self.get_thread_mut(tid).loop_stack.insert(pre_len, ls);
                 }
                 
-                if self.state == ExecState::PushLoop {
-                    self.state = ExecState::Running;
+                if self.get_thread(tid).state == ExecState::PushLoop {
+                    self.get_thread_mut(tid).state = ExecState::Running;
                     continue; // Re-evaluate loop stack, top is now the new inner loop!
                 }
                 
@@ -344,32 +442,36 @@ impl ScriptExec {
                 }
             }
 
-            if self.state != ExecState::Running { return; }
+            if self.get_thread(tid).state != ExecState::Running { return; }
 
             let mut broke_for_loop = false;
             
             // Continue sequence from PC
-            while self.state == ExecState::Running {
-                if self.seq_pc < self.script.sequence.len() {
-                    let stmt = self.script.sequence[self.seq_pc].clone();
-                    self.seq_pc += 1;
-                    self.exec_stmt(&stmt, now, ctx);
+            while self.get_thread(tid).state == ExecState::Running {
+                let seq_pc = self.get_thread(tid).seq_pc;
+                let len = self.get_thread(tid).script.sequence.len();
+                if seq_pc < len {
+                    let stmt = self.get_thread(tid).script.sequence[seq_pc].clone();
+                    self.get_thread_mut(tid).seq_pc += 1;
+                    self.exec_stmt(tid, &stmt, now, ctx);
                     
-                    if self.state == ExecState::PushLoop {
-                        self.state = ExecState::Running;
+                    if self.get_thread(tid).state == ExecState::PushLoop {
+                        self.get_thread_mut(tid).state = ExecState::Running;
                         broke_for_loop = true;
                         break;
                     }
                 } else {
                     // Fell off end of sequence
-                    if self.loop_stack.is_empty() {
-                        if let Some(frame) = self.call_stack.pop() {
-                            self.script = frame.script;
-                            self.variables = frame.variables;
-                            self.seq_pc = frame.seq_pc;
-                            self.loop_stack = frame.loop_stack;
+                    if self.get_thread(tid).loop_stack.is_empty() {
+                        let frame = self.get_thread_mut(tid).call_stack.pop();
+                        if let Some(frame) = frame {
+                            let t = self.get_thread_mut(tid);
+                            t.script = frame.script;
+                            t.variables = frame.variables;
+                            t.seq_pc = frame.seq_pc;
+                            t.loop_stack = frame.loop_stack;
                         } else {
-                            self.state = ExecState::Done;
+                            self.get_thread_mut(tid).state = ExecState::Done;
                             return;
                         }
                     } else {
@@ -385,43 +487,43 @@ impl ScriptExec {
     }
 
     /// Step a loop. Returns (still_active, should_push_back).
-    fn step_loop(&mut self, ls: &mut LoopState, now: f64, ctx: &mut ScroniContext) -> (bool, bool) {
+    fn step_loop(&mut self, tid: u32, ls: &mut LoopState, now: f64, ctx: &mut ScroniContext) -> (bool, bool) {
         match ls {
             LoopState::Forever { body, pc } => {
-                while *pc < body.len() && self.state == ExecState::Running {
+                while *pc < body.len() && self.get_thread(tid).state == ExecState::Running {
                     let stmt = body[*pc].clone();
                     *pc += 1;
-                    self.exec_stmt(&stmt, now, ctx);
+                    self.exec_stmt(tid, &stmt, now, ctx);
                 }
-                if self.state == ExecState::PushLoop { return (true, true); }
-                if self.state == ExecState::Running {
+                if self.get_thread(tid).state == ExecState::PushLoop { return (true, true); }
+                if self.get_thread(tid).state == ExecState::Running {
                     *pc = 0; // restart loop
                     return (true, true);
                 }
-                if self.state == ExecState::Yielded {
-                    self.state = ExecState::Running;
+                if self.get_thread(tid).state == ExecState::Yielded {
+                    self.get_thread_mut(tid).state = ExecState::Running;
                     return (true, true);
                 }
                 (true, true) // blocked — keep loop
             }
             LoopState::While { condition, body, pc } => {
                 let cond = condition.clone();
-                let cond_val = self.eval_expr(&cond, now, ctx);
+                let cond_val = self.eval_expr(tid, &cond, now, ctx);
                 if !cond_val.as_bool() {
                     return (false, false); // loop done
                 }
-                while *pc < body.len() && self.state == ExecState::Running {
+                while *pc < body.len() && self.get_thread(tid).state == ExecState::Running {
                     let stmt = body[*pc].clone();
                     *pc += 1;
-                    self.exec_stmt(&stmt, now, ctx);
+                    self.exec_stmt(tid, &stmt, now, ctx);
                 }
-                if self.state == ExecState::PushLoop { return (true, true); }
-                if self.state == ExecState::Running {
+                if self.get_thread(tid).state == ExecState::PushLoop { return (true, true); }
+                if self.get_thread(tid).state == ExecState::Running {
                     *pc = 0;
                     return (true, true);
                 }
-                if self.state == ExecState::Yielded {
-                    self.state = ExecState::Running;
+                if self.get_thread(tid).state == ExecState::Yielded {
+                    self.get_thread_mut(tid).state = ExecState::Running;
                     return (true, true);
                 }
                 (true, true)
@@ -430,13 +532,13 @@ impl ScriptExec {
                 if *remaining <= 0 {
                     return (false, false);
                 }
-                while *pc < body.len() && self.state == ExecState::Running {
+                while *pc < body.len() && self.get_thread(tid).state == ExecState::Running {
                     let stmt = body[*pc].clone();
                     *pc += 1;
-                    self.exec_stmt(&stmt, now, ctx);
+                    self.exec_stmt(tid, &stmt, now, ctx);
                 }
-                if self.state == ExecState::PushLoop { return (true, true); }
-                if self.state == ExecState::Running {
+                if self.get_thread(tid).state == ExecState::PushLoop { return (true, true); }
+                if self.get_thread(tid).state == ExecState::Running {
                     *remaining -= 1;
                     *pc = 0;
                     let still_active = *remaining > 0;
@@ -448,29 +550,29 @@ impl ScriptExec {
                 if now >= *end_time {
                     return (false, false);
                 }
-                while *pc < body.len() && self.state == ExecState::Running {
+                while *pc < body.len() && self.get_thread(tid).state == ExecState::Running {
                     let stmt = body[*pc].clone();
                     *pc += 1;
-                    self.exec_stmt(&stmt, now, ctx);
+                    self.exec_stmt(tid, &stmt, now, ctx);
                 }
-                if self.state == ExecState::PushLoop { return (true, true); }
-                if self.state == ExecState::Running {
+                if self.get_thread(tid).state == ExecState::PushLoop { return (true, true); }
+                if self.get_thread(tid).state == ExecState::Running {
                     *pc = 0;
                     return (true, true);
                 }
-                if self.state == ExecState::Yielded {
-                    self.state = ExecState::Running;
+                if self.get_thread(tid).state == ExecState::Yielded {
+                    self.get_thread_mut(tid).state = ExecState::Running;
                     return (true, true);
                 }
                 (true, true)
             }
             LoopState::Block { stmts, pc } => {
-                while *pc < stmts.len() && self.state == ExecState::Running {
+                while *pc < stmts.len() && self.get_thread(tid).state == ExecState::Running {
                     let stmt = stmts[*pc].clone();
                     *pc += 1;
-                    self.exec_stmt(&stmt, now, ctx);
+                    self.exec_stmt(tid, &stmt, now, ctx);
                 }
-                if self.state == ExecState::PushLoop { return (true, true); }
+                if self.get_thread(tid).state == ExecState::PushLoop { return (true, true); }
                 if *pc >= stmts.len() {
                     return (false, false); // block done
                 }
@@ -479,102 +581,99 @@ impl ScriptExec {
         }
     }
 
-    fn exec_stmt(&mut self, stmt: &Stmt, now: f64, ctx: &mut ScroniContext) {
-        if self.state != ExecState::Running {
+    fn exec_stmt(&mut self, tid: u32, stmt: &Stmt, now: f64, ctx: &mut ScroniContext) {
+        if self.get_thread(tid).state != ExecState::Running {
             return;
         }
 
         match stmt {
             Stmt::Set { var, value } => {
-                let val = self.eval_expr(value, now, ctx);
-                self.variables.insert(var.clone(), val);
+                let val = self.eval_expr(tid, value, now, ctx);
+                self.set_var(tid, var.clone(), val);
             }
             Stmt::AddToList { expr, list } => {
-                let val = self.eval_expr(expr, now, ctx);
-                let entry = self.variables.entry(list.clone()).or_insert_with(|| Value::ActorList(Vec::new(), 0));
+                let val = self.eval_expr(tid, expr, now, ctx);
+                let mut current_list = self.get_var(tid, list);
                 
-                // Ensure it's treated as an ActorList even if it was mistakenly initialized as Int(0)
-                if let Value::Int(0) = entry {
-                    *entry = Value::ActorList(Vec::new(), 0);
+                if matches!(current_list, Value::None | Value::Int(0)) {
+                    current_list = Value::ActorList(Vec::new(), 0);
                 }
 
-                if let Value::ActorList(vec, _) = entry {
+                if let Value::ActorList(mut vec, idx) = current_list {
                     if let Value::Actor(ent) = val {
                         vec.push(ent);
                     } else if let Value::Int(guid) = val {
-                        // Sometimes guids are pushed to lists directly. For now, represent guid as a dummy entity
-                        // or just ignore until we map guids to entities correctly.
-                        // Assuming val is somehow resolved to entity or we store raw IDs.
-                        // For Bevy Ents:
-                        // Bevy entities are IDs, you can construct them with from_bits or from_raw depending on version.
                         vec.push(Entity::from_bits(guid as u64));
                     }
+                    self.set_var(tid, list.clone(), Value::ActorList(vec, idx));
                 }
             }
             Stmt::If { condition, then_branch, else_branch } => {
-                let cond = self.eval_expr(condition, now, ctx);
+                let cond = self.eval_expr(tid, condition, now, ctx);
                 if cond.as_bool() {
-                    self.exec_stmt(then_branch, now, ctx);
+                    self.exec_stmt(tid, then_branch, now, ctx);
                 } else if let Some(else_b) = else_branch {
-                    self.exec_stmt(else_b, now, ctx);
+                    self.exec_stmt(tid, else_b, now, ctx);
                 }
             }
             Stmt::Block(stmts) => {
-                self.loop_stack.push(LoopState::Block { stmts: stmts.clone(), pc: 0 });
-                self.state = ExecState::PushLoop;
+                self.get_thread_mut(tid).loop_stack.push(LoopState::Block { stmts: stmts.clone(), pc: 0 });
+                self.get_thread_mut(tid).state = ExecState::PushLoop;
             }
             Stmt::DoForever(body) => {
                 let stmts = self.flatten_to_block(body);
-                self.loop_stack.push(LoopState::Forever { body: stmts, pc: 0 });
-                self.state = ExecState::PushLoop;
+                self.get_thread_mut(tid).loop_stack.push(LoopState::Forever { body: stmts, pc: 0 });
+                self.get_thread_mut(tid).state = ExecState::PushLoop;
             }
             Stmt::DoWhile { condition, body } => {
                 let stmts = self.flatten_to_block(body);
-                self.loop_stack.push(LoopState::While {
+                self.get_thread_mut(tid).loop_stack.push(LoopState::While {
                     condition: condition.clone(),
                     body: stmts,
                     pc: 0,
                 });
-                self.state = ExecState::PushLoop;
+                self.get_thread_mut(tid).state = ExecState::PushLoop;
             }
             Stmt::DoNTimes { count, body } => {
-                let n = self.eval_expr(count, now, ctx).as_int();
+                let n = self.eval_expr(tid, count, now, ctx).as_int();
                 let stmts = self.flatten_to_block(body);
-                self.loop_stack.push(LoopState::NTimes { remaining: n, body: stmts, pc: 0 });
-                self.state = ExecState::PushLoop;
+                self.get_thread_mut(tid).loop_stack.push(LoopState::NTimes { remaining: n, body: stmts, pc: 0 });
+                self.get_thread_mut(tid).state = ExecState::PushLoop;
             }
             Stmt::DoForSeconds { seconds, body } => {
-                let secs = self.eval_expr(seconds, now, ctx).as_float();
+                let secs = self.eval_expr(tid, seconds, now, ctx).as_float();
                 let stmts = self.flatten_to_block(body);
-                self.loop_stack.push(LoopState::ForSeconds {
+                self.get_thread_mut(tid).loop_stack.push(LoopState::ForSeconds {
                     end_time: now + secs as f64,
                     body: stmts,
                     pc: 0,
                 });
-                self.state = ExecState::PushLoop;
+                self.get_thread_mut(tid).state = ExecState::PushLoop;
             }
             Stmt::Exit => {
-                self.state = ExecState::Yielded;
+                self.get_thread_mut(tid).state = ExecState::Yielded;
             }
             Stmt::Done => {
-                if let Some(frame) = self.call_stack.pop() {
-                    self.script = frame.script;
-                    self.variables = frame.variables;
-                    self.seq_pc = frame.seq_pc;
-                    self.loop_stack = frame.loop_stack;
+                let frame = self.get_thread_mut(tid).call_stack.pop();
+                if let Some(frame) = frame {
+                    let mut t = self.get_thread_mut(tid);
+                    t.script = frame.script;
+                    t.variables = frame.variables;
+                    t.seq_pc = frame.seq_pc;
+                    t.loop_stack = frame.loop_stack;
                 } else {
-                    self.state = ExecState::Done;
+                    self.get_thread_mut(tid).state = ExecState::Done;
                 }
             }
             Stmt::Home => {
-                // Reset to beginning of sequence
-                self.seq_pc = 0;
-                self.loop_stack.clear();
-                self.state = ExecState::Yielded; // Yield to prevent executing rest of old block
+                let mut t = self.get_thread_mut(tid);
+                t.seq_pc = 0;
+                t.loop_stack.clear();
+                t.state = ExecState::Yielded;
             }
             Stmt::Log(exprs) => {
                 let parts: Vec<String> = exprs.iter().map(|e| {
-                    let v = self.eval_expr(e, now, ctx);
+                    let v = self.eval_expr(tid, e, now, ctx);
                     v.as_string()
                 }).collect();
                 info!("[ScrOni] {}", parts.join(" "));
@@ -582,113 +681,113 @@ impl ScriptExec {
 
             // Blocking commands — set blocking action and yield
             Stmt::Idle(expr) => {
-                let secs = self.eval_expr(expr, now, ctx).as_float();
-                self.blocking = Some(BlockingAction::Idle { end_time: now + secs as f64 });
-                self.state = ExecState::Blocked;
+                let secs = self.eval_expr(tid, expr, now, ctx).as_float();
+                self.get_thread_mut(tid).blocking = Some(BlockingAction::Idle { end_time: now + secs as f64 });
+                self.get_thread_mut(tid).state = ExecState::Blocked;
             }
             Stmt::GotoCurvePhase { phase, seconds } => {
-                let p = self.eval_expr(phase, now, ctx).as_float();
-                let s = self.eval_expr(seconds, now, ctx).as_float();
-                self.blocking = Some(BlockingAction::GotoCurvePhase { target: p, seconds: s });
-                self.state = ExecState::Blocked;
+                let p = self.eval_expr(tid, phase, now, ctx).as_float();
+                let s = self.eval_expr(tid, seconds, now, ctx).as_float();
+                self.get_thread_mut(tid).blocking = Some(BlockingAction::GotoCurvePhase { target: p, seconds: s });
+                self.get_thread_mut(tid).state = ExecState::Blocked;
             }
             Stmt::GotoCurveKnot { knot, seconds } => {
-                let k = self.eval_expr(knot, now, ctx).as_int();
-                let s = self.eval_expr(seconds, now, ctx).as_float();
-                self.blocking = Some(BlockingAction::GotoCurveKnot { knot: k, seconds: s });
-                self.state = ExecState::Blocked;
+                let k = self.eval_expr(tid, knot, now, ctx).as_int();
+                let s = self.eval_expr(tid, seconds, now, ctx).as_float();
+                self.get_thread_mut(tid).blocking = Some(BlockingAction::GotoCurveKnot { knot: k, seconds: s });
+                self.get_thread_mut(tid).state = ExecState::Blocked;
             }
             Stmt::GotoCurveLerp { lerp, seconds } => {
-                let l = self.eval_expr(lerp, now, ctx).as_float();
-                let s = self.eval_expr(seconds, now, ctx).as_float();
-                self.blocking = Some(BlockingAction::GotoCurveLerp { target: l, seconds: s });
-                self.state = ExecState::Blocked;
+                let l = self.eval_expr(tid, lerp, now, ctx).as_float();
+                let s = self.eval_expr(tid, seconds, now, ctx).as_float();
+                self.get_thread_mut(tid).blocking = Some(BlockingAction::GotoCurveLerp { target: l, seconds: s });
+                self.get_thread_mut(tid).state = ExecState::Blocked;
             }
             Stmt::Face { target, seconds } => {
-                let t = self.eval_expr(target, now, ctx);
-                let s = seconds.as_ref().map(|e| self.eval_expr(e, now, ctx).as_float());
-                self.blocking = Some(BlockingAction::Face { target: t, seconds: s });
-                self.state = ExecState::Blocked;
+                let t = self.eval_expr(tid, target, now, ctx);
+                let s = seconds.as_ref().map(|e| self.eval_expr(tid, e, now, ctx).as_float());
+                self.get_thread_mut(tid).blocking = Some(BlockingAction::Face { target: t, seconds: s });
+                self.get_thread_mut(tid).state = ExecState::Blocked;
             }
             Stmt::GotoPoint { target, within, speed, duration } => {
-                let t = self.eval_expr(target, now, ctx);
-                let w = within.as_ref().map(|e| self.eval_expr(e, now, ctx).as_float());
-                let s = speed.as_ref().map(|e| self.eval_expr(e, now, ctx).as_float());
-                let d = duration.as_ref().map(|e| self.eval_expr(e, now, ctx).as_float());
-                self.blocking = Some(BlockingAction::GotoPoint { target: t, within: w, speed: s, duration: d });
-                self.state = ExecState::Blocked;
+                let t = self.eval_expr(tid, target, now, ctx);
+                let w = within.as_ref().map(|e| self.eval_expr(tid, e, now, ctx).as_float());
+                let s = speed.as_ref().map(|e| self.eval_expr(tid, e, now, ctx).as_float());
+                let d = duration.as_ref().map(|e| self.eval_expr(tid, e, now, ctx).as_float());
+                self.get_thread_mut(tid).blocking = Some(BlockingAction::GotoPoint { target: t, within: w, speed: s, duration: d });
+                self.get_thread_mut(tid).state = ExecState::Blocked;
             }
             Stmt::PlayAnimation { name, hold, rate, duration } => {
-                let n = self.eval_expr(name, now, ctx).as_string();
-                let r = rate.as_ref().map(|e| self.eval_expr(e, now, ctx).as_float());
-                let d = duration.as_ref().map(|e| self.eval_expr(e, now, ctx).as_float());
-                self.blocking = Some(BlockingAction::PlayAnimation { name: n, hold: *hold, rate: r, duration: d });
-                self.state = ExecState::Blocked;
+                let n = self.eval_expr(tid, name, now, ctx).as_string();
+                let r = rate.as_ref().map(|e| self.eval_expr(tid, e, now, ctx).as_float());
+                let d = duration.as_ref().map(|e| self.eval_expr(tid, e, now, ctx).as_float());
+                self.get_thread_mut(tid).blocking = Some(BlockingAction::PlayAnimation { name: n, hold: *hold, rate: r, duration: d });
+                self.get_thread_mut(tid).state = ExecState::Blocked;
             }
             Stmt::PlayActionAnimation { name, hold, duration } => {
-                let n = self.eval_expr(name, now, ctx).as_string();
-                let d = duration.as_ref().map(|e| self.eval_expr(e, now, ctx).as_float());
-                self.blocking = Some(BlockingAction::PlayAnimation { name: n, hold: *hold, rate: None, duration: d });
-                self.state = ExecState::Blocked;
+                let n = self.eval_expr(tid, name, now, ctx).as_string();
+                let d = duration.as_ref().map(|e| self.eval_expr(tid, e, now, ctx).as_float());
+                self.get_thread_mut(tid).blocking = Some(BlockingAction::PlayAnimation { name: n, hold: *hold, rate: None, duration: d });
+                self.get_thread_mut(tid).state = ExecState::Blocked;
             }
             Stmt::Fight => {
-                self.blocking = Some(BlockingAction::Fight);
-                self.state = ExecState::Blocked;
+                self.get_thread_mut(tid).blocking = Some(BlockingAction::Fight);
+                self.get_thread_mut(tid).state = ExecState::Blocked;
             }
             Stmt::Shoot => {
-                self.blocking = Some(BlockingAction::Shoot);
-                self.state = ExecState::Blocked;
+                self.get_thread_mut(tid).blocking = Some(BlockingAction::Shoot);
+                self.get_thread_mut(tid).state = ExecState::Blocked;
             }
 
             // Non-blocking curve commands — set variables for external systems to read
             Stmt::SetCurvePhase(expr) => {
-                let v = self.eval_expr(expr, now, ctx);
-                self.variables.insert("__curve_phase".into(), v);
+                let v = self.eval_expr(tid, expr, now, ctx);
+                self.set_var(tid, "__curve_phase".into(), v);
             }
             Stmt::SetCurveSpeed(expr) => {
-                let v = self.eval_expr(expr, now, ctx);
-                self.variables.insert("__curve_speed".into(), v);
+                let v = self.eval_expr(tid, expr, now, ctx);
+                self.set_var(tid, "__curve_speed".into(), v);
             }
             Stmt::SetCurveKs(expr) => {
-                let v = self.eval_expr(expr, now, ctx);
-                self.variables.insert("__curve_ks".into(), v);
+                let v = self.eval_expr(tid, expr, now, ctx);
+                self.set_var(tid, "__curve_ks".into(), v);
             }
             Stmt::SetCurvePingPong(expr) => {
-                let v = self.eval_expr(expr, now, ctx);
-                self.variables.insert("__curve_pingpong".into(), v);
+                let v = self.eval_expr(tid, expr, now, ctx);
+                self.set_var(tid, "__curve_pingpong".into(), v);
             }
             Stmt::SetCurve { name, at_phase } => {
-                let n = self.eval_expr(name, now, ctx);
-                self.variables.insert("__curve_name".into(), n);
+                let n = self.eval_expr(tid, name, now, ctx);
+                self.set_var(tid, "__curve_name".into(), n);
                 if let Some(p) = at_phase {
-                    let v = self.eval_expr(p, now, ctx);
-                    self.variables.insert("__curve_phase".into(), v);
+                    let v = self.eval_expr(tid, p, now, ctx);
+                    self.set_var(tid, "__curve_phase".into(), v);
                 }
             }
             Stmt::SetLerpCurve(expr) => {
-                let v = self.eval_expr(expr, now, ctx);
-                self.variables.insert("__lerp_curve".into(), v);
+                let v = self.eval_expr(tid, expr, now, ctx);
+                self.set_var(tid, "__lerp_curve".into(), v);
             }
             Stmt::SetLookUpCurve(expr) => {
-                let v = self.eval_expr(expr, now, ctx);
-                self.variables.insert("__lookup_curve".into(), v);
+                let v = self.eval_expr(tid, expr, now, ctx);
+                self.set_var(tid, "__lookup_curve".into(), v);
             }
             Stmt::SetCurveLookAtActor(expr) => {
-                let v = self.eval_expr(expr, now, ctx);
-                self.variables.insert("__curve_lookat".into(), v);
+                let v = self.eval_expr(tid, expr, now, ctx);
+                self.set_var(tid, "__curve_lookat".into(), v);
             }
             Stmt::SetCurveLookAlongDistance(expr) => {
-                let v = self.eval_expr(expr, now, ctx);
-                self.variables.insert("__curve_lookalong_dist".into(), v);
+                let v = self.eval_expr(tid, expr, now, ctx);
+                self.set_var(tid, "__curve_lookalong_dist".into(), v);
             }
             Stmt::SetCurveLookAlongDirection(expr) => {
-                let v = self.eval_expr(expr, now, ctx);
-                self.variables.insert("__curve_lookalong_dir".into(), v);
+                let v = self.eval_expr(tid, expr, now, ctx);
+                self.set_var(tid, "__curve_lookalong_dir".into(), v);
             }
 
             Stmt::InlineVarDecl(decl) => {
                 let val = if let Some(init) = &decl.initializer {
-                    self.eval_expr(init, now, ctx)
+                    self.eval_expr(tid, init, now, ctx)
                 } else {
                     match decl.var_type {
                         VarType::Integer => Value::Int(0),
@@ -698,23 +797,23 @@ impl ScriptExec {
                         _ => Value::None,
                     }
                 };
-                self.variables.insert(decl.name.clone(), val);
+                self.set_var(tid, decl.name.clone(), val);
             }
 
             Stmt::Find { list_var, conditions, range } => {
-                let eval_conds = conditions.iter().map(|(k, e)| (k.clone(), self.eval_expr(e, now, ctx))).collect();
-                let eval_range = range.as_ref().map(|e| self.eval_expr(e, now, ctx).as_float());
-                self.blocking = Some(BlockingAction::Find {
+                let eval_conds = conditions.iter().map(|(k, e)| (k.clone(), self.eval_expr(tid, e, now, ctx))).collect();
+                let eval_range = range.as_ref().map(|e| self.eval_expr(tid, e, now, ctx).as_float());
+                self.get_thread_mut(tid).blocking = Some(BlockingAction::Find {
                     list_var: list_var.clone(),
                     conditions: eval_conds,
                     range: eval_range,
                 });
-                self.state = ExecState::Blocked;
+                self.get_thread_mut(tid).state = ExecState::Blocked;
             }
 
             Stmt::TextureMovie { name, pass: _, action, arg } => {
-                let target_name = self.eval_expr(name, now, ctx).as_string();
-                let arg_val = self.eval_expr(arg, now, ctx);
+                let target_name = self.eval_expr(tid, name, now, ctx).as_string();
+                let arg_val = self.eval_expr(tid, arg, now, ctx);
                 self.sys_requests.push(SysRequest::TextureMovie {
                     target_name,
                     action: *action,
@@ -723,12 +822,12 @@ impl ScriptExec {
             }
 
             Stmt::SendMessage { msg, to, with } => {
-                let msg_str = self.eval_expr(msg, now, ctx).as_string();
-                let target = self.eval_expr(to, now, ctx);
+                let msg_str = self.eval_expr(tid, msg, now, ctx).as_string();
+                let target = self.eval_expr(tid, to, now, ctx);
                 if let Value::Actor(entity) = target {
                     let mut args = Vec::new();
                     for a in with {
-                        args.push(self.eval_expr(a, now, ctx));
+                        args.push(self.eval_expr(tid, a, now, ctx));
                     }
                     self.outgoing_messages.push(ScriptMessage {
                         msg: msg_str,
@@ -739,14 +838,14 @@ impl ScriptExec {
                 }
             }
             Stmt::Teleport { target, to, face } => {
-                if let Value::Actor(ent) = self.eval_expr(target, now, ctx) {
+                if let Value::Actor(ent) = self.eval_expr(tid, target, now, ctx) {
                     let to_vec = to.as_ref().map(|e| {
-                        match self.eval_expr(e, now, ctx) {
+                        match self.eval_expr(tid, e, now, ctx) {
                             Value::Vector(v) => v,
                             _ => Vec3::ZERO,
                         }
                     });
-                    let face_float = face.as_ref().map(|e| self.eval_expr(e, now, ctx).as_float());
+                    let face_float = face.as_ref().map(|e| self.eval_expr(tid, e, now, ctx).as_float());
                     
                     self.sys_requests.push(SysRequest::Teleport {
                         target: ent,
@@ -757,15 +856,15 @@ impl ScriptExec {
             }
 
             Stmt::Spawn { script, assign_to, at, name } => {
-                let script_str = self.eval_expr(script, now, ctx).as_string();
+                let script_str = self.eval_expr(tid, script, now, ctx).as_string();
                 let assign = assign_to.clone();
                 let at_pos = at.as_ref().map(|e| {
-                    match self.eval_expr(e, now, ctx) {
+                    match self.eval_expr(tid, e, now, ctx) {
                         Value::Vector(v) => v,
                         _ => Vec3::ZERO,
                     }
                 });
-                let target_name = name.as_ref().map(|e| self.eval_expr(e, now, ctx).as_string());
+                let target_name = name.as_ref().map(|e| self.eval_expr(tid, e, now, ctx).as_string());
                 
                 self.sys_requests.push(SysRequest::Spawn {
                     script: script_str,
@@ -776,9 +875,9 @@ impl ScriptExec {
             }
 
             Stmt::MakeFx { name, at } => {
-                let fx_name = self.eval_expr(name, now, ctx).as_string();
+                let fx_name = self.eval_expr(tid, name, now, ctx).as_string();
                 let fx_pos = at.as_ref().map(|e| {
-                    match self.eval_expr(e, now, ctx) {
+                    match self.eval_expr(tid, e, now, ctx) {
                         Value::Vector(v) => v,
                         Value::Actor(ent) => {
                             if let Ok((_, tf, _)) = ctx.all_entities.get(ent) {
@@ -799,17 +898,20 @@ impl ScriptExec {
             }
 
             Stmt::Stack(name_expr) => {
-                let name = self.eval_expr(name_expr, now, ctx).as_string();
+                let name = self.eval_expr(tid, name_expr, now, ctx).as_string();
                 if let Some(new_script) = self.available_scripts.get(&name).cloned() {
-                    self.call_stack.push(CallFrame {
-                        script: self.script.clone(),
-                        variables: self.variables.clone(),
-                        seq_pc: self.seq_pc,
-                        loop_stack: self.loop_stack.clone(),
-                    });
-                    self.script = new_script;
-                    self.variables.clear();
-                    for var in &self.script.variables {
+                    let mut t = self.get_thread_mut(tid);
+                    let frame = CallFrame {
+                        script: t.script.clone(),
+                        variables: t.variables.clone(),
+                        seq_pc: t.seq_pc,
+                        loop_stack: t.loop_stack.clone(),
+                    };
+                    t.call_stack.push(frame);
+                    t.script = new_script.clone();
+                    t.variables.clear();
+                    for var in &t.script.variables {
+                        if var.is_parent { continue; }
                         let val = match var.var_type {
                             VarType::Integer => Value::Int(0),
                             VarType::Float => Value::Float(0.0),
@@ -820,22 +922,24 @@ impl ScriptExec {
                             VarType::ActorList => Value::ActorList(Vec::new(), 0),
                             VarType::Child => Value::Int(0),
                         };
-                        self.variables.insert(var.name.clone(), val);
+                        t.variables.insert(var.name.clone(), val);
                     }
-                    self.seq_pc = 0;
-                    self.loop_stack.clear();
-                    self.state = ExecState::Yielded; // Yield to prevent executing rest of old block
+                    t.seq_pc = 0;
+                    t.loop_stack.clear();
+                    t.state = ExecState::Yielded; // Yield to prevent executing rest of old block
                 } else {
                     warn!("Stack: Script '{}' not found in available scripts.", name);
                 }
             }
 
             Stmt::Switch(name_expr) => {
-                let name = self.eval_expr(name_expr, now, ctx).as_string();
+                let name = self.eval_expr(tid, name_expr, now, ctx).as_string();
                 if let Some(new_script) = self.available_scripts.get(&name).cloned() {
-                    self.script = new_script;
-                    self.variables.clear();
-                    for var in &self.script.variables {
+                    let mut t = self.get_thread_mut(tid);
+                    t.script = new_script;
+                    t.variables.clear();
+                    for var in &t.script.variables {
+                        if var.is_parent { continue; }
                         let val = match var.var_type {
                             VarType::Integer => Value::Int(0),
                             VarType::Float => Value::Float(0.0),
@@ -846,40 +950,61 @@ impl ScriptExec {
                             VarType::ActorList => Value::ActorList(Vec::new(), 0),
                             VarType::Child => Value::Int(0),
                         };
-                        self.variables.insert(var.name.clone(), val);
+                        t.variables.insert(var.name.clone(), val);
                     }
-                    self.seq_pc = 0;
-                    self.loop_stack.clear();
-                    self.state = ExecState::Yielded; // Yield to prevent executing rest of old block
+                    t.seq_pc = 0;
+                    t.loop_stack.clear();
+                    self.get_thread_mut(tid).state = ExecState::Yielded; // Yield to prevent executing rest of old block
                 } else {
                     warn!("Switch: Script '{}' not found in available scripts.", name);
                 }
             }
 
             Stmt::ChildStack { var, script } => {
-                let script_name = self.eval_expr(script, now, ctx).as_string();
-                info!("VM: Spawning child script '{}' into var '{}' (unimplemented)", script_name, var);
-                self.variables.insert(var.clone(), Value::Int(1)); // dummy child script handle
+                let script_name = self.eval_expr(tid, script, now, ctx).as_string();
+                if let Some(new_script) = self.available_scripts.get(&script_name).cloned() {
+                    let new_tid = self.next_thread_id;
+                    self.next_thread_id += 1;
+                    let mut new_thread = ScrOniThread::new(new_tid, Some(tid), new_script, now);
+                    for var_decl in &new_thread.script.variables {
+                        if var_decl.is_parent { continue; }
+                        new_thread.variables.insert(var_decl.name.clone(), Value::default_for_type(&var_decl.var_type));
+                    }
+                    self.child_threads.push(new_thread);
+                    self.set_var(tid, var.clone(), Value::Int(new_tid as i32));
+                } else {
+                    warn!("ChildStack: Script '{}' not found", script_name);
+                }
             }
 
             Stmt::ChildSwitch { var, script } => {
-                let script_name = self.eval_expr(script, now, ctx).as_string();
-                info!("VM: Switching to child script '{}' into var '{}' (unimplemented)", script_name, var);
-                self.variables.insert(var.clone(), Value::Int(1)); // dummy child script handle
+                let script_name = self.eval_expr(tid, script, now, ctx).as_string();
+                if let Some(new_script) = self.available_scripts.get(&script_name).cloned() {
+                    let new_tid = self.next_thread_id;
+                    self.next_thread_id += 1;
+                    let mut new_thread = ScrOniThread::new(new_tid, Some(tid), new_script, now);
+                    for var_decl in &new_thread.script.variables {
+                        if var_decl.is_parent { continue; }
+                        new_thread.variables.insert(var_decl.name.clone(), Value::default_for_type(&var_decl.var_type));
+                    }
+                    self.child_threads.push(new_thread);
+                    self.set_var(tid, var.clone(), Value::Int(new_tid as i32));
+                } else {
+                    warn!("ChildSwitch: Script '{}' not found", script_name);
+                }
             }
 
-
             Stmt::CameraSetPackage(expr) => {
-                let pkg_name = self.eval_expr(expr, now, ctx).as_string();
+                let pkg_name = self.eval_expr(tid, expr, now, ctx).as_string();
                 self.sys_requests.push(SysRequest::CameraSetPackage(pkg_name));
             }
             Stmt::At(x_expr, y_expr) => {
-                let x = self.eval_expr(x_expr, now, ctx).as_float();
-                let y = self.eval_expr(y_expr, now, ctx).as_float();
+                let x = self.eval_expr(tid, x_expr, now, ctx).as_float();
+                let y = self.eval_expr(tid, y_expr, now, ctx).as_float();
                 self.sys_requests.push(SysRequest::At(x, y));
             }
             Stmt::DrawText(text_expr) => {
-                let text = self.eval_expr(text_expr, now, ctx).as_string();
+                let text = self.eval_expr(tid, text_expr, now, ctx).as_string();
                 self.sys_requests.push(SysRequest::DrawText(text));
             }
             Stmt::Sound { args } => {
@@ -889,12 +1014,12 @@ impl ScriptExec {
                 info!("VM: AmbientSound {:?} (unimplemented)", args);
             }
             Stmt::PlayAmbientSound { name, volume } => {
-                let n = self.eval_expr(name, now, ctx).as_string();
-                let v = volume.as_ref().map(|e| self.eval_expr(e, now, ctx).as_float());
+                let n = self.eval_expr(tid, name, now, ctx).as_string();
+                let v = volume.as_ref().map(|e| self.eval_expr(tid, e, now, ctx).as_float());
                 info!("VM: PlayAmbientSound {} {:?} (unimplemented)", n, v);
             }
             Stmt::MusicPlay(expr) => {
-                let m = self.eval_expr(expr, now, ctx).as_string();
+                let m = self.eval_expr(tid, expr, now, ctx).as_string();
                 info!("VM: MusicPlay {} (unimplemented)", m);
             }
             Stmt::MusicStop => {
@@ -904,11 +1029,11 @@ impl ScriptExec {
                 info!("VM: CameraReset (unimplemented)");
             }
             Stmt::CameraMode(expr) => {
-                let mode = self.eval_expr(expr, now, ctx).as_string();
+                let mode = self.eval_expr(tid, expr, now, ctx).as_string();
                 info!("VM: CameraMode {} (unimplemented)", mode);
             }
             Stmt::CameraLetterbox(expr) => {
-                let b = self.eval_expr(expr, now, ctx).as_int();
+                let b = self.eval_expr(tid, expr, now, ctx).as_int();
                 info!("VM: CameraLetterbox {} (unimplemented)", b);
             }
             Stmt::CameraFollowActor { args } => { info!("VM: CameraFollowActor {:?} (unimplemented)", args); }
@@ -922,7 +1047,7 @@ impl ScriptExec {
             Stmt::CameraShake => { info!("VM: CameraShake (unimplemented)"); }
 
             Stmt::SetFogType(expr) => {
-                let fog_type = self.eval_expr(expr, now, ctx).as_string();
+                let fog_type = self.eval_expr(tid, expr, now, ctx).as_string();
                 info!("VM: SetFogType {} (unimplemented)", fog_type);
             }
             Stmt::SetFogRange { min, max } => {
@@ -937,12 +1062,21 @@ impl ScriptExec {
             Stmt::SetFogPalettePower { args } => {
                 info!("VM: SetFogPalettePower {:?} (unimplemented)", args);
             }
+            Stmt::SetShaderLocal { args } => {
+                info!("VM: SetShaderLocal {:?} (unimplemented)", args);
+            }
+            Stmt::SetLightParameter { args } => {
+                info!("VM: SetLightParameter {:?} (unimplemented)", args);
+            }
+            Stmt::Intensity { args } => {
+                info!("VM: Intensity {:?} (unimplemented)", args);
+            }
             Stmt::SetFullScreenColor { args } => {
                 info!("VM: SetFullScreenColor {:?} (unimplemented)", args);
             }
             Stmt::SetUpdateState { target, state } => {
-                let target_val = self.eval_expr(target, now, ctx).as_string();
-                let state_val = self.eval_expr(state, now, ctx).as_string();
+                let target_val = self.eval_expr(tid, target, now, ctx).as_string();
+                let state_val = self.eval_expr(tid, state, now, ctx).as_string();
                 info!("VM: SetUpdateState {} {} (unimplemented)", target_val, state_val);
             }
 
@@ -963,7 +1097,7 @@ impl ScriptExec {
 
     // ---- Expression evaluation ----
 
-    fn eval_expr(&mut self, expr: &Expr, now: f64, ctx: &mut ScroniContext) -> Value {
+    fn eval_expr(&mut self, tid: u32, expr: &Expr, now: f64, ctx: &mut ScroniContext) -> Value {
         match expr {
             Expr::IntLit(i) => Value::Int(*i),
             Expr::FloatLit(f) => Value::Float(*f),
@@ -971,7 +1105,7 @@ impl ScriptExec {
             Expr::List(exprs) => {
                 let mut ents = Vec::new();
                 for e in exprs {
-                    let v = self.eval_expr(e, now, ctx);
+                    let v = self.eval_expr(tid, e, now, ctx);
                     if let Value::Actor(ent) = v {
                         ents.push(ent);
                     } else if let Value::Int(guid) = v {
@@ -981,7 +1115,7 @@ impl ScriptExec {
                 Value::ActorList(ents, 0)
             }
             Expr::Var(name) => {
-                self.variables.get(name).cloned().unwrap_or(Value::None)
+                self.get_var(tid, name)
             }
             Expr::Me => Value::Actor(self.owner),
             Expr::Player => {
@@ -991,13 +1125,13 @@ impl ScriptExec {
                     Value::None
                 }
             }
-            Expr::Paren(inner) => self.eval_expr(inner, now, ctx),
+            Expr::Paren(inner) => self.eval_expr(tid, inner, now, ctx),
             Expr::Not(inner) => {
-                let v = self.eval_expr(inner, now, ctx);
+                let v = self.eval_expr(tid, inner, now, ctx);
                 Value::Int(if v.as_bool() { 0 } else { 1 })
             }
             Expr::Negate(inner) => {
-                let v = self.eval_expr(inner, now, ctx);
+                let v = self.eval_expr(tid, inner, now, ctx);
                 match v {
                     Value::Int(i) => Value::Int(-i),
                     Value::Float(f) => Value::Float(-f),
@@ -1005,13 +1139,13 @@ impl ScriptExec {
                 }
             }
             Expr::VectorLit(x_expr, y_expr, z_expr) => {
-                let x = self.eval_expr(x_expr, now, ctx).as_float();
-                let y = self.eval_expr(y_expr, now, ctx).as_float();
-                let z = self.eval_expr(z_expr, now, ctx).as_float();
+                let x = self.eval_expr(tid, x_expr, now, ctx).as_float();
+                let y = self.eval_expr(tid, y_expr, now, ctx).as_float();
+                let z = self.eval_expr(tid, z_expr, now, ctx).as_float();
                 Value::Vector(Vec3::new(x, y, z))
             }
             Expr::FieldAccess { base, field } => {
-                let base_val = self.eval_expr(base, now, ctx);
+                let base_val = self.eval_expr(tid, base, now, ctx);
                 match base_val {
                     Value::Vector(v) => match field.as_str() {
                         "x" | "X" => Value::Float(v.x),
@@ -1023,8 +1157,8 @@ impl ScriptExec {
                 }
             }
             Expr::BinOp { op, left, right } => {
-                let l = self.eval_expr(left, now, ctx);
-                let r = self.eval_expr(right, now, ctx);
+                let l = self.eval_expr(tid, left, now, ctx);
+                let r = self.eval_expr(tid, right, now, ctx);
                 eval_binop(*op, &l, &r)
             }
             Expr::Call { name, args } => {
@@ -1035,7 +1169,7 @@ impl ScriptExec {
                     "randomrange" => Value::Int(0), // stub
                     "randomrangefloat" => Value::Float(0.0), // stub
                     "location" => {
-                        let target = args.get(0).map(|e| self.eval_expr(e, now, ctx));
+                        let target = args.get(0).map(|e| self.eval_expr(tid, e, now, ctx));
                         if let Some(Value::Actor(act)) = target {
                             if let Ok((_, tf, _)) = ctx.all_entities.get(act) {
                                 return Value::Vector(tf.translation);
@@ -1044,8 +1178,8 @@ impl ScriptExec {
                         Value::None
                     }
                     "distance" => {
-                        let arg1 = args.get(0).map(|e| self.eval_expr(e, now, ctx));
-                        let arg2 = args.get(1).map(|e| self.eval_expr(e, now, ctx));
+                        let arg1 = args.get(0).map(|e| self.eval_expr(tid, e, now, ctx));
+                        let arg2 = args.get(1).map(|e| self.eval_expr(tid, e, now, ctx));
                         
                         let resolve_pos = |val: Value| -> Option<Vec3> {
                             match val {
@@ -1077,8 +1211,8 @@ impl ScriptExec {
                         Value::Float(99999.0)
                     }
                     "triggerentered" => {
-                        let trig_ent = args.get(0).map(|e| self.eval_expr(e, now, ctx));
-                        let targ_ent = args.get(1).map(|e| self.eval_expr(e, now, ctx));
+                        let trig_ent = args.get(0).map(|e| self.eval_expr(tid, e, now, ctx));
+                        let targ_ent = args.get(1).map(|e| self.eval_expr(tid, e, now, ctx));
                         if let (Some(Value::Actor(t)), Some(Value::Actor(e))) = (trig_ent, targ_ent) {
                             if let Ok(trigger) = ctx.triggers.get(t) {
                                 if trigger.just_entered.contains(&e) {
@@ -1089,8 +1223,8 @@ impl ScriptExec {
                         Value::Int(0)
                     }
                     "triggerexited" => {
-                        let trig_ent = args.get(0).map(|e| self.eval_expr(e, now, ctx));
-                        let targ_ent = args.get(1).map(|e| self.eval_expr(e, now, ctx));
+                        let trig_ent = args.get(0).map(|e| self.eval_expr(tid, e, now, ctx));
+                        let targ_ent = args.get(1).map(|e| self.eval_expr(tid, e, now, ctx));
                         if let (Some(Value::Actor(t)), Some(Value::Actor(e))) = (trig_ent, targ_ent) {
                             if let Ok(trigger) = ctx.triggers.get(t) {
                                 if trigger.just_exited.contains(&e) {
@@ -1101,8 +1235,8 @@ impl ScriptExec {
                         Value::Int(0)
                     }
                     "triggerinside" => {
-                        let trig_ent = args.get(0).map(|e| self.eval_expr(e, now, ctx));
-                        let targ_ent = args.get(1).map(|e| self.eval_expr(e, now, ctx));
+                        let trig_ent = args.get(0).map(|e| self.eval_expr(tid, e, now, ctx));
+                        let targ_ent = args.get(1).map(|e| self.eval_expr(tid, e, now, ctx));
                         if let (Some(Value::Actor(t)), Some(Value::Actor(e))) = (trig_ent, targ_ent) {
                             if let Ok(trigger) = ctx.triggers.get(t) {
                                 if trigger.inside.contains(&e) {
@@ -1114,7 +1248,7 @@ impl ScriptExec {
                     }
                     "receivemessage" => {
                         if let Some(msg_expr) = args.get(0) {
-                            let target_msg = self.eval_expr(msg_expr, now, ctx).as_string();
+                            let target_msg = self.eval_expr(tid, msg_expr, now, ctx).as_string();
                             if let Some(idx) = self.message_queue.iter().position(|m| m.msg == target_msg) {
                                 self.message_queue.remove(idx);
                                 return Value::Int(1);
@@ -1124,13 +1258,13 @@ impl ScriptExec {
                     }
                     "first" => {
                         if let Some(Expr::Var(list_name)) = args.get(0) {
-                            if let Some(Value::ActorList(entities, _)) = self.variables.get(list_name) {
+                            if let Some(Value::ActorList(entities, _)) = self.get_thread(tid).variables.get(list_name) {
                                 let updated = entities.clone();
                                 if let Some(&first_ent) = updated.first() {
-                                    self.variables.insert(list_name.clone(), Value::ActorList(updated, 1));
+                                    self.get_thread_mut(tid).variables.insert(list_name.clone(), Value::ActorList(updated, 1));
                                     return Value::Actor(first_ent);
                                 } else {
-                                    self.variables.insert(list_name.clone(), Value::ActorList(updated, 0));
+                                    self.get_thread_mut(tid).variables.insert(list_name.clone(), Value::ActorList(updated, 0));
                                     return Value::None;
                                 }
                             }
@@ -1139,15 +1273,15 @@ impl ScriptExec {
                     }
                     "next" => {
                         if let Some(Expr::Var(list_name)) = args.get(0) {
-                            if let Some(Value::ActorList(entities, idx)) = self.variables.get(list_name) {
+                            if let Some(Value::ActorList(entities, idx)) = self.get_thread(tid).variables.get(list_name) {
                                 let updated = entities.clone();
                                 let current_idx = *idx;
                                 if current_idx < updated.len() {
                                     let ent = updated[current_idx];
-                                    self.variables.insert(list_name.clone(), Value::ActorList(updated, current_idx + 1));
+                                    self.get_thread_mut(tid).variables.insert(list_name.clone(), Value::ActorList(updated, current_idx + 1));
                                     return Value::Actor(ent);
                                 } else {
-                                    self.variables.insert(list_name.clone(), Value::ActorList(updated, current_idx));
+                                    self.get_thread_mut(tid).variables.insert(list_name.clone(), Value::ActorList(updated, current_idx));
                                     return Value::None;
                                 }
                             }
@@ -1156,7 +1290,7 @@ impl ScriptExec {
                     }
                     "guid" => {
                         let entity_name = args.get(0)
-                            .map(|e| self.eval_expr(e, now, ctx).as_string())
+                            .map(|e| self.eval_expr(tid, e, now, ctx).as_string())
                             .unwrap_or_default();
                         for (other_ent, _, name_opt) in ctx.all_entities {
                             if let Some(n) = name_opt {
@@ -1168,7 +1302,18 @@ impl ScriptExec {
                         Value::None
                     }
                     "isdone" => {
-                        // Stub: assume child scripts finish instantly so we don't stall infinite loops.
+                        let target_var = args.get(0).map(|e| self.eval_expr(tid, e, now, ctx));
+                        if let Some(Value::Int(target_tid)) = target_var {
+                            // Check if child thread still exists
+                            let mut exists_and_running = false;
+                            for ct in &self.child_threads {
+                                if ct.thread_id == target_tid as u32 {
+                                    exists_and_running = ct.state != ExecState::Done;
+                                    break;
+                                }
+                            }
+                            return Value::Int(if exists_and_running { 0 } else { 1 });
+                        }
                         Value::Int(1)
                     }
                     _ => Value::None,
@@ -1178,11 +1323,15 @@ impl ScriptExec {
         }
     }
 
-    /// Clear the current blocking action (called by external systems when behavior completes).
-    pub fn clear_blocking(&mut self) {
-        self.blocking = None;
-        if self.state == ExecState::Blocked {
-            self.state = ExecState::Running;
+    // Helper to unblock a thread
+    pub fn clear_blocking(&mut self, tid: u32) {
+        if let Some(t) = self.child_threads.iter_mut().find(|t| t.thread_id == tid).or_else(|| {
+            if tid == 0 { Some(&mut self.main_thread) } else { None }
+        }) {
+            t.blocking = None;
+            if t.state == ExecState::Blocked {
+                t.state = ExecState::Running;
+            }
         }
     }
 }
@@ -1265,8 +1414,15 @@ pub fn scroni_tick_system(
         };
         script.exec.tick(now, &mut ctx);
 
+        let mut finds_to_resolve = Vec::new();
+        for t in script.exec.all_threads_mut() {
+            if let Some(BlockingAction::Find { list_var, conditions, range }) = t.blocking.clone() {
+                finds_to_resolve.push((t.thread_id, list_var, conditions, range));
+            }
+        }
+
         // Handle Find request
-        if let Some(BlockingAction::Find { list_var, conditions, range }) = script.exec.blocking.clone() {
+        for (tid, list_var, conditions, range) in finds_to_resolve {
             let mut found = Vec::new();
             let my_pos = transform.translation;
             let max_dist = range.unwrap_or(9999.0);
@@ -1294,10 +1450,10 @@ pub fn scroni_tick_system(
                 }
             }
 
-            script.exec.variables.insert(list_var, Value::ActorList(found, 0));
-            script.exec.clear_blocking();
+            script.exec.set_var(tid, list_var, Value::ActorList(found, 0));
+            script.exec.clear_blocking(tid);
             // Tick again to resume immediately
-            script.exec.tick(now, &mut ctx);
+            script.exec.tick_thread(tid, now, &mut ctx);
         }
 
         for req in script.exec.sys_requests.drain(..) {
@@ -1384,7 +1540,7 @@ pub fn cleanup_scroni_text(
     time: Res<Time>,
 ) {
     let now = time.elapsed_secs_f64();
-    for (entity, text_element, text) in &query {
+    for (entity, text_element, _text) in &query {
         if now > text_element.expires_at {
             commands.entity(entity).despawn();
         }

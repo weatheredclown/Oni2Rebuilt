@@ -48,6 +48,7 @@ pub struct ParticleLibrary {
 pub fn load_global_registries(
     mut commands: Commands,
     asset_server: Res<AssetServer>,
+    mut images: ResMut<Assets<Image>>,
 ) {
     let mut proj_lib = ProjLibrary::default();
     let mut fx_lib = FxLibrary::default();
@@ -69,14 +70,14 @@ pub fn load_global_registries(
     if let Ok(content) = vfs::read_to_string("Settings", "rb.fx") {
         let blocks = parse_settings(&content);
         for def in &blocks {
-            if let Some(parsed) = parse_effect(&def.def_type, &def.name, &def.block, &asset_server) {
+            if let Some(parsed) = parse_effect(&def.def_type, &def.name, &def.block, &asset_server, &mut images) {
                 fx_lib.effects.insert(def.name.to_lowercase(), parsed.clone());
 
                 // Eagerly load .ptx files if this effect references one
                 match &parsed {
-                    EffectDef::Particle(p) => try_load_ptx(&p.system.system_name, &asset_server, &mut ptx_lib),
-                    EffectDef::DelayedParticle(d) => try_load_ptx(&d.system.system_name, &asset_server, &mut ptx_lib),
-                    EffectDef::HealthIndicator(h) => try_load_ptx(&h.system.system_name, &asset_server, &mut ptx_lib),
+                    EffectDef::Particle(p) => try_load_ptx(&p.system.system_name, &asset_server, &mut ptx_lib, &mut images),
+                    EffectDef::DelayedParticle(d) => try_load_ptx(&d.system.system_name, &asset_server, &mut ptx_lib, &mut images),
+                    EffectDef::HealthIndicator(h) => try_load_ptx(&h.system.system_name, &asset_server, &mut ptx_lib, &mut images),
                     _ => {}
                 }
             }
@@ -91,7 +92,7 @@ pub fn load_global_registries(
     commands.insert_resource(EntityLibrary::default());
 }
 
-fn try_load_ptx(name: &str, asset_server: &AssetServer, ptx_lib: &mut ParticleLibrary) {
+fn try_load_ptx(name: &str, asset_server: &AssetServer, ptx_lib: &mut ParticleLibrary, images: &mut Assets<Image>) {
     let lower_name = name.to_lowercase();
     if ptx_lib.systems.contains_key(&lower_name) {
         return; // Already loaded
@@ -99,7 +100,7 @@ fn try_load_ptx(name: &str, asset_server: &AssetServer, ptx_lib: &mut ParticleLi
 
     let ptx_filename = format!("{}.ptx", name);
     if let Ok(content) = vfs::read_to_string("Settings", &ptx_filename) {
-        if let Some(def) = parse_ptx(&content, name.to_string(), asset_server) {
+        if let Some(def) = parse_ptx(&content, name.to_string(), asset_server, images) {
             ptx_lib.systems.insert(lower_name, def);
             return;
         }
@@ -113,7 +114,7 @@ fn try_load_ptx(name: &str, asset_server: &AssetServer, ptx_lib: &mut ParticleLi
                 // We'll extract the filename component safely.
                 let fallback_filename = entry.path.split('/').last().unwrap_or("");
                 if let Ok(content) = vfs::read_to_string("Settings", fallback_filename) {
-                    if let Some(def) = parse_ptx(&content, name.to_string(), asset_server) {
+                    if let Some(def) = parse_ptx(&content, name.to_string(), asset_server, images) {
                         ptx_lib.systems.insert(lower_name, def);
                         return;
                     }

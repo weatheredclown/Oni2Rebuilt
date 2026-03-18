@@ -17,6 +17,7 @@ pub struct ScriptDef {
 /// Variable declaration: `integer x`, `float speed`, `vector pos`, etc.
 #[derive(Debug, Clone)]
 pub struct VarDecl {
+    pub is_parent: bool,
     pub var_type: VarType,
     pub name: String,
     pub initializer: Option<Expr>,
@@ -202,6 +203,11 @@ pub enum Stmt {
     SetFogColor { args: Vec<Expr> },
     SetFogClamp { args: Vec<Expr> },
     SetFogPalettePower { args: Vec<Expr> },
+    
+    /// Shader and lighting commands
+    SetShaderLocal { args: Vec<Expr> },
+    SetLightParameter { args: Vec<Expr> },
+    Intensity { args: Vec<Expr> },
     
     /// Global Screen commands
     SetFullScreenColor { args: Vec<Expr> },

@@ -118,7 +118,7 @@ pub fn parse_particle_ref(block: &SettingsBlock) -> Option<ParticleSystemRef> {
     None
 }
 
-pub fn parse_effect(def_type: &str, name: &str, block: &SettingsBlock, asset_server: &AssetServer) -> Option<EffectDef> {
+pub fn parse_effect(def_type: &str, name: &str, block: &SettingsBlock, asset_server: &AssetServer, images: &mut Assets<Image>) -> Option<EffectDef> {
     match def_type {
         "SFX" => {
             Some(EffectDef::Sfx(SfxDef {
@@ -128,7 +128,11 @@ pub fn parse_effect(def_type: &str, name: &str, block: &SettingsBlock, asset_ser
         }
         "SPRITEEFFECT" => {
             let tex_name = block.get_string("TextureName").unwrap_or_default();
-            let tex_handle = asset_server.load(format!("textures/{}.png", tex_name));
+            let tex_handle = if let Some((h, _)) = crate::oni2_loader::parsers::texture::load_tga_texture("textures", &tex_name, images) {
+                h
+            } else {
+                asset_server.load(format!("textures/{}.tga", tex_name))
+            };
             Some(EffectDef::Sprite(SpriteEffectDef {
                 name: name.to_string(),
                 texture: tex_handle,

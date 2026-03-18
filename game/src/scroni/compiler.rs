@@ -138,7 +138,7 @@ impl Compiler {
                 && self.code() != TokenCode::Sequence
                 && self.code() != TokenCode::End
                 && !self.at_end()
-                && is_var_type(self.code())
+                && (is_var_type(self.code()) || self.code() == TokenCode::Parent)
             {
                 if let Some(v) = self.parse_var_decl() {
                     variables.push(v);
@@ -169,6 +169,8 @@ impl Compiler {
     }
 
     fn parse_var_decl(&mut self) -> Option<VarDecl> {
+        let is_parent = self.skip_if(TokenCode::Parent);
+
         let var_type = match self.code() {
             TokenCode::Integer => VarType::Integer,
             TokenCode::Float => VarType::Float,
@@ -221,7 +223,7 @@ impl Compiler {
             None
         };
 
-        Some(VarDecl { var_type, name, initializer })
+        Some(VarDecl { is_parent, var_type, name, initializer })
     }
 
     // ---- Section / block parsing ----
@@ -378,6 +380,11 @@ impl Compiler {
             TokenCode::SetFogColor => self.parse_generic_args(TokenCode::SetFogColor, |args| Stmt::SetFogColor { args }),
             TokenCode::SetFogClamp => self.parse_generic_args(TokenCode::SetFogClamp, |args| Stmt::SetFogClamp { args }),
             TokenCode::SetFogPalettePower => self.parse_generic_args(TokenCode::SetFogPalettePower, |args| Stmt::SetFogPalettePower { args }),
+
+            // Shaders / Lights
+            TokenCode::SetShaderLocal => self.parse_generic_args(TokenCode::SetShaderLocal, |args| Stmt::SetShaderLocal { args }),
+            TokenCode::SetLightParameter => self.parse_generic_args(TokenCode::SetLightParameter, |args| Stmt::SetLightParameter { args }),
+            TokenCode::Intensity => self.parse_generic_args(TokenCode::Intensity, |args| Stmt::Intensity { args }),
 
             // Global
             TokenCode::SetFullScreenColor => self.parse_generic_args(TokenCode::SetFullScreenColor, |args| Stmt::SetFullScreenColor { args }),
@@ -1049,6 +1056,7 @@ fn is_command_start(code: TokenCode) -> bool {
         | TokenCode::CameraCutToActor | TokenCode::CameraCutToPoint | TokenCode::CameraSetFOV
         | TokenCode::CameraShake | TokenCode::Sound | TokenCode::AmbientSound
         | TokenCode::SetFogColor | TokenCode::SetFogClamp | TokenCode::SetFogPalettePower | TokenCode::SetFogType
+        | TokenCode::SetShaderLocal | TokenCode::SetLightParameter | TokenCode::Intensity
     )
 }
 

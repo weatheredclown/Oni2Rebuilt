@@ -26,7 +26,7 @@ pub struct ParticleSystemDef {
 //   Key Value
 //   Key Value Value Value
 // }
-pub fn parse_ptx(content: &str, name: String, asset_server: &AssetServer) -> Option<ParticleSystemDef> {
+pub fn parse_ptx(content: &str, name: String, asset_server: &AssetServer, images: &mut Assets<Image>) -> Option<ParticleSystemDef> {
     let mut texture = asset_server.add(Image::default()); // Placeholder
     let mut position_var = Vec3::ZERO;
     let mut radius_birth = Vec2::ZERO;
@@ -49,8 +49,12 @@ pub fn parse_ptx(content: &str, name: String, asset_server: &AssetServer) -> Opt
         match tokens[0] {
             "TextureName" => {
                 if tokens.len() > 1 {
-                    // Typical .ptx textures might just be names like ptx_explosion4x4
-                    texture = asset_server.load(format!("textures/{}.png", tokens[1]));
+                    let tex_name = tokens[1];
+                    if let Some((h, _)) = crate::oni2_loader::parsers::texture::load_tga_texture("textures", tex_name, images) {
+                        texture = h;
+                    } else {
+                        texture = asset_server.load(format!("textures/{}.tga", tex_name));
+                    }
                 }
             }
             "PositionVar" => if tokens.len() > 3 { position_var = Vec3::new(tokens[1].parse().unwrap_or(0.0), tokens[2].parse().unwrap_or(0.0), tokens[3].parse().unwrap_or(0.0)); },

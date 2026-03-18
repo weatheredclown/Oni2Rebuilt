@@ -149,108 +149,93 @@ pub fn scroni_curve_bridge_system(
         let exec = &mut script.exec;
         let entity_name = name_comp.map(|n| n.as_str()).unwrap_or("Unknown Entity");
 
-        // 1. Apply non-blocking curve variable writes from script
-        if let Some(ref mut follower) = follower {
-            if let Some(v) = exec.variables.remove("__curve_phase") {
-                follower.phase = v.as_float();
-                follower.reached_target = true;
-                follower.speed = 0.0;
+        // We need to iterate over all active threads to see if any generated a curve variable or blocked on animation/curve
+        for t in exec.all_threads_mut() {
+            // 1. Apply non-blocking curve variable writes from script
+            if let Some(ref mut follower) = follower {
+                if let Some(v) = t.variables.remove("__curve_phase") {
+                    follower.phase = v.as_float();
+                    follower.reached_target = true;
+                    follower.speed = 0.0;
+                }
+                if let Some(v) = t.variables.remove("__curve_speed") {
+                    follower.speed = v.as_float();
+                }
+                if let Some(v) = t.variables.remove("__curve_pingpong") {
+                    let pp = v.as_int() != 0;
+                    follower.ping_pong = pp;
+                    follower.wrap_around = !pp;
+                }
             }
-            if let Some(v) = exec.variables.remove("__curve_speed") {
-                follower.speed = v.as_float();
-            }
-            if let Some(v) = exec.variables.remove("__curve_pingpong") {
-                let pp = v.as_int() != 0;
-                follower.ping_pong = pp;
-                follower.wrap_around = !pp;
-            }
-        }
 
-        // 2. Handle blocking actions
-        if exec.state == scroni::vm::ExecState::Blocked {
-            if let Some(ref action) = exec.blocking {
-                match action {
-                    scroni::vm::BlockingAction::GotoCurvePhase { target, seconds } => {
-                        if let Some(ref mut follower) = follower {
-                            if follower.reached_target {
-                                let target = *target;
-                                let seconds = *seconds;
-                                let dist = target - follower.phase;
-                                follower.speed = if seconds > 0.0 { dist / seconds } else { 0.0 };
-                                follower.target_phase = target;
-                                follower.reached_target = false;
-                                follower.wrap_around = false;
-                                exec.blocking = Some(scroni::vm::BlockingAction::WaitingForCurve);
+            // 2. Handle blocking actions
+            if t.state == scroni::vm::ExecState::Blocked {
+                if let Some(ref action) = t.blocking.clone() {
+                    match action {
+                        scroni::vm::BlockingAction::GotoCurvePhase { target, seconds } => {
+                            if let Some(ref mut follower) = follower {
+                                if follower.reached_target {
+                                    let target_val = *target;
+                                    let seconds_val = *seconds;
+                                    let dist = target_val - follower.phase;
+                                    follower.speed = if seconds_val > 0.0 { dist / seconds_val } else { 0.0 };
+                                    follower.target_phase = target_val;
+                                    follower.reached_target = false;
+                                    follower.wrap_around = false;
+                                    t.blocking = Some(scroni::vm::BlockingAction::WaitingForCurve);
+                                }
                             }
                         }
-                    }
-                    scroni::vm::BlockingAction::WaitingForCurve => {
-                        if let Some(ref follower) = follower {
-                            if follower.reached_target {
-                                exec.clear_blocking();
+                        scroni::vm::BlockingAction::WaitingForCurve => {
+                            if let Some(ref follower) = follower {
+                                if follower.reached_target {
+                                    t.blocking = None;
+                                    t.state = scroni::vm::ExecState::Running;
+                                }
                             }
                         }
-                    }
-                    scroni::vm::BlockingAction::PlayAnimation { name, hold, rate, .. } => {
-                        if let Some(lib) = anim_lib.as_ref() {
-                            if let Some(ref mut state) = anim_state.as_deref_mut() {
-                                let name = name.clone();
-                                let hold = *hold;
-                                let rate = *rate;
-                                if lib.play(&name, state) {
-                                    state.looping = !hold;
-                                    state.speed_multiplier = rate.unwrap_or(1.0);
-                                    if hold {
-                                        // Non-looping: wait for animation to finish
-                                        exec.blocking =
-                                            Some(scroni::vm::BlockingAction::WaitingForAnimation);
+                        scroni::vm::BlockingAction::PlayAnimation { name, hold, rate, .. } => {
+                            if let Some(lib) = anim_lib.as_ref() {
+                                if let Some(ref mut state) = anim_state.as_deref_mut() {
+                                    let name_val = name.clone();
+                                    let hold_val = *hold;
+                                    let rate_val = *rate;
+                                    if lib.play(&name_val, state) {
+                                        state.looping = !hold_val;
+                                        state.speed_multiplier = rate_val.unwrap_or(1.0);
+                                        if hold_val {
+                                            t.blocking = Some(scroni::vm::BlockingAction::WaitingForAnimation);
+                                        } else {
+                                            t.blocking = None;
+                                            t.state = scroni::vm::ExecState::Running;
+                                        }
                                     } else {
-                                        // Looping: unblock immediately, animation plays forever
-                                        exec.clear_blocking();
+                                        t.blocking = None;
+                                        t.state = scroni::vm::ExecState::Running;
                                     }
                                 } else {
-                                    warn!(
-                                        "PlayAnimation: alias {:?} not found in anim library for entity {} ({:?})",
-                                        name, entity_name, exec.owner
-                                    );
-                                    exec.clear_blocking();
+                                    t.blocking = None;
+                                    t.state = scroni::vm::ExecState::Running;
                                 }
                             } else {
-                                warn!(
-                                    "PlayAnimation: entity {} ({:?}) has AniLibrary but is missing AnimState",
-                                    entity_name, exec.owner
-                                );
-                                exec.clear_blocking();
+                                t.blocking = None;
+                                t.state = scroni::vm::ExecState::Running;
                             }
-                        } else {
-                            if anim_state.is_some() {
-                                warn!(
-                                    "PlayAnimation: entity {} ({:?}) has AnimState but is missing AniLibrary",
-                                    entity_name, exec.owner
-                                );
+                        }
+                        scroni::vm::BlockingAction::WaitingForAnimation => {
+                            if let Some(ref state) = anim_state.as_deref() {
+                                let num_frames = state.anim.frames.len() as f32;
+                                if num_frames > 0.0 && state.current_time >= num_frames - 1.0 && !state.looping {
+                                    t.blocking = None;
+                                    t.state = scroni::vm::ExecState::Running;
+                                }
                             } else {
-                                warn!(
-                                    "PlayAnimation: entity {} ({:?}) is missing both AniLibrary and AnimState",
-                                    entity_name, exec.owner
-                                );
+                                t.blocking = None;
+                                t.state = scroni::vm::ExecState::Running;
                             }
-                            exec.clear_blocking();
                         }
+                        _ => {}
                     }
-                    scroni::vm::BlockingAction::WaitingForAnimation => {
-                        if let Some(ref state) = anim_state.as_deref() {
-                            let num_frames = state.anim.frames.len() as f32;
-                            if num_frames > 0.0
-                                && state.current_time >= num_frames - 1.0
-                                && !state.looping
-                            {
-                                exec.clear_blocking();
-                            }
-                        } else {
-                            exec.clear_blocking();
-                        }
-                    }
-                    _ => {}
                 }
             }
         }
