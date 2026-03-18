@@ -141,8 +141,9 @@ fn projectile_collision_system(
 
         let filter = SpatialQueryFilter::from_excluded_entities([entity, instance.owner]);
 
-        if let Some(hit) = spatial_query.cast_ray(prev_pos, direction, distance, true, &filter) {
-            let hit_pos = prev_pos + direction * hit.distance;
+        if let Ok(dir3) = Dir3::new(direction) {
+            if let Some(hit) = spatial_query.cast_ray(prev_pos, dir3, distance, true, &filter) {
+                let hit_pos = prev_pos + direction * hit.distance;
 
             impact_writer.write(ImpactMessage {
                 hit_entity: Some(hit.entity),
@@ -160,8 +161,8 @@ fn projectile_collision_system(
                     parent: None,
                 });
             }
-
             commands.entity(entity).despawn();
+        }
         }
     }
 }
