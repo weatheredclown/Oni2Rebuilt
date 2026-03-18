@@ -385,20 +385,24 @@ pub fn spawn_layout_actor(
                         } else {
                             0.2 // 1.0 / 5.0 seconds
                         };
-                        assets.commands.entity(entity).insert(CurveFollower {
-                            curve,
-                            phase: 0.0,
-                            speed,
-                            target_phase: if has_script { 0.0 } else { 1.0 },
-                            wrap_around: if has_script {
-                                false
-                            } else {
-                                !actor.curve_ping_pong
+                        assets.commands.entity(entity).insert((
+                            CurveFollower {
+                                curve,
+                                phase: 0.0,
+                                speed,
+                                target_phase: if has_script { 0.0 } else { 1.0 },
+                                wrap_around: if has_script {
+                                    false
+                                } else {
+                                    !actor.curve_ping_pong
+                                },
+                                ping_pong: actor.curve_ping_pong,
+                                look_along_xz: actor.curve_look_xz,
+                                fixed_orientation: actor.curve_fixed_orientation,
+                                reached_target: has_script,
                             },
-                            ping_pong: actor.curve_ping_pong,
-                            look_along_xz: actor.curve_look_xz,
-                            reached_target: has_script,
-                        });
+                            avian3d::prelude::RigidBody::Kinematic,
+                        ));
                         info!(
                             "Attached CurveFollower '{}' to {} ({} control points)",
                             cname,

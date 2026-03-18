@@ -15,6 +15,8 @@ pub struct LayoutActor {
     pub is_player: bool,
     /// Curve name from <Curve> component (for path-following entities).
     pub curve_name: Option<String>,
+    /// Whether the entity should NOT rotate to look along the curve.
+    pub curve_fixed_orientation: bool,
     /// Whether to constrain orientation to the XZ plane.
     pub curve_look_xz: bool,
     /// PingPong mode for curve traversal.
@@ -164,11 +166,13 @@ pub fn parse_actor_xml(dir: &str, filename: &str, template_dir: &str) -> Option<
     
     // Extract Curve props
     let mut curve_name: Option<String> = None;
+    let mut curve_fixed_orientation = false;
     let mut curve_look_xz = false;
     let mut curve_ping_pong = false;
     let mut curve_speed = 0.0f32;
     if let Some(block) = curve_block {
         if let Some(v) = extract_xml_attr(&block, "CurveName") { curve_name = Some(v); }
+        if let Some(v) = extract_xml_attr(&block, "FixedOrientation") { curve_fixed_orientation = v == "1"; }
         if let Some(v) = extract_xml_attr(&block, "LookAlongXZPlane") { curve_look_xz = v == "1"; }
         if let Some(v) = extract_xml_attr(&block, "PingPong") { curve_ping_pong = v == "1"; }
         if let Some(v) = extract_xml_attr(&block, "Speed") { curve_speed = v.parse().unwrap_or(0.0); }
@@ -224,6 +228,7 @@ pub fn parse_actor_xml(dir: &str, filename: &str, template_dir: &str) -> Option<
         is_creature,
         is_player,
         curve_name,
+        curve_fixed_orientation,
         curve_look_xz,
         curve_ping_pong,
         curve_speed,

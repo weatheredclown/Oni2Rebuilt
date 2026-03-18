@@ -60,6 +60,8 @@ pub enum ExecState {
     Running,
     /// Yielded for this frame (exit instruction).
     Yielded,
+    /// Yielded control immediately to enter a newly pushed inner loop block.
+    PushLoop,
     /// Script completed (done instruction or fell off end of sequence).
     Done,
     /// Waiting for a blocking behavior to complete.
@@ -315,44 +317,69 @@ impl ScriptExec {
     }
 
     fn run_sequence(&mut self, now: f64, ctx: &mut ScroniContext) {
-        // If we're inside a loop, continue that loop
-        while !self.loop_stack.is_empty() {
-            if self.state != ExecState::Running {
-                return;
+        loop {
+            // If we're inside a loop, continue that loop
+            while !self.loop_stack.is_empty() {
+                if self.state != ExecState::Running {
+                    return;
+                }
+                
+                let top_idx = self.loop_stack.len() - 1;
+                let mut ls = self.loop_stack.remove(top_idx);
+                let pre_len = self.loop_stack.len();
+                
+                let (active, push_back) = self.step_loop(&mut ls, now, ctx);
+                
+                if push_back {
+                    self.loop_stack.insert(pre_len, ls);
+                }
+                
+                if self.state == ExecState::PushLoop {
+                    self.state = ExecState::Running;
+                    continue; // Re-evaluate loop stack, top is now the new inner loop!
+                }
+                
+                if active {
+                    return;
+                }
             }
-            // Take the loop off the stack to avoid borrow conflicts
-            let mut ls = self.loop_stack.pop().unwrap();
-            let (active, push_back) = self.step_loop(&mut ls, now, ctx);
-            if push_back {
-                self.loop_stack.push(ls);
-            }
-            if active {
-                return;
-            }
-            // Loop finished — continue to next outer loop or sequence
-        }
 
-        // Continue sequence from PC
-        while self.state == ExecState::Running {
-            if self.seq_pc < self.script.sequence.len() {
-                let stmt = self.script.sequence[self.seq_pc].clone();
-                self.seq_pc += 1;
-                self.exec_stmt(&stmt, now, ctx);
-            } else {
-                // Fell off end of sequence
-                if self.loop_stack.is_empty() {
-                    if let Some(frame) = self.call_stack.pop() {
-                        self.script = frame.script;
-                        self.variables = frame.variables;
-                        self.seq_pc = frame.seq_pc;
-                        self.loop_stack = frame.loop_stack;
-                    } else {
-                        self.state = ExecState::Done;
+            if self.state != ExecState::Running { return; }
+
+            let mut broke_for_loop = false;
+            
+            // Continue sequence from PC
+            while self.state == ExecState::Running {
+                if self.seq_pc < self.script.sequence.len() {
+                    let stmt = self.script.sequence[self.seq_pc].clone();
+                    self.seq_pc += 1;
+                    self.exec_stmt(&stmt, now, ctx);
+                    
+                    if self.state == ExecState::PushLoop {
+                        self.state = ExecState::Running;
+                        broke_for_loop = true;
                         break;
                     }
                 } else {
-                    break; // Should not happen, but break to be safe
+                    // Fell off end of sequence
+                    if self.loop_stack.is_empty() {
+                        if let Some(frame) = self.call_stack.pop() {
+                            self.script = frame.script;
+                            self.variables = frame.variables;
+                            self.seq_pc = frame.seq_pc;
+                            self.loop_stack = frame.loop_stack;
+                        } else {
+                            self.state = ExecState::Done;
+                            return;
+                        }
+                    } else {
+                        return; // Should not happen, but break to be safe
+                    }
                 }
+            }
+            
+            if !broke_for_loop {
+                break; // If we didn't break to push a loop, the sequence is done or yielded, so end run_sequence
             }
         }
     }
@@ -366,6 +393,7 @@ impl ScriptExec {
                     *pc += 1;
                     self.exec_stmt(&stmt, now, ctx);
                 }
+                if self.state == ExecState::PushLoop { return (true, true); }
                 if self.state == ExecState::Running {
                     *pc = 0; // restart loop
                     return (true, true);
@@ -387,6 +415,7 @@ impl ScriptExec {
                     *pc += 1;
                     self.exec_stmt(&stmt, now, ctx);
                 }
+                if self.state == ExecState::PushLoop { return (true, true); }
                 if self.state == ExecState::Running {
                     *pc = 0;
                     return (true, true);
@@ -406,6 +435,7 @@ impl ScriptExec {
                     *pc += 1;
                     self.exec_stmt(&stmt, now, ctx);
                 }
+                if self.state == ExecState::PushLoop { return (true, true); }
                 if self.state == ExecState::Running {
                     *remaining -= 1;
                     *pc = 0;
@@ -423,6 +453,7 @@ impl ScriptExec {
                     *pc += 1;
                     self.exec_stmt(&stmt, now, ctx);
                 }
+                if self.state == ExecState::PushLoop { return (true, true); }
                 if self.state == ExecState::Running {
                     *pc = 0;
                     return (true, true);
@@ -439,6 +470,7 @@ impl ScriptExec {
                     *pc += 1;
                     self.exec_stmt(&stmt, now, ctx);
                 }
+                if self.state == ExecState::PushLoop { return (true, true); }
                 if *pc >= stmts.len() {
                     return (false, false); // block done
                 }
@@ -489,10 +521,12 @@ impl ScriptExec {
             }
             Stmt::Block(stmts) => {
                 self.loop_stack.push(LoopState::Block { stmts: stmts.clone(), pc: 0 });
+                self.state = ExecState::PushLoop;
             }
             Stmt::DoForever(body) => {
                 let stmts = self.flatten_to_block(body);
                 self.loop_stack.push(LoopState::Forever { body: stmts, pc: 0 });
+                self.state = ExecState::PushLoop;
             }
             Stmt::DoWhile { condition, body } => {
                 let stmts = self.flatten_to_block(body);
@@ -501,11 +535,13 @@ impl ScriptExec {
                     body: stmts,
                     pc: 0,
                 });
+                self.state = ExecState::PushLoop;
             }
             Stmt::DoNTimes { count, body } => {
                 let n = self.eval_expr(count, now, ctx).as_int();
                 let stmts = self.flatten_to_block(body);
                 self.loop_stack.push(LoopState::NTimes { remaining: n, body: stmts, pc: 0 });
+                self.state = ExecState::PushLoop;
             }
             Stmt::DoForSeconds { seconds, body } => {
                 let secs = self.eval_expr(seconds, now, ctx).as_float();
@@ -515,6 +551,7 @@ impl ScriptExec {
                     body: stmts,
                     pc: 0,
                 });
+                self.state = ExecState::PushLoop;
             }
             Stmt::Exit => {
                 self.state = ExecState::Yielded;
@@ -819,6 +856,19 @@ impl ScriptExec {
                 }
             }
 
+            Stmt::ChildStack { var, script } => {
+                let script_name = self.eval_expr(script, now, ctx).as_string();
+                info!("VM: Spawning child script '{}' into var '{}' (unimplemented)", script_name, var);
+                self.variables.insert(var.clone(), Value::Int(1)); // dummy child script handle
+            }
+
+            Stmt::ChildSwitch { var, script } => {
+                let script_name = self.eval_expr(script, now, ctx).as_string();
+                info!("VM: Switching to child script '{}' into var '{}' (unimplemented)", script_name, var);
+                self.variables.insert(var.clone(), Value::Int(1)); // dummy child script handle
+            }
+
+
             Stmt::CameraSetPackage(expr) => {
                 let pkg_name = self.eval_expr(expr, now, ctx).as_string();
                 self.sys_requests.push(SysRequest::CameraSetPackage(pkg_name));
@@ -1117,6 +1167,10 @@ impl ScriptExec {
                         }
                         Value::None
                     }
+                    "isdone" => {
+                        // Stub: assume child scripts finish instantly so we don't stall infinite loops.
+                        Value::Int(1)
+                    }
                     _ => Value::None,
                 }
             }
@@ -1389,8 +1443,10 @@ pub fn scroni_sys_event_observer(
         }
         ScrOniSysEvent::CameraSetPackage(pkg_name) => {
             if let Some(mut active_pkg) = active_camera_package {
-                info!("Changing active camera package from {} to {}", active_pkg.name, pkg_name);
-                active_pkg.name = pkg_name;
+                if active_pkg.name != pkg_name {
+                    info!("Changing active camera package from {} to {}", active_pkg.name, pkg_name);
+                    active_pkg.name = pkg_name;
+                }
             } else {
                 warn!("CameraSetPackage called but no ActiveCameraPackage resource found.");
             }

@@ -121,10 +121,10 @@ pub enum Stmt {
     Stack(Expr),
     /// `switch <string>`
     Switch(Expr),
-    /// `childstack <string>`
-    ChildStack(Expr),
-    /// `childswitch <string>`
-    ChildSwitch(Expr),
+    /// `childstack <var> <string>`
+    ChildStack { var: String, script: Expr },
+    /// `childswitch <var> <string>`
+    ChildSwitch { var: String, script: Expr },
     /// `childdone`
     ChildDone,
     /// `childhome`

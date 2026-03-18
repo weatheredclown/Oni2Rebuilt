@@ -308,8 +308,20 @@ impl Compiler {
             // Script flow
             TokenCode::Stack => { self.advance(); Stmt::Stack(self.parse_expr()) }
             TokenCode::Switch => { self.advance(); Stmt::Switch(self.parse_expr()) }
-            TokenCode::ChildStack => { self.advance(); Stmt::ChildStack(self.parse_expr()) }
-            TokenCode::ChildSwitch => { self.advance(); Stmt::ChildSwitch(self.parse_expr()) }
+            TokenCode::ChildStack => {
+                self.advance();
+                let var = self.peek().text.clone();
+                self.advance();
+                let script = self.parse_expr();
+                Stmt::ChildStack { var, script }
+            }
+            TokenCode::ChildSwitch => {
+                self.advance();
+                let var = self.peek().text.clone();
+                self.advance();
+                let script = self.parse_expr();
+                Stmt::ChildSwitch { var, script }
+            }
             TokenCode::ChildDone => { self.advance(); Stmt::ChildDone }
             TokenCode::ChildHome => { self.advance(); Stmt::ChildHome }
             TokenCode::ChildStop => { self.advance(); Stmt::ChildStop }

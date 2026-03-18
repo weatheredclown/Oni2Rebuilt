@@ -71,7 +71,8 @@ pub fn curve_follower_system(
         let prev_phase = follower.phase;
 
         // Advance phase parametrically (knots/sec)
-        follower.phase += follower.speed * dt;
+        const GLOBAL_SPEED_SCALE: f32 = 0.1;
+        follower.phase += follower.speed * dt * GLOBAL_SPEED_SCALE;
 
         // Check if we've reached/passed the target
         if !follower.reached_target {
@@ -110,20 +111,22 @@ pub fn curve_follower_system(
         tf.translation = pos;
 
         // Orient along curve direction (look-ahead)
-        let look_t = (follower.phase + 0.005).min(0.999);
-        let ahead = follower.curve.get_curve_point(look_t);
-        let dir = ahead - pos;
-        if dir.length_squared() > 0.001 {
-            let forward = if follower.look_along_xz {
-                Vec3::new(dir.x, 0.0, dir.z).normalize_or_zero()
-            } else {
-                dir.normalize()
-            };
-            if forward.length_squared() > 0.001 {
-                let target = pos + forward;
-                tf.look_at(target, Vec3::Y);
-                // Oni2 models face +Z; look_at points -Z at target
-                tf.rotate_y(std::f32::consts::PI);
+        if !follower.fixed_orientation {
+            let look_t = (follower.phase + 0.005).min(0.999);
+            let ahead = follower.curve.get_curve_point(look_t);
+            let dir = ahead - pos;
+            if dir.length_squared() > 0.001 {
+                let forward = if follower.look_along_xz {
+                    Vec3::new(dir.x, 0.0, dir.z).normalize_or_zero()
+                } else {
+                    dir.normalize()
+                };
+                if forward.length_squared() > 0.001 {
+                    let target = pos + forward;
+                    tf.look_at(target, Vec3::Y);
+                    // Oni2 models face +Z; look_at points -Z at target
+                    tf.rotate_y(std::f32::consts::PI);
+                }
             }
         }
     }
@@ -447,9 +450,14 @@ pub fn load_anim_library(
         };
         // Only skip if the anim has more than 1 channel but doesn't match skeleton.
         // Single-channel anims (e.g. simple rotation) are always accepted.
+        // Also allow 6 channels for 0-joint skeletons (root pos + rot) like BCTrashTest.
         if anim.num_channels > 1 && anim.num_channels as usize != expected_channels {
-            skipped_channels += 1;
-            continue;
+            if expected_channels == 3 && anim.num_channels == 6 {
+                // Accept 6 channels instead of 3 for rigid body / generic objects
+            } else {
+                skipped_channels += 1;
+                continue;
+            }
         }
         let id = AnimId::new(alias);
         anims.insert(id, anim);

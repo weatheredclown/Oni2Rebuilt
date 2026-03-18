@@ -190,12 +190,29 @@ pub fn creature_movement_anim_system(
                 CreatureMovementAnim::RunLeft => "ANIMNAV_STRAFE_LEFT_JOG",
                 CreatureMovementAnim::RunRight => "ANIMNAV_STRAFE_RIGHT_JOG",
             };
-            if library.play(alias, &mut anim_state) {
+            
+            let mut played = library.play(alias, &mut anim_state);
+            
+            if !played {
+                // Fallbacks if JOG variants are missing
+                let fallback_alias = if alias.ends_with("_JOG") {
+                    Some(alias.trim_end_matches("_JOG"))
+                } else if alias == "ANIMNAV_RUN_FORWARD" {
+                    Some("ANIMNAV_WLK_FORWARD")
+                } else {
+                    None
+                };
+
+                if let Some(fb) = fallback_alias {
+                    played = library.play(fb, &mut anim_state);
+                }
+            }
+
+            if played {
                 *move_anim = desired;
-                info!("Creature movement animation changed to: {}", alias);
             } else {
                 warn!(
-                    "Creature missing expected movement animation alias: {}",
+                    "Creature missing expected movement animation alias and fallbacks: {}",
                     alias
                 );
             }

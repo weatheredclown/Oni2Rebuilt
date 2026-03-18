@@ -17,6 +17,7 @@ pub struct CurveFollower {
     pub wrap_around: bool,    // loop when reaching end
     pub ping_pong: bool,      // reverse direction at ends
     pub look_along_xz: bool,  // constrain orientation to XZ plane
+    pub fixed_orientation: bool, // disable rotation completely
     pub reached_target: bool,
 }
 
