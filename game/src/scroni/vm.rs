@@ -79,6 +79,8 @@ pub enum ExecState {
     Done,
     /// Waiting for a blocking behavior to complete.
     Blocked,
+    /// Script aborted the sequence (home, switch, etc.). Unwinds loops.
+    AbortSequence,
 }
 
 /// A message sent between scripts.
@@ -396,7 +398,9 @@ impl ScriptExec {
             }
         }
 
-        self.get_thread_mut(tid).state = ExecState::Running;
+        if self.get_thread(tid).state != ExecState::Running {
+            self.get_thread_mut(tid).state = ExecState::Running;
+        }
 
         // Run whenever block (non-blocking, runs every frame)
         let whenever = self.get_thread(tid).script.whenever.clone();
@@ -488,6 +492,21 @@ impl ScriptExec {
         }
     }
 
+    /// Checks the current thread state after executing loop statements and returns early tuple
+    /// if the state requires a standard loop control flow break/yield/abort.
+    fn check_loop_state(&mut self, tid: u32) -> Option<(bool, bool)> {
+        match self.get_thread(tid).state {
+            ExecState::PushLoop => Some((true, true)),
+            ExecState::AbortSequence => Some((true, false)),
+            ExecState::Done => Some((false, false)),
+            ExecState::Yielded => {
+                self.get_thread_mut(tid).state = ExecState::Running;
+                Some((true, true))
+            }
+            _ => None,
+        }
+    }
+
     /// Step a loop. Returns (still_active, should_push_back).
     fn step_loop(&mut self, tid: u32, ls: &mut LoopState, now: f64, ctx: &mut ScroniContext) -> (bool, bool) {
         match ls {
@@ -497,13 +516,9 @@ impl ScriptExec {
                     *pc += 1;
                     self.exec_stmt(tid, &stmt, now, ctx);
                 }
-                if self.get_thread(tid).state == ExecState::PushLoop { return (true, true); }
+                if let Some(res) = self.check_loop_state(tid) { return res; }
                 if self.get_thread(tid).state == ExecState::Running {
                     *pc = 0; // restart loop
-                    return (true, true);
-                }
-                if self.get_thread(tid).state == ExecState::Yielded {
-                    self.get_thread_mut(tid).state = ExecState::Running;
                     return (true, true);
                 }
                 (true, true) // blocked — keep loop
@@ -519,13 +534,9 @@ impl ScriptExec {
                     *pc += 1;
                     self.exec_stmt(tid, &stmt, now, ctx);
                 }
-                if self.get_thread(tid).state == ExecState::PushLoop { return (true, true); }
+                if let Some(res) = self.check_loop_state(tid) { return res; }
                 if self.get_thread(tid).state == ExecState::Running {
                     *pc = 0;
-                    return (true, true);
-                }
-                if self.get_thread(tid).state == ExecState::Yielded {
-                    self.get_thread_mut(tid).state = ExecState::Running;
                     return (true, true);
                 }
                 (true, true)
@@ -539,7 +550,7 @@ impl ScriptExec {
                     *pc += 1;
                     self.exec_stmt(tid, &stmt, now, ctx);
                 }
-                if self.get_thread(tid).state == ExecState::PushLoop { return (true, true); }
+                if let Some(res) = self.check_loop_state(tid) { return res; }
                 if self.get_thread(tid).state == ExecState::Running {
                     *remaining -= 1;
                     *pc = 0;
@@ -557,13 +568,9 @@ impl ScriptExec {
                     *pc += 1;
                     self.exec_stmt(tid, &stmt, now, ctx);
                 }
-                if self.get_thread(tid).state == ExecState::PushLoop { return (true, true); }
+                if let Some(res) = self.check_loop_state(tid) { return res; }
                 if self.get_thread(tid).state == ExecState::Running {
                     *pc = 0;
-                    return (true, true);
-                }
-                if self.get_thread(tid).state == ExecState::Yielded {
-                    self.get_thread_mut(tid).state = ExecState::Running;
                     return (true, true);
                 }
                 (true, true)
@@ -574,7 +581,7 @@ impl ScriptExec {
                     *pc += 1;
                     self.exec_stmt(tid, &stmt, now, ctx);
                 }
-                if self.get_thread(tid).state == ExecState::PushLoop { return (true, true); }
+                if let Some(res) = self.check_loop_state(tid) { return res; }
                 if *pc >= stmts.len() {
                     return (false, false); // block done
                 }
@@ -663,6 +670,7 @@ impl ScriptExec {
                     t.variables = frame.variables;
                     t.seq_pc = frame.seq_pc;
                     t.loop_stack = frame.loop_stack;
+                    t.state = ExecState::AbortSequence;
                 } else {
                     self.get_thread_mut(tid).state = ExecState::Done;
                 }
@@ -671,7 +679,7 @@ impl ScriptExec {
                 let mut t = self.get_thread_mut(tid);
                 t.seq_pc = 0;
                 t.loop_stack.clear();
-                t.state = ExecState::Yielded;
+                t.state = ExecState::AbortSequence;
             }
             Stmt::Log(exprs) => {
                 let parts: Vec<String> = exprs.iter().map(|e| {
@@ -928,7 +936,7 @@ impl ScriptExec {
                     }
                     t.seq_pc = 0;
                     t.loop_stack.clear();
-                    t.state = ExecState::Yielded; // Yield to prevent executing rest of old block
+                    t.state = ExecState::AbortSequence; // Yield to prevent executing rest of old block
                 } else {
                     warn!("Stack: Script '{}' not found in available scripts.", name);
                 }
@@ -956,7 +964,7 @@ impl ScriptExec {
                     }
                     t.seq_pc = 0;
                     t.loop_stack.clear();
-                    self.get_thread_mut(tid).state = ExecState::Yielded; // Yield to prevent executing rest of old block
+                    self.get_thread_mut(tid).state = ExecState::AbortSequence; // Yield to prevent executing rest of old block
                 } else {
                     warn!("Switch: Script '{}' not found in available scripts.", name);
                 }
