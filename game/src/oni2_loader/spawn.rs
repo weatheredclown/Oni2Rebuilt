@@ -141,17 +141,19 @@ pub enum CreatureMovementAnim {
 /// Pick stand/walk/run animations based on horizontal velocity for all creatures.
 pub fn creature_movement_anim_system(
     mut creatures: Query<(
-        &Oni2AnimLibrary,
-        &mut Oni2AnimState,
+        &crate::oni2_loader::animation::Oni2AnimLibrary,
+        &mut crate::oni2_loader::animation::Oni2AnimState,
         &mut CreatureMovementAnim,
         &LinearVelocity,
         &GlobalTransform,
+        Option<&crate::oni2_loader::parsers::loco::LocomotionController>,
     )>,
 ) {
     const WALK_THRESHOLD: f32 = 0.5;
     const RUN_THRESHOLD: f32 = 3.0;
+    const MAX_RUN_SPEED: f32 = 6.0;
 
-    for (library, mut anim_state, mut move_anim, vel, transform) in &mut creatures {
+    for (library, mut anim_state, mut move_anim, vel, transform, loco_opt) in &mut creatures {
         let horiz_speed = Vec2::new(vel.x, vel.z).length();
 
         // Get character forward and right directions
@@ -162,59 +164,43 @@ pub fn creature_movement_anim_system(
         let forward_speed = vel_xz.dot(forward);
         let right_speed = vel_xz.dot(-right);
 
-        let desired = if forward_speed.abs() > right_speed.abs() {
-            if horiz_speed < WALK_THRESHOLD {
-                CreatureMovementAnim::Stand
-            } else if horiz_speed < RUN_THRESHOLD {
-                if forward_speed > 0.0 { CreatureMovementAnim::Walk } else { CreatureMovementAnim::Walk } // TODO: backwards walk
-            } else {
-                if forward_speed > 0.0 { CreatureMovementAnim::Run } else { CreatureMovementAnim::Run }   // TODO: backwards run
-            }
-        } else {
-            if horiz_speed < WALK_THRESHOLD {
-                CreatureMovementAnim::Stand
-            } else if horiz_speed < RUN_THRESHOLD {
-                if right_speed > 0.0 { CreatureMovementAnim::WalkRight } else { CreatureMovementAnim::WalkLeft }
-            } else {
-                if right_speed > 0.0 { CreatureMovementAnim::RunRight } else { CreatureMovementAnim::RunLeft }
-            }
-        };
+        if let Some(loco) = loco_opt {
+            let mut throttle_fwd = -forward_speed / MAX_RUN_SPEED;
+            let mut throttle_right = -right_speed / MAX_RUN_SPEED;
 
-        if *move_anim != desired {
-            let alias = match desired {
-                CreatureMovementAnim::Stand => "ANIMNAV_STAND",
-                CreatureMovementAnim::Walk => "ANIMNAV_WLK_FORWARD",
-                CreatureMovementAnim::Run => "ANIMNAV_RUN_FORWARD",
-                CreatureMovementAnim::WalkLeft => "ANIMNAV_STRAFE_LEFT",
-                CreatureMovementAnim::WalkRight => "ANIMNAV_STRAFE_RIGHT",
-                CreatureMovementAnim::RunLeft => "ANIMNAV_STRAFE_LEFT_JOG",
-                CreatureMovementAnim::RunRight => "ANIMNAV_STRAFE_RIGHT_JOG",
+            // Snap small movements to 0
+            if throttle_fwd.abs() < 0.05 { throttle_fwd = 0.0; }
+            if throttle_right.abs() < 0.05 { throttle_right = 0.0; }
+
+            let (gaits, throttle) = if throttle_fwd.abs() >= throttle_right.abs() {
+                (loco.forward_gaits.as_slice(), throttle_fwd)
+            } else {
+                (loco.strafe_gaits.as_slice(), throttle_right)
             };
-            
-            let mut played = library.play(alias, &mut anim_state);
-            
-            if !played {
-                // Fallbacks if JOG variants are missing
-                let fallback_alias = if alias.ends_with("_JOG") {
-                    Some(alias.trim_end_matches("_JOG"))
-                } else if alias == "ANIMNAV_RUN_FORWARD" {
-                    Some("ANIMNAV_WLK_FORWARD")
-                } else {
-                    None
-                };
 
-                if let Some(fb) = fallback_alias {
-                    played = library.play(fb, &mut anim_state);
+            let best_gait = gaits.iter().find(|g| {
+                let lower = g.min_throttle.min(g.max_throttle);
+                let upper = g.min_throttle.max(g.max_throttle);
+                throttle >= lower && throttle <= upper
+            }).or_else(|| {
+                gaits.iter().min_by(|a, b| {
+                    (a.ideal_throttle - throttle).abs().total_cmp(&(b.ideal_throttle - throttle).abs())
+                })
+            });
+
+            if let Some(gait) = best_gait {
+                if Some(gait.anim) != anim_state.current_anim_id {
+                    let dir_str = if throttle_fwd.abs() >= throttle_right.abs() { "FWD" } else { "STRAFE" };
+                    info!(
+                        "Loco Selection -> Fwd: {:.2}, Right: {:.2} | {} Throttle: {:.2} | Selected: {} (bounds: {:.2} to {:.2})",
+                        forward_speed, right_speed, dir_str, throttle, gait.anim, gait.min_throttle, gait.max_throttle
+                    );
+                    if library.play_id(gait.anim, &mut anim_state) {
+                        *move_anim = CreatureMovementAnim::Stand; // Prevent legacy code from desyncing state
+                    } else {
+                        warn!("Loco gait requested missing animation ID: {}", gait.anim);
+                    }
                 }
-            }
-
-            if played {
-                *move_anim = desired;
-            } else {
-                warn!(
-                    "Creature missing expected movement animation alias and fallbacks: {}",
-                    alias
-                );
             }
         }
     }
@@ -746,6 +732,7 @@ pub fn spawn_oni2_entity_with_rotation(
             joint_entities: joint_entities.clone(),
             base_rotation: rotation,
             current_frame: Vec::new(),
+            current_anim_id: None,
         });
     }
 

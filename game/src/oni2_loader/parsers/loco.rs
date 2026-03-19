@@ -4,7 +4,8 @@ use crate::oni2_loader::AnimId;
 
 #[derive(Component, Clone, Default, Debug)]
 pub struct LocomotionController {
-    pub blend_spaces: Vec<LocoBlendGait>,
+    pub forward_gaits: Vec<LocoBlendGait>,
+    pub strafe_gaits: Vec<LocoBlendGait>,
     pub transitions: HashMap<AnimId, Vec<LocoTransition>>,
 }
 
@@ -29,12 +30,13 @@ pub struct LocoTransition {
 pub fn parse_loco_content(content: &str) -> LocomotionController {
     let mut controller = LocomotionController::default();
 
-    let mut in_locodata = false;
+    let mut locodata_depth = 0;
+    let mut gait_depth = 0;
     let mut current_gait: Option<LocoBlendGait> = None;
     
     let mut current_transition_event: Option<AnimId> = None;
     let mut current_transition: Option<LocoTransition> = None;
-    let mut nesting_level = 0;
+    let mut pending_name: Option<String> = None;
 
     for line in content.lines() {
         let trimmed = line.trim();
@@ -43,48 +45,69 @@ pub fn parse_loco_content(content: &str) -> LocomotionController {
         }
 
         if trimmed == "locodata {" {
-            in_locodata = true;
-            nesting_level += 1;
+            locodata_depth += 1;
             continue;
-        } else if trimmed.ends_with("{") {
-            let name = trimmed.trim_end_matches('{').trim();
-            if in_locodata {
+        } else if trimmed == "transitiondata {" {
+            continue;
+        }
+
+        let is_open_brace = trimmed == "{";
+        let is_close_brace = trimmed == "}";
+
+        if is_open_brace || trimmed.ends_with("{") {
+            let name = if is_open_brace {
+                pending_name.take().unwrap_or_default()
+            } else {
+                trimmed.trim_end_matches('{').trim().to_string()
+            };
+
+            if name.is_empty() {
+                continue;
+            }
+
+            if locodata_depth > 0 {
                 current_gait = Some(LocoBlendGait {
-                    anim: AnimId::new(name),
+                    anim: AnimId::new(&name),
                     ..default()
                 });
+                gait_depth = locodata_depth;
             } else {
-                current_transition_event = Some(AnimId::new(name));
+                current_transition_event = Some(AnimId::new(&name));
                 current_transition = Some(LocoTransition::default());
             }
-            nesting_level += 1;
             continue;
-        } else if trimmed == "}" {
-            nesting_level -= 1;
-            if in_locodata && nesting_level == 1 {
-                if let Some(gait) = current_gait.take() {
-                    controller.blend_spaces.push(gait);
+        } else if is_close_brace {
+            if let Some(gait) = current_gait.take() {
+                if gait_depth == 1 {
+                    controller.forward_gaits.push(gait);
+                } else {
+                    controller.strafe_gaits.push(gait);
                 }
-            } else if nesting_level == 0 {
-                if in_locodata {
-                    in_locodata = false;
-                } else if let Some(event_id) = current_transition_event.take() {
-                    if let Some(trans) = current_transition.take() {
-                        controller.transitions.entry(event_id).or_default().push(trans);
-                    }
+            } else if let Some(trans) = current_transition.take() {
+                if let Some(event_id) = current_transition_event.take() {
+                    controller.transitions.entry(event_id).or_default().push(trans);
                 }
+            } else if locodata_depth > 0 {
+                locodata_depth -= 1;
             }
             continue;
         }
 
         let parts: Vec<&str> = trimmed.split_whitespace().collect();
+        
+        if parts.len() == 1 {
+            pending_name = Some(parts[0].to_string());
+            continue;
+        }
+        
         if parts.len() < 2 {
             continue;
         }
+        
         let key = parts[0];
         let val = parts[1];
 
-        if in_locodata && current_gait.is_some() {
+        if locodata_depth > 0 && current_gait.is_some() {
             let gait = current_gait.as_mut().unwrap();
             match key {
                 "min_throttle" => gait.min_throttle = val.parse().unwrap_or(0.0),

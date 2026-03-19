@@ -277,6 +277,8 @@ pub struct Oni2AnimState {
     pub base_rotation: Quat,
     /// Blended current frame channel data
     pub current_frame: Vec<f32>,
+    /// Currently playing animation ID for efficient comparison
+    pub current_anim_id: Option<AnimId>,
 }
 
 /// Deterministic string hash used as animation identifier.
@@ -337,6 +339,7 @@ impl Oni2AnimLibrary {
             state.current_time = 0.0;
             state.looping = anim.is_loop;
             state.last_rendered_time = -1.0; // force rebuild
+            state.current_anim_id = Some(id);
 
             // Resize current_frame to match animation channel count
             let num_channels = anim.num_channels as usize;
