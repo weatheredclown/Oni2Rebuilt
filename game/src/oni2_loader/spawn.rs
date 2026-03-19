@@ -190,11 +190,6 @@ pub fn creature_movement_anim_system(
 
             if let Some(gait) = best_gait {
                 if Some(gait.anim) != anim_state.current_anim_id {
-                    let dir_str = if throttle_fwd.abs() >= throttle_right.abs() { "FWD" } else { "STRAFE" };
-                    info!(
-                        "Loco Selection -> Fwd: {:.2}, Right: {:.2} | {} Throttle: {:.2} | Selected: {} (bounds: {:.2} to {:.2})",
-                        forward_speed, right_speed, dir_str, throttle, gait.anim, gait.min_throttle, gait.max_throttle
-                    );
                     if library.play_id(gait.anim, &mut anim_state) {
                         *move_anim = CreatureMovementAnim::Stand; // Prevent legacy code from desyncing state
                     } else {
