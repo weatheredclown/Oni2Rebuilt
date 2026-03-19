@@ -90,6 +90,7 @@ pub struct ScriptMessage {
     pub from: Entity,
     pub to: Entity,
     pub args: Vec<Value>,
+    pub is_action: bool,
 }
 
 /// Represents a blocking command that the VM has issued and is waiting on.
@@ -126,6 +127,7 @@ pub enum SysRequest {
     DrawText(String),
     At(f32, f32),
     MakeFx { script_entity: Entity, name: String, at: Option<Vec3> },
+    SendAction { action: String, target: Entity, component: String },
 }
 
 #[derive(Event, Debug, Clone)]
@@ -155,6 +157,11 @@ pub enum ScrOniSysEvent {
         script_entity: Entity,
         name: String,
         at: Option<Vec3>,
+    },
+    SendAction {
+        action: String,
+        target: Entity,
+        component: String,
     },
 }
 
@@ -844,7 +851,30 @@ impl ScriptExec {
                         from: self.owner,
                         to: entity,
                         args,
+                        is_action: false,
                     });
+                }
+            }
+            Stmt::SendAction { action, target, component } => {
+                let act_str = self.eval_expr(tid, action, now, ctx).as_string();
+                let tgt = self.eval_expr(tid, target, now, ctx);
+                if let Value::Actor(entity) = tgt {
+                    if let Some(comp_expr) = component {
+                        let comp_str = self.eval_expr(tid, comp_expr, now, ctx).as_string();
+                        self.sys_requests.push(SysRequest::SendAction {
+                            action: act_str,
+                            target: entity,
+                            component: comp_str,
+                        });
+                    } else {
+                        self.outgoing_messages.push(ScriptMessage {
+                            msg: act_str,
+                            from: self.owner,
+                            to: entity,
+                            args: Vec::new(),
+                            is_action: true,
+                        });
+                    }
                 }
             }
             Stmt::Teleport { target, to, face } => {
@@ -1259,7 +1289,22 @@ impl ScriptExec {
                     "receivemessage" => {
                         if let Some(msg_expr) = args.get(0) {
                             let target_msg = self.eval_expr(tid, msg_expr, now, ctx).as_string();
-                            if let Some(idx) = self.message_queue.iter().position(|m| m.msg == target_msg) {
+                            if let Some(idx) = self.message_queue.iter().position(|m| !m.is_action && m.msg == target_msg) {
+                                self.message_queue.remove(idx);
+                                return Value::Int(1);
+                            }
+                        }
+                        Value::Int(0)
+                    }
+                    "receiveaction" => {
+                        if let Some(msg_expr) = args.get(0) {
+                            let target_msg = self.eval_expr(tid, msg_expr, now, ctx).as_string();
+                            if let Some(idx) = self.message_queue.iter().position(|m| m.is_action && m.msg == target_msg) {
+                                self.message_queue.remove(idx);
+                                return Value::Int(1);
+                            }
+                        } else {
+                            if let Some(idx) = self.message_queue.iter().position(|m| m.is_action) {
                                 self.message_queue.remove(idx);
                                 return Value::Int(1);
                             }
@@ -1508,6 +1553,13 @@ pub fn scroni_tick_system(
                         at,
                     });
                 }
+                SysRequest::SendAction { action, target, component } => {
+                    commands.trigger(ScrOniSysEvent::SendAction {
+                        action,
+                        target,
+                        component,
+                    });
+                }
             }
         }
 
@@ -1738,6 +1790,16 @@ pub fn scroni_sys_event_observer(
                 at: at,
                 parent: Some(script_entity),
             });
+        }
+        ScrOniSysEvent::SendAction { action, target, component } => {
+            if component.eq_ignore_ascii_case("fx") {
+                commands.trigger(crate::fx_system::FxAction {
+                    action: action.clone(),
+                    target: target,
+                });
+            } else {
+                warn!("SendAction: Unrecognized component '{}'", component);
+            }
         }
     }
 }

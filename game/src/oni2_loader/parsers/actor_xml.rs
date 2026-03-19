@@ -29,8 +29,12 @@ pub struct LayoutActor {
     pub script_main: Option<String>,
     /// Radius from <BroadcastTrigger><Radius>
     pub broadcast_radius: Option<f32>,
-    /// FXType for initial environmental particle systems (e.g. bcnozzlegassesHigh)
     pub fx_type: Option<String>,
+    pub fx_start_active: bool,
+    pub ptx_name: Option<String>,
+    pub ptx_birth_rate: f32,
+    pub ptx_num_particles: i32,
+    pub ptx_offset: Vec3,
 }
 
 /// Resolve the full template chain for an actor XML file.
@@ -205,14 +209,43 @@ pub fn parse_actor_xml(dir: &str, filename: &str, template_dir: &str) -> Option<
         }
     });
 
-    // Extract FXType (e.g. <FXType value="bcnozzlegassesHigh"/>)
+    // Extract FX block (e.g. <FX> ... </FX>)
     let mut fx_type: Option<String> = None;
-    for content in &chain {
-        // Look for standalone FXType tag since it's sometimes just sitting by itself
-        let fx_block = extract_xml_block(content, "FXType");
-        if let Some(block) = fx_block {
-            if let Some(v) = extract_xml_attr(&block, "value") {
-                fx_type = Some(v);
+    let mut fx_start_active = true; // Default to true if not specified
+    let mut ptx_name: Option<String> = None;
+    let mut ptx_birth_rate = 0.0;
+    let mut ptx_num_particles = 0;
+    let mut ptx_offset = Vec3::ZERO;
+
+    let fx_block = extract_component(&chain, has_components_xml, "FX");
+    if let Some(block) = fx_block {
+        if let Some(v) = extract_xml_attr(&block, "FXType") {
+            fx_type = Some(v);
+        }
+        if let Some(v) = extract_xml_attr(&block, "ParticlesType") {
+            ptx_name = Some(v);
+        }
+        if let Some(v) = extract_xml_attr(&block, "StartActive") {
+            fx_start_active = v == "1";
+        }
+        if let Some(v) = extract_xml_attr(&block, "BirthRate") {
+            ptx_birth_rate = v.parse().unwrap_or(0.0);
+        }
+        if let Some(v) = extract_xml_attr(&block, "NumParticles") {
+            ptx_num_particles = v.parse().unwrap_or(0);
+        }
+        if let Some(v) = extract_xml_attr(&block, "Offset").and_then(|s| parse_vec3(&s)) {
+            // Convert to right-handed: negate X and Z
+            ptx_offset = Vec3::new(-v.x, v.y, -v.z);
+        }
+    } else {
+        // Fallback for standalone FXType tag in old maps
+        for content in &chain {
+            let fx_alone = extract_xml_block(content, "FXType");
+            if let Some(block) = fx_alone {
+                if let Some(v) = extract_xml_attr(&block, "value") {
+                    fx_type = Some(v);
+                }
             }
         }
     }
@@ -236,5 +269,10 @@ pub fn parse_actor_xml(dir: &str, filename: &str, template_dir: &str) -> Option<
         script_main,
         broadcast_radius,
         fx_type,
+        fx_start_active,
+        ptx_name,
+        ptx_birth_rate,
+        ptx_num_particles,
+        ptx_offset,
     })
 }

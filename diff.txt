@@ -1,0 +1,34 @@
+﻿diff --git a/game/src/oni2_loader/parsers/effect.rs b/game/src/oni2_loader/parsers/effect.rs
+index 82faec0..3758d5b 100644
+--- a/game/src/oni2_loader/parsers/effect.rs
++++ b/game/src/oni2_loader/parsers/effect.rs
+@@ -128,10 +128,10 @@ pub fn parse_effect(def_type: &str, name: &str, block: &SettingsBlock, asset_ser
+         }
+         "SPRITEEFFECT" => {
+             let tex_name = block.get_string("TextureName").unwrap_or_default();
+-            let tex_handle = if let Some((h, _)) = crate::oni2_loader::parsers::texture::load_tga_texture("textures", &tex_name, images) {
++            let tex_handle = if let Some((h, _)) = crate::oni2_loader::parsers::texture::load_tga_texture("texture", &tex_name, images) {
+                 h
+             } else {
+-                asset_server.load(format!("textures/{}.tga", tex_name))
++                asset_server.load(format!("texture/{}.tga", tex_name))
+             };
+             Some(EffectDef::Sprite(SpriteEffectDef {
+                 name: name.to_string(),
+diff --git a/game/src/oni2_loader/parsers/particle.rs b/game/src/oni2_loader/parsers/particle.rs
+index 99830b4..5b6c0d3 100644
+--- a/game/src/oni2_loader/parsers/particle.rs
++++ b/game/src/oni2_loader/parsers/particle.rs
+@@ -50,10 +50,10 @@ pub fn parse_ptx(content: &str, name: String, asset_server: &AssetServer, images
+             "TextureName" => {
+                 if tokens.len() > 1 {
+                     let tex_name = tokens[1];
+-                    if let Some((h, _)) = crate::oni2_loader::parsers::texture::load_tga_texture("textures", tex_name, images) {
++                    if let Some((h, _)) = crate::oni2_loader::parsers::texture::load_tga_texture("texture", tex_name, images) {
+                         texture = h;
+                     } else {
+-                        texture = asset_server.load(format!("textures/{}.tga", tex_name));
++                        texture = asset_server.load(format!("texture/{}.tga", tex_name));
+                     }
+                 }
+             }

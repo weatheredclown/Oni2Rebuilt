@@ -22,8 +22,13 @@ pub struct CurveFollower {
 }
 
 /// Component indicating this entity should emit a specific Particle/FX system (from layout XML).
-#[derive(Component)]
+#[derive(Component, Debug, Clone)]
 pub struct ActorFxType {
-    pub fx_name: String,
+    pub fx_name: Option<String>,
+    pub start_active: bool,
+    pub ptx_name: Option<String>,
+    pub ptx_birth_rate: f32,
+    pub ptx_num_particles: i32,
+    pub ptx_offset: Vec3,
 }
 

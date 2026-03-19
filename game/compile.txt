@@ -1,0 +1,227 @@
+    Checking rb-game v0.1.0 (C:\Users\timla\repos\rustexperiment\Oni2Rebuilt\game)
+warning: unused import: `bevy::log::info`
+ --> game\src\filesystem\vfs.rs:4:5
+  |
+4 | use bevy::log::info;
+  |     ^^^^^^^^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused import: `std::collections::HashMap`
+ --> game\src\oni2_loader\parsers\projectile.rs:2:5
+  |
+2 | use std::collections::HashMap;
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `std::collections::HashMap`
+ --> game\src\oni2_loader\parsers\effect.rs:2:5
+  |
+2 | use std::collections::HashMap;
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `std::collections::HashMap`
+ --> game\src\oni2_loader\parsers\particle.rs:2:5
+  |
+2 | use std::collections::HashMap;
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `crate::oni2_loader::parsers::anims::*`
+  --> game\src\oni2_loader\mod.rs:28:5
+   |
+28 | use crate::oni2_loader::parsers::anims::*;
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `crate::oni2_loader::parsers::texture::load_tga_file as texture_load_tga_file`
+  --> game\src\oni2_loader\mod.rs:35:5
+   |
+35 | use crate::oni2_loader::parsers::texture::load_tga_file as texture_load_tga_file;
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `crate::scroni::vm::ScrOniSysEvent`
+ --> game\src\fx_system.rs:6:5
+  |
+6 | use crate::scroni::vm::ScrOniSysEvent;
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `ExplosionMatrix`
+ --> game\src\projectile_system.rs:3:71
+  |
+3 | use crate::oni2_loader::parsers::projectile::{ProjectileDef, HitType, ExplosionMatrix};
+  |                                                                       ^^^^^^^^^^^^^^^
+
+warning: unused import: `vfs::DiskVfs`
+  --> game\src\main.rs:28:5
+   |
+28 | use vfs::DiskVfs;
+   |     ^^^^^^^^^^^^
+
+error[E0614]: type `bevy::prelude::Entity` cannot be dereferenced
+    --> game\src\scroni\vm.rs:1798:29
+     |
+1798 |                     target: *target,
+     |                             ^^^^^^^ can't be dereferenced
+
+warning: variable `fov` is assigned to, but never used
+   --> game\src\camera\systems.rs:142:21
+    |
+142 |                 let mut fov = 50.0;
+    |                     ^^^^^^^
+    |
+    = note: consider using `_fov` instead
+    = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: variable `outer_dz` is assigned to, but never used
+   --> game\src\camera\systems.rs:146:21
+    |
+146 |                 let mut outer_dz = rig.dead_zone_outer;
+    |                     ^^^^^^^^^^^^
+    |
+    = note: consider using `_outer_dz` instead
+
+warning: variable `z_lerp_rates` is assigned to, but never used
+   --> game\src\camera\systems.rs:148:21
+    |
+148 |                 let mut z_lerp_rates = rig.zone_lerp_rates;
+    |                     ^^^^^^^^^^^^^^^^
+    |
+    = note: consider using `_z_lerp_rates` instead
+
+warning: value assigned to `fov` is never read
+   --> game\src\camera\systems.rs:170:29
+    |
+170 | ...                   fov = params.fov;
+    |                       ^^^^^^^^^^^^^^^^
+    |
+    = help: maybe it is overwritten before being read?
+    = note: `#[warn(unused_assignments)]` (part of `#[warn(unused)]`) on by default
+
+warning: value assigned to `height_offset` is never read
+   --> game\src\camera\systems.rs:144:41
+    |
+144 |                 let mut height_offset = rig.height;
+    |                                         ^^^^^^^^^^
+    |
+    = help: maybe it is overwritten before being read?
+
+warning: value assigned to `outer_dz` is never read
+   --> game\src\camera\systems.rs:173:29
+    |
+173 | ...                   outer_dz = if in_fight { params.outer_radius } else { params.dead_zone_outer_radius };
+    |                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: maybe it is overwritten before being read?
+
+warning: value assigned to `z_lerp_rates` is never read
+   --> game\src\camera\systems.rs:177:33
+    |
+177 | / ...                   z_lerp_rates = [
+178 | | ...                       params.lerp_rate_azimuth_zone1,
+179 | | ...                       params.lerp_rate_azimuth_zone2,
+180 | | ...                       params.lerp_rate_azimuth_zone3,
+181 | | ...                       params.lerp_rate_azimuth_zone4,
+182 | | ...                   ];
+    | |_______________________^
+    |
+    = help: maybe it is overwritten before being read?
+
+warning: variable does not need to be mutable
+  --> game\src\menu.rs:69:21
+   |
+69 |                 let mut image = Image::new(
+   |                     ----^^^^^
+   |                     |
+   |                     help: remove this `mut`
+   |
+   = note: `#[warn(unused_mut)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `entity_name`
+   --> game\src\oni2_loader\animation.rs:150:13
+    |
+150 |         let entity_name = name_comp.map(|n| n.as_str()).unwrap_or("Unknown Entity");
+    |             ^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_entity_name`
+
+warning: variable does not need to be mutable
+   --> game\src\oni2_loader\layout_loader.rs:148:9
+    |
+148 |     let mut camera_packages = CameraPackages {
+    |         ----^^^^^^^^^^^^^^^
+    |         |
+    |         help: remove this `mut`
+
+warning: variable does not need to be mutable
+   --> game\src\oni2_loader\parsers\actor_xml.rs:163:9
+    |
+163 |     let mut is_creature = creature_block.is_some();
+    |         ----^^^^^^^^^^^
+    |         |
+    |         help: remove this `mut`
+
+warning: variable does not need to be mutable
+  --> game\src\oni2_loader\parsers\settings.rs:28:9
+   |
+28 |     let mut tokens = tokenize_settings(content);
+   |         ----^^^^^^
+   |         |
+   |         help: remove this `mut`
+
+warning: unused variable: `asset_server`
+   --> game\src\oni2_loader\parsers\projectile.rs:280:76
+    |
+280 | pub fn parse_projectile(def_type: &str, name: &str, block: &SettingsBlock, asset_server: &AssetServer) -> Option<ProjectileDef> {
+    |                                                                            ^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_asset_server`
+
+warning: unused variable: `horiz_speed`
+   --> game\src\oni2_loader\spawn.rs:157:13
+    |
+157 |         let horiz_speed = Vec2::new(vel.x, vel.z).length();
+    |             ^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_horiz_speed`
+
+warning: variable does not need to be mutable
+   --> game\src\scroni\compiler.rs:212:17
+    |
+212 |             let mut first = self.parse_expr();
+    |                 ----^^^^^
+    |                 |
+    |                 help: remove this `mut`
+
+warning: variable does not need to be mutable
+   --> game\src\scroni\vm.rs:675:25
+    |
+675 |                     let mut t = self.get_thread_mut(tid);
+    |                         ----^
+    |                         |
+    |                         help: remove this `mut`
+
+warning: variable does not need to be mutable
+   --> game\src\scroni\vm.rs:686:21
+    |
+686 |                 let mut t = self.get_thread_mut(tid);
+    |                     ----^
+    |                     |
+    |                     help: remove this `mut`
+
+warning: variable does not need to be mutable
+   --> game\src\scroni\vm.rs:943:25
+    |
+943 |                     let mut t = self.get_thread_mut(tid);
+    |                         ----^
+    |                         |
+    |                         help: remove this `mut`
+
+warning: variable does not need to be mutable
+   --> game\src\scroni\vm.rs:978:25
+    |
+978 |                     let mut t = self.get_thread_mut(tid);
+    |                         ----^
+    |                         |
+    |                         help: remove this `mut`
+
+warning: unused variable: `ptx_lib`
+   --> game\src\fx_system.rs:174:5
+    |
+174 |     ptx_lib: Res<ParticleLibrary>,
+    |     ^^^^^^^ help: if this is intentional, prefix it with an underscore: `_ptx_lib`
+
+For more information about this error, try `rustc --explain E0614`.
+warning: `rb-game` (bin "rb-game") generated 29 warnings
+error: could not compile `rb-game` (bin "rb-game") due to 1 previous error; 29 warnings emitted

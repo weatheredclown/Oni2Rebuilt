@@ -50,10 +50,10 @@ pub fn parse_ptx(content: &str, name: String, asset_server: &AssetServer, images
             "TextureName" => {
                 if tokens.len() > 1 {
                     let tex_name = tokens[1];
-                    if let Some((h, _)) = crate::oni2_loader::parsers::texture::load_tga_texture("textures", tex_name, images) {
+                    if let Some((h, _)) = crate::oni2_loader::parsers::texture::load_tga_texture("texture", tex_name, images) {
                         texture = h;
                     } else {
-                        texture = asset_server.load(format!("textures/{}.tga", tex_name));
+                        texture = asset_server.load(format!("texture/{}.tga", tex_name));
                     }
                 }
             }

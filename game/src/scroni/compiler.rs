@@ -341,6 +341,7 @@ impl Compiler {
             TokenCode::SendMessage => self.parse_send_message(),
             TokenCode::SendGroupMessage => self.parse_send_group_message(),
             TokenCode::SendGroupMembersMessage => self.parse_send_group_members_message(),
+            TokenCode::SendAction => self.parse_send_action(),
 
             // Properties
             TokenCode::SetHealth => { self.advance(); Stmt::SetHealth(self.parse_expr()) }
@@ -661,6 +662,21 @@ impl Compiler {
         self.skip_if(TokenCode::To);
         let to = self.parse_expr();
         Stmt::SendGroupMembersMessage { msg, to }
+    }
+
+    fn parse_send_action(&mut self) -> Stmt {
+        self.advance(); // consume `sendaction`
+        let action = self.parse_expr();
+        self.skip_if(TokenCode::To);
+        let target = self.parse_expr();
+
+        let component = if self.skip_if(TokenCode::Component) {
+            Some(self.parse_expr())
+        } else {
+            None
+        };
+
+        Stmt::SendAction { action, target, component }
     }
 
     fn parse_play_ambient_sound(&mut self) -> Stmt {

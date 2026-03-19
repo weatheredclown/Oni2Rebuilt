@@ -221,7 +221,7 @@ fn main() {
         ).run_if(in_state(AppState::InGame).and(resource_exists::<TestAnimMode>)),
     )
     .add_systems(Startup, (setup_fps_counter, disable_physics_debug, oni2_loader::load_global_registries))
-    .add_systems(Update, (update_fps_counter, toggle_physics_debug));
+    .add_systems(Update, (update_fps_counter, toggle_physics_debug, toggle_debug_light));
 
     if diagnostics_mode {
         app.add_plugins(bevy::diagnostic::LogDiagnosticsPlugin::default());
@@ -726,5 +726,38 @@ fn toggle_physics_debug(
         let config = store.config_mut::<avian3d::debug_render::PhysicsGizmos>().0;
         config.enabled = !config.enabled;
         info!("Physics debug rendering: {}", if config.enabled { "ON" } else { "OFF" });
+    }
+}
+
+#[derive(Component)]
+struct DebugPointLight;
+
+/// F8 toggles a bright white point light above the player to help light environments.
+fn toggle_debug_light(
+    mut commands: Commands,
+    keyboard: Res<ButtonInput<KeyCode>>,
+    player_query: Query<Entity, With<player::components::Player>>,
+    light_query: Query<Entity, With<DebugPointLight>>,
+) {
+    if keyboard.just_pressed(KeyCode::F8) {
+        if let Some(light_entity) = light_query.iter().next() {
+            commands.entity(light_entity).despawn();
+            info!("Debug point light OFF");
+        } else if let Some(player_entity) = player_query.iter().next() {
+            commands.entity(player_entity).with_children(|parent| {
+                parent.spawn((
+                    PointLight {
+                        color: Color::WHITE,
+                        intensity: 1_000_000.0,
+                        range: 100.0,
+                        shadows_enabled: true,
+                        ..default()
+                    },
+                    Transform::from_xyz(0.0, 5.0, 0.0),
+                    DebugPointLight,
+                ));
+            });
+            info!("Debug point light ON");
+        }
     }
 }

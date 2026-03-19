@@ -128,10 +128,10 @@ pub fn parse_effect(def_type: &str, name: &str, block: &SettingsBlock, asset_ser
         }
         "SPRITEEFFECT" => {
             let tex_name = block.get_string("TextureName").unwrap_or_default();
-            let tex_handle = if let Some((h, _)) = crate::oni2_loader::parsers::texture::load_tga_texture("textures", &tex_name, images) {
+            let tex_handle = if let Some((h, _)) = crate::oni2_loader::parsers::texture::load_tga_texture("texture", &tex_name, images) {
                 h
             } else {
-                asset_server.load(format!("textures/{}.tga", tex_name))
+                asset_server.load(format!("texture/{}.tga", tex_name))
             };
             Some(EffectDef::Sprite(SpriteEffectDef {
                 name: name.to_string(),

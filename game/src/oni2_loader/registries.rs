@@ -99,7 +99,7 @@ pub fn load_global_registries(
     commands.insert_resource(AnimRegistry::default());
 }
 
-fn try_load_ptx(name: &str, asset_server: &AssetServer, ptx_lib: &mut ParticleLibrary, images: &mut Assets<Image>) {
+pub fn try_load_ptx(name: &str, asset_server: &AssetServer, ptx_lib: &mut ParticleLibrary, images: &mut Assets<Image>) {
     let lower_name = name.to_lowercase();
     if ptx_lib.systems.contains_key(&lower_name) {
         return; // Already loaded

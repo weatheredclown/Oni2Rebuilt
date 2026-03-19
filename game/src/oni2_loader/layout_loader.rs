@@ -319,6 +319,19 @@ pub fn spawn_layout_actor(
                     .entity(entity)
                     .insert(crate::camera::components::PrototypeElement);
             }
+            // Attach FXType component if present
+            if actor.fx_type.is_some() || actor.ptx_name.is_some() {
+                assets.commands.entity(entity).insert(crate::oni2_loader::components::ActorFxType {
+                    fx_name: actor.fx_type.clone(),
+                    start_active: actor.fx_start_active,
+                    ptx_name: actor.ptx_name.clone(),
+                    ptx_birth_rate: actor.ptx_birth_rate,
+                    ptx_num_particles: actor.ptx_num_particles,
+                    ptx_offset: actor.ptx_offset,
+                });
+                info!("Attached FX component to creature {}", actor.entity_type);
+            }
+
             return Some((entity, actor));
         }
     } else {
@@ -497,11 +510,16 @@ pub fn spawn_layout_actor(
             }
 
             // Attach FXType component if present
-            if let Some(ref fx) = actor.fx_type {
+            if actor.fx_type.is_some() || actor.ptx_name.is_some() {
                 assets.commands.entity(entity).insert(crate::oni2_loader::components::ActorFxType {
-                    fx_name: fx.clone(),
+                    fx_name: actor.fx_type.clone(),
+                    start_active: actor.fx_start_active,
+                    ptx_name: actor.ptx_name.clone(),
+                    ptx_birth_rate: actor.ptx_birth_rate,
+                    ptx_num_particles: actor.ptx_num_particles,
+                    ptx_offset: actor.ptx_offset,
                 });
-                info!("Attached FXType '{}' to {}", fx, actor.entity_type);
+                info!("Attached FX component to {}", actor.entity_type);
             }
 
             return Some((entity, actor));
