@@ -1,10 +1,10 @@
 use bevy::prelude::*;
 
 
-/// Parse the content of a .anims file, populating alias_map with (ALIAS -> anim_filename) pairs.
 pub fn parse_anims_content(
     content: &str,
     alias_map: &mut std::collections::HashMap<String, String>,
+    loco_pkg: &mut Option<String>,
 ) {
     let mut in_anims_block = false;
 
@@ -22,8 +22,13 @@ pub fn parse_anims_content(
             continue;
         }
 
-        // Skip loco/jump package lines
-        if trimmed.starts_with("locopkg ") || trimmed.starts_with("jumppkg ") {
+        // Read locopkg lines
+        if let Some(loco_ref) = trimmed.strip_prefix("locopkg ") {
+            *loco_pkg = Some(loco_ref.trim().to_string());
+            continue;
+        }
+        if trimmed.starts_with("jumppkg ") {
+            info!("Skipping jumppkg: {}", trimmed);
             continue;
         }
 

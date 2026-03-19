@@ -342,6 +342,7 @@ pub fn spawn_oni2_entity(
     images: &mut ResMut<Assets<Image>>,
     skinned_mesh_ibp: &mut ResMut<Assets<SkinnedMeshInverseBindposes>>,
     entity_lib: &mut ResMut<crate::oni2_loader::registries::EntityLibrary>,
+    anim_registry: &mut ResMut<crate::oni2_loader::registries::AnimRegistry>,
     entity_dir: &str,
     position: Vec3,
     name: &str,
@@ -353,6 +354,7 @@ pub fn spawn_oni2_entity(
         images,
         skinned_mesh_ibp,
         entity_lib,
+        anim_registry,
         entity_dir,
         position,
         Quat::IDENTITY,
@@ -370,6 +372,7 @@ pub fn load_oni2_entity_type(
     materials: &mut Assets<StandardMaterial>,
     images: &mut Assets<Image>,
     skinned_mesh_ibp: &mut Assets<SkinnedMeshInverseBindposes>,
+    anim_registry: &mut crate::oni2_loader::registries::AnimRegistry,
     entity_dir: &str,
     name: &str,
     entity_type_name: Option<&str>,
@@ -508,15 +511,23 @@ pub fn load_oni2_entity_type(
         }
     });
 
-    let library = if let Some(ref skel) = skeleton {
-        let lib = load_anim_library(entity_dir, entity_type_name.unwrap_or(name), skel);
-        if !lib.anims.is_empty() {
+    let (library, locomotion) = if let Some(ref skel) = skeleton {
+        let cache_key = format!("{}/{}", entity_dir, entity_type_name.unwrap_or(name));
+        let (lib, loco) = if let Some(cached) = anim_registry.libraries.get(&cache_key) {
+            cached.clone()
+        } else {
+            let loaded = load_anim_library(entity_dir, entity_type_name.unwrap_or(name), skel);
+            anim_registry.libraries.insert(cache_key.clone(), loaded.clone());
+            loaded
+        };
+        let lib_opt = if !lib.anims.is_empty() {
             Some(lib)
         } else {
             None
-        }
+        };
+        (lib_opt, loco)
     } else {
-        None
+        (None, None)
     };
 
     let use_gpu_skinning = skeleton.is_some() && library.is_some();
@@ -591,6 +602,7 @@ pub fn load_oni2_entity_type(
         bound_quads,
         bound_tris,
         anim_library: library,
+        locomotion,
         debug_skeleton,
     })
 }
@@ -602,6 +614,7 @@ pub fn spawn_oni2_entity_with_rotation(
     images: &mut ResMut<Assets<Image>>,
     skinned_mesh_ibp: &mut ResMut<Assets<SkinnedMeshInverseBindposes>>,
     entity_lib: &mut ResMut<crate::oni2_loader::registries::EntityLibrary>,
+    anim_registry: &mut ResMut<crate::oni2_loader::registries::AnimRegistry>,
     entity_dir: &str,
     position: Vec3,
     rotation: Quat,
@@ -619,6 +632,7 @@ pub fn spawn_oni2_entity_with_rotation(
             materials.as_mut(),
             images.as_mut(),
             skinned_mesh_ibp.as_mut(),
+            anim_registry.as_mut(),
             entity_dir,
             name,
             entity_type_name
@@ -739,6 +753,10 @@ pub fn spawn_oni2_entity_with_rotation(
         commands.entity(parent_entity).insert(lib.clone());
     }
 
+    if let Some(ref loco) = ent_type.locomotion {
+        commands.entity(parent_entity).insert(loco.clone());
+    }
+
     // 4. Mesh sub_meshes
     for (mat_idx, mesh_handle) in &ent_type.sub_meshes {
         let mat_handle = ent_type.materials
@@ -773,6 +791,7 @@ pub fn spawn_oni2_creature(
     images: &mut ResMut<Assets<Image>>,
     skinned_mesh_ibp: &mut ResMut<Assets<SkinnedMeshInverseBindposes>>,
     entity_lib: &mut ResMut<crate::oni2_loader::registries::EntityLibrary>,
+    anim_registry: &mut ResMut<crate::oni2_loader::registries::AnimRegistry>,
     entity_dir: &str,
     position: Vec3,
     rotation: Quat,
@@ -795,6 +814,7 @@ pub fn spawn_oni2_creature(
         images,
         skinned_mesh_ibp,
         entity_lib,
+        anim_registry,
         entity_dir,
         spawn_position,
         rotation,
@@ -837,9 +857,19 @@ pub fn spawn_oni2_creature(
     let skeleton = skel_data.map(|s| parse_skel(&s));
 
     if let Some(ref skel) = skeleton {
-        let library = load_anim_library(&anim_entity_dir, anim_name, skel);
+        let cache_key = format!("{}/{}", anim_entity_dir, anim_name);
+        let (library, locomotion) = if let Some(cached) = anim_registry.libraries.get(&cache_key) {
+            cached.clone()
+        } else {
+            let loaded = load_anim_library(&anim_entity_dir, anim_name, skel);
+            anim_registry.libraries.insert(cache_key.clone(), loaded.clone());
+            loaded
+        };
         if !library.anims.is_empty() {
             commands.entity(entity).insert(library);
+            if let Some(loco) = locomotion {
+                commands.entity(entity).insert(loco);
+            }
             commands.entity(entity).insert(CreatureMovementAnim::Run);
         }
     }

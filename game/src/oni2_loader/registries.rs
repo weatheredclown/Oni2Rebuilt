@@ -16,6 +16,11 @@ pub struct EntityLibrary {
     pub entities: HashMap<String, Oni2EntityType>,
 }
 
+#[derive(Resource, Default)]
+pub struct AnimRegistry {
+    pub libraries: HashMap<String, (Oni2AnimLibrary, Option<crate::oni2_loader::parsers::loco::LocomotionController>)>,
+}
+
 #[derive(Clone)]
 pub struct Oni2EntityType {
     pub name: String,
@@ -27,6 +32,7 @@ pub struct Oni2EntityType {
     pub bound_quads: Vec<[u32; 4]>,
     pub bound_tris: Vec<[u32; 3]>,
     pub anim_library: Option<Oni2AnimLibrary>,
+    pub locomotion: Option<crate::oni2_loader::parsers::loco::LocomotionController>,
     pub debug_skeleton: Option<crate::oni2_loader::Oni2DebugSkeleton>,
 }
 
@@ -90,6 +96,7 @@ pub fn load_global_registries(
     commands.insert_resource(fx_lib);
     commands.insert_resource(ptx_lib);
     commands.insert_resource(EntityLibrary::default());
+    commands.insert_resource(AnimRegistry::default());
 }
 
 fn try_load_ptx(name: &str, asset_server: &AssetServer, ptx_lib: &mut ParticleLibrary, images: &mut Assets<Image>) {

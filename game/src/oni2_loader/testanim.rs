@@ -24,6 +24,7 @@ pub fn setup_testanim_scene(
     mut images: ResMut<Assets<Image>>,
     mut skinned_mesh_ibp: ResMut<Assets<SkinnedMeshInverseBindposes>>,
     mut entity_lib: ResMut<crate::oni2_loader::registries::EntityLibrary>,
+    mut anim_registry: ResMut<crate::oni2_loader::registries::AnimRegistry>,
     testanim: Res<TestAnimMode>,
 ) {
     let anim_file = &testanim.0;
@@ -54,6 +55,7 @@ pub fn setup_testanim_scene(
         &mut images,
         &mut skinned_mesh_ibp,
         &mut entity_lib,
+        &mut anim_registry,
         &entity_dir,
         Vec3::new(0.0, 0.0, 0.0),
         Quat::IDENTITY,

@@ -19,6 +19,7 @@ pub fn load_layout(
     images: &mut ResMut<Assets<Image>>,
     skinned_mesh_ibp: &mut ResMut<Assets<SkinnedMeshInverseBindposes>>,
     entity_lib: &mut ResMut<crate::oni2_loader::registries::EntityLibrary>,
+    anim_registry: &mut ResMut<crate::oni2_loader::registries::AnimRegistry>,
     layout_dir: &str,
     entity_base_dir: &str,
 ) -> Option<LayoutPlayerInfo> {
@@ -95,6 +96,7 @@ pub fn load_layout(
             images,
             skinned_mesh_ibp: &mut *skinned_mesh_ibp,
             entity_lib: &mut *entity_lib,
+            anim_registry: &mut *anim_registry,
             texture_collections: &mut texture_collections,
         };
 
@@ -285,6 +287,7 @@ pub fn spawn_layout_actor(
             assets.images,
             assets.skinned_mesh_ibp,
             assets.entity_lib,
+            assets.anim_registry,
             &entity_dir,
             position,
             rotation,
@@ -345,6 +348,7 @@ pub fn spawn_layout_actor(
                 assets.images,
                 assets.skinned_mesh_ibp,
                 assets.entity_lib,
+                assets.anim_registry,
                 &entity_dir,
                 position,
                 rotation,

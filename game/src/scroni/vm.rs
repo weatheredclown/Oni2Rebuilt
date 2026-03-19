@@ -422,14 +422,16 @@ impl ScriptExec {
                     return;
                 }
                 
-                let top_idx = self.get_thread(tid).loop_stack.len() - 1;
-                let mut ls = self.get_thread_mut(tid).loop_stack.remove(top_idx);
+                let mut ls = self.get_thread_mut(tid).loop_stack.pop().unwrap();
                 let pre_len = self.get_thread(tid).loop_stack.len();
                 
                 let (active, push_back) = self.step_loop(tid, &mut ls, now, ctx);
                 
                 if push_back {
-                    self.get_thread_mut(tid).loop_stack.insert(pre_len, ls);
+                    let cur_len = self.get_thread(tid).loop_stack.len();
+                    if cur_len >= pre_len {
+                        self.get_thread_mut(tid).loop_stack.insert(pre_len, ls);
+                    }
                 }
                 
                 if self.get_thread(tid).state == ExecState::PushLoop {
@@ -1554,10 +1556,12 @@ pub fn scroni_sys_event_observer(
     mut transform_query: Query<(&mut Transform, Option<&mut avian3d::prelude::LinearVelocity>)>,
     children_query: Query<&Children>,
     mut materials_query: Query<&mut MeshMaterial3d<StandardMaterial>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut images: ResMut<Assets<Image>>,
-    mut skinned_mesh_ibp: ResMut<Assets<bevy::mesh::skinning::SkinnedMeshInverseBindposes>>,
+    mut assets: (
+        ResMut<Assets<StandardMaterial>>,
+        ResMut<Assets<Mesh>>,
+        ResMut<Assets<Image>>,
+        ResMut<Assets<bevy::mesh::skinning::SkinnedMeshInverseBindposes>>,
+    ),
     mut texture_collections: ResMut<crate::oni2_loader::TextureCollections>,
     layout_context: Option<Res<crate::oni2_loader::LayoutContext>>,
     layout_paths: Option<Res<crate::oni2_loader::LayoutPaths>>,
@@ -1565,9 +1569,11 @@ pub fn scroni_sys_event_observer(
     mut scroni_text_state: ResMut<ScroniTextState>,
     time: Res<Time>,
     mut entity_lib: ResMut<crate::oni2_loader::registries::EntityLibrary>,
+    mut anim_registry: ResMut<crate::oni2_loader::registries::AnimRegistry>,
     mut camera_query: Query<&mut crate::camera::components::CameraRig>,
 ) {
     let ev = (*trigger).clone();
+    let (mut materials, mut meshes, mut images, mut skinned_mesh_ibp) = assets;
     match ev {
         ScrOniSysEvent::At(x, y) => {
             scroni_text_state.current_x = x;
@@ -1660,6 +1666,7 @@ pub fn scroni_sys_event_observer(
                     images: &mut images,
                     skinned_mesh_ibp: &mut skinned_mesh_ibp,
                     entity_lib: &mut entity_lib,
+                    anim_registry: &mut anim_registry,
                     texture_collections: &mut texture_collections,
                 };
                 

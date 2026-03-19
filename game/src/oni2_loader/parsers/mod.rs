@@ -14,3 +14,4 @@ pub mod settings;
 pub mod projectile;
 pub mod effect;
 pub mod particle;
+pub mod loco;

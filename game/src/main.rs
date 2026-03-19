@@ -255,6 +255,7 @@ fn setup_scene(
     mut images: ResMut<Assets<Image>>,
     mut skinned_mesh_ibp: ResMut<Assets<bevy::mesh::skinning::SkinnedMeshInverseBindposes>>,
     mut entity_lib: ResMut<crate::oni2_loader::registries::EntityLibrary>,
+    mut anim_registry: ResMut<crate::oni2_loader::registries::AnimRegistry>,
     selected_layout: Option<Res<SelectedLayout>>,
     sandbox: Option<Res<SandboxMode>>,
 ) {
@@ -339,6 +340,7 @@ fn setup_scene(
             &mut images,
             &mut skinned_mesh_ibp,
             &mut entity_lib,
+            &mut anim_registry,
             &entity_path_kno,
             Vec3::new(0.0, 2.0, 0.0),
             "kno",
@@ -354,6 +356,7 @@ fn setup_scene(
             &mut images,
             &mut skinned_mesh_ibp,
             &mut entity_lib,
+            &mut anim_registry,
             &layout_path,
             &entity_base_str,
         )
@@ -521,6 +524,7 @@ fn setup_formation_scene(
     mut images: ResMut<Assets<Image>>,
     mut skinned_mesh_ibp: ResMut<Assets<bevy::mesh::skinning::SkinnedMeshInverseBindposes>>,
     mut entity_lib: ResMut<crate::oni2_loader::registries::EntityLibrary>,
+    mut anim_registry: ResMut<crate::oni2_loader::registries::AnimRegistry>,
 ) {
     let scoped = InGameEntity;
 
@@ -575,6 +579,7 @@ fn setup_formation_scene(
             &mut images,
             &mut skinned_mesh_ibp,
             &mut entity_lib,
+            &mut anim_registry,
             entity_dir,
             pos,
             name,

@@ -282,7 +282,7 @@ pub struct Oni2AnimState {
 /// Deterministic string hash used as animation identifier.
 /// Use `AnimId::new("ANIMNAV_RUN_FORWARD")` in const context — compiles to a u64 literal.
 /// Scripts produce the same hash at runtime via `AnimId::new(name)`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub struct AnimId(pub u64);
 
 impl AnimId {
@@ -368,10 +368,11 @@ pub fn load_anim_library(
     entity_dir: &str,
     entity_name: &str,
     skeleton: &Oni2Skeleton,
-) -> Oni2AnimLibrary {
+) -> (Oni2AnimLibrary, Option<crate::oni2_loader::parsers::loco::LocomotionController>) {
     let expected_channels = skeleton.positions.len() * 3 + 3;
 
     let mut alias_map: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+    let mut loco_pkg: Option<String> = None;
 
     // Try entity.tune version first (more complete), then Entity version
     let tune_dir = "entity.tune".to_string();
@@ -386,7 +387,7 @@ pub fn load_anim_library(
     };
 
     if let Ok(content) = crate::vfs::read_to_string("", &anims_path) {
-        parse_anims_content(&content, &mut alias_map);
+        crate::oni2_loader::parsers::anims::parse_anims_content(&content, &mut alias_map, &mut loco_pkg);
     } else {
         info!("No .anims file found for {}", entity_name);
     }
@@ -455,7 +456,30 @@ pub fn load_anim_library(
         entity_name, loaded, skipped_channels, skipped_missing
     );
 
-    Oni2AnimLibrary { anims, debug_names }
+    let locomotion = if let Some(pkg) = loco_pkg {
+        // e.g., "animpkg.nav.player" -> "entity.tune/animpkg/nav/player.loco"
+        let parts: Vec<&str> = pkg.split('.').collect();
+        if parts.len() >= 2 {
+            let filename = parts.last().unwrap();
+            let mut loco_dir = "entity.tune".to_string();
+            for p in &parts[..parts.len() - 1] {
+                loco_dir = format!("{}/{}", loco_dir, p);
+            }
+            let loco_path = format!("{}.loco", filename);
+            if let Ok(loco_content) = crate::vfs::read_to_string(&loco_dir, &loco_path) {
+                Some(crate::oni2_loader::parsers::loco::parse_loco_content(&loco_content))
+            } else {
+                warn!("Could not read locomotion package: {}/{}", loco_dir, loco_path);
+                None
+            }
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
+    (Oni2AnimLibrary { anims, debug_names }, locomotion)
 }
 
 /// Controls visibility of debug collision bounds wireframes.
