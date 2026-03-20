@@ -376,6 +376,25 @@ pub fn spawn_oni2_entity(
 /// Load an ONI2 entity from a directory and spawn it with position and rotation.
 /// If `anim_path` is provided, load that specific anim file instead of the default.
 
+fn parse_sawtooth_speed(payload: &str) -> f32 {
+    let parts: Vec<&str> = payload.split_whitespace().collect();
+    if let Some(idx) = parts.iter().position(|&x| x == "sawtooth") {
+        if idx + 1 < parts.len() {
+            return parts[idx + 1].parse().unwrap_or(0.0);
+        }
+    }
+    0.0
+}
+
+fn parse_uv_animator(pass: &crate::oni2_loader::parsers::types::Oni2MaterialPass) -> crate::oni2_loader::registries::TextureUVAnimator {
+    let mut anim = crate::oni2_loader::registries::TextureUVAnimator::default();
+    if let Some(s) = &pass.slides { anim.slides_speed = parse_sawtooth_speed(s); }
+    if let Some(s) = &pass.slidet { anim.slidet_speed = parse_sawtooth_speed(s); }
+    if let Some(s) = &pass.rotate { anim.rotate_speed = parse_sawtooth_speed(s); }
+    if let Some(s) = &pass.scalet { anim.scalet_speed = parse_sawtooth_speed(s); }
+    anim
+}
+
 pub fn load_oni2_entity_type(
     meshes: &mut Assets<Mesh>,
     materials: &mut Assets<StandardMaterial>,
@@ -566,11 +585,12 @@ pub fn load_oni2_entity_type(
         None
     };
 
-    let bevy_materials: Vec<Vec<Handle<StandardMaterial>>> = if let Some(ref m) = model {
+    let (bevy_materials, material_animators): (Vec<Vec<Handle<StandardMaterial>>>, Vec<Vec<crate::oni2_loader::registries::TextureUVAnimator>>) = if let Some(ref m) = model {
         m.materials
             .iter()
             .map(|oni_mat| {
                 let mut handles = Vec::new();
+                let mut anims = Vec::new();
                 if !oni_mat.passes.is_empty() {
                     for (pass_idx, pass) in oni_mat.passes.iter().enumerate() {
                         let (texture_handle, has_alpha) = match pass.texture_name.as_ref() {
@@ -595,6 +615,7 @@ pub fn load_oni2_entity_type(
                             depth_bias: pass_idx as f32 * 10.0,
                             ..default()
                         }));
+                        anims.push(parse_uv_animator(pass));
                     }
                 } else {
                     let (texture_handle, has_alpha) = match oni_mat.texture_name.as_ref() {
@@ -615,18 +636,20 @@ pub fn load_oni2_entity_type(
                         reflectance: 0.0,
                         ..default()
                     }));
+                    anims.push(crate::oni2_loader::registries::TextureUVAnimator::default());
                 }
-                handles
+                (handles, anims)
             })
-            .collect()
+            .unzip()
     } else {
-        Vec::new()
+        (Vec::new(), Vec::new())
     };
 
     Some(crate::oni2_loader::registries::Oni2EntityType {
         name: name.to_string(),
         sub_meshes: sub_meshes.into_iter().map(|(id, mesh)| (id, meshes.add(mesh))).collect(),
         materials: bevy_materials,
+        material_animators,
         skeleton,
         inverse_bind_poses: ibp_handle,
         bounds: debug_bounds,
@@ -795,13 +818,24 @@ pub fn spawn_oni2_entity_with_rotation(
             .get(*mat_idx)
             .cloned()
             .unwrap_or_else(|| vec![fallback_mat.clone()]);
+            
+        let pass_animators = ent_type.material_animators
+            .get(*mat_idx)
+            .cloned()
+            .unwrap_or_default();
 
-        for pass_mat_handle in pass_handles {
+        for (pass_idx, pass_mat_handle) in pass_handles.into_iter().enumerate() {
             let mut mesh_ec = commands.spawn((
                 Mesh3d(mesh_handle.clone()),
                 MeshMaterial3d(pass_mat_handle),
                 Transform::default(),
             ));
+            
+            if let Some(anim) = pass_animators.get(pass_idx) {
+                if anim.slides_speed != 0.0 || anim.slidet_speed != 0.0 || anim.rotate_speed != 0.0 || anim.scalet_speed != 0.0 {
+                    mesh_ec.insert(anim.clone());
+                }
+            }
 
             if let Some(ref ibp) = ent_type.inverse_bind_poses {
                 mesh_ec.insert(SkinnedMesh {

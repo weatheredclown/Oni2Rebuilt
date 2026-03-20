@@ -11,6 +11,14 @@ use crate::oni2_loader::Oni2DebugBounds;
 use bevy::mesh::skinning::SkinnedMeshInverseBindposes;
 use crate::vfs;
 
+#[derive(Component, Clone, Default, Debug)]
+pub struct TextureUVAnimator {
+    pub slides_speed: f32, // U increment per second
+    pub slidet_speed: f32, // V increment per second
+    pub rotate_speed: f32, // Radians per second
+    pub scalet_speed: f32, // Scalar
+}
+
 #[derive(Resource, Default)]
 pub struct EntityLibrary {
     pub entities: HashMap<String, Oni2EntityType>,
@@ -26,6 +34,7 @@ pub struct Oni2EntityType {
     pub name: String,
     pub sub_meshes: Vec<(usize, Handle<Mesh>)>,
     pub materials: Vec<Vec<Handle<StandardMaterial>>>,
+    pub material_animators: Vec<Vec<TextureUVAnimator>>,
     pub skeleton: Option<Oni2Skeleton>,
     pub inverse_bind_poses: Option<Handle<SkinnedMeshInverseBindposes>>,
     pub bounds: Oni2DebugBounds,

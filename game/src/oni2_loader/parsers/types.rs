@@ -24,6 +24,10 @@ pub struct Oni2MaterialPass {
     pub texcombine: Option<String>,
     pub texsrc: Option<u32>,
     pub alphafunc: Option<String>,
+    pub slides: Option<String>,
+    pub slidet: Option<String>,
+    pub rotate: Option<String>,
+    pub scalet: Option<String>,
 }
 
 #[derive(Debug, Clone)]

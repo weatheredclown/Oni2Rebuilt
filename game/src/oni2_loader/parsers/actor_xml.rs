@@ -1,4 +1,18 @@
 use bevy::prelude::*;
+use std::sync::{LazyLock, RwLock};
+use std::collections::HashMap;
+
+static XML_CACHE: LazyLock<RwLock<HashMap<String, String>>> = LazyLock::new(|| RwLock::new(HashMap::new()));
+
+fn cached_read_to_string(dir: &str, filename: &str) -> std::io::Result<String> {
+    let key = format!("{}/{}", dir, filename);
+    if let Some(content) = XML_CACHE.read().unwrap().get(&key) {
+        return Ok(content.clone());
+    }
+    let content = crate::vfs::read_to_string(dir, filename)?;
+    XML_CACHE.write().unwrap().insert(key, content.clone());
+    Ok(content)
+}
 
 use crate::oni2_loader::utils::parse::{extract_xml_base_attr, extract_xml_attr, parse_vec3, extract_xml_block};
 
@@ -42,7 +56,7 @@ pub struct LayoutActor {
 fn resolve_template_chain(path: &str, template_dir: &str) -> Vec<String> {
     let mut chain = Vec::new();
 
-    let content = match crate::vfs::read_to_string("", path) {
+    let content = match cached_read_to_string("", path) {
         Ok(c) => c,
         Err(_) => return chain,
     };
@@ -118,11 +132,7 @@ pub fn parse_actor_xml(dir: &str, filename: &str, template_dir: &str) -> Option<
     // Prepend components.xml as the root defaults if available
     let root_dir = "";
     let mut has_components_xml = false;
-    if let Ok(comp) = crate::vfs::read_to_string(root_dir, "components.xml")
-        .or_else(|_| crate::vfs::read_to_string(template_dir, "components.xml"))
-        .or_else(|_| crate::vfs::read_to_string("Entity", "components.xml"))
-        .or_else(|_| crate::vfs::read_to_string("template", "components.xml"))
-    {
+    if let Ok(comp) = cached_read_to_string(root_dir, "components.xml") {
         // Insert at index 0 so it's processed first and later files override it
         chain.insert(0, comp);
         has_components_xml = true;

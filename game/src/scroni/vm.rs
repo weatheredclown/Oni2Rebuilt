@@ -128,6 +128,8 @@ pub enum SysRequest {
     At(f32, f32),
     MakeFx { script_entity: Entity, name: String, at: Option<Vec3> },
     SendAction { action: String, target: Entity, component: String },
+    SetLightIntensity { light: String, intensity: f32 },
+    SetShaderLocal { name: String, val: f32 },
 }
 
 #[derive(Event, Debug, Clone)]
@@ -162,6 +164,16 @@ pub enum ScrOniSysEvent {
         action: String,
         target: Entity,
         component: String,
+    },
+    SetLightIntensity {
+        script_entity: Entity,
+        light: String,
+        intensity: f32,
+    },
+    SetShaderLocal {
+        script_entity: Entity,
+        name: String,
+        val: f32,
     },
 }
 
@@ -231,6 +243,8 @@ pub struct ScriptExec {
     pub sys_requests: Vec<SysRequest>,
     /// The entity this script is attached to.
     pub owner: Entity,
+    /// Currently active light selected by scripts (SetLightParameter).
+    pub current_light: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -307,6 +321,7 @@ impl ScriptExec {
             outgoing_messages: Vec::new(),
             sys_requests: Vec::new(),
             owner,
+            current_light: None,
         }
     }
 
@@ -1103,13 +1118,19 @@ impl ScriptExec {
                 info!("VM: SetFogPalettePower {:?} (unimplemented)", args);
             }
             Stmt::SetShaderLocal { args } => {
-                info!("VM: SetShaderLocal {:?} (unimplemented)", args);
+                let name = self.eval_expr(tid, &args[0], now, ctx).as_string();
+                let val = self.eval_expr(tid, &args[1], now, ctx).as_float();
+                self.sys_requests.push(SysRequest::SetShaderLocal { name, val });
             }
             Stmt::SetLightParameter { args } => {
-                info!("VM: SetLightParameter {:?} (unimplemented)", args);
+                let light = self.eval_expr(tid, &args[0], now, ctx).as_string();
+                self.current_light = Some(light);
             }
             Stmt::Intensity { args } => {
-                info!("VM: Intensity {:?} (unimplemented)", args);
+                let val = self.eval_expr(tid, &args[0], now, ctx).as_float();
+                if let Some(light) = &self.current_light {
+                    self.sys_requests.push(SysRequest::SetLightIntensity { light: light.clone(), intensity: val });
+                }
             }
             Stmt::SetFullScreenColor { args } => {
                 info!("VM: SetFullScreenColor {:?} (unimplemented)", args);
@@ -1560,6 +1581,20 @@ pub fn scroni_tick_system(
                         component,
                     });
                 }
+                SysRequest::SetLightIntensity { light, intensity } => {
+                    commands.trigger(ScrOniSysEvent::SetLightIntensity {
+                        script_entity: entity,
+                        light,
+                        intensity,
+                    });
+                }
+                SysRequest::SetShaderLocal { name, val } => {
+                    commands.trigger(ScrOniSysEvent::SetShaderLocal {
+                        script_entity: entity,
+                        name,
+                        val,
+                    });
+                }
             }
         }
 
@@ -1631,6 +1666,7 @@ pub fn scroni_sys_event_observer(
     mut entity_lib: ResMut<crate::oni2_loader::registries::EntityLibrary>,
     mut anim_registry: ResMut<crate::oni2_loader::registries::AnimRegistry>,
     mut camera_query: Query<&mut crate::camera::components::CameraRig>,
+    mut lights_query: Query<(&Name, Option<&mut PointLight>, Option<&mut SpotLight>)>,
 ) {
     let ev = (*trigger).clone();
     let (mut materials, mut meshes, mut images, mut skinned_mesh_ibp) = assets;
@@ -1800,6 +1836,22 @@ pub fn scroni_sys_event_observer(
             } else {
                 warn!("SendAction: Unrecognized component '{}'", component);
             }
+        }
+        ScrOniSysEvent::SetLightIntensity { script_entity: _, light, intensity } => {
+            for (name, mut point, mut spot) in &mut lights_query {
+                if name.as_str().eq_ignore_ascii_case(&light) {
+                    // Multiply scaling heuristic to adapt Oni floats to PBR luminous intensity
+                    if let Some(p) = point.as_deref_mut() {
+                        p.intensity = intensity * 100.0;
+                    }
+                    if let Some(s) = spot.as_deref_mut() {
+                        s.intensity = intensity * 100.0;
+                    }
+                }
+            }
+        }
+        ScrOniSysEvent::SetShaderLocal { script_entity: _, name, val } => {
+            debug!("VM: Observed SetShaderLocal {} = {} (Unimplemented Material Target)", name, val);
         }
     }
 }

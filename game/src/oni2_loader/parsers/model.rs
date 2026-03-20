@@ -278,6 +278,18 @@ pub fn parse_shader(content: &str) -> Vec<Oni2MaterialPass> {
             "alphafunc" => {
                 if parts.len() > 1 { current_pass.alphafunc = Some(parts[1].to_string()); }
             }
+            "slides" => {
+                if parts.len() > 1 { current_pass.slides = Some(parts[1..].join(" ")); }
+            }
+            "slidet" => {
+                if parts.len() > 1 { current_pass.slidet = Some(parts[1..].join(" ")); }
+            }
+            "rotate" => {
+                if parts.len() > 1 { current_pass.rotate = Some(parts[1..].join(" ")); }
+            }
+            "scalet" => {
+                if parts.len() > 1 { current_pass.scalet = Some(parts[1..].join(" ")); }
+            }
             _ => {}
         }
     }

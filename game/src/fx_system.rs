@@ -29,7 +29,89 @@ impl Plugin for FxPlugin {
            .add_observer(handle_spawn_fx)
            .add_observer(handle_spawn_ptx)
            .add_observer(handle_fx_action)
-           .add_systems(Update, handle_actor_fx_attachments);
+           .add_systems(Update, handle_actor_fx_attachments)
+           .add_systems(Update, uv_animator_system);
+    }
+}
+
+/// System for animating mesh UV coordinates dynamically.
+/// FUTURE ARCHITECTURE NOTE:
+/// Modifying `ResMut<Assets<Mesh>>` applies the UV transformation globally to ALL entities sharing 
+/// this mesh buffer. For environmental geometry (like ambient rising steam/fire instances), this natively
+/// synchronizes the scrolling while remaining extremely fast (CPU only visits the vertices once per level).
+/// However, if future designs require isolated, parameterized rendering per-instance (e.g. a character 
+/// walking through steam causing localized warping), these static mesh buffers should be decoupled per-entity,
+/// or ideally offloaded into a custom Bevy `MaterialExtension` shader where UV offsets are passed as
+/// lightweight instance Uniforms directly to the GPU instead of mutating native float vertices on the CPU.
+pub fn uv_animator_system(
+    time: Res<Time>,
+    entity_lib: Option<Res<crate::oni2_loader::registries::EntityLibrary>>,
+    mut meshes: ResMut<Assets<Mesh>>,
+) {
+    let dt = time.delta_secs();
+    if dt == 0.0 { return; }
+    
+    let lib = if let Some(l) = entity_lib { l } else { return; };
+    
+    // Natively iterate the layout definitions rather than the instantiated entities so that
+    // we strictly perform mathematical mutations only once per pooled Handle<Mesh> memory allocation.
+    for ent_type in lib.entities.values() {
+        for (i, (mat_idx, handle)) in ent_type.sub_meshes.iter().enumerate() {
+            let animators = ent_type.material_animators.get(*mat_idx);
+            if let Some(anims) = animators {
+                let mut u_speed = 0.0;
+                let mut v_speed = 0.0;
+                let mut r_speed = 0.0;
+                let mut s_speed = 0.0;
+                
+                for anim in anims {
+                    if anim.slides_speed != 0.0 { u_speed = anim.slides_speed; }
+                    if anim.slidet_speed != 0.0 { v_speed = anim.slidet_speed; }
+                    if anim.rotate_speed != 0.0 { r_speed = anim.rotate_speed; }
+                    if anim.scalet_speed != 0.0 { s_speed = anim.scalet_speed; }
+                }
+                
+                if u_speed == 0.0 && v_speed == 0.0 && r_speed == 0.0 && s_speed == 0.0 {
+                    continue;
+                }
+                
+                if let Some(mesh) = meshes.get_mut(handle) {
+                    if let Some(bevy::mesh::VertexAttributeValues::Float32x2(uvs)) = mesh.attribute_mut(Mesh::ATTRIBUTE_UV_0) {
+                        let du = u_speed * dt;
+                        let dv = v_speed * dt;
+                        let cos_r = (r_speed * dt).cos();
+                        let sin_r = (r_speed * dt).sin();
+                        let scale = if s_speed != 0.0 { 1.0 + s_speed * dt } else { 1.0 };
+                        
+                        for uv in uvs.iter_mut() {
+                            let mut u = uv[0];
+                            let mut v = uv[1];
+                            
+                            u -= du;
+                            v -= dv;
+                            
+                            // Rotation around 0.5 (texture center pivot point)
+                            if r_speed != 0.0 || s_speed != 0.0 {
+                                let cu = u - 0.5;
+                                let cv = v - 0.5;
+                                
+                                let rotated_u = cu * cos_r - cv * sin_r;
+                                let rotated_v = cu * sin_r + cv * cos_r;
+                                
+                                u = rotated_u * scale + 0.5;
+                                v = rotated_v * scale + 0.5;
+                            }
+                            
+                            // Float wrapping logic to prevent precision degradation
+                            // Only safely bounds if geometry does not natively span across multiple units smoothly.
+                            // Left unbounded purposely to preserve identical tiled tiling mappings.
+                            uv[0] = u;
+                            uv[1] = v;
+                        }
+                    }
+                }
+            }
+        }
     }
 }
 
