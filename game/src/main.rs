@@ -154,6 +154,11 @@ fn main() {
 
     app.init_resource::<scroni::vm::ScroniTextState>()
        .init_resource::<oni2_loader::DebugLightGridState>()
+       .init_resource::<oni2_loader::registries::EntityLibrary>()
+       .init_resource::<oni2_loader::registries::AnimRegistry>()
+       .init_resource::<oni2_loader::registries::ProjLibrary>()
+       .init_resource::<oni2_loader::registries::FxLibrary>()
+       .init_resource::<oni2_loader::registries::ParticleLibrary>()
        .add_observer(scroni::vm::scroni_sys_event_observer);
 
     app

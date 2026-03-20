@@ -27,7 +27,8 @@ pub fn setup_testanim_scene(
     mut anim_registry: ResMut<crate::oni2_loader::registries::AnimRegistry>,
     testanim: Res<TestAnimMode>,
 ) {
-    let anim_file = &testanim.0;
+    let normalized_anim_file = testanim.0.replace("\\", "/");
+    let anim_file = &normalized_anim_file;
 
     // Derive entity name from filename prefix before first '_'
     let file_stem = anim_file

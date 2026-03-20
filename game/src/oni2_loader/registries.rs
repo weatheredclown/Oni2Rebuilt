@@ -61,14 +61,12 @@ pub struct ParticleLibrary {
 }
 
 pub fn load_global_registries(
-    mut commands: Commands,
     asset_server: Res<AssetServer>,
     mut images: ResMut<Assets<Image>>,
+    mut proj_lib: ResMut<ProjLibrary>,
+    mut fx_lib: ResMut<FxLibrary>,
+    mut ptx_lib: ResMut<ParticleLibrary>,
 ) {
-    let mut proj_lib = ProjLibrary::default();
-    let mut fx_lib = FxLibrary::default();
-    let mut ptx_lib = ParticleLibrary::default();
-
     // 1. Load rb.proj
     if let Ok(content) = vfs::read_to_string("Settings", "rb.proj") {
         let blocks = parse_settings(&content);
@@ -100,12 +98,6 @@ pub fn load_global_registries(
     } else {
         warn!("Could not find Settings/rb.fx in VFS.");
     }
-
-    commands.insert_resource(proj_lib);
-    commands.insert_resource(fx_lib);
-    commands.insert_resource(ptx_lib);
-    commands.insert_resource(EntityLibrary::default());
-    commands.insert_resource(AnimRegistry::default());
 }
 
 pub fn try_load_ptx(name: &str, asset_server: &AssetServer, ptx_lib: &mut ParticleLibrary, images: &mut Assets<Image>) {
