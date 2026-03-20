@@ -218,33 +218,57 @@ pub fn spawn_mod_file(
 
     let sub_meshes = build_meshes_by_material(&model);
 
-    let bevy_materials: Vec<Handle<StandardMaterial>> = model
+    let bevy_materials: Vec<Vec<Handle<StandardMaterial>>> = model
         .materials
         .iter()
         .map(|oni_mat| {
-            let (texture_handle, has_alpha) = match oni_mat.texture_name.as_ref() {
-                Some(tex_name) => match load_tga_texture(dir, tex_name, images) {
-                    Some((h, alpha)) => (Some(h), alpha),
+            let mut handles = Vec::new();
+            if !oni_mat.passes.is_empty() {
+                for (pass_idx, pass) in oni_mat.passes.iter().enumerate() {
+                    let (texture_handle, has_alpha) = match pass.texture_name.as_ref() {
+                        Some(tex_name) => match load_tga_texture(dir, tex_name, images) {
+                            Some((h, alpha)) => (Some(h), alpha),
+                            None => (None, false),
+                        },
+                        None => (None, false),
+                    };
+
+                    let diffuse = Color::srgb(oni_mat.diffuse[0], oni_mat.diffuse[1], oni_mat.diffuse[2]);
+                    let is_decal = pass.texcombine.as_ref().map(|s| s == "decal").unwrap_or(false);
+                    let is_blend = pass.blendset.as_ref().map(|s| s != "opaque").unwrap_or(false);
+
+                    handles.push(materials.add(StandardMaterial {
+                        base_color: if texture_handle.is_some() { Color::WHITE } else { diffuse },
+                        base_color_texture: texture_handle,
+                        cull_mode: None,
+                        alpha_mode: if has_alpha || is_decal || is_blend { AlphaMode::Blend } else { AlphaMode::Opaque },
+                        perceptual_roughness: 1.0,
+                        reflectance: 0.0,
+                        depth_bias: pass_idx as f32 * 10.0,
+                        ..default()
+                    }));
+                }
+            } else {
+                let (texture_handle, has_alpha) = match oni_mat.texture_name.as_ref() {
+                    Some(tex_name) => match load_tga_texture(dir, tex_name, images) {
+                        Some((h, alpha)) => (Some(h), alpha),
+                        None => (None, false),
+                    },
                     None => (None, false),
-                },
-                None => (None, false),
-            };
-            let diffuse = Color::srgb(oni_mat.diffuse[0], oni_mat.diffuse[1], oni_mat.diffuse[2]);
-            materials.add(StandardMaterial {
-                base_color: if texture_handle.is_some() {
-                    Color::WHITE
-                } else {
-                    diffuse
-                },
-                base_color_texture: texture_handle,
-                cull_mode: None,
-                alpha_mode: if has_alpha {
-                    AlphaMode::Blend
-                } else {
-                    AlphaMode::Opaque
-                },
-                ..default()
-            })
+                };
+
+                let diffuse = Color::srgb(oni_mat.diffuse[0], oni_mat.diffuse[1], oni_mat.diffuse[2]);
+                handles.push(materials.add(StandardMaterial {
+                    base_color: if texture_handle.is_some() { Color::WHITE } else { diffuse },
+                    base_color_texture: texture_handle,
+                    cull_mode: None,
+                    alpha_mode: if has_alpha { AlphaMode::Blend } else { AlphaMode::Opaque },
+                    perceptual_roughness: 1.0,
+                    reflectance: 0.0,
+                    ..default()
+                }));
+            }
+            handles
         })
         .collect();
 
@@ -295,15 +319,19 @@ pub fn spawn_mod_file(
     let parent = ec
         .with_children(|parent| {
             for (mat_idx, mesh) in sub_meshes {
-                let mat_handle = bevy_materials
+                let mesh_handle = meshes.add(mesh);
+                let pass_handles = bevy_materials
                     .get(mat_idx)
                     .cloned()
-                    .unwrap_or_else(|| fallback_mat.clone());
-                parent.spawn((
-                    Mesh3d(meshes.add(mesh)),
-                    MeshMaterial3d(mat_handle),
-                    Transform::default(),
-                ));
+                    .unwrap_or_else(|| vec![fallback_mat.clone()]);
+                    
+                for pass_mat_handle in pass_handles {
+                    parent.spawn((
+                        Mesh3d(mesh_handle.clone()),
+                        MeshMaterial3d(pass_mat_handle),
+                        Transform::default(),
+                    ));
+                }
             }
         })
         .id();
@@ -538,35 +566,57 @@ pub fn load_oni2_entity_type(
         None
     };
 
-    let bevy_materials: Vec<Handle<StandardMaterial>> = if let Some(ref m) = model {
+    let bevy_materials: Vec<Vec<Handle<StandardMaterial>>> = if let Some(ref m) = model {
         m.materials
             .iter()
             .map(|oni_mat| {
-                let (texture_handle, has_alpha) = match oni_mat.texture_name.as_ref() {
-                    Some(tex_name) => match crate::oni2_loader::parsers::texture::load_tga_texture(dir, tex_name, images) {
-                        Some((h, alpha)) => (Some(h), alpha),
+                let mut handles = Vec::new();
+                if !oni_mat.passes.is_empty() {
+                    for (pass_idx, pass) in oni_mat.passes.iter().enumerate() {
+                        let (texture_handle, has_alpha) = match pass.texture_name.as_ref() {
+                            Some(tex_name) => match crate::oni2_loader::parsers::texture::load_tga_texture(dir, tex_name, images) {
+                                Some((h, alpha)) => (Some(h), alpha),
+                                None => (None, false),
+                            },
+                            None => (None, false),
+                        };
+
+                        let diffuse = Color::srgb(oni_mat.diffuse[0], oni_mat.diffuse[1], oni_mat.diffuse[2]);
+                        let is_decal = pass.texcombine.as_ref().map(|s| s == "decal").unwrap_or(false);
+                        let is_blend = pass.blendset.as_ref().map(|s| s != "opaque").unwrap_or(false);
+
+                        handles.push(materials.add(StandardMaterial {
+                            base_color: if texture_handle.is_some() { Color::WHITE } else { diffuse },
+                            base_color_texture: texture_handle,
+                            cull_mode: None,
+                            alpha_mode: if has_alpha || is_decal || is_blend { AlphaMode::Blend } else { AlphaMode::Opaque },
+                            perceptual_roughness: 1.0,
+                            reflectance: 0.0,
+                            depth_bias: pass_idx as f32 * 10.0,
+                            ..default()
+                        }));
+                    }
+                } else {
+                    let (texture_handle, has_alpha) = match oni_mat.texture_name.as_ref() {
+                        Some(tex_name) => match crate::oni2_loader::parsers::texture::load_tga_texture(dir, tex_name, images) {
+                            Some((h, alpha)) => (Some(h), alpha),
+                            None => (None, false),
+                        },
                         None => (None, false),
-                    },
-                    None => (None, false),
-                };
+                    };
 
-                let diffuse = Color::srgb(oni_mat.diffuse[0], oni_mat.diffuse[1], oni_mat.diffuse[2]);
-
-                materials.add(StandardMaterial {
-                    base_color: if texture_handle.is_some() {
-                        Color::WHITE
-                    } else {
-                        diffuse
-                    },
-                    base_color_texture: texture_handle,
-                    cull_mode: None,
-                    alpha_mode: if has_alpha {
-                        AlphaMode::Blend
-                    } else {
-                        AlphaMode::Opaque
-                    },
-                    ..default()
-                })
+                    let diffuse = Color::srgb(oni_mat.diffuse[0], oni_mat.diffuse[1], oni_mat.diffuse[2]);
+                    handles.push(materials.add(StandardMaterial {
+                        base_color: if texture_handle.is_some() { Color::WHITE } else { diffuse },
+                        base_color_texture: texture_handle,
+                        cull_mode: None,
+                        alpha_mode: if has_alpha { AlphaMode::Blend } else { AlphaMode::Opaque },
+                        perceptual_roughness: 1.0,
+                        reflectance: 0.0,
+                        ..default()
+                    }));
+                }
+                handles
             })
             .collect()
     } else {
@@ -741,26 +791,28 @@ pub fn spawn_oni2_entity_with_rotation(
 
     // 4. Mesh sub_meshes
     for (mat_idx, mesh_handle) in &ent_type.sub_meshes {
-        let mat_handle = ent_type.materials
+        let pass_handles = ent_type.materials
             .get(*mat_idx)
             .cloned()
-            .unwrap_or_else(|| fallback_mat.clone());
+            .unwrap_or_else(|| vec![fallback_mat.clone()]);
 
-        let mut mesh_ec = commands.spawn((
-            Mesh3d(mesh_handle.clone()),
-            MeshMaterial3d(mat_handle),
-            Transform::default(),
-        ));
+        for pass_mat_handle in pass_handles {
+            let mut mesh_ec = commands.spawn((
+                Mesh3d(mesh_handle.clone()),
+                MeshMaterial3d(pass_mat_handle),
+                Transform::default(),
+            ));
 
-        if let Some(ref ibp) = ent_type.inverse_bind_poses {
-            mesh_ec.insert(SkinnedMesh {
-                inverse_bindposes: ibp.clone(),
-                joints: joint_entities.clone(),
-            });
+            if let Some(ref ibp) = ent_type.inverse_bind_poses {
+                mesh_ec.insert(SkinnedMesh {
+                    inverse_bindposes: ibp.clone(),
+                    joints: joint_entities.clone(),
+                });
+            }
+
+            let mesh_entity = mesh_ec.id();
+            commands.entity(parent_entity).add_child(mesh_entity);
         }
-
-        let mesh_entity = mesh_ec.id();
-        commands.entity(parent_entity).add_child(mesh_entity);
     }
 
     Some(parent_entity)

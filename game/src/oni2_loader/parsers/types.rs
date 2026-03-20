@@ -16,6 +16,16 @@ pub struct Oni2Model {
     pub world_space_verts: bool,
 }
 
+#[derive(Debug, Clone, Default)]
+pub struct Oni2MaterialPass {
+    pub texture_name: Option<String>,
+    pub lighting: Option<String>,
+    pub blendset: Option<String>,
+    pub texcombine: Option<String>,
+    pub texsrc: Option<u32>,
+    pub alphafunc: Option<String>,
+}
+
 #[derive(Debug, Clone)]
 pub struct Oni2Material {
     pub name: String,
@@ -23,6 +33,7 @@ pub struct Oni2Material {
     pub texture_name: Option<String>,
     pub primitive_count: u32,
     pub packet_count: u32,
+    pub passes: Vec<Oni2MaterialPass>,
 }
 
 #[derive(Debug, Clone)]

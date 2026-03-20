@@ -210,9 +210,19 @@ pub fn spawn_layout_actor(
         .contains_key(&actor.entity_type)
     {
         let sha_filename = format!("{}.sha", actor.entity_type);
+        let sha_filename_alt = format!("{}.shader", actor.entity_type);
         let mut frames = Vec::new();
 
-        if let Ok(sha_content) = crate::vfs::read_to_string(&entity_dir, &sha_filename) {
+        // check sha_filename or sha_filename_alt
+        let sha_content = crate::vfs::read_to_string(&entity_dir, &sha_filename)
+            .or_else(|_| crate::vfs::read_to_string(&entity_dir, &sha_filename_alt))
+            .ok();
+
+        if sha_content.is_none() {
+            warn!("Failed to read sha file: {}.sha(der)", actor.entity_type);
+        }
+
+        if let Some(sha_content) = sha_content {
             let mut tc_name = None;
             for line in sha_content.lines() {
                 let trimmed = line.trim();
@@ -258,11 +268,11 @@ pub fn spawn_layout_actor(
                     );
                 }
             }
+            assets
+                .texture_collections
+                .collections
+                .insert(actor.entity_type.clone(), frames);
         }
-        assets
-            .texture_collections
-            .collections
-            .insert(actor.entity_type.clone(), frames);
     }
 
     if actor.is_creature {
@@ -857,16 +867,18 @@ pub(crate) fn load_mod_file(path: &str) -> Option<Oni2Model> {
     }
 
     // Check for binary v2.10 header: "version: 2.10\0"
+    let entity_dir = std::path::Path::new(path).parent().unwrap_or(std::path::Path::new("")).to_str().unwrap_or("");
+
     if data.starts_with(b"version: 2.10\0") {
         info!("Loading binary v2.10 model: {}", path);
-        return parse_mod_binary(&data);
+        return parse_mod_binary(&data, entity_dir);
     }
 
     // Otherwise try text v1.10
     let text = String::from_utf8_lossy(&data);
     if text.starts_with("version: 1.10") {
         info!("Loading text v1.10 model: {}", path);
-        return Some(parse_mod(&text));
+        return Some(parse_mod(&text, entity_dir));
     }
 
     warn!("Unknown .mod format: {}", path);

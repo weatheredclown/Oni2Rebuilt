@@ -152,6 +152,7 @@ pub fn load_tga_texture(
     texture_name: &str,
     images: &mut Assets<Image>,
 ) -> Option<(Handle<Image>, bool)> {
+    let texture_name = texture_name.trim_end_matches(".tex");
     // Try native .tex format first
     let tex_filename = format!("{}.tex", texture_name);
     if crate::vfs::exists(entity_dir, &tex_filename) {

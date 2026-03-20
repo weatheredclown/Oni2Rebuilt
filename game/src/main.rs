@@ -81,7 +81,7 @@ fn main() {
         }
     });
     let cli_testanim = args.windows(2).find_map(|w| {
-        if w[0] == "--testanim" {
+        if w[0] == "--testanim" || w[0] == "--animtest" {
             Some(w[1].clone())
         } else {
             None
@@ -153,6 +153,7 @@ fn main() {
     }
 
     app.init_resource::<scroni::vm::ScroniTextState>()
+       .init_resource::<oni2_loader::DebugLightGridState>()
        .add_observer(scroni::vm::scroni_sys_event_observer);
 
     app
@@ -221,7 +222,7 @@ fn main() {
         ).run_if(in_state(AppState::InGame).and(resource_exists::<TestAnimMode>)),
     )
     .add_systems(Startup, (setup_fps_counter, disable_physics_debug, oni2_loader::load_global_registries))
-    .add_systems(Update, (update_fps_counter, toggle_physics_debug, toggle_debug_light));
+    .add_systems(Update, (update_fps_counter, toggle_physics_debug, toggle_debug_light, oni2_loader::toggle_debug_fog, oni2_loader::toggle_debug_light_grid, oni2_loader::update_debug_light_grid));
 
     if diagnostics_mode {
         app.add_plugins(bevy::diagnostic::LogDiagnosticsPlugin::default());

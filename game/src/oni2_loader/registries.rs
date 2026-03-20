@@ -25,7 +25,7 @@ pub struct AnimRegistry {
 pub struct Oni2EntityType {
     pub name: String,
     pub sub_meshes: Vec<(usize, Handle<Mesh>)>,
-    pub materials: Vec<Handle<StandardMaterial>>,
+    pub materials: Vec<Vec<Handle<StandardMaterial>>>,
     pub skeleton: Option<Oni2Skeleton>,
     pub inverse_bind_poses: Option<Handle<SkinnedMeshInverseBindposes>>,
     pub bounds: Oni2DebugBounds,

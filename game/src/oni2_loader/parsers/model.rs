@@ -1,8 +1,8 @@
 use bevy::prelude::*;
 use crate::oni2_loader::utils::binary::{read_u32_le, read_u16_le, read_f32_le};
-use super::types::{Oni2Model, Oni2Material, Oni2Packet, Oni2Adjunct};
+use super::types::{Oni2Model, Oni2Material, Oni2Packet, Oni2Adjunct, Oni2MaterialPass};
 
-pub fn parse_mod(content: &str) -> Oni2Model {
+pub fn parse_mod(content: &str, entity_dir: &str) -> Oni2Model {
     let mut vertices = Vec::new();
     let mut normals = Vec::new();
     let mut colors = Vec::new();
@@ -92,12 +92,24 @@ pub fn parse_mod(content: &str) -> Oni2Model {
                 i += 1;
             }
 
+            let shader_name = format!("{}.shader", name);
+            if let Ok(sha_content) = crate::vfs::read_to_string(&entity_dir, &shader_name) {
+                // TODO: put shader loading here
+                
+            }
+                        let mut passes = Vec::new();
+            let shader_name = format!("{}.shader", name);
+            if let Ok(sha_content) = crate::vfs::read_to_string(entity_dir, &shader_name) {
+                passes = parse_shader(&sha_content);
+            }
+
             materials.push(Oni2Material {
                 name,
                 diffuse,
                 texture_name,
                 primitive_count,
                 packet_count: 0, // ASCII parser sets this via count_packets_for_material
+                passes,
             });
         }
         // Packet
@@ -228,7 +240,53 @@ fn count_packets_for_material(content: &str, material_name: &str) -> usize {
     1
 }
 
-pub fn parse_mod_binary(data: &[u8]) -> Option<Oni2Model> {
+pub fn parse_shader(content: &str) -> Vec<Oni2MaterialPass> {
+    let mut passes = Vec::new();
+    let mut current_pass = Oni2MaterialPass::default();
+
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() { continue; }
+        
+        if trimmed == "nextpass" {
+            passes.push(current_pass);
+            current_pass = Oni2MaterialPass::default();
+            continue;
+        }
+
+        let parts: Vec<&str> = trimmed.split_whitespace().collect();
+        if parts.is_empty() { continue; }
+        
+        match parts[0].to_lowercase().as_str() {
+            "texture" => {
+                if parts.len() > 1 {
+                    current_pass.texture_name = Some(parts[1].trim_matches('"').to_string());
+                }
+            }
+            "lighting" => {
+                if parts.len() > 1 { current_pass.lighting = Some(parts[1].to_string()); }
+            }
+            "blendset" => {
+                if parts.len() > 1 { current_pass.blendset = Some(parts[1].to_string()); }
+            }
+            "texcombine" => {
+                if parts.len() > 1 { current_pass.texcombine = Some(parts[1].to_string()); }
+            }
+            "texsrc" => {
+                if parts.len() > 1 { current_pass.texsrc = parts[1].parse().ok(); }
+            }
+            "alphafunc" => {
+                if parts.len() > 1 { current_pass.alphafunc = Some(parts[1].to_string()); }
+            }
+            _ => {}
+        }
+    }
+    
+    passes.push(current_pass);
+    passes
+}
+
+pub fn parse_mod_binary(data: &[u8], entity_dir: &str) -> Option<Oni2Model> {
     if data.len() < 58 {
         warn!("Binary .mod file too small: {} bytes", data.len());
         return None;
@@ -347,12 +405,19 @@ pub fn parse_mod_binary(data: &[u8]) -> Option<Oni2Model> {
 
         info!("  Material: name='{}' pkts={} prims={} texture={:?}", name, pkt_count, prim_count, texture_name);
 
+        let mut passes = Vec::new();
+        let shader_name = format!("{}.shader", name);
+        if let Ok(sha_content) = crate::vfs::read_to_string(entity_dir, &shader_name) {
+            passes = parse_shader(&sha_content);
+        }
+
         materials.push(Oni2Material {
             name,
             diffuse: [dr, dg, db],
             texture_name,
             primitive_count: prim_count,
             packet_count: pkt_count,
+            passes,
         });
     }
 
@@ -1801,7 +1866,7 @@ mod tests {
             eprintln!("\n=== {} ({} bytes, mats={} adj={} prim={} mtx={} reskin={}) ===",
                 fname, data.len(), n_materials, n_adjuncts, n_primitives, n_matrices, n_reskins);
 
-            if let Some(model) = parse_mod_binary(&data) {
+            if let Some(model) = parse_mod_binary(&data, base_str) {
                 let total_adj: usize = model.packets.iter().map(|p| p.adjuncts.len()).sum();
                 let total_strips: usize = model.packets.iter().map(|p| p.strips.len()).sum();
                 let total_strip_verts: usize = model.packets.iter()

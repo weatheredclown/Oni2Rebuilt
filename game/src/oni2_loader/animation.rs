@@ -70,9 +70,21 @@ pub fn curve_follower_system(
 
         let prev_phase = follower.phase;
 
-        // Advance phase parametrically (knots/sec)
-        const GLOBAL_SPEED_SCALE: f32 = 0.1;
-        follower.phase += follower.speed * dt * GLOBAL_SPEED_SCALE;
+        // Calculate arc-length derivative ds/d(phase)
+        let sample_dt = 0.001;
+        let t1 = follower.phase.min(1.0 - sample_dt);
+        let t2 = t1 + sample_dt;
+        let p1 = follower.curve.get_curve_point(t1);
+        let p2 = follower.curve.get_curve_point(t2);
+        
+        // ds_dphase represents the linear distance covered over 1.0 phase
+        let mut ds_dphase = (p2 - p1).length() / sample_dt;
+        if ds_dphase < 0.001 {
+            ds_dphase = 0.001;
+        }
+
+        // Advance phase linearly based on world space speed
+        follower.phase += (follower.speed * dt) / ds_dphase;
 
         // Check if we've reached/passed the target
         if !follower.reached_target {
@@ -501,7 +513,7 @@ pub struct PointCloudMode(pub bool);
 #[derive(Component)]
 pub struct Oni2ModelData {
     pub model: Oni2Model,
-    pub material_handles: Vec<Handle<StandardMaterial>>,
+    pub material_handles: Vec<Vec<Handle<StandardMaterial>>>,
     pub fallback_material: Handle<StandardMaterial>,
 }
 
@@ -650,16 +662,19 @@ pub fn toggle_point_cloud(
 
         commands.entity(entity).with_children(|parent| {
             for (mat_idx, mesh) in sub_meshes {
-                let mat_handle = model_data
+                let mesh_handle = meshes.add(mesh);
+                let pass_handles = model_data
                     .material_handles
                     .get(mat_idx)
                     .cloned()
-                    .unwrap_or_else(|| model_data.fallback_material.clone());
-                parent.spawn((
-                    Mesh3d(meshes.add(mesh)),
-                    MeshMaterial3d(mat_handle),
-                    Transform::default(),
-                ));
+                    .unwrap_or_else(|| vec![model_data.fallback_material.clone()]);
+                for mat_handle in pass_handles {
+                    parent.spawn((
+                        Mesh3d(mesh_handle.clone()),
+                        MeshMaterial3d(mat_handle),
+                        Transform::default(),
+                    ));
+                }
             }
         });
     }
