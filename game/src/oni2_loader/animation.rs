@@ -1,62 +1,5 @@
 use super::*;
 
-fn compute_animated_bone_transforms(
-    skel: &Oni2Skeleton,
-    frame_channels: &[f32],
-) -> Vec<(Quat, Vec3)> {
-    let num_bones = skel.positions.len();
-    let mut result = vec![(Quat::IDENTITY, Vec3::ZERO); num_bones];
-
-    for i in 0..num_bones {
-        if i == 0 {
-            // Root bone: translation from channels 0-2, rotation from channels 3-5
-            let tx = *frame_channels.get(0).unwrap_or(&0.0);
-            let ty = *frame_channels.get(1).unwrap_or(&0.0);
-            let tz = *frame_channels.get(2).unwrap_or(&0.0);
-            let euler_x = *frame_channels.get(3).unwrap_or(&0.0);
-            let euler_y = *frame_channels.get(4).unwrap_or(&0.0);
-            let euler_z = *frame_channels.get(5).unwrap_or(&0.0);
-            // FromEulersXZY: R = Ry · Rz · Rx → glam XZY order
-            let rot = Quat::from_euler(EulerRot::XZY, euler_x, euler_z, euler_y);
-            result[0] = (rot, Vec3::new(tx, ty, tz));
-        } else {
-            // Non-root: euler rotation from channels i*3+3 .. i*3+5
-            let ch_base = i * 3 + 3;
-            let euler_x = *frame_channels.get(ch_base).unwrap_or(&0.0);
-            let euler_y = *frame_channels.get(ch_base + 1).unwrap_or(&0.0);
-            let euler_z = *frame_channels.get(ch_base + 2).unwrap_or(&0.0);
-            let local_rot = Quat::from_euler(EulerRot::XZY, euler_x, euler_z, euler_y);
-
-            let local_offset = Vec3::from(skel.local_offsets[i]);
-
-            let parent_idx = skel.parent_indices[i].unwrap_or(0);
-            let (parent_rot, parent_pos) = result[parent_idx];
-
-            // Row-vector: global = local * parent → column-vector/quat: global = parent * local
-            let global_rot = parent_rot * local_rot;
-            let global_pos = parent_rot.mul_vec3(local_offset) + parent_pos;
-
-            result[i] = (global_rot, global_pos);
-        }
-    }
-
-    result
-}
-
-/// Compute inverse bind-pose matrices for GPU skinning.
-/// Bind pose is translation-only (no rotation), so inverse is just negated translation.
-/// Positions are in Oni2 coordinates; we apply X/Z negate for Bevy space.
-pub(crate) fn compute_inverse_bind_poses(skel: &Oni2Skeleton) -> Vec<Mat4> {
-    skel.positions
-        .iter()
-        .map(|pos| {
-            // Bind-pose matrix: translation with X/Z negate for Bevy coordinate system
-            let bind = Mat4::from_translation(Vec3::new(-pos[0], pos[1], -pos[2]));
-            bind.inverse()
-        })
-        .collect()
-}
-
 /// System: advance CurveFollower phase, evaluate NURBS position, update Transform.
 pub fn curve_follower_system(
     mut query: Query<(&mut CurveFollower, &mut Transform)>,
@@ -70,21 +13,29 @@ pub fn curve_follower_system(
 
         let prev_phase = follower.phase;
 
-        // Calculate arc-length derivative ds/d(phase)
-        let sample_dt = 0.001;
-        let t1 = follower.phase.min(1.0 - sample_dt);
-        let t2 = t1 + sample_dt;
-        let p1 = follower.curve.get_curve_point(t1);
-        let p2 = follower.curve.get_curve_point(t2);
+        // Advance phase mapped by metric length evaluated via finite-difference derivative.
+        // `follower.speed` represents real-world speed (meters per second).
+        let current_pos = follower.curve.get_curve_point(follower.phase);
+        let epsilon = 0.001;
         
-        // ds_dphase represents the linear distance covered over 1.0 phase
-        let mut ds_dphase = (p2 - p1).length() / sample_dt;
-        if ds_dphase < 0.001 {
-            ds_dphase = 0.001;
-        }
+        let delta_phase = if follower.speed > 0.0 { epsilon } else { -epsilon };
+        let mut lookahead_phase = follower.phase + delta_phase;
+        
+        // Handle boundaries to evaluate interior derivatives
+        if lookahead_phase > 1.0 { lookahead_phase = 1.0; }
+        if lookahead_phase < 0.0 { lookahead_phase = 0.0; }
+        
+        let lookahead_pos = follower.curve.get_curve_point(lookahead_phase);
+        let dist = current_pos.distance(lookahead_pos);
+        
+        let phase_per_meter = if dist > 0.00001 {
+            (lookahead_phase - follower.phase).abs() / dist
+        } else {
+            1.0
+        };
 
-        // Advance phase linearly based on world space speed
-        follower.phase += (follower.speed * dt) / ds_dphase;
+        // Advance phase maintaining absolute velocity constraints across spline density
+        follower.phase += follower.speed * dt * phase_per_meter;
 
         // Check if we've reached/passed the target
         if !follower.reached_target {
@@ -383,17 +334,23 @@ pub fn load_anim_library(
     entity_dir: &str,
     entity_name: &str,
     skeleton: &Oni2Skeleton,
-) -> (Oni2AnimLibrary, Option<crate::oni2_loader::parsers::loco::LocomotionController>) {
-    let expected_channels = skeleton.positions.len() * 3 + 3;
+) -> (Oni2AnimLibrary, Option<crate::oni2_loader::parsers::loco::LocomotionController>, Option<crate::oni2_loader::parsers::jump::JumpController>) {
+    let mut expected_channels = skeleton.expected_anim_channels();
+    if expected_channels == 0 {
+        expected_channels = skeleton.positions.len() * 3 + 3;
+    }
 
     let mut alias_map: std::collections::HashMap<String, String> = std::collections::HashMap::new();
     let mut loco_pkg: Option<String> = None;
+    let mut jump_pkg: Option<String> = None;
 
     // Try entity.tune version first (more complete), then Entity version
     let tune_dir = "entity.tune".to_string();
     let tune_entity = format!("{}/{}", tune_dir, entity_name);
     let tune_anims = format!("{}/{}.anims", tune_entity, entity_name);
     let entity_anims = format!("{}/{}.anims", entity_dir, entity_name);
+
+    info!("Attempting to load anims from tune: {} and fallback entity: {}", tune_anims, entity_anims);
 
     let anims_path = if crate::vfs::exists("", &tune_anims) {
         tune_anims
@@ -402,7 +359,7 @@ pub fn load_anim_library(
     };
 
     if let Ok(content) = crate::vfs::read_to_string("", &anims_path) {
-        crate::oni2_loader::parsers::anims::parse_anims_content(&content, &mut alias_map, &mut loco_pkg);
+        crate::oni2_loader::parsers::anims::parse_anims_content(&content, &mut alias_map, &mut loco_pkg, &mut jump_pkg);
     } else {
         info!("No .anims file found for {}", entity_name);
     }
@@ -413,7 +370,6 @@ pub fn load_anim_library(
     let mut loaded = 0;
     let mut skipped_channels = 0;
     let mut skipped_missing = 0;
-
     for (alias, anim_name) in &alias_map {
         let anim_file = format!("{}/{}.anim", entity_dir, anim_name);
 
@@ -428,13 +384,11 @@ pub fn load_anim_library(
                     }
                     let fallback_dir = parts.join("/");
                     let fallback_file = format!("{}/{}.anim", fallback_dir, anim_name);
-
-                    match crate::vfs::read("", &fallback_file) {
-                        Ok(d) => d,
-                        Err(_) => {
-                            skipped_missing += 1;
-                            continue;
-                        }
+                    if let Ok(d) = crate::vfs::read("", &fallback_file) {
+                        d
+                    } else {
+                        skipped_missing += 1;
+                        continue;
                     }
                 } else {
                     skipped_missing += 1;
@@ -494,7 +448,31 @@ pub fn load_anim_library(
         None
     };
 
-    (Oni2AnimLibrary { anims, debug_names }, locomotion)
+    let jump_controller = if let Some(pkg) = jump_pkg {
+        // e.g., "animpkg.nav.tim" -> "entity.tune/animpkg/nav/tim.jump"
+        let parts: Vec<&str> = pkg.split('.').collect();
+        if parts.len() >= 2 {
+            let filename = parts.last().unwrap();
+            let mut jump_dir = "entity.tune".to_string();
+            // Drop the first part "animpkg" if needed, but normally we just path it out
+            for p in &parts[..parts.len() - 1] {
+                jump_dir = format!("{}/{}", jump_dir, p);
+            }
+            let jump_path = format!("{}.jump", filename);
+            if let Ok(jump_content) = crate::vfs::read_to_string(&jump_dir, &jump_path) {
+                Some(crate::oni2_loader::parsers::jump::parse_jump_content(&jump_content))
+            } else {
+                warn!("Could not read jump package: {}/{}", jump_dir, jump_path);
+                None
+            }
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
+    (Oni2AnimLibrary { anims, debug_names }, locomotion, jump_controller)
 }
 
 /// Controls visibility of debug collision bounds wireframes.
@@ -751,10 +729,10 @@ pub fn debug_draw_skeleton(
 
 /// Linearly interpolate between two animation frames, storing the result in `state.current_frame`.
 pub fn frame_lerp(state: &mut Oni2AnimState, idx_a: usize, idx_b: usize, t: f32) {
-    // Destructure to borrow `current_frame` mutably and `anim` immutably at the same time
     let Oni2AnimState {
         anim,
         current_frame,
+        skeleton,
         ..
     } = state;
 
@@ -762,12 +740,17 @@ pub fn frame_lerp(state: &mut Oni2AnimState, idx_a: usize, idx_b: usize, t: f32)
     let b = &anim.frames[idx_b];
     let len = current_frame.len().min(a.len()).min(b.len());
     
-    // For single-channel, it's a pure rotation track (Y-rot). 
-    // For multi-channel, 0..=2 are root translations, 3+ are rotations.
-    let rot_start_idx = if len == 1 { 0 } else { 3 };
+    let rot_flags = &skeleton.channel_is_rot;
     
     for i in 0..len {
-        if i >= rot_start_idx {
+        let is_rot = if rot_flags.len() >= len {
+            rot_flags[i]
+        } else {
+            // Legacy fallback if no explicit channel map exists
+            if len == 1 { false } else { i >= 3 }
+        };
+
+        if is_rot {
             // Shortest path interpolation for angles
             let mut diff = (b[i] - a[i]).rem_euclid(std::f32::consts::TAU);
             if diff > std::f32::consts::PI {
@@ -776,9 +759,9 @@ pub fn frame_lerp(state: &mut Oni2AnimState, idx_a: usize, idx_b: usize, t: f32)
             current_frame[i] = a[i] + diff * t;
         } else {
             // Linear interpolation for translations
-            current_frame[i] = a[i] + (b[i] - a[i]) * t;
-        }
+        current_frame[i] = a[i] + (b[i] - a[i]) * t;
     }
+}
 }
 
 /// Update animation: advance frame, recompute bone transforms, rebuild meshes.
@@ -855,7 +838,7 @@ pub fn update_oni2_animation(
             continue;
         }
 
-        let mut bone_transforms = compute_animated_bone_transforms(&anim_state.skeleton, frame);
+        let mut bone_transforms = crate::oni2_loader::utils::bone::compute_animated_bone_transforms(&anim_state.skeleton, frame);
 
         // Strip root motion: zero out root bone XZ translation so the model
         // stays pinned to its entity origin. Keep Y for vertical anim motion.

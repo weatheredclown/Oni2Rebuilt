@@ -19,7 +19,6 @@ pub fn parse_anim(data: &[u8]) -> Option<Oni2Animation> {
     let format_id = read_u32_le(data, 0);
 
     match format_id {
-        0 => parse_anim_old(data),
         ANIM_MAGIC_ANI0 => parse_anim_ani0(data),
         ANIM_MAGIC_ANI1 => parse_anim_ani1(data),
         _ => {
@@ -27,24 +26,6 @@ pub fn parse_anim(data: &[u8]) -> Option<Oni2Animation> {
             None
         }
     }
-}
-
-/// Old format (format_id=0):
-/// Header: [u32:0] [u32:num_frames] [u32:num_channels] [f32:stride_z] [u8:loop_flag] = 17 bytes
-/// Per frame: [num_channels × f32]
-fn parse_anim_old(data: &[u8]) -> Option<Oni2Animation> {
-    let num_frames = read_u32_le(data, 4);
-    let num_channels = read_u32_le(data, 8);
-    let stride_z = read_f32_le(data, 12);
-    let is_loop = data[16] != 0;
-
-    let mut off = 17usize;
-    let frames = read_frames(data, &mut off, num_frames, num_channels, 0, false)?;
-
-    info!("Parsed anim (old): {} frames, {} channels, stride_z={}, loop={}",
-        num_frames, num_channels, stride_z, is_loop);
-
-    Some(Oni2Animation { num_frames, num_channels, stride_z, is_loop, frames })
 }
 
 /// 'ani0' format (format_id=0x00696E61):

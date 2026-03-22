@@ -5,6 +5,7 @@ pub fn parse_anims_content(
     content: &str,
     alias_map: &mut std::collections::HashMap<String, String>,
     loco_pkg: &mut Option<String>,
+    jump_pkg: &mut Option<String>,
 ) {
     let mut in_anims_block = false;
 
@@ -22,13 +23,19 @@ pub fn parse_anims_content(
             continue;
         }
 
+        if let Some(jump_ref) = trimmed.strip_prefix("jumppkg ") {
+            *jump_pkg = Some(jump_ref.trim().to_string());
+            continue;
+        }
+
         // Read locopkg lines
         if let Some(loco_ref) = trimmed.strip_prefix("locopkg ") {
             *loco_pkg = Some(loco_ref.trim().to_string());
             continue;
         }
-        if trimmed.starts_with("jumppkg ") {
-            info!("Skipping jumppkg: {}", trimmed);
+        if let Some(jump_ref) = trimmed.strip_prefix("jumppkg ") {
+            //load_apkg_aliases(jump_ref.trim(), alias_map);
+            // TODO: implement jump pkg loading (*.jump)
             continue;
         }
 

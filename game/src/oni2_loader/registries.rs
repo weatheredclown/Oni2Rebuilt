@@ -26,7 +26,7 @@ pub struct EntityLibrary {
 
 #[derive(Resource, Default)]
 pub struct AnimRegistry {
-    pub libraries: HashMap<String, (Oni2AnimLibrary, Option<crate::oni2_loader::parsers::loco::LocomotionController>)>,
+    pub libraries: HashMap<String, (Oni2AnimLibrary, Option<crate::oni2_loader::parsers::loco::LocomotionController>, Option<crate::oni2_loader::parsers::jump::JumpController>)>,
 }
 
 #[derive(Clone)]
@@ -43,6 +43,7 @@ pub struct Oni2EntityType {
     pub anim_library: Option<Oni2AnimLibrary>,
     pub locomotion: Option<crate::oni2_loader::parsers::loco::LocomotionController>,
     pub debug_skeleton: Option<crate::oni2_loader::Oni2DebugSkeleton>,
+    pub jump_controller: Option<crate::oni2_loader::parsers::jump::JumpController>,
 }
 
 #[derive(Resource, Default)]

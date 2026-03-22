@@ -1,5 +1,6 @@
 use super::*;
 use crate::oni2_loader::parsers::texture::load_tga_texture;
+use crate::oni2_loader::utils::bone::compute_inverse_bind_poses;
 
 #[derive(Component)]
 pub struct CreatureRenderOffset {
@@ -539,9 +540,9 @@ pub fn load_oni2_entity_type(
         }
     });
 
-    let (library, locomotion) = if let Some(ref skel) = skeleton {
+    let (library, locomotion, jump_controller) = if let Some(ref skel) = skeleton {
         let cache_key = format!("{}/{}", entity_dir, entity_type_name.unwrap_or(name));
-        let (lib, loco) = if let Some(cached) = anim_registry.libraries.get(&cache_key) {
+        let (lib, loco, jump) = if let Some(cached) = anim_registry.libraries.get(&cache_key) {
             cached.clone()
         } else {
             let loaded = load_anim_library(entity_dir, entity_type_name.unwrap_or(name), skel);
@@ -553,9 +554,9 @@ pub fn load_oni2_entity_type(
         } else {
             None
         };
-        (lib_opt, loco)
+        (lib_opt, loco, jump)
     } else {
-        (None, None)
+        (None, None, None)
     };
 
     let use_gpu_skinning = skeleton.is_some() && library.is_some();
@@ -579,7 +580,7 @@ pub fn load_oni2_entity_type(
 
     let ibp_handle = if use_gpu_skinning {
         let inverse_bind_poses =
-            super::animation::compute_inverse_bind_poses(skeleton.as_ref().unwrap());
+            compute_inverse_bind_poses(skeleton.as_ref().unwrap());
         Some(skinned_mesh_ibp.add(SkinnedMeshInverseBindposes::from(inverse_bind_poses)))
     } else {
         None
@@ -657,6 +658,7 @@ pub fn load_oni2_entity_type(
         bound_tris,
         anim_library: library,
         locomotion,
+        jump_controller,
         debug_skeleton,
     })
 }
@@ -757,7 +759,7 @@ pub fn spawn_oni2_entity_with_rotation(
         let mut joints = Vec::with_capacity(num_bones);
         for _ in 0..num_bones {
             let joint = commands
-                .spawn((Transform::IDENTITY, Visibility::Hidden))
+                .spawn((Transform::IDENTITY, GlobalTransform::default(), Visibility::Hidden))
                 .id();
             commands.entity(parent_entity).add_child(joint);
             joints.push(joint);
@@ -810,6 +812,10 @@ pub fn spawn_oni2_entity_with_rotation(
 
     if let Some(ref loco) = ent_type.locomotion {
         commands.entity(parent_entity).insert(loco.clone());
+    }
+
+    if let Some(ref jump) = ent_type.jump_controller {
+        commands.entity(parent_entity).insert(jump.clone());
     }
 
     // 4. Mesh sub_meshes
@@ -909,7 +915,7 @@ pub fn spawn_oni2_creature(
         .with_max_distance(0.3),
         // Offset mesh down to align feet with capsule bottom
         CreatureRenderOffset {
-            y_offset: -1.0,
+            y_offset: -2.0,
             facing: Quat::IDENTITY,
         },
         // Deferred ground probe — wait for physics colliders to register
@@ -926,7 +932,7 @@ pub fn spawn_oni2_creature(
 
     if let Some(ref skel) = skeleton {
         let cache_key = format!("{}/{}", anim_entity_dir, anim_name);
-        let (library, locomotion) = if let Some(cached) = anim_registry.libraries.get(&cache_key) {
+        let (library, locomotion, jump_controller) = if let Some(cached) = anim_registry.libraries.get(&cache_key) {
             cached.clone()
         } else {
             let loaded = load_anim_library(&anim_entity_dir, anim_name, skel);
@@ -937,6 +943,9 @@ pub fn spawn_oni2_creature(
             commands.entity(entity).insert(library);
             if let Some(loco) = locomotion {
                 commands.entity(entity).insert(loco);
+            }
+            if let Some(jump) = jump_controller {
+                commands.entity(entity).insert(jump);
             }
             commands.entity(entity).insert(CreatureMovementAnim::Run);
         }

@@ -6,9 +6,19 @@ use bevy::prelude::*;
 pub enum AppState {
     #[default]
     Menu,
+    AnimMenu,
     LoadingLayout,
     InGame,
 }
+
+#[derive(Resource)]
+pub struct TestAnimEntity(pub String);
+
+#[derive(Component)]
+struct AnimMenuRoot;
+
+#[derive(Component)]
+struct AnimButton(String);
 
 #[derive(Resource)]
 pub struct SelectedLayout(pub String);
@@ -36,6 +46,12 @@ impl Plugin for MenuPlugin {
                 (menu_interaction, scroll_list).run_if(in_state(AppState::Menu)),
             )
             .add_systems(OnExit(AppState::Menu), cleanup_menu)
+            .add_systems(OnEnter(AppState::AnimMenu), setup_anim_menu)
+            .add_systems(
+                Update,
+                (anim_menu_interaction, scroll_list).run_if(in_state(AppState::AnimMenu)),
+            )
+            .add_systems(OnExit(AppState::AnimMenu), cleanup_anim_menu)
             .add_systems(OnEnter(AppState::LoadingLayout), setup_loading_screen)
             .add_systems(
                 Update,
@@ -309,9 +325,14 @@ fn scroll_list(
 fn escape_to_menu(
     keyboard: Res<ButtonInput<KeyCode>>,
     mut next_state: ResMut<NextState<AppState>>,
+    test_ent: Option<Res<TestAnimEntity>>,
 ) {
     if keyboard.just_pressed(KeyCode::Escape) {
-        next_state.set(AppState::Menu);
+        if test_ent.is_some() {
+            next_state.set(AppState::AnimMenu);
+        } else {
+            next_state.set(AppState::Menu);
+        }
     }
 }
 
@@ -324,5 +345,155 @@ fn cleanup_game(mut commands: Commands, query: Query<Entity, With<InGameEntity>>
 fn cleanup_menu(mut commands: Commands, query: Query<Entity, With<MenuRoot>>) {
     for entity in &query {
         commands.entity(entity).despawn();
+    }
+}
+
+fn cleanup_anim_menu(mut commands: Commands, query: Query<Entity, With<AnimMenuRoot>>) {
+    for entity in &query {
+        commands.entity(entity).despawn();
+    }
+}
+
+fn scan_anims_for_entity(entity: &str) -> Vec<(String, String)> {
+    let entity_dir = format!("Entity/{}", entity);
+    let tune_dir = "entity.tune".to_string();
+    let tune_entity = format!("{}/{}", tune_dir, entity);
+    let tune_anims = format!("{}/{}.anims", tune_entity, entity);
+    let entity_anims = format!("{}/{}.anims", entity_dir, entity);
+
+    let anims_path = if crate::vfs::exists("", &tune_anims) {
+        tune_anims
+    } else {
+        entity_anims
+    };
+
+    let mut alias_map = std::collections::HashMap::new();
+    let mut loco_pkg = None;
+
+    if let Ok(content) = crate::vfs::read_to_string("", &anims_path) {
+        crate::oni2_loader::parsers::anims::parse_anims_content(&content, &mut alias_map, &mut loco_pkg, &mut None);
+    } 
+
+    let mut results = Vec::new();
+    for (alias, anim_name) in &alias_map {
+        let anim_file = format!("{}/{}.anim", entity_dir, anim_name);
+        if crate::vfs::exists("", &anim_file) {
+            results.push((alias.clone(), anim_file));
+        } else {
+            // Check prefix fallback matching core spawn logic
+            if let Some(prefix) = anim_name.split('_').next() {
+                let mut parts: Vec<&str> = entity_dir.split('/').collect();
+                if let Some(last) = parts.last_mut() {
+                    *last = prefix;
+                }
+                let fallback_dir = parts.join("/");
+                let fallback_file = format!("{}/{}.anim", fallback_dir, anim_name);
+                if crate::vfs::exists("", &fallback_file) {
+                    results.push((alias.clone(), fallback_file));
+                }
+            }
+        }
+    }
+    results.sort_by(|a, b| a.0.cmp(&b.0));
+    results
+}
+
+fn setup_anim_menu(mut commands: Commands, test_ent: Res<TestAnimEntity>) {
+    let anims = scan_anims_for_entity(&test_ent.0);
+
+    // Camera for menu UI rendering
+    commands.spawn((Camera2d, AnimMenuRoot));
+
+    commands
+        .spawn((
+            Node {
+                width: Val::Percent(100.0),
+                height: Val::Percent(100.0),
+                flex_direction: FlexDirection::Column,
+                align_items: AlignItems::Center,
+                justify_content: JustifyContent::FlexStart,
+                padding: UiRect::all(Val::Px(40.0)),
+                ..default()
+            },
+            BackgroundColor(Color::srgb(0.1, 0.1, 0.12)),
+            AnimMenuRoot,
+        ))
+        .with_children(|root| {
+            // Title
+            root.spawn((
+                Text::new(format!("Select Animation For: {}", test_ent.0)),
+                TextFont {
+                    font_size: 48.0,
+                    ..default()
+                },
+                TextColor(Color::WHITE),
+                Node {
+                    margin: UiRect::bottom(Val::Px(20.0)),
+                    ..default()
+                },
+            ));
+
+            // Scrollable list container
+            root.spawn((
+                Node {
+                    width: Val::Px(500.0),
+                    flex_grow: 1.0,
+                    flex_direction: FlexDirection::Column,
+                    overflow: Overflow::scroll_y(),
+                    ..default()
+                },
+                ScrollableList,
+            ))
+            .with_children(|list| {
+                for (alias, file_path) in &anims {
+                    list.spawn((
+                        Button,
+                        Node {
+                            width: Val::Percent(100.0),
+                            padding: UiRect::axes(Val::Px(16.0), Val::Px(10.0)),
+                            margin: UiRect::bottom(Val::Px(4.0)),
+                            ..default()
+                        },
+                        BackgroundColor(Color::srgb(0.2, 0.2, 0.25)),
+                        AnimButton(file_path.clone()),
+                    ))
+                    .with_children(|btn| {
+                        btn.spawn((
+                            Text::new(format!("{}  ->  {}", alias, file_path.split('/').last().unwrap_or(file_path))),
+                            TextFont {
+                                font_size: 20.0,
+                                ..default()
+                            },
+                            TextColor(Color::WHITE),
+                        ));
+                    });
+                }
+            });
+        });
+}
+
+fn anim_menu_interaction(
+    mut query: Query<
+        (&Interaction, &AnimButton, &mut BackgroundColor),
+        Changed<Interaction>,
+    >,
+    mut next_state: ResMut<NextState<AppState>>,
+    mut commands: Commands,
+    test_ent: Res<TestAnimEntity>,
+) {
+    for (interaction, anim_btn, mut bg) in &mut query {
+        match *interaction {
+            Interaction::Pressed => {
+                // The TestAnimMode resource instructs testanim.rs to spawn this anim natively from the CLI
+                commands.insert_resource(crate::oni2_loader::TestAnimMode(anim_btn.0.clone()));
+                next_state.set(AppState::InGame);
+            }
+            Interaction::Hovered => {
+                *bg = BackgroundColor(Color::srgb(0.35, 0.35, 0.4));
+            }
+            Interaction::None => {
+                *bg = BackgroundColor(Color::srgb(0.2, 0.2, 0.25));
+            }
+        }
     }
 }

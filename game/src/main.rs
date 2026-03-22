@@ -234,8 +234,13 @@ fn main() {
     }
 
     if let Some(anim_path) = cli_testanim {
-        app.insert_resource(TestAnimMode(anim_path));
-        app.insert_state(AppState::InGame);
+        if anim_path.to_lowercase().ends_with(".anim") {
+            app.insert_resource(TestAnimMode(anim_path));
+            app.insert_state(AppState::InGame);
+        } else {
+            app.insert_resource(crate::menu::TestAnimEntity(anim_path));
+            app.insert_state(AppState::AnimMenu);
+        }
     } else if formation_mode {
         app.insert_resource(FormationMode);
         app.insert_state(AppState::InGame);

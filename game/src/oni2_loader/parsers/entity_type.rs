@@ -59,5 +59,6 @@ pub fn parse_entity_type(content: &str) -> Oni2EntityType {
         bound_file,
         skel_file,
         lod_radius,
+        jump_controller: None,
     }
 }

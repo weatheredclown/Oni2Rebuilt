@@ -73,13 +73,43 @@ pub struct Oni2Bound {
 
 // === Parsed .skel file data ===
 
-#[derive(Debug, Clone, Default)]
+#[derive(Clone, Default, Debug)]
+pub struct Oni2BoneChannels {
+    pub has_trans_x: bool,
+    pub has_trans_y: bool,
+    pub has_trans_z: bool,
+    pub has_rot_x: bool,
+    pub has_rot_y: bool,
+    pub has_rot_z: bool,
+}
+
+#[derive(Clone, Default, Debug)]
 pub struct Oni2Skeleton {
-    pub positions: Vec<[f32; 3]>,
+    pub positions: Vec<[f32; 3]>, // Bind-pose positions in world space (pre-offsetting)
     pub parent_indices: Vec<Option<usize>>,
     pub names: Vec<String>,
-    /// Raw local offsets from parent (before accumulation to world positions).
-    pub local_offsets: Vec<[f32; 3]>,
+    pub local_offsets: Vec<[f32; 3]>, // Explicit local offsets from parent
+    pub channels: Vec<Oni2BoneChannels>, // Track explicit explicit dimensions per-node mappings
+    pub channel_is_rot: Vec<bool>, // Flattened boolean flags mapping index layout directly to angle/pos tracking
+}
+
+impl Oni2Skeleton {
+    /// Evaluates the total number of channels natively defined spanning all constituent bones combined natively.
+    pub fn expected_anim_channels(&self) -> usize {
+        self.channel_is_rot.len()
+    }
+    
+    pub fn build_channel_map(&mut self) {
+        self.channel_is_rot.clear();
+        for c in &self.channels {
+            if c.has_trans_x { self.channel_is_rot.push(false); }
+            if c.has_trans_y { self.channel_is_rot.push(false); }
+            if c.has_trans_z { self.channel_is_rot.push(false); }
+            if c.has_rot_x { self.channel_is_rot.push(true); }
+            if c.has_rot_y { self.channel_is_rot.push(true); }
+            if c.has_rot_z { self.channel_is_rot.push(true); }
+        }
+    }
 }
 
 // === Parsed Entity.type ===
@@ -90,6 +120,7 @@ pub struct Oni2EntityType {
     pub bound_file: Option<String>,
     pub skel_file: Option<String>,
     pub lod_radius: f32,
+    pub jump_controller: Option<crate::oni2_loader::parsers::jump::JumpController>,
 }
 
 // === Parsed .anim file data ===

@@ -224,7 +224,7 @@ pub fn update_debug_light_grid(
             let height = if let Some(hit) = spatial_query.cast_ray(ray_origin, Dir3::Y, 100.0, true, &filter) {
                 ray_origin.y + hit.distance - 2.0
             } else {
-                py + 15.0
+                py + 5.0
             };
 
             let light_entity = commands.spawn((

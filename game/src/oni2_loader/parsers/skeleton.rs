@@ -7,6 +7,7 @@ pub fn parse_skel(content: &str) -> Oni2Skeleton {
     let mut parent_indices = Vec::new();
     let mut names = Vec::new();
     let mut local_offsets = Vec::new();
+    let mut channels = Vec::new();
     // Stack of (parent world position, parent bone index or None for root level)
     let mut parent_stack: Vec<([f32; 3], Option<usize>)> = vec![([0.0; 3], None)];
 
@@ -23,6 +24,7 @@ pub fn parse_skel(content: &str) -> Oni2Skeleton {
             parent_indices.push(parent_idx);
             names.push(name);
             local_offsets.push([0.0; 3]); // placeholder
+            channels.push(crate::oni2_loader::parsers::types::Oni2BoneChannels::default());
             parent_stack.push((parent_pos, Some(bone_idx)));
         } else if trimmed.starts_with("offset ") {
             let parts: Vec<&str> = trimmed.split_whitespace().collect();
@@ -50,10 +52,29 @@ pub fn parse_skel(content: &str) -> Oni2Skeleton {
                     top.0 = world_pos;
                 }
             }
+        } else if trimmed.starts_with("trans") || trimmed.starts_with("rot") {
+            let parts: Vec<&str> = trimmed.split_whitespace().collect();
+            if parts.len() > 1 && parts[1] == "lock" {
+                // Locked track, does not consume anim channels (typically)
+                continue;
+            }
+            if let Some(ch) = channels.last_mut() {
+                match parts[0] {
+                    "transX" => ch.has_trans_x = true,
+                    "transY" => ch.has_trans_y = true,
+                    "transZ" => ch.has_trans_z = true,
+                    "rotX" => ch.has_rot_x = true,
+                    "rotY" => ch.has_rot_y = true,
+                    "rotZ" => ch.has_rot_z = true,
+                    _ => {}
+                }
+            }
         } else if trimmed == "}" {
             parent_stack.pop();
         }
     }
 
-    Oni2Skeleton { positions, parent_indices, names, local_offsets }
+    let mut skel = Oni2Skeleton { positions, parent_indices, names, local_offsets, channels, channel_is_rot: Vec::new() };
+    skel.build_channel_map();
+    skel
 }
