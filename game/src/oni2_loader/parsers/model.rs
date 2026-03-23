@@ -93,7 +93,7 @@ pub fn parse_mod(content: &str, entity_dir: &str) -> Oni2Model {
             }
 
             let shader_name = format!("{}.shader", name);
-            if let Ok(sha_content) = crate::vfs::read_to_string(&entity_dir, &shader_name) {
+            if let Ok(_sha_content) = crate::vfs::read_to_string(&entity_dir, &shader_name) {
                 // TODO: put shader loading here
                 
             }
@@ -215,7 +215,7 @@ pub fn parse_mod(content: &str, entity_dir: &str) -> Oni2Model {
         packets,
         bone_world_positions: Vec::new(),
         bone_rotations: Vec::new(),
-        world_space_verts: false,
+        world_space_verts: true,
     }
 }
 
@@ -538,7 +538,7 @@ pub fn parse_mod_binary(data: &[u8], entity_dir: &str) -> Option<Oni2Model> {
         packets,
         bone_world_positions: Vec::new(),
         bone_rotations: Vec::new(),
-        world_space_verts: true, // binary v2.10 vertices are in world space when loaded from win32
+        world_space_verts: false, // binary v2.10 characters natively evaluate as bone-local
     })
 }
 

@@ -56,7 +56,7 @@ pub fn uv_animator_system(
     // Natively iterate the layout definitions rather than the instantiated entities so that
     // we strictly perform mathematical mutations only once per pooled Handle<Mesh> memory allocation.
     for ent_type in lib.entities.values() {
-        for (i, (mat_idx, handle)) in ent_type.sub_meshes.iter().enumerate() {
+        for (_i, (mat_idx, handle)) in ent_type.sub_meshes.iter().enumerate() {
             let animators = ent_type.material_animators.get(*mat_idx);
             if let Some(anims) = animators {
                 let mut u_speed = 0.0;
@@ -160,7 +160,32 @@ fn get_or_create_ptx_asset(
         bevy_hanabi::SpawnerSettings::rate(rate.into())
     };
 
-    let handle = effects.add(EffectAsset::new(32768, spawner, writer.finish())
+    let texture_slot = writer.lit(0u32).expr();
+
+    let mut init_sprite_index = None;
+    let mut update_sprite_index = None;
+
+    if ptx_def.grid_x > 1 || ptx_def.grid_y > 1 {
+        let frames = (ptx_def.end_tile as i32 - ptx_def.start_tile as i32 + 1).max(1);
+        let start_tile = writer.lit(ptx_def.start_tile as i32);
+        
+        if ptx_def.frame_rate > 0.0 {
+            // Animated
+            let age = writer.attr(Attribute::AGE);
+            let frame_rate = writer.lit(ptx_def.frame_rate);
+            let frame_idx = age.mul(frame_rate).cast(ScalarType::Int).rem(writer.lit(frames));
+            update_sprite_index = Some(SetAttributeModifier::new(Attribute::SPRITE_INDEX, start_tile.add(frame_idx).expr()));
+        } else {
+            // Static randomize
+            let rnd = writer.rand(ScalarType::Float).mul(writer.lit(frames as f32)).cast(ScalarType::Int);
+            init_sprite_index = Some(SetAttributeModifier::new(Attribute::SPRITE_INDEX, start_tile.add(rnd).expr()));
+        }
+    }
+
+    let mut module = writer.finish();
+    module.add_texture_slot("color");
+
+    let mut asset = EffectAsset::new(32768, spawner, module)
         .init(init_pos)
         .init(init_vel)
         .init(init_age)
@@ -168,7 +193,25 @@ fn get_or_create_ptx_asset(
         .update(LinearDragModifier::new(drag_coef))
         .render(ColorOverLifetimeModifier { gradient: color_gradient, ..Default::default() })
         .render(SizeOverLifetimeModifier { gradient: size_gradient, screen_space_size: false, ..Default::default() })
-    );
+        .render(ParticleTextureModifier {
+            texture_slot,
+            sample_mapping: ImageSampleMapping::Modulate,
+        })
+        .render(OrientModifier::new(OrientMode::FaceCameraPosition));
+
+    if let Some(mut init_sp) = init_sprite_index {
+        asset = asset.init(init_sp);
+    }
+    if let Some(mut update_sp) = update_sprite_index {
+        asset = asset.update(update_sp);
+    }
+    if ptx_def.grid_x > 1 || ptx_def.grid_y > 1 {
+        asset = asset.render(FlipbookModifier {
+            sprite_grid_size: UVec2::new(ptx_def.grid_x, ptx_def.grid_y),
+        });
+    }
+
+    let handle = effects.add(asset);
 
     effect_cache.insert(cache_key, handle.clone());
     handle
@@ -201,6 +244,9 @@ fn handle_spawn_fx(
 
                 let mut ec = commands.spawn((
                     ParticleEffect::new(handle),
+                    EffectMaterial {
+                        images: vec![ptx_def.texture.clone()],
+                    },
                     Transform::from_translation(ev.at.unwrap_or(Vec3::ZERO)),
                 ));
 
@@ -237,6 +283,9 @@ fn handle_spawn_ptx(
 
         let mut ec = commands.spawn((
             ParticleEffect::new(handle),
+            EffectMaterial {
+                images: vec![ptx_def.texture.clone()],
+            },
             Transform::from_translation(ev.at.unwrap_or(Vec3::ZERO)),
         ));
 
@@ -253,7 +302,7 @@ fn handle_actor_fx_attachments(
     mut commands: Commands,
     query: Query<(Entity, &ActorFxType), Added<ActorFxType>>,
     fx_lib: Res<FxLibrary>,
-    ptx_lib: Res<ParticleLibrary>,
+    _ptx_lib: Res<ParticleLibrary>,
 ) {
     for (entity, fx_type) in query.iter() {
         if let Some(ref fx_name) = fx_type.fx_name {

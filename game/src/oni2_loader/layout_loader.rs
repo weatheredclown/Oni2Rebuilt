@@ -145,7 +145,7 @@ pub fn load_layout(
     commands.insert_resource(texture_collections);
 
     // Load camera packages and parameters
-    let mut camera_packages = CameraPackages {
+    let camera_packages = CameraPackages {
         packages: crate::oni2_loader::parsers::camera::parse_campacknew(layout_dir),
     };
     let mut camera_sets = CameraParameterSets::default();

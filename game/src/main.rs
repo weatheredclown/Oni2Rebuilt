@@ -25,7 +25,7 @@ use menu::{AppState, InGameEntity, SelectedLayout};
 use oni2_loader::TestAnimMode;
 use player::components::*;
 use std::sync::OnceLock;
-use vfs::DiskVfs;
+
 
 pub static ASSETS_PATH: OnceLock<String> = OnceLock::new();
 pub static ASSETS_DAT: OnceLock<String> = OnceLock::new();
@@ -85,6 +85,14 @@ fn main() {
             Some(w[1].clone())
         } else {
             None
+        }
+    });
+
+    let cli_testentity = args.iter().position(|a| a == "--testentity" || a == "--entitytest").map(|i| {
+        if i + 1 < args.len() && !args[i + 1].starts_with("--") {
+            args[i + 1].clone()
+        } else {
+            String::new()
         }
     });
     let sandbox_mode = args.iter().any(|a| a == "--sandbox");
@@ -166,7 +174,8 @@ fn main() {
         OnEnter(AppState::InGame),
         setup_scene.run_if(
             not(resource_exists::<TestAnimMode>)
-                .and(not(resource_exists::<FormationMode>)),
+                .and(not(resource_exists::<FormationMode>))
+                .and(not(resource_exists::<oni2_loader::TestEntityMode>)),
         ),
     )
     .add_systems(
@@ -176,6 +185,10 @@ fn main() {
     .add_systems(
         OnEnter(AppState::InGame),
         oni2_loader::setup_testanim_scene.run_if(resource_exists::<TestAnimMode>),
+    )
+    .add_systems(
+        OnEnter(AppState::InGame),
+        oni2_loader::setup_testentity_scene.run_if(resource_exists::<oni2_loader::TestEntityMode>),
     )
     .add_systems(
         Update,
@@ -223,8 +236,13 @@ fn main() {
         (
             oni2_loader::testanim_input_system,
             oni2_loader::update_testanim_hud,
-            oni2_loader::orbit_camera_system,
         ).run_if(in_state(AppState::InGame).and(resource_exists::<TestAnimMode>)),
+    )
+    .add_systems(
+        Update,
+        oni2_loader::orbit_camera_system.run_if(
+            in_state(AppState::InGame).and(|t1: Option<Res<TestAnimMode>>, t2: Option<Res<oni2_loader::TestEntityMode>>| t1.is_some() || t2.is_some())
+        ),
     )
     .add_systems(Startup, (setup_fps_counter, disable_physics_debug, oni2_loader::load_global_registries))
     .add_systems(Update, (update_fps_counter, toggle_physics_debug, toggle_debug_light, oni2_loader::toggle_debug_fog, oni2_loader::toggle_debug_light_grid, oni2_loader::update_debug_light_grid));
@@ -240,6 +258,13 @@ fn main() {
         } else {
             app.insert_resource(crate::menu::TestAnimEntity(anim_path));
             app.insert_state(AppState::AnimMenu);
+        }
+    } else if let Some(entity_name) = cli_testentity {
+        if entity_name.is_empty() {
+            app.insert_state(AppState::EntityMenu);
+        } else {
+            app.insert_resource(oni2_loader::TestEntityMode(entity_name));
+            app.insert_state(AppState::InGame);
         }
     } else if formation_mode {
         app.insert_resource(FormationMode);

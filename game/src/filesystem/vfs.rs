@@ -1,7 +1,6 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use bevy::log::info;
 use bevy::log::warn;
 
 pub struct VfsEntry {

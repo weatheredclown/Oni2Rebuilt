@@ -94,10 +94,10 @@ pub enum Stmt {
     /// `SetCurveLookAlongDirection <expr>`
     SetCurveLookAlongDirection(Expr),
 
-    /// `PlayAnimation <string> [hold] [rate <expr>] [for <expr>]`
-    PlayAnimation { name: Expr, hold: bool, rate: Option<Expr>, duration: Option<Expr> },
-    /// `PlayActionAnimation <string> [hold] [for <expr>]`
-    PlayActionAnimation { name: Expr, hold: bool, duration: Option<Expr> },
+    /// `PlayAnimation <string> [hold] [loop] [rate <expr>] [for <expr>]`
+    PlayAnimation { name: Expr, hold: bool, loop_anim: bool, rate: Option<Expr>, duration: Option<Expr> },
+    /// `PlayActionAnimation <string> [hold] [loop] [for <expr>]`
+    PlayActionAnimation { name: Expr, hold: bool, loop_anim: bool, duration: Option<Expr> },
     /// `ControlAnimation <string> ...`
     ControlAnimation { name: Expr },
 

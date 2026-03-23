@@ -4,6 +4,9 @@ use bevy::prelude::Resource;
 #[derive(Resource)]
 pub struct TestAnimMode(pub String);
 
+#[derive(Resource)]
+pub struct TestEntityMode(pub String);
+
 /// Marker component for the testanim HUD text node.
 #[derive(Component)]
 pub struct TestAnimHud;
@@ -215,5 +218,76 @@ pub fn update_testanim_hud(
     *text = Text::new(format!(
         "Frame: {}/{}  FPS: {}  {}  {}",
         frame, total, anim.fps as u32, pause_str, loop_str
+    ));
+}
+
+pub fn setup_testentity_scene(
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    mut images: ResMut<Assets<Image>>,
+    mut skinned_mesh_ibp: ResMut<Assets<SkinnedMeshInverseBindposes>>,
+    mut entity_lib: ResMut<crate::oni2_loader::registries::EntityLibrary>,
+    mut anim_registry: ResMut<crate::oni2_loader::registries::AnimRegistry>,
+    testent: Res<TestEntityMode>,
+) {
+    let entity_name = &testent.0;
+    let entity_dir = format!("Entity/{}", entity_name);
+
+    info!("TestEntity: entity={}, dir={}", entity_name, entity_dir);
+
+    let scoped = InGameEntity;
+
+    // Spawn entity without explicit animation
+    spawn_oni2_entity_with_rotation(
+        &mut commands,
+        &mut meshes,
+        &mut materials,
+        &mut images,
+        &mut skinned_mesh_ibp,
+        &mut entity_lib,
+        &mut anim_registry,
+        &entity_dir,
+        Vec3::new(0.0, 0.0, 0.0),
+        Quat::IDENTITY,
+        entity_name,
+        None,
+        Some(entity_name),
+    );
+
+    // Directional light
+    commands.spawn((
+        DirectionalLight {
+            illuminance: 10_000.0,
+            shadows_enabled: false,
+            ..default()
+        },
+        Transform::from_xyz(50.0, 50.0, 50.0).looking_at(Vec3::ZERO, Vec3::Y),
+        scoped.clone(),
+    ));
+
+    // Ambient light
+    commands.spawn((
+        AmbientLight {
+            color: Color::WHITE,
+            brightness: 500.0,
+            affects_lightmapped_meshes: false,
+        },
+        scoped.clone(),
+    ));
+
+    // Orbit camera centered on character
+    let orbit = OrbitCamera {
+        target: Vec3::new(0.0, 0.8, 0.0),
+        distance: 3.0,
+        yaw: 0.0,
+        pitch: 0.15,
+    };
+    let cam_pos = orbit_camera_position(&orbit);
+    commands.spawn((
+        Camera3d::default(),
+        Transform::from_translation(cam_pos).looking_at(orbit.target, Vec3::Y),
+        orbit,
+        scoped.clone(),
     ));
 }

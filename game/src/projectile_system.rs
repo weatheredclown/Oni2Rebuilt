@@ -1,6 +1,6 @@
 use avian3d::prelude::*;
 use bevy::prelude::*;
-use crate::oni2_loader::parsers::projectile::{ProjectileDef, HitType, ExplosionMatrix};
+use crate::oni2_loader::parsers::projectile::{ProjectileDef, HitType};
 use crate::oni2_loader::registries::ProjLibrary;
 use crate::fx_system::SpawnFx;
 

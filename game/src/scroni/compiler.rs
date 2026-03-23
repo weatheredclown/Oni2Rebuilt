@@ -209,7 +209,7 @@ impl Compiler {
         // Optional initializer: `= <expr> [, <expr>...]`
         let initializer = if self.code() == TokenCode::Equal {
             self.advance();
-            let mut first = self.parse_expr();
+            let first = self.parse_expr();
             if self.code() == TokenCode::Comma {
                 let mut list = vec![first];
                 while self.skip_if(TokenCode::Comma) {
@@ -559,18 +559,48 @@ impl Compiler {
     fn parse_play_animation(&mut self) -> Stmt {
         self.advance();
         let name = self.parse_expr();
-        let hold = self.skip_if(TokenCode::Hold);
-        let rate = if self.skip_if(TokenCode::Rate) { Some(self.parse_expr()) } else { None };
-        let duration = if self.skip_if(TokenCode::For) { Some(self.parse_expr()) } else { None };
-        Stmt::PlayAnimation { name, hold, rate, duration }
+        let mut hold = false;
+        let mut loop_anim = false;
+        let mut rate = None;
+        let mut duration = None;
+
+        loop {
+            if self.skip_if(TokenCode::Hold) {
+                hold = true;
+            } else if self.skip_if(TokenCode::Loop) {
+                loop_anim = true;
+            } else if self.skip_if(TokenCode::Rate) {
+                rate = Some(self.parse_expr());
+            } else if self.skip_if(TokenCode::For) {
+                duration = Some(self.parse_expr());
+            } else {
+                break;
+            }
+        }
+        
+        Stmt::PlayAnimation { name, hold, loop_anim, rate, duration }
     }
 
     fn parse_play_action_animation(&mut self) -> Stmt {
         self.advance();
         let name = self.parse_expr();
-        let hold = self.skip_if(TokenCode::Hold);
-        let duration = if self.skip_if(TokenCode::For) { Some(self.parse_expr()) } else { None };
-        Stmt::PlayActionAnimation { name, hold, duration }
+        let mut hold = false;
+        let mut loop_anim = false;
+        let mut duration = None;
+
+        loop {
+            if self.skip_if(TokenCode::Hold) {
+                hold = true;
+            } else if self.skip_if(TokenCode::Loop) {
+                loop_anim = true;
+            } else if self.skip_if(TokenCode::For) {
+                duration = Some(self.parse_expr());
+            } else {
+                break;
+            }
+        }
+        
+        Stmt::PlayActionAnimation { name, hold, loop_anim, duration }
     }
 
     fn parse_face(&mut self) -> Stmt {

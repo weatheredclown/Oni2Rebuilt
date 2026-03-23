@@ -102,7 +102,7 @@ pub enum BlockingAction {
     GotoCurveLerp { target: f32, seconds: f32 },
     Face { target: Value, seconds: Option<f32> },
     GotoPoint { target: Value, within: Option<f32>, speed: Option<f32>, duration: Option<f32> },
-    PlayAnimation { name: String, hold: bool, rate: Option<f32>, duration: Option<f32> },
+    PlayAnimation { name: String, hold: bool, loop_anim: bool, rate: Option<f32>, duration: Option<f32> },
     Fight,
     Shoot,
     Patrol(Value),
@@ -687,7 +687,7 @@ impl ScriptExec {
             Stmt::Done => {
                 let frame = self.get_thread_mut(tid).call_stack.pop();
                 if let Some(frame) = frame {
-                    let mut t = self.get_thread_mut(tid);
+                    let t = self.get_thread_mut(tid);
                     t.script = frame.script;
                     t.variables = frame.variables;
                     t.seq_pc = frame.seq_pc;
@@ -698,7 +698,7 @@ impl ScriptExec {
                 }
             }
             Stmt::Home => {
-                let mut t = self.get_thread_mut(tid);
+                let t = self.get_thread_mut(tid);
                 t.seq_pc = 0;
                 t.loop_stack.clear();
                 t.state = ExecState::AbortSequence;
@@ -749,17 +749,17 @@ impl ScriptExec {
                 self.get_thread_mut(tid).blocking = Some(BlockingAction::GotoPoint { target: t, within: w, speed: s, duration: d });
                 self.get_thread_mut(tid).state = ExecState::Blocked;
             }
-            Stmt::PlayAnimation { name, hold, rate, duration } => {
+            Stmt::PlayAnimation { name, hold, loop_anim, rate, duration } => {
                 let n = self.eval_expr(tid, name, now, ctx).as_string();
                 let r = rate.as_ref().map(|e| self.eval_expr(tid, e, now, ctx).as_float());
                 let d = duration.as_ref().map(|e| self.eval_expr(tid, e, now, ctx).as_float());
-                self.get_thread_mut(tid).blocking = Some(BlockingAction::PlayAnimation { name: n, hold: *hold, rate: r, duration: d });
+                self.get_thread_mut(tid).blocking = Some(BlockingAction::PlayAnimation { name: n, hold: *hold, loop_anim: *loop_anim, rate: r, duration: d });
                 self.get_thread_mut(tid).state = ExecState::Blocked;
             }
-            Stmt::PlayActionAnimation { name, hold, duration } => {
+            Stmt::PlayActionAnimation { name, hold, loop_anim, duration } => {
                 let n = self.eval_expr(tid, name, now, ctx).as_string();
                 let d = duration.as_ref().map(|e| self.eval_expr(tid, e, now, ctx).as_float());
-                self.get_thread_mut(tid).blocking = Some(BlockingAction::PlayAnimation { name: n, hold: *hold, rate: None, duration: d });
+                self.get_thread_mut(tid).blocking = Some(BlockingAction::PlayAnimation { name: n, hold: *hold, loop_anim: *loop_anim, rate: None, duration: d });
                 self.get_thread_mut(tid).state = ExecState::Blocked;
             }
             Stmt::Fight => {
@@ -955,7 +955,7 @@ impl ScriptExec {
             Stmt::Stack(name_expr) => {
                 let name = self.eval_expr(tid, name_expr, now, ctx).as_string();
                 if let Some(new_script) = self.available_scripts.get(&name).cloned() {
-                    let mut t = self.get_thread_mut(tid);
+                    let t = self.get_thread_mut(tid);
                     let frame = CallFrame {
                         script: t.script.clone(),
                         variables: t.variables.clone(),
@@ -990,7 +990,7 @@ impl ScriptExec {
             Stmt::Switch(name_expr) => {
                 let name = self.eval_expr(tid, name_expr, now, ctx).as_string();
                 if let Some(new_script) = self.available_scripts.get(&name).cloned() {
-                    let mut t = self.get_thread_mut(tid);
+                    let t = self.get_thread_mut(tid);
                     t.script = new_script;
                     t.variables.clear();
                     for var in &t.script.variables {
@@ -1651,7 +1651,7 @@ pub fn scroni_sys_event_observer(
     mut transform_query: Query<(&mut Transform, Option<&mut avian3d::prelude::LinearVelocity>)>,
     children_query: Query<&Children>,
     mut materials_query: Query<&mut MeshMaterial3d<StandardMaterial>>,
-    mut assets: (
+    assets: (
         ResMut<Assets<StandardMaterial>>,
         ResMut<Assets<Mesh>>,
         ResMut<Assets<Image>>,
@@ -1660,7 +1660,7 @@ pub fn scroni_sys_event_observer(
     mut texture_collections: ResMut<crate::oni2_loader::TextureCollections>,
     layout_context: Option<Res<crate::oni2_loader::LayoutContext>>,
     layout_paths: Option<Res<crate::oni2_loader::LayoutPaths>>,
-    mut active_camera_package: Option<ResMut<crate::oni2_loader::ActiveCameraPackage>>,
+    active_camera_package: Option<ResMut<crate::oni2_loader::ActiveCameraPackage>>,
     mut scroni_text_state: ResMut<ScroniTextState>,
     time: Res<Time>,
     mut entity_lib: ResMut<crate::oni2_loader::registries::EntityLibrary>,

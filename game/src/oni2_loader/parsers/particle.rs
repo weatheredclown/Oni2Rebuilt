@@ -18,6 +18,10 @@ pub struct ParticleSystemDef {
     pub rate: f32,
     pub blend_set: i32,
     pub frame_rate: f32,
+    pub grid_x: u32,
+    pub grid_y: u32,
+    pub start_tile: u32,
+    pub end_tile: u32,
 }
 
 // Very basic custom parser for .ptx format which is:
@@ -41,6 +45,10 @@ pub fn parse_ptx(content: &str, name: String, asset_server: &AssetServer, images
     let mut rate = 1.0;
     let mut blend_set = 0;
     let mut frame_rate = 0.0;
+    let mut grid_x = 1;
+    let mut grid_y = 1;
+    let mut start_tile = 0;
+    let mut end_tile = 0;
 
     for line in content.lines() {
         let tokens: Vec<&str> = line.split_whitespace().collect();
@@ -78,6 +86,10 @@ pub fn parse_ptx(content: &str, name: String, asset_server: &AssetServer, images
             "Rate" => if tokens.len() > 1 { rate = tokens[1].parse().unwrap_or(1.0); },
             "BlendSet" => if tokens.len() > 1 { blend_set = tokens[1].parse().unwrap_or(0); },
             "FrameRate" => if tokens.len() > 1 { frame_rate = tokens[1].parse().unwrap_or(0.0); },
+            "NumTextureTilesX" => if tokens.len() > 1 { grid_x = tokens[1].parse().unwrap_or(1); },
+            "NumTextureTilesY" => if tokens.len() > 1 { grid_y = tokens[1].parse().unwrap_or(1); },
+            "StartTextureTile" => if tokens.len() > 1 { start_tile = tokens[1].parse().unwrap_or(0); },
+            "EndTextureTile" => if tokens.len() > 1 { end_tile = tokens[1].parse().unwrap_or(0); },
             _ => {}
         }
     }
@@ -98,5 +110,9 @@ pub fn parse_ptx(content: &str, name: String, asset_server: &AssetServer, images
         rate,
         blend_set,
         frame_rate,
+        grid_x,
+        grid_y,
+        start_tile,
+        end_tile,
     })
 }

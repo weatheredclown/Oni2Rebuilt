@@ -1,5 +1,4 @@
 use bevy::prelude::*;
-use std::collections::HashMap;
 
 use super::settings::{SettingsBlock, SettingsValue};
 

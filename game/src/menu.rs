@@ -7,8 +7,16 @@ pub enum AppState {
     #[default]
     Menu,
     AnimMenu,
+    EntityMenu,
     LoadingLayout,
     InGame,
+}
+
+#[derive(Resource, Default)]
+pub struct MenuScrollState {
+    pub layout: f32,
+    pub anim: f32,
+    pub entity: f32,
 }
 
 #[derive(Resource)]
@@ -40,7 +48,8 @@ pub struct MenuPlugin;
 
 impl Plugin for MenuPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(OnEnter(AppState::Menu), setup_menu)
+        app.init_resource::<MenuScrollState>()
+            .add_systems(OnEnter(AppState::Menu), setup_menu)
             .add_systems(
                 Update,
                 (menu_interaction, scroll_list).run_if(in_state(AppState::Menu)),
@@ -52,6 +61,12 @@ impl Plugin for MenuPlugin {
                 (anim_menu_interaction, scroll_list).run_if(in_state(AppState::AnimMenu)),
             )
             .add_systems(OnExit(AppState::AnimMenu), cleanup_anim_menu)
+            .add_systems(OnEnter(AppState::EntityMenu), setup_entity_menu)
+            .add_systems(
+                Update,
+                (entity_menu_interaction, scroll_list).run_if(in_state(AppState::EntityMenu)),
+            )
+            .add_systems(OnExit(AppState::EntityMenu), cleanup_entity_menu)
             .add_systems(OnEnter(AppState::LoadingLayout), setup_loading_screen)
             .add_systems(
                 Update,
@@ -82,7 +97,7 @@ fn setup_loading_screen(
     if crate::vfs::exists("", &tex_filename) {
         if let Ok(tex_bytes) = crate::vfs::read("", &tex_filename) {
             if let Some((width, height, rgba, _)) = crate::oni2_loader::parsers::texture::decode_tex(&tex_bytes) {
-                let mut image = Image::new(
+                let image = Image::new(
                     bevy::render::render_resource::Extent3d {
                         width,
                         height,
@@ -211,7 +226,7 @@ fn scan_layouts() -> Vec<(String, String)> {
     with_desc
 }
 
-fn setup_menu(mut commands: Commands) {
+fn setup_menu(mut commands: Commands, scroll_state: Res<MenuScrollState>) {
     let layouts = scan_layouts();
 
     // Camera for menu UI rendering
@@ -256,6 +271,7 @@ fn setup_menu(mut commands: Commands) {
                     ..default()
                 },
                 ScrollableList,
+                ScrollPosition(Vec2::new(0.0, scroll_state.layout.max(0.0))),
             ))
             .with_children(|list| {
                 for (folder_name, display_name) in &layouts {
@@ -310,6 +326,8 @@ fn menu_interaction(
 }
 
 fn scroll_list(
+    app_state: Res<State<AppState>>,
+    mut scroll_state: ResMut<MenuScrollState>,
     scroll: Res<AccumulatedMouseScroll>,
     mut query: Query<&mut ScrollPosition, With<ScrollableList>>,
 ) {
@@ -319,17 +337,30 @@ fn scroll_list(
     for mut pos in &mut query {
         pos.y -= scroll.delta.y * 30.0;
         pos.y = pos.y.max(0.0);
+        
+        match app_state.get() {
+            AppState::Menu => scroll_state.layout = pos.y,
+            AppState::AnimMenu => scroll_state.anim = pos.y,
+            AppState::EntityMenu => scroll_state.entity = pos.y,
+            _ => {}
+        }
     }
 }
 
 fn escape_to_menu(
+    mut commands: Commands,
     keyboard: Res<ButtonInput<KeyCode>>,
     mut next_state: ResMut<NextState<AppState>>,
-    test_ent: Option<Res<TestAnimEntity>>,
+    test_anim_mode: Option<Res<crate::oni2_loader::TestAnimMode>>,
+    test_entity_mode: Option<Res<crate::oni2_loader::TestEntityMode>>,
 ) {
     if keyboard.just_pressed(KeyCode::Escape) {
-        if test_ent.is_some() {
+        if test_anim_mode.is_some() {
+            commands.remove_resource::<crate::oni2_loader::TestAnimMode>();
             next_state.set(AppState::AnimMenu);
+        } else if test_entity_mode.is_some() {
+            commands.remove_resource::<crate::oni2_loader::TestEntityMode>();
+            next_state.set(AppState::EntityMenu);
         } else {
             next_state.set(AppState::Menu);
         }
@@ -398,7 +429,7 @@ fn scan_anims_for_entity(entity: &str) -> Vec<(String, String)> {
     results
 }
 
-fn setup_anim_menu(mut commands: Commands, test_ent: Res<TestAnimEntity>) {
+fn setup_anim_menu(mut commands: Commands, test_ent: Res<TestAnimEntity>, scroll_state: Res<MenuScrollState>) {
     let anims = scan_anims_for_entity(&test_ent.0);
 
     // Camera for menu UI rendering
@@ -443,6 +474,7 @@ fn setup_anim_menu(mut commands: Commands, test_ent: Res<TestAnimEntity>) {
                     ..default()
                 },
                 ScrollableList,
+                ScrollPosition(Vec2::new(0.0, scroll_state.anim.max(0.0))),
             ))
             .with_children(|list| {
                 for (alias, file_path) in &anims {
@@ -479,7 +511,6 @@ fn anim_menu_interaction(
     >,
     mut next_state: ResMut<NextState<AppState>>,
     mut commands: Commands,
-    test_ent: Res<TestAnimEntity>,
 ) {
     for (interaction, anim_btn, mut bg) in &mut query {
         match *interaction {
@@ -495,5 +526,113 @@ fn anim_menu_interaction(
                 *bg = BackgroundColor(Color::srgb(0.2, 0.2, 0.25));
             }
         }
+    }
+}
+
+#[derive(Component)]
+struct EntityMenuRoot;
+
+#[derive(Component)]
+struct EntityButton(String);
+
+fn scan_entities() -> Vec<String> {
+    let target_dir = "Entity".to_string();
+    let mut all_folders = Vec::new();
+    if let Ok(entries) = crate::vfs::read_dir(&target_dir) {
+        for entry in entries {
+            if entry.is_dir {
+                if let Some(name) = entry.path.split('/').last() {
+                    all_folders.push(name.to_string());
+                }
+            }
+        }
+    }
+    all_folders.sort();
+    all_folders
+}
+
+fn setup_entity_menu(mut commands: Commands, scroll_state: Res<MenuScrollState>) {
+    let entities = scan_entities();
+
+    commands.spawn((Camera2d, EntityMenuRoot));
+
+    commands
+        .spawn((
+            Node {
+                width: Val::Percent(100.0),
+                height: Val::Percent(100.0),
+                flex_direction: FlexDirection::Column,
+                align_items: AlignItems::Center,
+                justify_content: JustifyContent::FlexStart,
+                padding: UiRect::all(Val::Px(40.0)),
+                ..default()
+            },
+            BackgroundColor(Color::srgb(0.1, 0.1, 0.12)),
+            EntityMenuRoot,
+        ))
+        .with_children(|root| {
+            root.spawn((
+                Text::new("Select Entity"),
+                TextFont { font_size: 48.0, ..default() },
+                TextColor(Color::WHITE),
+                Node { margin: UiRect::bottom(Val::Px(20.0)), ..default() },
+            ));
+
+            root.spawn((
+                Node {
+                    width: Val::Px(500.0),
+                    flex_grow: 1.0,
+                    flex_direction: FlexDirection::Column,
+                    overflow: Overflow::scroll_y(),
+                    ..default()
+                },
+                ScrollableList,
+                ScrollPosition(Vec2::new(0.0, scroll_state.entity.max(0.0))),
+            ))
+            .with_children(|list| {
+                for folder_name in &entities {
+                    list.spawn((
+                        Button,
+                        Node {
+                            width: Val::Percent(100.0),
+                            padding: UiRect::axes(Val::Px(16.0), Val::Px(10.0)),
+                            margin: UiRect::bottom(Val::Px(4.0)),
+                            ..default()
+                        },
+                        BackgroundColor(Color::srgb(0.2, 0.2, 0.25)),
+                        EntityButton(folder_name.clone()),
+                    ))
+                    .with_children(|btn| {
+                        btn.spawn((
+                            Text::new(folder_name.as_str()),
+                            TextFont { font_size: 20.0, ..default() },
+                            TextColor(Color::WHITE),
+                        ));
+                    });
+                }
+            });
+        });
+}
+
+fn entity_menu_interaction(
+    mut query: Query<(&Interaction, &EntityButton, &mut BackgroundColor), Changed<Interaction>>,
+    mut next_state: ResMut<NextState<AppState>>,
+    mut commands: Commands,
+) {
+    for (interaction, entity_btn, mut bg) in &mut query {
+        match *interaction {
+            Interaction::Pressed => {
+                commands.insert_resource(crate::oni2_loader::TestEntityMode(entity_btn.0.clone()));
+                next_state.set(AppState::InGame);
+            }
+            Interaction::Hovered => *bg = BackgroundColor(Color::srgb(0.35, 0.35, 0.4)),
+            Interaction::None => *bg = BackgroundColor(Color::srgb(0.2, 0.2, 0.25)),
+        }
+    }
+}
+
+fn cleanup_entity_menu(mut commands: Commands, query: Query<Entity, With<EntityMenuRoot>>) {
+    for entity in &query {
+        commands.entity(entity).despawn();
     }
 }

@@ -451,7 +451,6 @@ pub fn load_oni2_entity_type(
 
         if crate::vfs::exists("", &mod_path) {
             if let Some(mut model) = super::layout_loader::load_mod_file(&mod_path) {
-                model.world_space_verts = false;
                 m = Some(model);
             }
         }
@@ -459,7 +458,8 @@ pub fn load_oni2_entity_type(
         if m.is_none() {
             let base_mod = format!("{}/{}.mod", dir, name);
             if crate::vfs::exists("", &base_mod) {
-                if let Some(text_model) = super::layout_loader::load_mod_file(&base_mod) {
+                if let Some(mut text_model) = super::layout_loader::load_mod_file(&base_mod) {
+                    text_model.world_space_verts = true;
                     m = Some(text_model);
                 }
             }
@@ -468,13 +468,19 @@ pub fn load_oni2_entity_type(
         if m.is_none() {
             let win32_mod = format!("{}/win32_{}", dir, model_file);
             if crate::vfs::exists("", &win32_mod) {
-                if let Some(model) = super::layout_loader::load_mod_file(&win32_mod) {
+                if let Some(mut model) = super::layout_loader::load_mod_file(&win32_mod) {
+                    model.world_space_verts = true;
                     m = Some(model);
                 }
             }
         }
 
+        let mut was_world_space = false;
         if let (Some(model), Some(skel)) = (&mut m, &skeleton) {
+            if skel.positions.len() > 1 {
+                model.world_space_verts = false; // All multi-bone characters strictly map natively as bone-local!
+            }
+            was_world_space = model.world_space_verts;
             if model.world_space_verts {
                 convert_world_to_bone_local(model, skel);
             }
@@ -496,7 +502,7 @@ pub fn load_oni2_entity_type(
         }
     };
 
-    let bound_verts: Vec<Vec3> = bound
+    let mut bound_verts: Vec<Vec3> = bound
         .as_ref()
         .map(|b| {
             b.vertices
@@ -505,6 +511,28 @@ pub fn load_oni2_entity_type(
                 .collect()
         })
         .unwrap_or_default();
+
+    if let (Some(skel), Some(model_ref)) = (&skeleton, &model) {
+        if model_ref.world_space_verts == false {
+            // Note: world_space_verts is set to false after convert_world_to_bone_local.
+            // If the model had it originally true, it was converted. But we only check here if it's false, meaning it is bone-local,
+            // or if it was converted. To be safe, let's just use the fact that skeleton exists and we want it attached.
+            // Actually, we should only translate if bounds were historically world-space and the model is bone local.
+            // But since we can't easily pass was_world_space, let's observe: oni bounds are always world space.
+            // If we are attaching to bone 0, we must subtract bone 0 origin.
+            if let Some(bp) = skel.positions.get(0) {
+                // Actually, only offset bounds if it's a 1-bone rigid model because characters use capsule bounds unaffected by .bnd
+                if skel.positions.len() == 1 {
+                    for v in &mut bound_verts {
+                        v.x -= bp[0];
+                        v.y -= bp[1];
+                        v.z -= bp[2];
+                    }
+                }
+            }
+        }
+    }
+
     let bound_edges: Vec<[u32; 2]> = bound.as_ref().map(|b| b.edges.clone()).unwrap_or_default();
     let bound_quads: Vec<[u32; 4]> = bound.as_ref().map(|b| b.quads.clone()).unwrap_or_default();
     let bound_tris: Vec<[u32; 3]> = bound.as_ref().map(|b| b.tris.clone()).unwrap_or_default();
@@ -734,8 +762,6 @@ pub fn spawn_oni2_entity_with_rotation(
     let mut ec = commands.spawn((
         transform,
         Visibility::Visible,
-        RigidBody::Static,
-        collider,
         crate::oni2_loader::Oni2Entity {
             name: name.to_string(),
         },
@@ -743,6 +769,10 @@ pub fn spawn_oni2_entity_with_rotation(
         ent_type.bounds.clone(),
         InGameEntity,
     ));
+
+    if ent_type.skeleton.is_none() && ent_type.anim_library.is_none() {
+        ec.insert(RigidBody::Static); // Truly static objects get static bodies
+    }
 
     if let Some(ref ds) = ent_type.debug_skeleton {
         ec.insert(ds.clone());
@@ -768,6 +798,14 @@ pub fn spawn_oni2_entity_with_rotation(
     } else {
         Vec::new()
     };
+
+    if use_gpu_skinning && ent_type.skeleton.as_ref().map(|s| s.positions.len()).unwrap_or(0) == 1 {
+        commands.entity(joint_entities[0]).insert((collider, RigidBody::Kinematic, avian3d::prelude::LinearVelocity::default(), avian3d::prelude::AngularVelocity::default()));
+    } else if use_gpu_skinning {
+        commands.entity(parent_entity).insert((collider, RigidBody::Kinematic, avian3d::prelude::LinearVelocity::default(), avian3d::prelude::AngularVelocity::default()));
+    } else {
+        commands.entity(parent_entity).insert(collider);
+    }
 
     // Determine the default animation
     // Note: anim_path logic isn't preserved directly inside Oni2EntityType as it specifies instance overrides,

@@ -157,14 +157,14 @@ pub fn scroni_curve_bridge_system(
                                 }
                             }
                         }
-                        scroni::vm::BlockingAction::PlayAnimation { name, hold, rate, .. } => {
+                        scroni::vm::BlockingAction::PlayAnimation { name, hold, loop_anim, rate, .. } => {
                             if let Some(lib) = anim_lib.as_ref() {
                                 if let Some(ref mut state) = anim_state.as_deref_mut() {
                                     let name_val = name.clone();
                                     let hold_val = *hold;
                                     let rate_val = *rate;
                                     if lib.play(&name_val, state) {
-                                        state.looping = !hold_val;
+                                        state.looping = *loop_anim;
                                         state.speed_multiplier = rate_val.unwrap_or(1.0);
                                         if hold_val {
                                             t.blocking = Some(scroni::vm::BlockingAction::WaitingForAnimation);
@@ -773,7 +773,11 @@ pub fn update_oni2_animation(
         Option<&mut Oni2DebugSkeleton>,
         Option<&CreatureRenderOffset>,
     )>,
-    mut transform_query: Query<&mut Transform>,
+    mut transform_query: Query<(
+        &mut Transform,
+        Option<&mut avian3d::prelude::LinearVelocity>,
+        Option<&mut avian3d::prelude::AngularVelocity>,
+    )>,
 ) {
     for (entity, mut anim_state, debug_skel, render_offset) in &mut anim_query {
         let num_frames = anim_state.anim.num_frames as usize;
@@ -831,8 +835,24 @@ pub fn update_oni2_animation(
         // Single-channel animation: apply as Y-rotation composed on top of base orientation
         if anim_state.anim.num_channels == 1 {
             if let Some(y_rot) = frame.first() {
-                if let Ok(mut tf) = transform_query.get_mut(entity) {
-                    tf.rotation = anim_state.base_rotation * Quat::from_rotation_y(*y_rot);
+                if let Ok((mut tf, mut opt_lvel, mut opt_avel)) = transform_query.get_mut(entity) {
+                    let new_rot = anim_state.base_rotation * Quat::from_rotation_y(*y_rot);
+                    
+                    let dt = time.delta_secs();
+                    if dt > 0.0001 {
+                        if let Some(lv) = opt_lvel.as_deref_mut() {
+                            lv.0 = Vec3::ZERO;
+                        }
+                        if let Some(av) = opt_avel.as_deref_mut() {
+                            let diff = new_rot * tf.rotation.inverse();
+                            let (axis, angle) = diff.to_axis_angle();
+                            let mut angular_vel = axis * (angle / dt);
+                            if angular_vel.is_nan() { angular_vel = Vec3::ZERO; }
+                            av.0 = angular_vel;
+                        }
+                    }
+
+                    tf.rotation = new_rot;
                 }
             }
             continue;
@@ -840,11 +860,13 @@ pub fn update_oni2_animation(
 
         let mut bone_transforms = crate::oni2_loader::utils::bone::compute_animated_bone_transforms(&anim_state.skeleton, frame);
 
-        // Strip root motion: zero out root bone XZ translation so the model
+        // Strip root motion for characters: zero out root bone XZ translation so the model
         // stays pinned to its entity origin. Keep Y for vertical anim motion.
-        if let Some(root) = bone_transforms.get_mut(0) {
-            root.1.x = 0.0;
-            root.1.z = 0.0;
+        if render_offset.is_some() {
+            if let Some(root) = bone_transforms.get_mut(0) {
+                root.1.x = 0.0;
+                root.1.z = 0.0;
+            }
         }
 
         // Creature render offset (capsule Y compensation + facing)
@@ -854,7 +876,7 @@ pub fn update_oni2_animation(
         // Update joint entity transforms for GPU skinning
         for (i, (rot, pos)) in bone_transforms.iter().enumerate() {
             if let Some(&joint_entity) = anim_state.joint_entities.get(i) {
-                if let Ok(mut joint_tf) = transform_query.get_mut(joint_entity) {
+                if let Ok((mut joint_tf, mut opt_lvel, mut opt_avel)) = transform_query.get_mut(joint_entity) {
                     // Convert from Oni2 coordinates to Bevy: negate X and Z
                     let bevy_pos = Vec3::new(-pos.x, pos.y + y_offset, -pos.z);
                     // Conjugate rotation by 180° Y rotation: negate X and Z components
@@ -862,6 +884,22 @@ pub fn update_oni2_animation(
                     // Apply facing rotation (if model needs to be rotated)
                     let final_rot = facing * bevy_rot;
                     let final_pos = facing * bevy_pos;
+
+                    // Support native kinematic frictional bindings for moving objects
+                    let dt = time.delta_secs();
+                    if dt > 0.0001 {
+                        if let Some(lv) = opt_lvel.as_deref_mut() {
+                            lv.0 = (final_pos - joint_tf.translation) / dt;
+                        }
+                        if let Some(av) = opt_avel.as_deref_mut() {
+                            let diff = final_rot * joint_tf.rotation.inverse();
+                            let (axis, angle) = diff.to_axis_angle();
+                            let mut angular_vel = axis * (angle / dt);
+                            if angular_vel.is_nan() { angular_vel = Vec3::ZERO; }
+                            av.0 = angular_vel;
+                        }
+                    }
+
                     *joint_tf = Transform::from_translation(final_pos).with_rotation(final_rot);
                 }
             }

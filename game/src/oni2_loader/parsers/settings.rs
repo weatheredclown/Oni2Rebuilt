@@ -25,7 +25,7 @@ pub struct SettingsDefinition {
 
 /// Parses a file containing multiple definitions like `TYPE "Name" { ... }`
 pub fn parse_settings_file(content: &str) -> Vec<SettingsDefinition> {
-    let mut tokens = tokenize_settings(content);
+    let tokens = tokenize_settings(content);
     let mut defs = Vec::new();
     
     let mut i = 0;
