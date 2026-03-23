@@ -11,6 +11,18 @@ pub fn extract_xml_base_attr(content: &str) -> Option<String> {
     Some(tag[base_start..base_end].to_string())
 }
 
+/// Extract any arbitrary attribute from the root <actor ...> mapping
+pub fn extract_root_xml_attr(content: &str, attr: &str) -> Option<String> {
+    let idx = content.find("<actor ")?;
+    let after = &content[idx..];
+    let end = after.find('>')?;
+    let tag = &after[..end];
+    let attr_pattern = format!(" {}=\"", attr);
+    let attr_start = tag.find(&attr_pattern)? + attr_pattern.len();
+    let attr_end = tag[attr_start..].find('"')? + attr_start;
+    Some(tag[attr_start..attr_end].to_string())
+}
+
 /// Extract value="..." from an XML attribute tag like <TagName value="..."/>
 /// Returns the last non-empty value found (most derived). If only empty values are found, returns None.
 pub fn extract_xml_attr(content: &str, tag: &str) -> Option<String> {

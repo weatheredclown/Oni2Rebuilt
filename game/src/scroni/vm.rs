@@ -130,6 +130,7 @@ pub enum SysRequest {
     SendAction { action: String, target: Entity, component: String },
     SetLightIntensity { light: String, intensity: f32 },
     SetShaderLocal { name: String, val: f32 },
+    SetUpdateState { target: String, state: String },
 }
 
 #[derive(Event, Debug, Clone)]
@@ -174,6 +175,10 @@ pub enum ScrOniSysEvent {
         script_entity: Entity,
         name: String,
         val: f32,
+    },
+    SetUpdateState {
+        target: String,
+        state: String,
     },
 }
 
@@ -245,6 +250,8 @@ pub struct ScriptExec {
     pub owner: Entity,
     /// Currently active light selected by scripts (SetLightParameter).
     pub current_light: Option<String>,
+    /// Whether this script is actively evaluating ticks. Modifiable via SetUpdateState natively.
+    pub active: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -322,6 +329,7 @@ impl ScriptExec {
             sys_requests: Vec::new(),
             owner,
             current_light: None,
+            active: true,
         }
     }
 
@@ -375,15 +383,17 @@ impl ScriptExec {
     }
 
     /// Execute one frame's worth of the script. Returns the execution state.
-    /// The whenever block runs first, then the sequence block resumes.
-    pub fn tick(&mut self, now: f64, ctx: &mut ScroniContext) -> ExecState {
+    /// Tick the script executor. Process messages, then the main thread and child threads.
+    pub fn tick(&mut self, current_time: f64, ctx: &mut ScroniContext) -> ExecState {
+        if !self.active { return ExecState::Blocked; }
+        
         // Execute main thread
-        self.tick_thread(0, now, ctx);
+        self.tick_thread(0, current_time, ctx);
 
         let mut i = 0;
         while i < self.child_threads.len() {
             let tid = self.child_threads[i].thread_id;
-            self.tick_thread(tid, now, ctx);
+            self.tick_thread(tid, current_time, ctx);
 
             if self.child_threads[i].state == ExecState::Done {
                 self.child_threads.remove(i);
@@ -396,6 +406,40 @@ impl ScriptExec {
     }
 
     fn tick_thread(&mut self, tid: u32, now: f64, ctx: &mut ScroniContext) {
+        // Run whenever block (non-blocking, runs every frame)
+        // This must run even if the main sequence is blocked or done!
+        let whenever = self.get_thread(tid).script.whenever.clone();
+        if let Some(ref whenever_stmts) = whenever {
+            // Save state before whenever runs
+            let pre_state = self.get_thread(tid).state;
+            let pre_blocking = self.get_thread(tid).blocking.clone();
+            
+            // Force state to running temporarily for whenever
+            if pre_state != ExecState::Running {
+                self.get_thread_mut(tid).state = ExecState::Running;
+            }
+            
+            for stmt in whenever_stmts {
+                self.exec_stmt(tid, stmt, now, ctx);
+                let current_state = self.get_thread(tid).state;
+                if current_state == ExecState::Yielded || current_state == ExecState::Blocked {
+                    warn!("[ScrOni] Whenever block attempted to block or yield (state: {:?})", current_state);
+                    self.get_thread_mut(tid).state = ExecState::Running; 
+                } else if current_state == ExecState::PushLoop {
+                    warn!("[ScrOni] Whenever block pushed a loop, this is not fully supported and drops to sequence.");
+                    self.get_thread_mut(tid).state = ExecState::Running;
+                }
+            }
+            
+            // If the whenever block switched scripts or exited, we should keep that state
+            // Otherwise, restore the state of the sequence
+            let post_state = self.get_thread(tid).state;
+            if post_state == ExecState::Running || post_state == ExecState::Yielded {
+                self.get_thread_mut(tid).state = pre_state;
+                self.get_thread_mut(tid).blocking = pre_blocking;
+            }
+        }
+
         let state = self.get_thread(tid).state;
         if state == ExecState::Done {
             return;
@@ -403,6 +447,7 @@ impl ScriptExec {
 
         // Check if blocking action completed
         if let Some(ref action) = self.get_thread(tid).blocking.clone() {
+
             match action {
                 BlockingAction::Idle { end_time } => {
                     if now >= *end_time {
@@ -422,18 +467,6 @@ impl ScriptExec {
 
         if self.get_thread(tid).state != ExecState::Running {
             self.get_thread_mut(tid).state = ExecState::Running;
-        }
-
-        // Run whenever block (non-blocking, runs every frame)
-        let whenever = self.get_thread(tid).script.whenever.clone();
-        if let Some(ref whenever_stmts) = whenever {
-            for stmt in whenever_stmts {
-                self.exec_stmt(tid, stmt, now, ctx);
-                if self.get_thread(tid).state == ExecState::Yielded {
-                    self.get_thread_mut(tid).state = ExecState::Running; // reset for sequence
-                    break;
-                }
-            }
         }
 
         // Run sequence block from current PC
@@ -1138,7 +1171,10 @@ impl ScriptExec {
             Stmt::SetUpdateState { target, state } => {
                 let target_val = self.eval_expr(tid, target, now, ctx).as_string();
                 let state_val = self.eval_expr(tid, state, now, ctx).as_string();
-                info!("VM: SetUpdateState {} {} (unimplemented)", target_val, state_val);
+                self.sys_requests.push(SysRequest::SetUpdateState {
+                    target: target_val,
+                    state: state_val,
+                });
             }
 
             // Stubs for commands we don't execute yet
@@ -1233,7 +1269,8 @@ impl ScriptExec {
                         let target = args.get(0).map(|e| self.eval_expr(tid, e, now, ctx));
                         if let Some(Value::Actor(act)) = target {
                             if let Ok((_, tf, _)) = ctx.all_entities.get(act) {
-                                return Value::Vector(tf.translation);
+                                let p = tf.translation;
+                                return Value::Vector(Vec3::new(-p.x, p.y, -p.z));
                             }
                         }
                         Value::None
@@ -1247,7 +1284,8 @@ impl ScriptExec {
                                 Value::Vector(v) => Some(v),
                                 Value::Actor(act) => {
                                     if let Ok((_, tf, _)) = ctx.all_entities.get(act) {
-                                        Some(tf.translation)
+                                        let p = tf.translation;
+                                        Some(Vec3::new(-p.x, p.y, -p.z))
                                     } else {
                                         None
                                     }
@@ -1262,7 +1300,8 @@ impl ScriptExec {
                         if p1.is_some() && p2.is_none() {
                             if let Ok((_, my_tf, _)) = ctx.all_entities.get(self.owner) {
                                 p2 = p1;
-                                p1 = Some(my_tf.translation);
+                                let my_p = my_tf.translation;
+                                p1 = Some(Vec3::new(-my_p.x, my_p.y, -my_p.z));
                             }
                         }
                         
@@ -1595,6 +1634,12 @@ pub fn scroni_tick_system(
                         val,
                     });
                 }
+                SysRequest::SetUpdateState { target, state } => {
+                    commands.trigger(ScrOniSysEvent::SetUpdateState {
+                        target,
+                        state,
+                    });
+                }
             }
         }
 
@@ -1644,6 +1689,7 @@ pub fn cleanup_scroni_text(
     }
 }
 
+/// Even when tempted to use a Trigger here, keep this On-based.
 /// Observer to handle ScrOni system requests (like TextureMovie)
 pub fn scroni_sys_event_observer(
     trigger: On<ScrOniSysEvent>,
@@ -1658,8 +1704,10 @@ pub fn scroni_sys_event_observer(
         ResMut<Assets<bevy::mesh::skinning::SkinnedMeshInverseBindposes>>,
     ),
     mut texture_collections: ResMut<crate::oni2_loader::TextureCollections>,
-    layout_context: Option<Res<crate::oni2_loader::LayoutContext>>,
-    layout_paths: Option<Res<crate::oni2_loader::LayoutPaths>>,
+    layout_data: (
+        Option<Res<crate::oni2_loader::LayoutContext>>,
+        Option<Res<crate::oni2_loader::LayoutPaths>>,
+    ),
     active_camera_package: Option<ResMut<crate::oni2_loader::ActiveCameraPackage>>,
     mut scroni_text_state: ResMut<ScroniTextState>,
     time: Res<Time>,
@@ -1667,6 +1715,7 @@ pub fn scroni_sys_event_observer(
     mut anim_registry: ResMut<crate::oni2_loader::registries::AnimRegistry>,
     mut camera_query: Query<&mut crate::camera::components::CameraRig>,
     mut lights_query: Query<(&Name, Option<&mut PointLight>, Option<&mut SpotLight>)>,
+    mut script_query: Query<(&mut ScrOniScript, Option<&Name>)>,
 ) {
     let ev = (*trigger).clone();
     let (mut materials, mut meshes, mut images, mut skinned_mesh_ibp) = assets;
@@ -1754,7 +1803,7 @@ pub fn scroni_sys_event_observer(
             let pos = at.unwrap_or(Vec3::ZERO);
             let actor_name = name.clone().unwrap_or(script.clone());
             
-            if let (Some(layout_ctx), Some(paths)) = (&layout_context, &layout_paths) {
+            if let (Some(ctx), Some(paths)) = (layout_data.0.as_ref(), layout_data.1.as_ref()) {
                 let mut spawn_assets = crate::oni2_loader::SpawnAssets {
                     commands: &mut commands,
                     meshes: &mut meshes,
@@ -1770,7 +1819,7 @@ pub fn scroni_sys_event_observer(
                 if let Some((_new_entity, _actor)) = crate::oni2_loader::spawn_layout_actor(
                     &mut spawn_assets,
                     &actor_name,
-                    layout_ctx,
+                    ctx,
                     paths,
                     Some(pos),
                 ) {
@@ -1852,6 +1901,17 @@ pub fn scroni_sys_event_observer(
         }
         ScrOniSysEvent::SetShaderLocal { script_entity: _, name, val } => {
             debug!("VM: Observed SetShaderLocal {} = {} (Unimplemented Material Target)", name, val);
+        }
+        ScrOniSysEvent::SetUpdateState { target, state } => {
+            let active = state.eq_ignore_ascii_case("Active");
+            for (mut script, name_opt) in &mut script_query {
+                if let Some(n) = name_opt {
+                    if n.as_str() == target {
+                        script.exec.active = active;
+                        info!("SetUpdateState: toggled '{}' script active={}", target, active);
+                    }
+                }
+            }
         }
     }
 }

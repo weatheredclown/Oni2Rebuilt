@@ -473,6 +473,11 @@ pub fn spawn_layout_actor(
                             for s in &file.scripts {
                                 exec.available_scripts.insert(s.name.clone(), s.clone());
                             }
+                            if let Some(ref update) = actor.updatestate {
+                                if update.eq_ignore_ascii_case("Asleep") {
+                                    exec.active = false;
+                                }
+                            }
                             assets
                                 .commands
                                 .entity(entity)

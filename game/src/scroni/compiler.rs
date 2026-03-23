@@ -1192,4 +1192,19 @@ end
             _ => panic!("expected if statement"),
         }
     }
+
+    #[test]
+    fn test_compile_konoko_oni() {
+        let path = r#"..\oni2\zips\assets\layout\M03_A01_Blast_Chambers\Scripts\konoko.oni"#;
+        let content = std::fs::read_to_string(path).unwrap();
+        match Compiler::compile(&content) {
+            Ok(_) => println!("COMPILE SUCCESS"),
+            Err(e) => {
+                for err in &e {
+                    println!("COMPILE ERROR: {}", err);
+                }
+                panic!("Failed to compile");
+            }
+        }
+    }
 }

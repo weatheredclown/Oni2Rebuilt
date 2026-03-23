@@ -14,7 +14,7 @@ fn cached_read_to_string(dir: &str, filename: &str) -> std::io::Result<String> {
     Ok(content)
 }
 
-use crate::oni2_loader::utils::parse::{extract_xml_base_attr, extract_xml_attr, parse_vec3, extract_xml_block};
+use crate::oni2_loader::utils::parse::{extract_xml_base_attr, extract_root_xml_attr, extract_xml_attr, parse_vec3, extract_xml_block};
 
 /// Parsed actor from a layout XML file.
 pub struct LayoutActor {
@@ -49,6 +49,8 @@ pub struct LayoutActor {
     pub ptx_birth_rate: f32,
     pub ptx_num_particles: i32,
     pub ptx_offset: Vec3,
+    /// Script update state (e.g., "Asleep", "Active"). Extracted from root `<actor>` tag.
+    pub updatestate: Option<String>,
 }
 
 /// Resolve the full template chain for an actor XML file.
@@ -142,6 +144,8 @@ pub fn parse_actor_xml(dir: &str, filename: &str, template_dir: &str) -> Option<
     let mut entity_type: Option<String> = None;
     let mut position = Vec3::ZERO;
     let mut orientation = Vec3::ZERO;
+    let mut updatestate: Option<String> = None;
+
     
     // Core property extraction is done via block extraction from 'Prop' and 'Entity' first if they exist,
     // but the old code grabbed attributes globally. We will use a safe global grab for position/orientation
@@ -149,6 +153,7 @@ pub fn parse_actor_xml(dir: &str, filename: &str, template_dir: &str) -> Option<
     for content in &chain {
         // Fallback or override values
         if let Some(v) = extract_xml_attr(content, "EntityType") { entity_type = Some(v); }
+        if let Some(v) = extract_root_xml_attr(content, "updatestate") { updatestate = Some(v); }
         if let Some(v) = extract_xml_attr(content, "Position").and_then(|s| parse_vec3(&s)) { position = v; }
         if let Some(v) = extract_xml_attr(content, "Orientation").and_then(|s| parse_vec3(&s)) { orientation = v; }
     }
@@ -284,5 +289,6 @@ pub fn parse_actor_xml(dir: &str, filename: &str, template_dir: &str) -> Option<
         ptx_birth_rate,
         ptx_num_particles,
         ptx_offset,
+        updatestate,
     })
 }
