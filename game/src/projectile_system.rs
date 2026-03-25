@@ -91,8 +91,9 @@ fn handle_spawn_projectile(
         if let Some(ref fx) = def.flight_fx() {
             commands.trigger(SpawnFx {
                 name: fx.clone(),
-                at: None,
+                at: Some(ev.position),
                 parent: Some(entity),
+                start_active: true,
             });
         }
     } else {
@@ -159,6 +160,7 @@ fn projectile_collision_system(
                     name: explode_fx.clone(),
                     at: Some(hit_pos),
                     parent: None,
+                    start_active: true,
                 });
             }
             commands.entity(entity).despawn();
@@ -180,6 +182,7 @@ fn projectile_lifetime_system(
                         name: explode_fx.clone(),
                         at: Some(transform.translation),
                         parent: None,
+                        start_active: true,
                     });
                 }
             }

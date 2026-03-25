@@ -142,7 +142,12 @@ pub enum Stmt {
     /// `makefx <string> [at <expr>]`
     MakeFx { name: Expr, at: Option<Expr> },
     /// `sendaction <expr> to <expr> [component <string>]`
-    SendAction { action: Expr, target: Expr, component: Option<Expr> },
+    SendAction { action: Expr, target: Option<Expr>, component: Option<Expr> },
+
+    /// `pickup <expr>`
+    Pickup(Expr),
+    /// `dropoff [at <expr>]`
+    Dropoff { at: Option<Expr> },
 
     /// `sendmessage <string> to <expr> [with <expr>, ...]`
     SendMessage { msg: Expr, to: Expr, with: Vec<Expr> },
@@ -221,8 +226,10 @@ pub enum Stmt {
     /// `ControlHead <keyword> [<expr>]`
     ControlHead { args: Vec<Expr> },
 
-    /// `add <expr> to <var>`
+    /// `add <expr> to <list>`
     AddToList { expr: Expr, list: String },
+    /// `remove <expr> from <list>`
+    RemoveFromList { expr: Expr, list: String },
 
     /// Inline variable declaration: `integer x = <expr>`
     InlineVarDecl(VarDecl),
@@ -231,6 +238,8 @@ pub enum Stmt {
     At(Expr, Expr),
     /// `drawtext <expr>`
     DrawText(Expr),
+    /// `usepad`
+    UsePad,
 
     /// Catch-all for commands we parse but don't fully implement yet.
     /// Stores the command name and any trailing arguments.

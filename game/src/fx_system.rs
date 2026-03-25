@@ -10,6 +10,7 @@ pub struct SpawnFx {
     pub name: String,
     pub at: Option<Vec3>,
     pub parent: Option<Entity>,
+    pub start_active: bool,
 }
 
 #[derive(Event, Debug, Clone)]
@@ -19,7 +20,15 @@ pub struct SpawnPtx {
     pub num_particles: i32,
     pub at: Option<Vec3>, // Offset
     pub parent: Option<Entity>,
+    pub start_active: bool,
 }
+
+#[derive(Component)]
+pub struct FxStartInactive;
+
+/// Component storing intended active state for FX.
+#[derive(Component)]
+pub struct IntendedFxState(pub bool);
 
 pub struct FxPlugin;
 
@@ -30,7 +39,21 @@ impl Plugin for FxPlugin {
            .add_observer(handle_spawn_ptx)
            .add_observer(handle_fx_action)
            .add_systems(Update, handle_actor_fx_attachments)
-           .add_systems(Update, uv_animator_system);
+           .add_systems(Update, apply_fx_start_inactive)
+           .add_systems(Update, uv_animator_system)
+           .add_systems(Update, (handle_actor_sleep, handle_actor_awake));
+    }
+}
+
+fn apply_fx_start_inactive(
+    mut commands: Commands,
+    mut q: Query<(Entity, &mut EffectSpawner), (Added<EffectSpawner>, With<FxStartInactive>)>,
+) {
+    for (entity, mut spawner) in &mut q {
+        spawner.active = false;
+        commands.entity(entity).remove::<FxStartInactive>();
+        // Explicitly clear initial reset if it tries to spawn once
+        spawner.reset();
     }
 }
 
@@ -202,7 +225,7 @@ fn get_or_create_ptx_asset(
     if let Some(mut init_sp) = init_sprite_index {
         asset = asset.init(init_sp);
     }
-    if let Some(mut update_sp) = update_sprite_index {
+    if let Some(update_sp) = update_sprite_index {
         asset = asset.update(update_sp);
     }
     if ptx_def.grid_x > 1 || ptx_def.grid_y > 1 {
@@ -225,6 +248,7 @@ fn handle_spawn_fx(
     ptx_lib: Res<ParticleLibrary>,
     mut effects: ResMut<Assets<EffectAsset>>,
     mut effect_cache: Local<std::collections::HashMap<String, Handle<EffectAsset>>>,
+    actor_sleep_query: Query<&crate::oni2_loader::components::ActorAsleep>,
 ) {
     let ev = trigger.event();
     let lower_name = ev.name.to_lowercase();
@@ -242,13 +266,21 @@ fn handle_spawn_fx(
             if let Some(ptx_def) = ptx_lib.systems.get(&ptx_name) {
                 let handle = get_or_create_ptx_asset(&ptx_name, ptx_def, 0.0, 0, &mut effects, &mut effect_cache);
 
+                let is_asleep = ev.parent.and_then(|p| actor_sleep_query.get(p).ok()).is_some();
+                let effective_start_active = ev.start_active && !is_asleep;
+
                 let mut ec = commands.spawn((
                     ParticleEffect::new(handle),
                     EffectMaterial {
                         images: vec![ptx_def.texture.clone()],
                     },
                     Transform::from_translation(ev.at.unwrap_or(Vec3::ZERO)),
+                    IntendedFxState(ev.start_active),
                 ));
+
+                if !effective_start_active {
+                    ec.insert(FxStartInactive);
+                }
 
                 if let Some(parent) = ev.parent {
                     ec.set_parent_in_place(parent);
@@ -269,6 +301,7 @@ fn handle_spawn_ptx(
     mut ptx_lib: ResMut<ParticleLibrary>,
     mut effects: ResMut<Assets<EffectAsset>>,
     mut effect_cache: Local<std::collections::HashMap<String, Handle<EffectAsset>>>,
+    actor_sleep_query: Query<&crate::oni2_loader::components::ActorAsleep>,
 ) {
     let ev = trigger.event();
     let mut ptx_name = ev.ptx_name.to_lowercase();
@@ -281,13 +314,21 @@ fn handle_spawn_ptx(
     if let Some(ptx_def) = ptx_lib.systems.get(&ptx_name) {
         let handle = get_or_create_ptx_asset(&ptx_name, ptx_def, ev.rate, ev.num_particles, &mut effects, &mut effect_cache);
 
+        let is_asleep = ev.parent.and_then(|p| actor_sleep_query.get(p).ok()).is_some();
+        let effective_start_active = ev.start_active && !is_asleep;
+
         let mut ec = commands.spawn((
             ParticleEffect::new(handle),
             EffectMaterial {
                 images: vec![ptx_def.texture.clone()],
             },
             Transform::from_translation(ev.at.unwrap_or(Vec3::ZERO)),
+            IntendedFxState(ev.start_active),
         ));
+
+        if !effective_start_active {
+            ec.insert(FxStartInactive);
+        }
 
         if let Some(parent) = ev.parent {
             ec.set_parent_in_place(parent);
@@ -306,34 +347,30 @@ fn handle_actor_fx_attachments(
 ) {
     for (entity, fx_type) in query.iter() {
         if let Some(ref fx_name) = fx_type.fx_name {
-            if fx_type.start_active {
-                let lower_name = fx_name.to_lowercase();
-                if let Some(_fx_def) = fx_lib.effects.get(&lower_name) {
-                    info!("Attaching FX {} to entity {:?}", fx_name, entity);
-                    commands.trigger(SpawnFx {
-                        name: fx_name.clone(),
-                        at: Some(fx_type.ptx_offset),
-                        parent: Some(entity),
-                    });
-                } else {
-                    warn!("ActorFxType: Effect '{}' not found in FxLibrary", fx_name);
-                }
+            let lower_name = fx_name.to_lowercase();
+            if let Some(_fx_def) = fx_lib.effects.get(&lower_name) {
+                info!("Attaching FX {} to entity {:?} (StartActive={})", fx_name, entity, fx_type.start_active);
+                commands.trigger(SpawnFx {
+                    name: fx_name.clone(),
+                    at: Some(fx_type.ptx_offset),
+                    parent: Some(entity),
+                    start_active: fx_type.start_active,
+                });
             } else {
-                info!("FX {} on entity {:?} has StartActive=0, skipping initial trigger", fx_name, entity);
+                warn!("ActorFxType: Effect '{}' not found in FxLibrary", fx_name);
             }
         }
         
         if let Some(ref ptx_name) = fx_type.ptx_name {
-            if fx_type.start_active {
-                info!("Attaching Particle System {} to entity {:?}", ptx_name, entity);
-                commands.trigger(SpawnPtx {
-                    ptx_name: ptx_name.clone(),
-                    rate: fx_type.ptx_birth_rate,
-                    num_particles: fx_type.ptx_num_particles,
-                    at: Some(fx_type.ptx_offset),
-                    parent: Some(entity),
-                });
-            }
+            info!("Attaching Particle System {} to entity {:?} (StartActive={})", ptx_name, entity, fx_type.start_active);
+            commands.trigger(SpawnPtx {
+                ptx_name: ptx_name.clone(),
+                rate: fx_type.ptx_birth_rate,
+                num_particles: fx_type.ptx_num_particles,
+                at: Some(fx_type.ptx_offset),
+                parent: Some(entity),
+                start_active: fx_type.start_active,
+            });
         }
     }
 }
@@ -348,16 +385,55 @@ pub struct FxAction {
 fn handle_fx_action(
     trigger: On<FxAction>,
     children_query: Query<&Children>,
-    mut spawner_query: Query<&mut EffectSpawner>,
+    mut spawner_query: Query<(&mut EffectSpawner, &mut IntendedFxState)>,
+    actor_sleep_query: Query<&crate::oni2_loader::components::ActorAsleep>,
 ) {
     let evt = trigger.event();
     let act_lower = evt.action.to_lowercase();
     if act_lower == "activate" || act_lower == "deactivate" {
         let to_active = act_lower == "activate";
+        let is_asleep = actor_sleep_query.get(evt.target).is_ok();
         let mut stack = vec![evt.target];
         while let Some(ent) = stack.pop() {
+            if let Ok((mut spawner, mut intended)) = spawner_query.get_mut(ent) {
+                intended.0 = to_active;
+                spawner.active = to_active && !is_asleep;
+            }
+            if let Ok(children) = children_query.get(ent) {
+                stack.extend(children.iter());
+            }
+        }
+    }
+}
+
+fn handle_actor_sleep(
+    query: Query<Entity, Added<crate::oni2_loader::components::ActorAsleep>>,
+    children_query: Query<&Children>,
+    mut spawner_query: Query<&mut EffectSpawner, With<IntendedFxState>>,
+) {
+    for entity in query.iter() {
+        let mut stack = vec![entity];
+        while let Some(ent) = stack.pop() {
             if let Ok(mut spawner) = spawner_query.get_mut(ent) {
-                spawner.active = to_active;
+                spawner.active = false;
+            }
+            if let Ok(children) = children_query.get(ent) {
+                stack.extend(children.iter());
+            }
+        }
+    }
+}
+
+fn handle_actor_awake(
+    mut removed: RemovedComponents<crate::oni2_loader::components::ActorAsleep>,
+    children_query: Query<&Children>,
+    mut spawner_query: Query<(&mut EffectSpawner, &IntendedFxState)>,
+) {
+    for entity in removed.read() {
+        let mut stack = vec![entity];
+        while let Some(ent) = stack.pop() {
+            if let Ok((mut spawner, intended)) = spawner_query.get_mut(ent) {
+                spawner.active = intended.0;
             }
             if let Ok(children) = children_query.get(ent) {
                 stack.extend(children.iter());

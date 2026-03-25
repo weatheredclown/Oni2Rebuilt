@@ -51,6 +51,12 @@ pub struct LayoutActor {
     pub ptx_offset: Vec3,
     /// Script update state (e.g., "Asleep", "Active"). Extracted from root `<actor>` tag.
     pub updatestate: Option<String>,
+    /// Checkpoint index if this actor acts as a checkpoint trigger
+    pub checkpoint_index: Option<i32>,
+    /// Checkpoint trigger radius natively parsed from the component block
+    pub checkpoint_radius: Option<f32>,
+    /// Whether this actor should be instantly skipped by layout_loader during load
+    pub spawn_later: bool,
 }
 
 /// Resolve the full template chain for an actor XML file.
@@ -145,6 +151,7 @@ pub fn parse_actor_xml(dir: &str, filename: &str, template_dir: &str) -> Option<
     let mut position = Vec3::ZERO;
     let mut orientation = Vec3::ZERO;
     let mut updatestate: Option<String> = None;
+    let mut spawn_later = false;
 
     
     // Core property extraction is done via block extraction from 'Prop' and 'Entity' first if they exist,
@@ -154,6 +161,7 @@ pub fn parse_actor_xml(dir: &str, filename: &str, template_dir: &str) -> Option<
         // Fallback or override values
         if let Some(v) = extract_xml_attr(content, "EntityType") { entity_type = Some(v); }
         if let Some(v) = extract_root_xml_attr(content, "updatestate") { updatestate = Some(v); }
+        if let Some(v) = extract_root_xml_attr(content, "spawnlater") { spawn_later = v == "1" || v.eq_ignore_ascii_case("true"); }
         if let Some(v) = extract_xml_attr(content, "Position").and_then(|s| parse_vec3(&s)) { position = v; }
         if let Some(v) = extract_xml_attr(content, "Orientation").and_then(|s| parse_vec3(&s)) { orientation = v; }
     }
@@ -210,6 +218,18 @@ pub fn parse_actor_xml(dir: &str, filename: &str, template_dir: &str) -> Option<
     if let Some(block) = broadcast_block {
         if let Some(v) = extract_xml_attr(&block, "Radius") {
             broadcast_radius = v.parse().ok();
+        }
+    }
+
+    let checkpoint_block = extract_component(&chain, has_components_xml, "CheckpointTrigger");
+    let mut checkpoint_index: Option<i32> = None;
+    let mut checkpoint_radius: Option<f32> = None;
+    if let Some(block) = checkpoint_block {
+        if let Some(v) = extract_xml_attr(&block, "CheckpointIndex") {
+            checkpoint_index = v.parse().ok();
+        }
+        if let Some(v) = extract_xml_attr(&block, "Radius") {
+            checkpoint_radius = v.parse().ok();
         }
     }
 
@@ -290,5 +310,8 @@ pub fn parse_actor_xml(dir: &str, filename: &str, template_dir: &str) -> Option<
         ptx_num_particles,
         ptx_offset,
         updatestate,
+        checkpoint_index,
+        checkpoint_radius,
+        spawn_later,
     })
 }

@@ -189,7 +189,7 @@ impl Compiler {
 
         // Variable names can be identifiers or keywords used as names (e.g. "speed")
         let name = if self.code() == TokenCode::Identifier || self.code() == TokenCode::Eof {
-            let n = self.peek().text.clone();
+            let n = self.peek().text.clone().to_lowercase();
             self.advance();
             n
         } else if !matches!(self.code(),
@@ -198,7 +198,7 @@ impl Compiler {
             | TokenCode::Begin | TokenCode::End | TokenCode::Whenever | TokenCode::Sequence
         ) {
             // Accept keyword tokens as variable names (ScrOni allows this)
-            let n = self.peek().text.clone();
+            let n = self.peek().text.clone().to_lowercase();
             self.advance();
             n
         } else {
@@ -312,14 +312,14 @@ impl Compiler {
             TokenCode::Switch => { self.advance(); Stmt::Switch(self.parse_expr()) }
             TokenCode::ChildStack => {
                 self.advance();
-                let var = self.peek().text.clone();
+                let var = self.peek().text.clone().to_lowercase();
                 self.advance();
                 let script = self.parse_expr();
                 Stmt::ChildStack { var, script }
             }
             TokenCode::ChildSwitch => {
                 self.advance();
-                let var = self.peek().text.clone();
+                let var = self.peek().text.clone().to_lowercase();
                 self.advance();
                 let script = self.parse_expr();
                 Stmt::ChildSwitch { var, script }
@@ -330,18 +330,24 @@ impl Compiler {
 
             // Lists
             TokenCode::Add => self.parse_add(),
+            TokenCode::Remove => self.parse_remove(),
 
             // Actor management
             TokenCode::Spawn => self.parse_spawn(),
             TokenCode::Destroy => { self.advance(); Stmt::Destroy }
             TokenCode::Teleport => self.parse_teleport(),
             TokenCode::MakeFX => self.parse_make_fx(),
+            TokenCode::UsePad => { self.advance(); Stmt::UsePad }
 
             // Messaging
             TokenCode::SendMessage => self.parse_send_message(),
             TokenCode::SendGroupMessage => self.parse_send_group_message(),
             TokenCode::SendGroupMembersMessage => self.parse_send_group_members_message(),
             TokenCode::SendAction => self.parse_send_action(),
+            
+            // Item interactions
+            TokenCode::Pickup => { self.advance(); Stmt::Pickup(self.parse_expr()) }
+            TokenCode::Dropoff => self.parse_dropoff(),
 
             // Properties
             TokenCode::SetHealth => { self.advance(); Stmt::SetHealth(self.parse_expr()) }
@@ -437,7 +443,7 @@ impl Compiler {
 
     fn parse_set(&mut self) -> Stmt {
         self.advance(); // skip 'set'
-        let var = self.peek().text.clone();
+        let var = self.peek().text.clone().to_lowercase();
         self.advance(); // skip identifier
         self.skip_if(TokenCode::To); // skip 'to'
         
@@ -461,10 +467,22 @@ impl Compiler {
         self.skip_if(TokenCode::To); // skip 'to'
         
         // Target list can be an identifier or a keyword
-        let list = self.peek().text.clone();
+        let list = self.peek().text.clone().to_lowercase();
         self.advance();
         
         Stmt::AddToList { expr, list }
+    }
+
+    fn parse_remove(&mut self) -> Stmt {
+        self.advance(); // skip 'remove'
+        let expr = self.parse_expr();
+        self.skip_if(TokenCode::From); // skip 'from'
+        
+        // Target list can be an identifier or a keyword
+        let list = self.peek().text.clone().to_lowercase();
+        self.advance();
+        
+        Stmt::RemoveFromList { expr, list }
     }
 
     fn parse_if(&mut self) -> Stmt {
@@ -624,7 +642,7 @@ impl Compiler {
         let script = self.parse_expr();
         let assign_to = if self.skip_if(TokenCode::Assign) {
             self.skip_if(TokenCode::To);
-            let name = self.peek().text.clone();
+            let name = self.peek().text.clone().to_lowercase();
             self.advance();
             Some(name)
         } else {
@@ -663,6 +681,15 @@ impl Compiler {
         Stmt::Teleport { target, to, face }
     }
 
+    fn parse_dropoff(&mut self) -> Stmt {
+        self.advance();
+        let mut at = None;
+        if self.skip_if(TokenCode::At) {
+            at = Some(self.parse_expr());
+        }
+        Stmt::Dropoff { at }
+    }
+
     fn parse_send_message(&mut self) -> Stmt {
         self.advance();
         let msg = self.parse_expr();
@@ -697,8 +724,14 @@ impl Compiler {
     fn parse_send_action(&mut self) -> Stmt {
         self.advance(); // consume `sendaction`
         let action = self.parse_expr();
-        self.skip_if(TokenCode::To);
-        let target = self.parse_expr();
+        
+        let target = if self.skip_if(TokenCode::To) {
+            Some(self.parse_expr())
+        } else if self.peek().code != TokenCode::Component {
+            Some(self.parse_expr())
+        } else {
+            None
+        };
 
         let component = if self.skip_if(TokenCode::Component) {
             Some(self.parse_expr())
@@ -730,7 +763,7 @@ impl Compiler {
 
     fn parse_find(&mut self) -> Stmt {
         self.advance(); // skip 'find'
-        let list_var = self.peek().text.clone();
+        let list_var = self.peek().text.clone().to_lowercase();
         self.advance();
 
         let mut conditions = Vec::new();
@@ -988,7 +1021,7 @@ impl Compiler {
             }
             _ => {
                 if !matches!(self.code(), TokenCode::IntegerConstant | TokenCode::FloatConstant | TokenCode::StringConstant | TokenCode::Eof | TokenCode::Begin | TokenCode::End | TokenCode::Whenever | TokenCode::Sequence | TokenCode::Comma | TokenCode::LeftParen | TokenCode::RightParen | TokenCode::LeftCurlyBracket | TokenCode::RightCurlyBracket | TokenCode::Colon | TokenCode::Period | TokenCode::Plus | TokenCode::Minus | TokenCode::Star | TokenCode::Slash | TokenCode::Percent | TokenCode::Equal | TokenCode::NotEqual | TokenCode::Greater | TokenCode::GreaterOrEqual | TokenCode::Less | TokenCode::LessOrEqual | TokenCode::Cross) {
-                    let name = self.peek().text.clone();
+                    let name = self.peek().text.clone().to_lowercase();
                     self.advance();
                     // Check for function call: name(...)
                     if self.code() == TokenCode::LeftParen {
@@ -1015,7 +1048,7 @@ impl Compiler {
     }
 
     fn parse_call_expr(&mut self) -> Expr {
-        let name = self.peek().text.clone();
+        let name = self.peek().text.clone().to_lowercase();
         self.advance();
         let mut args = Vec::new();
         if self.code() == TokenCode::LeftParen {

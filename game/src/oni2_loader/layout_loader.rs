@@ -48,6 +48,9 @@ pub fn load_layout(
     if !layout_paths.curves.is_empty() {
         info!("Layout: loaded {} path curves", layout_paths.curves.len());
     }
+    
+    // Insert LayoutPaths globally for dynamic spawned actors
+    commands.insert_resource(layout_paths.clone());
 
     // Parse layout.actors to get actor list
     let actors_content = match crate::vfs::read_to_string(layout_path, "layout.actors") {
@@ -105,6 +108,8 @@ pub fn load_layout(
             actor_name,
             &layout_ctx,
             &layout_paths,
+            None,
+            false,
             None,
         ) {
             if actor.is_creature {
@@ -182,23 +187,30 @@ pub fn load_layout(
 /// Spawns a single actor by name, parsing its XML internally. Can override position.
 pub fn spawn_layout_actor(
     assets: &mut SpawnAssets,
-    actor_name: &str,
+    xml_name: &str,
     layout_ctx: &LayoutContext,
     layout_paths: &LayoutPaths,
     pos_override: Option<Vec3>,
+    force_spawn: bool,
+    entity_name_override: Option<&str>,
 ) -> Option<(Entity, LayoutActor)> {
+    let actor_name = entity_name_override.unwrap_or(xml_name);
     // Find template dir
     let template_dir = "template".to_string();
 
     // Parse the actor XML
     let actor = match crate::oni2_loader::parsers::actor_xml::parse_actor_xml(
         &layout_ctx.layout_dir,
-        &format!("{}.xml", actor_name),
+        &format!("{}.xml", xml_name),
         &template_dir,
     ) {
         Some(a) => a,
         None => return None,
     };
+
+    if actor.spawn_later && !force_spawn {
+        return None;
+    }
 
     // Find the entity directory
     let entity_dir = format!("{}/{}", layout_ctx.entity_base, actor.entity_type);
@@ -275,7 +287,7 @@ pub fn spawn_layout_actor(
         }
     }
 
-    if actor.is_creature {
+    let spawned_entity = if actor.is_creature {
         // Position already in Bevy coordinates (Z negated at parse time)
         let position = pos_override.unwrap_or(actor.position);
         // 180° Y rotation flips X and Z rotation directions
@@ -342,7 +354,9 @@ pub fn spawn_layout_actor(
                 info!("Attached FX component to creature {}", actor.entity_type);
             }
 
-            return Some((entity, actor));
+            Some(entity)
+        } else {
+            None
         }
     } else {
         // Static entity (BASICENTITY check) or trigger (has broadcast_radius)
@@ -375,7 +389,7 @@ pub fn spawn_layout_actor(
                 &entity_dir,
                 position,
                 rotation,
-                &actor.entity_type,
+                actor_name,
                 None,
                 Some(&actor.entity_type),
             )
@@ -387,15 +401,18 @@ pub fn spawn_layout_actor(
                     .spawn((
                         Transform::from_translation(position).with_rotation(rotation),
                         GlobalTransform::default(),
-                        Name::new(actor.entity_type.clone()),
+                        Name::new(actor_name.to_string()),
                         crate::menu::InGameEntity,
                     ))
                     .id(),
             )
         };
 
-        if let Some(entity) = entity {
-            // Attach CurveFollower if actor references a named curve
+        entity
+    };
+
+    if let Some(entity) = spawned_entity {
+        // Attach CurveFollower if actor references a named curve
             if let Some(ref cname) = actor.curve_name {
                 if let Some((_, pts)) = layout_paths
                     .curves
@@ -457,8 +474,9 @@ pub fn spawn_layout_actor(
                     .file_stem()
                     .and_then(|s| s.to_str())
                     .unwrap_or("")
+                    .trim_start_matches('$')
                     .to_string();
-                let main_script = actor.script_main.as_ref().unwrap_or(&default_main);
+                let main_script = actor.script_main.as_ref().unwrap_or(&default_main).trim_start_matches('$');
 
                 let (script_dir, script_fname) =
                     resolve_script_path(&layout_ctx.layout_dir, filename);
@@ -475,7 +493,9 @@ pub fn spawn_layout_actor(
                             }
                             if let Some(ref update) = actor.updatestate {
                                 if update.eq_ignore_ascii_case("Asleep") {
-                                    exec.active = false;
+                                    // TODO: Tease out asleep/awake lifecycle. For now, do not respect updatestate="Asleep".
+                                    // exec.active = false;
+                                    // assets.commands.entity(entity).insert(crate::oni2_loader::components::ActorAsleep);
                                 }
                             }
                             assets
@@ -520,12 +540,12 @@ pub fn spawn_layout_actor(
                     });
                 info!(
                     "Attached BroadcastTrigger (radius {}) to {} at position {:?}",
-                    radius, actor.entity_type, position
+                    radius, actor.entity_type, pos_override.unwrap_or(actor.position)
                 );
             }
 
             // Attach FXType component if present
-            if actor.fx_type.is_some() || actor.ptx_name.is_some() {
+            if !actor.is_creature && (actor.fx_type.is_some() || actor.ptx_name.is_some()) {
                 assets.commands.entity(entity).insert(crate::oni2_loader::components::ActorFxType {
                     fx_name: actor.fx_type.clone(),
                     start_active: actor.fx_start_active,
@@ -537,9 +557,20 @@ pub fn spawn_layout_actor(
                 info!("Attached FX component to {}", actor.entity_type);
             }
 
+            // Attach CheckpointTrigger if present
+            if let Some(index) = actor.checkpoint_index {
+                let radius = actor.checkpoint_radius.unwrap_or(2.0); // Fallback radius
+                assets.commands.entity(entity).insert((
+                    crate::oni2_loader::components::CheckpointTrigger { index, radius },
+                    avian3d::prelude::Collider::sphere(radius),
+                    avian3d::prelude::Sensor, // Triggers don't physically block the player
+                ));
+                info!("Attached CheckpointTrigger (index {}, radius {}) to {}", index, radius, actor.entity_type);
+            }
+
             return Some((entity, actor));
         }
-    }
+
     None
 }
 

@@ -708,17 +708,9 @@ pub fn debug_draw_skeleton(
     let trigger_color = Color::srgba(1.0, 0.5, 0.0, 0.5); // Semi-transparent orange
 
     let trigger_count = trigger_query.iter().count();
-    println!(
-        "DEBUG DRAW SKELETON: Found {} triggers to draw (visible = {})",
-        trigger_count, visible.0
-    );
 
     for trigger in &trigger_query {
         let world_pos = trigger.world_center;
-        println!(
-            "  -> Drawing trigger at {:?} with radius {}",
-            world_pos, trigger.radius
-        );
         gizmos.sphere(
             Isometry3d::from_translation(world_pos),
             trigger.radius,
@@ -772,6 +764,7 @@ pub fn update_oni2_animation(
         &mut Oni2AnimState,
         Option<&mut Oni2DebugSkeleton>,
         Option<&CreatureRenderOffset>,
+        Option<&crate::oni2_loader::components::ActorAsleep>,
     )>,
     mut transform_query: Query<(
         &mut Transform,
@@ -779,7 +772,11 @@ pub fn update_oni2_animation(
         Option<&mut avian3d::prelude::AngularVelocity>,
     )>,
 ) {
-    for (entity, mut anim_state, debug_skel, render_offset) in &mut anim_query {
+    for (entity, mut anim_state, debug_skel, render_offset, asleep_opt) in &mut anim_query {
+        if asleep_opt.is_some() {
+            continue;
+        }
+
         let num_frames = anim_state.anim.num_frames as usize;
         if num_frames <= 1 {
             continue;

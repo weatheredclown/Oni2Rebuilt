@@ -167,6 +167,7 @@ fn main() {
        .init_resource::<oni2_loader::registries::ProjLibrary>()
        .init_resource::<oni2_loader::registries::FxLibrary>()
        .init_resource::<oni2_loader::registries::ParticleLibrary>()
+       .init_resource::<crate::oni2_loader::components::CurrentCheckpointIndex>()
        .add_observer(scroni::vm::scroni_sys_event_observer);
 
     app
@@ -209,6 +210,7 @@ fn main() {
                 .run_if(resource_exists::<oni2_loader::FogEnabled>),
             oni2_loader::update_skyhat,
             scroni::vm::update_broadcast_triggers.before(scroni::vm::scroni_tick_system),
+            scroni::vm::checkpoint_trigger_system.before(scroni::vm::scroni_tick_system),
             scroni::vm::scroni_tick_system,
             scroni::vm::cleanup_scroni_text,
             oni2_loader::scroni_curve_bridge_system,
@@ -245,7 +247,7 @@ fn main() {
         ),
     )
     .add_systems(Startup, (setup_fps_counter, disable_physics_debug, oni2_loader::load_global_registries))
-    .add_systems(Update, (update_fps_counter, toggle_physics_debug, toggle_debug_light, oni2_loader::toggle_debug_fog, oni2_loader::toggle_debug_light_grid, oni2_loader::update_debug_light_grid));
+    .add_systems(Update, (update_fps_counter, toggle_physics_debug, toggle_debug_light, debug_kill_creatures, oni2_loader::toggle_debug_fog, oni2_loader::toggle_debug_light_grid, oni2_loader::update_debug_light_grid));
 
     if diagnostics_mode {
         app.add_plugins(bevy::diagnostic::LogDiagnosticsPlugin::default());
@@ -795,5 +797,21 @@ fn toggle_debug_light(
             });
             info!("Debug point light ON");
         }
+    }
+}
+
+/// K kills all spawned/active creatures that are not the player for debugging
+fn debug_kill_creatures(
+    mut commands: Commands,
+    keyboard: Res<ButtonInput<KeyCode>>,
+    creature_query: Query<Entity, (With<crate::ai::components::AiFighter>, Without<player::components::Player>)>,
+) {
+    if keyboard.just_pressed(KeyCode::KeyK) {
+        let mut count = 0;
+        for entity in &creature_query {
+            commands.entity(entity).despawn();
+            count += 1;
+        }
+        info!("Killed {} active AiFighter creatures!", count);
     }
 }

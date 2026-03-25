@@ -32,3 +32,17 @@ pub struct ActorFxType {
     pub ptx_offset: Vec3,
 }
 
+/// Marker component for actors that are currently asleep (dormant).
+#[derive(Component, Debug, Clone)]
+pub struct ActorAsleep;
+
+/// Component indicating this entity operates as a game progression checkpoint.
+#[derive(Component, Debug, Clone)]
+pub struct CheckpointTrigger {
+    pub index: i32,
+    pub radius: f32,
+}
+
+/// Global resource tracking the player's current checkpoint progress.
+#[derive(Resource, Default, Debug, Clone, PartialEq, Eq)]
+pub struct CurrentCheckpointIndex(pub i32);

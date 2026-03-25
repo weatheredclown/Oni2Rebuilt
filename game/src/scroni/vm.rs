@@ -61,7 +61,10 @@ impl Value {
             Value::String(s) => s.clone(),
             Value::Int(i) => i.to_string(),
             Value::Float(f) => f.to_string(),
-            _ => String::new(),
+            Value::Vector(v) => format!("({}, {}, {})", v.x, v.y, v.z),
+            Value::ActorList(l, idx) => format!("ActorList[len={} idx={}]", l.len(), idx),
+            Value::Actor(act) => format!("Actor({:?})", act),
+            Value::None => "##UNLOGGABLE##".to_string(),
         }
     }
 }
@@ -131,6 +134,7 @@ pub enum SysRequest {
     SetLightIntensity { light: String, intensity: f32 },
     SetShaderLocal { name: String, val: f32 },
     SetUpdateState { target: String, state: String },
+    UsePad(Entity),
 }
 
 #[derive(Event, Debug, Clone)]
@@ -180,6 +184,9 @@ pub enum ScrOniSysEvent {
         target: String,
         state: String,
     },
+    UsePad {
+        script_entity: Entity,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -202,15 +209,13 @@ pub struct ScrOniThread {
     pub call_stack: Vec<CallFrame>,
     pub blocking: Option<BlockingAction>,
     pub start_time: f64,
+    pub in_whenever: bool,
 }
 
 impl ScrOniThread {
     pub fn new(thread_id: u32, parent_thread_id: Option<u32>, script: ScriptDef, start_time: f64) -> Self {
         let mut variables = HashMap::new();
-        for var in &script.variables {
-            if var.is_parent { continue; } // Do not allocate locally if inherited
-            variables.insert(var.name.clone(), Value::default_for_type(&var.var_type));
-        }
+        init_variables(&mut variables, &script.variables);
 
         Self {
             thread_id,
@@ -223,6 +228,7 @@ impl ScrOniThread {
             call_stack: Vec::new(),
             blocking: None,
             start_time,
+            in_whenever: false,
         }
     }
 
@@ -231,6 +237,47 @@ impl ScrOniThread {
         if self.state == ExecState::Blocked {
             self.state = ExecState::Running;
         }
+    }
+}
+
+pub fn hash_name(s: &str) -> i32 {
+    // We must use a fully deterministic hash across identical executions, not DefaultHasher 
+    // which generates random seeds via RandomState internally each iteration.
+    let mut hash: u32 = 2166136261;
+    for byte in s.bytes() {
+        hash ^= byte as u32;
+        hash = hash.wrapping_mul(16777619);
+    }
+    (hash % 100000) as i32
+}
+
+pub fn eval_constant(expr: &Expr) -> Option<Value> {
+    match expr {
+        Expr::IntLit(i) => Some(Value::Int(*i)),
+        Expr::FloatLit(f) => Some(Value::Float(*f)),
+        Expr::StringLit(s) => Some(Value::String(s.clone())),
+        Expr::Call { name, args } if name.to_lowercase() == "guid" && args.len() == 1 => {
+            if let Expr::StringLit(ref s) = args[0] {
+                Some(Value::Int(hash_name(s)))
+            } else {
+                None
+            }
+        }
+        _ => None,
+    }
+}
+
+pub fn init_variables(variables: &mut HashMap<String, Value>, decls: &[crate::scroni::ast::VarDecl]) {
+    variables.clear();
+    for var in decls {
+        if var.is_parent { continue; }
+        let mut val = Value::default_for_type(&var.var_type);
+        if let Some(ref expr) = var.initializer {
+            if let Some(c) = eval_constant(expr) {
+                val = c;
+            }
+        }
+        variables.insert(var.name.clone(), val);
     }
 }
 
@@ -252,6 +299,8 @@ pub struct ScriptExec {
     pub current_light: Option<String>,
     /// Whether this script is actively evaluating ticks. Modifiable via SetUpdateState natively.
     pub active: bool,
+    /// Warned tracking cache preventing log flooding.
+    pub warned_unimplemented: std::collections::HashSet<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -259,6 +308,35 @@ pub struct ScroniContext<'a, 'w_e, 's_e, 'w_t, 's_t> {
     pub all_entities: &'a Query<'w_e, 's_e, (Entity, &'static Transform, Option<&'static Name>)>,
     pub triggers: &'a Query<'w_t, 's_t, &'static BroadcastTrigger>,
     pub player: Option<Entity>,
+    pub current_checkpoint: i32,
+    pub layout_dir: String,
+}
+
+impl<'a, 'w_e, 's_e, 'w_t, 's_t> ScroniContext<'a, 'w_e, 's_e, 'w_t, 's_t> {
+    pub fn resolve_targets(&self, val: &Value) -> Vec<Entity> {
+        let mut targets = Vec::new();
+        match val {
+            Value::Actor(act) => {
+                if self.all_entities.get(*act).is_ok() { targets.push(*act); }
+            }
+            Value::Int(guid) => {
+                for (e, _, name_opt) in self.all_entities.iter() {
+                    if let Some(n) = name_opt {
+                        if hash_name(n.as_str()) == *guid {
+                            targets.push(e);
+                        }
+                    }
+                }
+            }
+            Value::ActorList(acts, _) => {
+                for act in acts {
+                    if self.all_entities.get(*act).is_ok() { targets.push(*act); }
+                }
+            }
+            _ => {}
+        }
+        targets
+    }
 }
 
 #[derive(Component, Default)]
@@ -283,7 +361,11 @@ pub fn update_broadcast_triggers(
 
         for (target_ent, target_tf) in &targets {
             if target_ent == trigger_ent { continue; }
-            if target_tf.translation().distance_squared(center) <= r_sq {
+            let d_x = target_tf.translation().x - center.x;
+            let d_z = target_tf.translation().z - center.z;
+            let d_y = (target_tf.translation().y - center.y).abs();
+            // Convert to 2D cylinder volume since Oni triggers often ignore Y variance 
+            if d_x * d_x + d_z * d_z <= r_sq && d_y < 50.0 {
                 currently_inside.insert(target_ent);
             }
         }
@@ -330,7 +412,45 @@ impl ScriptExec {
             owner,
             current_light: None,
             active: true,
+            warned_unimplemented: std::collections::HashSet::new(),
         }
+    }
+
+    /// Dynamically load and cache a script from file if not available in current execution context natively.
+    pub fn resolve_script(&mut self, script_name: &str, ctx: &ScroniContext) -> Option<ScriptDef> {
+        if let Some(new_script) = self.available_scripts.get(script_name).cloned() {
+            return Some(new_script);
+        }
+
+        // Try to parse cross-file reference, e.g. "$scavenger:Scv_Uber_Main" or "routines:GetUniqueRandomList"
+        if let Some(colon) = script_name.find(':') {
+            let filename = if script_name.starts_with('$') {
+                &script_name[1..colon]
+            } else {
+                &script_name[..colon]
+            };
+            let target_script = &script_name[colon + 1..];
+
+            let script_fname = format!("{}.oni", filename.trim_end_matches(".xml").trim_end_matches(".oni"));
+
+            let paths_to_try = [
+                format!("{}/Scripts", ctx.layout_dir),
+                "Scripts".to_string(),
+            ];
+
+            for dir in &paths_to_try {
+                if let Ok(file) = load_script_file(dir, &script_fname) {
+                    for s in &file.scripts {
+                        self.available_scripts.insert(s.name.clone(), s.clone());
+                    }
+                    return self.available_scripts.get(target_script).cloned();
+                }
+            }
+
+            warn!("[ScrOni][{}] resolve_script: Failed to load cross-reference script file {}", 
+                  self.main_thread.script.name, script_fname);
+        }
+        None
     }
 
     pub fn all_threads_mut(&mut self) -> impl Iterator<Item = &mut ScrOniThread> {
@@ -358,6 +478,11 @@ impl ScriptExec {
         if let Some(v) = thread.variables.get(name) {
             return v.clone();
         }
+        for frame in thread.call_stack.iter().rev() {
+            if let Some(v) = frame.variables.get(name) {
+                return v.clone();
+            }
+        }
         if let Some(pid) = thread.parent_thread_id {
             return self.get_var(pid, name);
         }
@@ -367,6 +492,21 @@ impl ScriptExec {
     pub fn set_var(&mut self, tid: u32, name: String, val: Value) {
         if self.get_thread(tid).variables.contains_key(&name) {
             self.get_thread_mut(tid).variables.insert(name, val);
+            return;
+        }
+        
+        let mut found_in_call_stack = false;
+        {
+            let thread = self.get_thread_mut(tid);
+            for frame in thread.call_stack.iter_mut().rev() {
+                if frame.variables.contains_key(&name) {
+                    frame.variables.insert(name.clone(), val.clone());
+                    found_in_call_stack = true;
+                    break;
+                }
+            }
+        }
+        if found_in_call_stack {
             return;
         }
         
@@ -384,9 +524,38 @@ impl ScriptExec {
 
     /// Execute one frame's worth of the script. Returns the execution state.
     /// Tick the script executor. Process messages, then the main thread and child threads.
-    pub fn tick(&mut self, current_time: f64, ctx: &mut ScroniContext) -> ExecState {
+    pub fn tick(&mut self, current_time: f64, delta_time: f32, ctx: &mut ScroniContext) -> ExecState {
         if !self.active { return ExecState::Blocked; }
         
+        // Degrade timer variables (only local ones to avoid double-decrement on inherited variables)
+        for thread in std::iter::once(&mut self.main_thread).chain(self.child_threads.iter_mut()) {
+            if thread.state == ExecState::Done { continue; }
+            for var_decl in &thread.script.variables {
+                if var_decl.var_type == VarType::Timer && !var_decl.is_parent {
+                    if let Some(val) = thread.variables.get(&var_decl.name) {
+                        match val {
+                            Value::Float(f) => {
+                                if *f > 0.0 {
+                                    let mut new_val = *f - delta_time;
+                                    if new_val < 0.0 { new_val = 0.0; }
+                                    thread.variables.insert(var_decl.name.clone(), Value::Float(new_val));
+                                }
+                            }
+                            Value::Int(i) => {
+                                let f = *i as f32;
+                                if f > 0.0 {
+                                    let mut new_val = f - delta_time;
+                                    if new_val < 0.0 { new_val = 0.0; }
+                                    thread.variables.insert(var_decl.name.clone(), Value::Float(new_val));
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+            }
+        }
+
         // Execute main thread
         self.tick_thread(0, current_time, ctx);
 
@@ -419,6 +588,7 @@ impl ScriptExec {
                 self.get_thread_mut(tid).state = ExecState::Running;
             }
             
+            self.get_thread_mut(tid).in_whenever = true;
             for stmt in whenever_stmts {
                 self.exec_stmt(tid, stmt, now, ctx);
                 let current_state = self.get_thread(tid).state;
@@ -426,10 +596,11 @@ impl ScriptExec {
                     warn!("[ScrOni] Whenever block attempted to block or yield (state: {:?})", current_state);
                     self.get_thread_mut(tid).state = ExecState::Running; 
                 } else if current_state == ExecState::PushLoop {
-                    warn!("[ScrOni] Whenever block pushed a loop, this is not fully supported and drops to sequence.");
+                    warn!("[ScrOni][{}] Whenever block pushed a loop, this is not fully supported and drops to sequence.", self.get_thread(tid).script.name);
                     self.get_thread_mut(tid).state = ExecState::Running;
                 }
             }
+            self.get_thread_mut(tid).in_whenever = false;
             
             // If the whenever block switched scripts or exited, we should keep that state
             // Otherwise, restore the state of the sequence
@@ -664,10 +835,31 @@ impl ScriptExec {
                 }
 
                 if let Value::ActorList(mut vec, idx) = current_list {
-                    if let Value::Actor(ent) = val {
-                        vec.push(ent);
-                    } else if let Value::Int(guid) = val {
-                        vec.push(Entity::from_bits(guid as u64));
+                    vec.extend(ctx.resolve_targets(&val));
+                    self.set_var(tid, list.clone(), Value::ActorList(vec, idx));
+                }
+            }
+            Stmt::RemoveFromList { expr, list } => {
+                let val = self.eval_expr(tid, expr, now, ctx);
+                
+                // Directly extract entities without validating ECS liveness 
+                // so we can properly clean dead handles out of memory lists!
+                let targets = match val {
+                    Value::Actor(act) => vec![act],
+                    Value::ActorList(acts, _) => acts,
+                    Value::Int(_) => ctx.resolve_targets(&val),
+                    _ => Vec::new(),
+                };
+                
+                if targets.is_empty() { return; }
+                
+                let current_list = self.get_var(tid, list);
+                if let Value::ActorList(mut vec, mut idx) = current_list {
+                    let original_len = vec.len();
+                    vec.retain(|e| !targets.contains(e));
+                    let removed_count = original_len - vec.len();
+                    if removed_count > 0 && idx > 0 {
+                        idx = idx.saturating_sub(removed_count);
                     }
                     self.set_var(tid, list.clone(), Value::ActorList(vec, idx));
                 }
@@ -681,8 +873,14 @@ impl ScriptExec {
                 }
             }
             Stmt::Block(stmts) => {
-                self.get_thread_mut(tid).loop_stack.push(LoopState::Block { stmts: stmts.clone(), pc: 0 });
-                self.get_thread_mut(tid).state = ExecState::PushLoop;
+                if self.get_thread(tid).in_whenever {
+                    for stmt in stmts {
+                        self.exec_stmt(tid, stmt, now, ctx);
+                    }
+                } else {
+                    self.get_thread_mut(tid).loop_stack.push(LoopState::Block { stmts: stmts.clone(), pc: 0 });
+                    self.get_thread_mut(tid).state = ExecState::PushLoop;
+                }
             }
             Stmt::DoForever(body) => {
                 let stmts = self.flatten_to_block(body);
@@ -741,7 +939,7 @@ impl ScriptExec {
                     let v = self.eval_expr(tid, e, now, ctx);
                     v.as_string()
                 }).collect();
-                info!("[ScrOni] {}", parts.join(" "));
+                info!("[ScrOni][{}] {}", self.get_thread(tid).script.name, parts.join(" "));
             }
 
             // Blocking commands — set blocking action and yield
@@ -850,6 +1048,15 @@ impl ScriptExec {
                 self.set_var(tid, "__curve_lookalong_dir".into(), v);
             }
 
+            Stmt::Pickup(expr) => {
+                let ent = self.eval_expr(tid, expr, now, ctx);
+                info!("VM: Pickup {:?} (unimplemented)", ent);
+            }
+            Stmt::Dropoff { at } => {
+                let at_val = at.as_ref().map(|e| self.eval_expr(tid, e, now, ctx));
+                info!("VM: Dropoff at {:?} (unimplemented)", at_val);
+            }
+
             Stmt::InlineVarDecl(decl) => {
                 let val = if let Some(init) = &decl.initializer {
                     self.eval_expr(tid, init, now, ctx)
@@ -889,34 +1096,61 @@ impl ScriptExec {
             Stmt::SendMessage { msg, to, with } => {
                 let msg_str = self.eval_expr(tid, msg, now, ctx).as_string();
                 let target = self.eval_expr(tid, to, now, ctx);
-                if let Value::Actor(entity) = target {
-                    let mut args = Vec::new();
-                    for a in with {
-                        args.push(self.eval_expr(tid, a, now, ctx));
-                    }
+                
+                let mut args = Vec::new();
+                for a in with {
+                    args.push(self.eval_expr(tid, a, now, ctx));
+                }
+
+                let targets = ctx.resolve_targets(&target);
+                if targets.is_empty() {
+                    warn!("[ScrOni][{}] VM: SendMessage '{}' failed, target {:?} unresolved", self.get_thread(tid).script.name, msg_str, target);
+                }
+
+                for entity in targets {
+                    info!("[ScrOni][{}] VM: SendMessage '{}' from {:?} to {:?}", self.get_thread(tid).script.name, msg_str, self.owner, entity);   
                     self.outgoing_messages.push(ScriptMessage {
-                        msg: msg_str,
+                        msg: msg_str.clone(),
                         from: self.owner,
                         to: entity,
-                        args,
+                        args: args.clone(),
                         is_action: false,
                     });
                 }
             }
             Stmt::SendAction { action, target, component } => {
-                let act_str = self.eval_expr(tid, action, now, ctx).as_string();
-                let tgt = self.eval_expr(tid, target, now, ctx);
-                if let Value::Actor(entity) = tgt {
+                let act_str = match action {
+                    Expr::Var(n) => n.clone(),
+                    Expr::StringLit(s) => s.clone(),
+                    _ => self.eval_expr(tid, action, now, ctx).as_string(),
+                };
+                
+                let mut targets = if let Some(target_expr) = target {
+                    let tgt = self.eval_expr(tid, target_expr, now, ctx);
+                    let res = ctx.resolve_targets(&tgt);
+                    if res.is_empty() {
+                        warn!("VM: SendAction '{}' failed, target {:?} unresolved", act_str, tgt);
+                    }
+                    res
+                } else {
+                    vec![self.owner]
+                };
+
+                for entity in targets {
                     if let Some(comp_expr) = component {
-                        let comp_str = self.eval_expr(tid, comp_expr, now, ctx).as_string();
+                        let comp_str = match comp_expr {
+                            Expr::Var(n) => n.clone(),
+                            Expr::StringLit(s) => s.clone(),
+                            _ => self.eval_expr(tid, comp_expr, now, ctx).as_string(),
+                        };
                         self.sys_requests.push(SysRequest::SendAction {
-                            action: act_str,
+                            action: act_str.clone(),
                             target: entity,
                             component: comp_str,
                         });
                     } else {
                         self.outgoing_messages.push(ScriptMessage {
-                            msg: act_str,
+                            msg: act_str.clone(),
                             from: self.owner,
                             to: entity,
                             args: Vec::new(),
@@ -944,6 +1178,7 @@ impl ScriptExec {
             }
 
             Stmt::Spawn { script, assign_to, at, name } => {
+                info!("Spawn command: script={:?}, assign_to={:?}, at={:?}, name={:?}", script, assign_to, at, name);
                 let script_str = self.eval_expr(tid, script, now, ctx).as_string();
                 let assign = assign_to.clone();
                 let at_pos = at.as_ref().map(|e| {
@@ -987,7 +1222,7 @@ impl ScriptExec {
 
             Stmt::Stack(name_expr) => {
                 let name = self.eval_expr(tid, name_expr, now, ctx).as_string();
-                if let Some(new_script) = self.available_scripts.get(&name).cloned() {
+                if let Some(new_script) = self.resolve_script(&name, ctx) {
                     let t = self.get_thread_mut(tid);
                     let frame = CallFrame {
                         script: t.script.clone(),
@@ -997,60 +1232,39 @@ impl ScriptExec {
                     };
                     t.call_stack.push(frame);
                     t.script = new_script.clone();
-                    t.variables.clear();
-                    for var in &t.script.variables {
-                        if var.is_parent { continue; }
-                        let val = match var.var_type {
-                            VarType::Integer => Value::Int(0),
-                            VarType::Float => Value::Float(0.0),
-                            VarType::Vector => Value::Vector(Vec3::ZERO),
-                            VarType::String => Value::String(String::new()),
-                            VarType::Timer => Value::Float(0.0),
-                            VarType::Label => Value::String(String::new()),
-                            VarType::ActorList => Value::ActorList(Vec::new(), 0),
-                            VarType::Child => Value::Int(0),
-                        };
-                        t.variables.insert(var.name.clone(), val);
-                    }
+                    init_variables(&mut t.variables, &t.script.variables);
                     t.seq_pc = 0;
                     t.loop_stack.clear();
                     t.state = ExecState::AbortSequence; // Yield to prevent executing rest of old block
                 } else {
-                    warn!("Stack: Script '{}' not found in available scripts.", name);
+                    warn!("[ScrOni][{}] Fork: Target Script '{}' not found", self.get_thread(tid).script.name, name);
                 }
             }
 
             Stmt::Switch(name_expr) => {
                 let name = self.eval_expr(tid, name_expr, now, ctx).as_string();
-                if let Some(new_script) = self.available_scripts.get(&name).cloned() {
+                if let Some(new_script) = self.resolve_script(&name, ctx) {
                     let t = self.get_thread_mut(tid);
                     t.script = new_script;
-                    t.variables.clear();
-                    for var in &t.script.variables {
-                        if var.is_parent { continue; }
-                        let val = match var.var_type {
-                            VarType::Integer => Value::Int(0),
-                            VarType::Float => Value::Float(0.0),
-                            VarType::Vector => Value::Vector(Vec3::ZERO),
-                            VarType::String => Value::String(String::new()),
-                            VarType::Timer => Value::Float(0.0),
-                            VarType::Label => Value::String(String::new()),
-                            VarType::ActorList => Value::ActorList(Vec::new(), 0),
-                            VarType::Child => Value::Int(0),
-                        };
-                        t.variables.insert(var.name.clone(), val);
-                    }
+                    init_variables(&mut t.variables, &t.script.variables);
                     t.seq_pc = 0;
                     t.loop_stack.clear();
+                    
+                    // Clear the message queue when the main script switches, 
+                    // matching the original engine's scrGroupContext::Reset behavior.
+                    if tid == 0 {
+                        self.message_queue.clear();
+                    }
+                    
                     self.get_thread_mut(tid).state = ExecState::AbortSequence; // Yield to prevent executing rest of old block
                 } else {
-                    warn!("Switch: Script '{}' not found in available scripts.", name);
+                    warn!("[ScrOni][{}] Switch: Target Script '{}' not found", self.get_thread(tid).script.name, name);
                 }
             }
 
             Stmt::ChildStack { var, script } => {
                 let script_name = self.eval_expr(tid, script, now, ctx).as_string();
-                if let Some(new_script) = self.available_scripts.get(&script_name).cloned() {
+                if let Some(new_script) = self.resolve_script(&script_name, ctx) {
                     let new_tid = self.next_thread_id;
                     self.next_thread_id += 1;
                     let mut new_thread = ScrOniThread::new(new_tid, Some(tid), new_script, now);
@@ -1061,24 +1275,26 @@ impl ScriptExec {
                     self.child_threads.push(new_thread);
                     self.set_var(tid, var.clone(), Value::Int(new_tid as i32));
                 } else {
-                    warn!("ChildStack: Script '{}' not found", script_name);
+                    warn!("[ScrOni][{}] ChildStack: Target Script '{}' not found", self.get_thread(tid).script.name, script_name);
                 }
             }
 
             Stmt::ChildSwitch { var, script } => {
                 let script_name = self.eval_expr(tid, script, now, ctx).as_string();
-                if let Some(new_script) = self.available_scripts.get(&script_name).cloned() {
+                if let Some(new_script) = self.resolve_script(&script_name, ctx) {
                     let new_tid = self.next_thread_id;
                     self.next_thread_id += 1;
                     let mut new_thread = ScrOniThread::new(new_tid, Some(tid), new_script, now);
-                    for var_decl in &new_thread.script.variables {
-                        if var_decl.is_parent { continue; }
-                        new_thread.variables.insert(var_decl.name.clone(), Value::default_for_type(&var_decl.var_type));
-                    }
                     self.child_threads.push(new_thread);
                     self.set_var(tid, var.clone(), Value::Int(new_tid as i32));
                 } else {
-                    warn!("ChildSwitch: Script '{}' not found", script_name);
+                    warn!("[ScrOni][{}] ChildSwitch: Target Script '{}' not found", self.get_thread(tid).script.name, script_name);
+                }
+            }
+
+            Stmt::UsePad => {
+                if ctx.player != Some(self.owner) {
+                    self.sys_requests.push(SysRequest::UsePad(self.owner));
                 }
             }
 
@@ -1177,10 +1393,31 @@ impl ScriptExec {
                 });
             }
 
+            // TODO: store a map of warned about commands and warn about each once!
             // Stubs for commands we don't execute yet
+            Stmt::Unimplemented { command, args } => {
+                let lower = command.to_lowercase();
+                if lower == "retreat" {
+                    // Retreat command stub
+                    let target_str = if !args.is_empty() {
+                        self.eval_expr(tid, &args[0], now, ctx).as_string()
+                    } else {
+                        "me".to_string()
+                    };
+                    if self.warned_unimplemented.insert(format!("retreat_{}", target_str)) {
+                        info!("VM: Retreat {} (unimplemented)", target_str);
+                    }
+                } else {
+                    if self.warned_unimplemented.insert(lower.clone()) {
+                        info!("Unimplemented command: {}", command);
+                    }
+                }
+            }
             _ => {
                 // Non-silently ignore unimplemented commands for now
-                info!("Unimplemented command: {:?}", stmt);
+                if self.warned_unimplemented.insert(format!("{:?}", stmt)) {
+                    info!("Unimplemented command: {:?}", stmt);
+                }
             }
         }
     }
@@ -1203,11 +1440,7 @@ impl ScriptExec {
                 let mut ents = Vec::new();
                 for e in exprs {
                     let v = self.eval_expr(tid, e, now, ctx);
-                    if let Value::Actor(ent) = v {
-                        ents.push(ent);
-                    } else if let Value::Int(guid) = v {
-                        ents.push(Entity::from_bits(guid as u64));
-                    }
+                    ents.extend(ctx.resolve_targets(&v));
                 }
                 Value::ActorList(ents, 0)
             }
@@ -1262,9 +1495,31 @@ impl ScriptExec {
                 let lower = name.to_lowercase();
                 match lower.as_str() {
                     "clock" => Value::Float(now as f32),
+                    "makestring" => {
+                        let mut s = String::new();
+                        for arg in args {
+                            s.push_str(&self.eval_expr(tid, arg, now, ctx).as_string());
+                        }
+                        Value::String(s)
+                    }
                     "random" => Value::Int(rand::random::<i32>().abs() % 100),
                     "randomrange" => Value::Int(0), // stub
                     "randomrangefloat" => Value::Float(0.0), // stub
+                    "guid" => {
+                        if let Some(e) = args.get(0) {
+                            let val = self.eval_expr(tid, e, now, ctx);
+                            return Value::Int(hash_name(&val.as_string()));
+                        }
+                        Value::None
+                    }
+                    "exists" => {
+                        let target = args.get(0).map(|e| self.eval_expr(tid, e, now, ctx));
+                        if let Some(t) = target {
+                            let ents = ctx.resolve_targets(&t);
+                            if !ents.is_empty() { return Value::Int(1); }
+                        }
+                        Value::Int(0)
+                    }
                     "location" => {
                         let target = args.get(0).map(|e| self.eval_expr(tid, e, now, ctx));
                         if let Some(Value::Actor(act)) = target {
@@ -1310,6 +1565,42 @@ impl ScriptExec {
                         }
                         Value::Float(99999.0)
                     }
+                    "trigger" => {
+                        if let Some(event_expr) = args.get(0) {
+                            let event_name = match event_expr {
+                                Expr::Var(n) => n.clone(),
+                                Expr::StringLit(s) => s.clone(),
+                                _ => self.eval_expr(tid, event_expr, now, ctx).as_string(),
+                            }.to_lowercase();
+
+                            if let Ok(trigger) = ctx.triggers.get(self.owner) {
+                                match event_name.as_str() {
+                                    "playerenter" => {
+                                        if let Some(p) = ctx.player {
+                                            if trigger.just_entered.contains(&p) { return Value::Int(1); }
+                                        }
+                                    }
+                                    "playerexit" => {
+                                        if let Some(p) = ctx.player {
+                                            if trigger.just_exited.contains(&p) { return Value::Int(1); }
+                                        }
+                                    }
+                                    "playerinside" => {
+                                        if let Some(p) = ctx.player {
+                                            if trigger.inside.contains(&p) { return Value::Int(1); }
+                                        }
+                                    }
+                                    "playeroutside" => {
+                                        if let Some(p) = ctx.player {
+                                            if !trigger.inside.contains(&p) { return Value::Int(1); }
+                                        }
+                                    }
+                                    _ => {}
+                                }
+                            }
+                        }
+                        return Value::Int(0);
+                    }
                     "triggerentered" => {
                         let trig_ent = args.get(0).map(|e| self.eval_expr(tid, e, now, ctx));
                         let targ_ent = args.get(1).map(|e| self.eval_expr(tid, e, now, ctx));
@@ -1350,6 +1641,7 @@ impl ScriptExec {
                         if let Some(msg_expr) = args.get(0) {
                             let target_msg = self.eval_expr(tid, msg_expr, now, ctx).as_string();
                             if let Some(idx) = self.message_queue.iter().position(|m| !m.is_action && m.msg == target_msg) {
+                                info!("VM: Received message '{}' (from {:?})", target_msg, self.message_queue[idx].from);
                                 self.message_queue.remove(idx);
                                 return Value::Int(1);
                             }
@@ -1371,6 +1663,9 @@ impl ScriptExec {
                         }
                         Value::Int(0)
                     }
+                    "getcheckpointindex" => {
+                        Value::Int(ctx.current_checkpoint)
+                    }
                     "first" => {
                         if let Some(Expr::Var(list_name)) = args.get(0) {
                             if let Some(Value::ActorList(entities, _)) = self.get_thread(tid).variables.get(list_name) {
@@ -1386,6 +1681,14 @@ impl ScriptExec {
                         }
                         Value::None
                     }
+                    "size" => {
+                        if let Some(Expr::Var(list_name)) = args.get(0) {
+                            if let Some(Value::ActorList(entities, _)) = self.get_thread(tid).variables.get(list_name) {
+                                return Value::Int(entities.len() as i32);
+                            }
+                        }
+                        Value::Int(0)
+                    }
                     "next" => {
                         if let Some(Expr::Var(list_name)) = args.get(0) {
                             if let Some(Value::ActorList(entities, idx)) = self.get_thread(tid).variables.get(list_name) {
@@ -1398,19 +1701,6 @@ impl ScriptExec {
                                 } else {
                                     self.get_thread_mut(tid).variables.insert(list_name.clone(), Value::ActorList(updated, current_idx));
                                     return Value::None;
-                                }
-                            }
-                        }
-                        Value::None
-                    }
-                    "guid" => {
-                        let entity_name = args.get(0)
-                            .map(|e| self.eval_expr(tid, e, now, ctx).as_string())
-                            .unwrap_or_default();
-                        for (other_ent, _, name_opt) in ctx.all_entities {
-                            if let Some(n) = name_opt {
-                                if n.as_str() == entity_name {
-                                    return Value::Actor(other_ent);
                                 }
                             }
                         }
@@ -1516,8 +1806,11 @@ pub fn scroni_tick_system(
     triggers: Query<&'static BroadcastTrigger>,
     time: Res<Time>,
     player_query: Query<Entity, With<crate::player::components::Player>>,
+    current_checkpoint: Res<crate::oni2_loader::components::CurrentCheckpointIndex>,
+    layout_context: Option<Res<crate::oni2_loader::environment::LayoutContext>>,
 ) {
     let now = time.elapsed_secs_f64();
+    let delta_time = time.delta_secs();
     let mut all_messages = Vec::new();
     let player_ent = player_query.iter().next();
 
@@ -1526,8 +1819,10 @@ pub fn scroni_tick_system(
             all_entities: &all_entities,
             triggers: &triggers,
             player: player_ent,
+            current_checkpoint: current_checkpoint.0,
+            layout_dir: layout_context.as_ref().map(|c| c.layout_dir.clone()).unwrap_or_default(),
         };
-        script.exec.tick(now, &mut ctx);
+        script.exec.tick(now, delta_time, &mut ctx);
 
         let mut finds_to_resolve = Vec::new();
         for t in script.exec.all_threads_mut() {
@@ -1582,6 +1877,7 @@ pub fn scroni_tick_system(
                     });
                 }
                 SysRequest::Spawn { script, assign_to, at, name } => {
+                    info!("Spawn command: script={}, assign_to={:?}, at={:?}, name={:?}", script, assign_to, at, name);
                     commands.trigger(ScrOniSysEvent::Spawn {
                         script_entity: entity,
                         script,
@@ -1640,6 +1936,9 @@ pub fn scroni_tick_system(
                         state,
                     });
                 }
+                SysRequest::UsePad(ent) => {
+                    commands.trigger(ScrOniSysEvent::UsePad { script_entity: ent });
+                }
             }
         }
 
@@ -1650,6 +1949,8 @@ pub fn scroni_tick_system(
     for msg in all_messages {
         if let Ok((_, mut target_script, _)) = query.get_mut(msg.to) {
             target_script.exec.message_queue.push(msg);
+        } else {
+            warn!("VM: Failed to deliver message '{}' to {:?}: target not found or has no ScrOniScript", msg.msg, msg.to);
         }
     }
 }
@@ -1715,7 +2016,7 @@ pub fn scroni_sys_event_observer(
     mut anim_registry: ResMut<crate::oni2_loader::registries::AnimRegistry>,
     mut camera_query: Query<&mut crate::camera::components::CameraRig>,
     mut lights_query: Query<(&Name, Option<&mut PointLight>, Option<&mut SpotLight>)>,
-    mut script_query: Query<(&mut ScrOniScript, Option<&Name>)>,
+    mut script_query: Query<(Entity, &mut ScrOniScript, Option<&Name>)>,
 ) {
     let ev = (*trigger).clone();
     let (mut materials, mut meshes, mut images, mut skinned_mesh_ibp) = assets;
@@ -1818,10 +2119,12 @@ pub fn scroni_sys_event_observer(
                 // Call the shared spawn function
                 if let Some((_new_entity, _actor)) = crate::oni2_loader::spawn_layout_actor(
                     &mut spawn_assets,
-                    &actor_name,
+                    &script,
                     ctx,
                     paths,
                     Some(pos),
+                    true,
+                    Some(&actor_name),
                 ) {
                     info!("Spawned {} at {:?}", actor_name, pos);
                     if let Some(var_name) = assign_to {
@@ -1874,6 +2177,7 @@ pub fn scroni_sys_event_observer(
                 name: name,
                 at: at,
                 parent: Some(script_entity),
+                start_active: true,
             });
         }
         ScrOniSysEvent::SendAction { action, target, component } => {
@@ -1904,13 +2208,60 @@ pub fn scroni_sys_event_observer(
         }
         ScrOniSysEvent::SetUpdateState { target, state } => {
             let active = state.eq_ignore_ascii_case("Active");
-            for (mut script, name_opt) in &mut script_query {
+            let target_hash = target.parse::<i32>().ok();
+
+            for (entity, mut script, name_opt) in &mut script_query {
                 if let Some(n) = name_opt {
-                    if n.as_str() == target {
+                    let mut is_match = n.as_str() == target;
+
+                    if !is_match {
+                        if let Some(h) = target_hash {
+                            let mut hasher = std::collections::hash_map::DefaultHasher::new();
+                            std::hash::Hash::hash(n.as_str(), &mut hasher);
+                            let hashed = (std::hash::Hasher::finish(&hasher) % 100000) as i32;
+                            if hashed == h {
+                                is_match = true;
+                            }
+                        }
+                    }
+
+                    if is_match {
+                        if active {
+                            commands.entity(entity).remove::<crate::oni2_loader::components::ActorAsleep>();
+                        } else {
+                            commands.entity(entity).insert(crate::oni2_loader::components::ActorAsleep);
+                        }
                         script.exec.active = active;
-                        info!("SetUpdateState: toggled '{}' script active={}", target, active);
+                        info!("SetUpdateState: toggled '{}' script active={}", n.as_str(), active);
                     }
                 }
+            }
+        }
+        ScrOniSysEvent::UsePad { script_entity } => {
+            commands.entity(script_entity).insert(crate::player::components::Player);
+            commands.entity(script_entity).remove::<crate::ai::components::AiFighter>();
+            for mut rig in &mut camera_query {
+                rig.target = script_entity;
+            }
+            info!("VM: Actor {:?} took player pad controls", script_entity);
+        }
+    }
+}
+
+pub fn checkpoint_trigger_system(
+    mut checkpoint_idx: ResMut<crate::oni2_loader::components::CurrentCheckpointIndex>,
+    trigger_query: Query<(&crate::oni2_loader::components::CheckpointTrigger, &GlobalTransform)>,
+    player_query: Query<&GlobalTransform, With<crate::player::components::Player>>,
+) {
+    let Some(player_tf) = player_query.iter().next() else { return; };
+    let player_pos = player_tf.translation();
+    
+    for (trigger, trigger_tf) in &trigger_query {
+        let dist = player_pos.distance(trigger_tf.translation());
+        if dist <= trigger.radius {
+            if checkpoint_idx.0 != trigger.index {
+                checkpoint_idx.0 = trigger.index;
+                info!("Player entered CheckpointTrigger: updated checkpoint_index to {}", trigger.index);
             }
         }
     }

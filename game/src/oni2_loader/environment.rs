@@ -8,7 +8,7 @@ pub struct LayoutFogSettings {
 }
 
 /// Navigation curves from layout.paths. Each curve is a named list of waypoints.
-#[derive(Resource, Default)]
+#[derive(Resource, Default, Clone)]
 pub struct LayoutPaths {
     pub curves: Vec<(String, Vec<Vec3>)>,
 }
