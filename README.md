@@ -55,3 +55,10 @@ shared/  # Shared protobuf + data model crate
 Each crate is a regular Cargo package inside the workspace, so `cargo test -p
 rb-game` or `cargo run -p rb-server` work as expected. See `docs/` for deeper
 notes on publishing or asset preparation if you are setting this up locally.
+
+## Original Research
+* The toughest part was the binary model format loader, how that maps to material groups and skin weights
+
+## Thank you
+* Huge shout out to the https://wiki.oni2.net/OBD:Oni2AS analysis that outlined most of the formats
+* https://github.com/vgmstream/vgmstream/blob/master/doc/FORMATS.md for the nitty-gritty of decoding the sound files
