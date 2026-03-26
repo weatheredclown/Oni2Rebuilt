@@ -209,29 +209,46 @@ pub fn spawn_layout_actor(
     };
 
     if actor.spawn_later && !force_spawn {
-        return None;
+        return None; // this should be loaded (with all sub-assets loaded) then spawning is just making it appear
     }
 
     // Find the entity directory
     let entity_dir = format!("{}/{}", layout_ctx.entity_base, actor.entity_type);
 
+    let mut is_basic = layout_ctx.basic_types.contains(&actor.entity_type)
+        || layout_ctx.basic_types.iter().any(|t| t.eq_ignore_ascii_case(&actor.entity_type));
+
+    let is_trigger = actor.broadcast_radius.is_some() || actor.checkpoint_radius.is_some();
+    if !is_basic && !is_trigger && !actor.is_creature {
+        is_basic = true;
+    }
+
+    let has_geometry = actor.is_creature || is_basic;
+
     // Try parsing .sha to find .tc (Texture Collection) and preload textures
-    if !assets
+    if has_geometry && !assets
         .texture_collections
         .collections
         .contains_key(&actor.entity_type)
     {
-        let sha_filename = format!("{}.sha", actor.entity_type);
-        let sha_filename_alt = format!("{}.shader", actor.entity_type);
+        let sha_filenames = vec![
+            format!("{}.sha", actor.entity_type),
+            format!("{}_LODs0.sha", actor.entity_type),
+            format!("{}_lods0.sha", actor.entity_type),
+        ];
+        
         let mut frames = Vec::new();
 
-        // check sha_filename or sha_filename_alt
-        let sha_content = crate::vfs::read_to_string(&entity_dir, &sha_filename)
-            .or_else(|_| crate::vfs::read_to_string(&entity_dir, &sha_filename_alt))
-            .ok();
+        let mut sha_content = None;
+        for fname in &sha_filenames {
+            if let Ok(content) = crate::vfs::read_to_string(&entity_dir, fname) {
+                sha_content = Some(content);
+                break;
+            }
+        }
 
         if sha_content.is_none() {
-            warn!("Failed to read sha file: {}.sha(der)", actor.entity_type);
+            warn!("Failed to read sha file for: {}", actor.entity_type);
         }
 
         if let Some(sha_content) = sha_content {
@@ -360,17 +377,6 @@ pub fn spawn_layout_actor(
         }
     } else {
         // Static entity (BASICENTITY check) or trigger (has broadcast_radius)
-        let mut is_basic = layout_ctx.basic_types.contains(&actor.entity_type)
-            || layout_ctx
-                .basic_types
-                .iter()
-                .any(|t| t.eq_ignore_ascii_case(&actor.entity_type));
-        let is_trigger = actor.broadcast_radius.is_some();
-        if !is_basic && !is_trigger {
-            // User feedback: missing entity types from layout.et should be loaded on demand as basic entities
-            is_basic = true;
-        }
-
         let position = pos_override.unwrap_or(actor.position);
         // 180° Y rotation flips X and Z rotation directions
         let rotation = Quat::from_rotation_x(-actor.orientation.x.to_radians())

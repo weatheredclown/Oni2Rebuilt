@@ -153,6 +153,7 @@ pub enum ScrOniSysEvent {
         name: Option<String>,
     },
     Teleport {
+        script_entity: Entity,
         target: Entity,
         to: Option<Vec3>,
         face: Option<f32>,
@@ -301,6 +302,8 @@ pub struct ScriptExec {
     pub active: bool,
     /// Warned tracking cache preventing log flooding.
     pub warned_unimplemented: std::collections::HashSet<String>,
+    /// Number of frames this script has been alive. Used to delay first tick protecting hierarchy initialization natively.
+    pub ticks_alive: u32,
 }
 
 #[derive(Debug, Clone)]
@@ -355,7 +358,12 @@ pub fn update_broadcast_triggers(
     for (trigger_ent, mut trigger, trigger_tf) in &mut triggers {
         let center = trigger_tf.translation();
         trigger.world_center = center;
-        let r_sq = trigger.radius * trigger.radius;
+        
+        // Take the max scale axis to conservatively size the radius
+        let scale_vec = trigger_tf.compute_transform().scale;
+        let scale_max = scale_vec.x.max(scale_vec.y).max(scale_vec.z);
+        let actual_radius = trigger.radius * scale_max;
+        let r_sq = actual_radius * actual_radius;
 
         let mut currently_inside = std::collections::HashSet::new();
 
@@ -413,6 +421,7 @@ impl ScriptExec {
             current_light: None,
             active: true,
             warned_unimplemented: std::collections::HashSet::new(),
+            ticks_alive: 0,
         }
     }
 
@@ -433,17 +442,47 @@ impl ScriptExec {
 
             let script_fname = format!("{}.oni", filename.trim_end_matches(".xml").trim_end_matches(".oni"));
 
-            let paths_to_try = [
-                format!("{}/Scripts", ctx.layout_dir),
-                "Scripts".to_string(),
-            ];
+            let mut paths_to_try = Vec::new();
+            let mut push_path = |path: String| {
+                if path.is_empty() {
+                    return;
+                }
+                if !paths_to_try.iter().any(|p: &String| p.eq_ignore_ascii_case(&path)) {
+                    paths_to_try.push(path);
+                }
+            };
+
+            let layout_dir = ctx.layout_dir.trim_end_matches('/');
+            if script_name.starts_with('$') {
+                if !layout_dir.is_empty() {
+                    push_path(format!("{}/Scripts", layout_dir));
+                    push_path(format!("{}/scripts", layout_dir));
+                }
+                push_path("Scripts".to_string());
+                push_path("scripts".to_string());
+            } else {
+                push_path("Scripts".to_string());
+                push_path("scripts".to_string());
+                if !layout_dir.is_empty() {
+                    push_path(format!("{}/Scripts", layout_dir));
+                    push_path(format!("{}/scripts", layout_dir));
+                }
+            }
 
             for dir in &paths_to_try {
-                if let Ok(file) = load_script_file(dir, &script_fname) {
-                    for s in &file.scripts {
-                        self.available_scripts.insert(s.name.clone(), s.clone());
+                if crate::vfs::exists(dir, &script_fname) {
+                    match load_script_file(dir, &script_fname) {
+                        Ok(file) => {
+                            for s in &file.scripts {
+                                self.available_scripts.insert(s.name.clone(), s.clone());
+                            }
+                            return self.available_scripts.get(target_script).cloned();
+                        }
+                        Err(e) => {
+                            warn!("[ScrOni][{}] resolve_script: Error loading {}:\n{}", 
+                                  self.main_thread.script.name, script_fname, e);
+                        }
                     }
-                    return self.available_scripts.get(target_script).cloned();
                 }
             }
 
@@ -645,6 +684,9 @@ impl ScriptExec {
     }
 
     fn run_sequence(&mut self, tid: u32, now: f64, ctx: &mut ScroniContext) {
+        let mut instruction_count = 0;
+        let max_instructions = 10000;
+
         loop {
             // If we're inside a loop, continue that loop
             while !self.get_thread(tid).loop_stack.is_empty() {
@@ -655,7 +697,7 @@ impl ScriptExec {
                 let mut ls = self.get_thread_mut(tid).loop_stack.pop().unwrap();
                 let pre_len = self.get_thread(tid).loop_stack.len();
                 
-                let (active, push_back) = self.step_loop(tid, &mut ls, now, ctx);
+                let (active, push_back) = self.step_loop(tid, &mut ls, &mut instruction_count, max_instructions, now, ctx);
                 
                 if push_back {
                     let cur_len = self.get_thread(tid).loop_stack.len();
@@ -680,6 +722,13 @@ impl ScriptExec {
             
             // Continue sequence from PC
             while self.get_thread(tid).state == ExecState::Running {
+                if instruction_count >= max_instructions {
+                    warn!("[ScrOni][{}] Script exceeded {} instructions in a single frame natively, force-yielding to prevent engine lockup!", self.get_thread(tid).script.name, max_instructions);
+                    self.get_thread_mut(tid).state = ExecState::Yielded;
+                    return;
+                }
+                instruction_count += 1;
+
                 let seq_pc = self.get_thread(tid).seq_pc;
                 let len = self.get_thread(tid).script.sequence.len();
                 if seq_pc < len {
@@ -734,10 +783,17 @@ impl ScriptExec {
     }
 
     /// Step a loop. Returns (still_active, should_push_back).
-    fn step_loop(&mut self, tid: u32, ls: &mut LoopState, now: f64, ctx: &mut ScroniContext) -> (bool, bool) {
+    fn step_loop(&mut self, tid: u32, ls: &mut LoopState, ins_count: &mut usize, max_ins: usize, now: f64, ctx: &mut ScroniContext) -> (bool, bool) {
         match ls {
             LoopState::Forever { body, pc } => {
                 while *pc < body.len() && self.get_thread(tid).state == ExecState::Running {
+                    if *ins_count >= max_ins {
+                        warn!("[ScrOni][{}] Script exceeded {} instructions in a single frame conditionally, force-yielding to prevent engine lockup!", self.get_thread(tid).script.name, max_ins);
+                        self.get_thread_mut(tid).state = ExecState::Yielded;
+                        return (true, true);
+                    }
+                    *ins_count += 1;
+                    
                     let stmt = body[*pc].clone();
                     *pc += 1;
                     self.exec_stmt(tid, &stmt, now, ctx);
@@ -745,7 +801,7 @@ impl ScriptExec {
                 if let Some(res) = self.check_loop_state(tid) { return res; }
                 if self.get_thread(tid).state == ExecState::Running {
                     *pc = 0; // restart loop
-                    return (true, true);
+                    return (false, true); // active=false, push_back=true -> instantly loops without yielding a frame
                 }
                 (true, true) // blocked — keep loop
             }
@@ -756,6 +812,13 @@ impl ScriptExec {
                     return (false, false); // loop done
                 }
                 while *pc < body.len() && self.get_thread(tid).state == ExecState::Running {
+                    if *ins_count >= max_ins {
+                        warn!("[ScrOni][{}] Script exceeded {} instructions in a single frame natively, force-yielding to prevent engine lockup!", self.get_thread(tid).script.name, max_ins);
+                        self.get_thread_mut(tid).state = ExecState::Yielded;
+                        return (true, true);
+                    }
+                    *ins_count += 1;
+                    
                     let stmt = body[*pc].clone();
                     *pc += 1;
                     self.exec_stmt(tid, &stmt, now, ctx);
@@ -763,7 +826,7 @@ impl ScriptExec {
                 if let Some(res) = self.check_loop_state(tid) { return res; }
                 if self.get_thread(tid).state == ExecState::Running {
                     *pc = 0;
-                    return (true, true);
+                    return (false, true); // loop instantly to condition evaluater without yielding
                 }
                 (true, true)
             }
@@ -772,6 +835,13 @@ impl ScriptExec {
                     return (false, false);
                 }
                 while *pc < body.len() && self.get_thread(tid).state == ExecState::Running {
+                    if *ins_count >= max_ins {
+                        warn!("[ScrOni][{}] Script exceeded {} instructions in a single frame natively, force-yielding to prevent engine lockup!", self.get_thread(tid).script.name, max_ins);
+                        self.get_thread_mut(tid).state = ExecState::Yielded;
+                        return (true, true);
+                    }
+                    *ins_count += 1;
+                    
                     let stmt = body[*pc].clone();
                     *pc += 1;
                     self.exec_stmt(tid, &stmt, now, ctx);
@@ -781,7 +851,7 @@ impl ScriptExec {
                     *remaining -= 1;
                     *pc = 0;
                     let still_active = *remaining > 0;
-                    return (still_active, still_active);
+                    return (false, still_active);
                 }
                 (true, true)
             }
@@ -790,6 +860,13 @@ impl ScriptExec {
                     return (false, false);
                 }
                 while *pc < body.len() && self.get_thread(tid).state == ExecState::Running {
+                    if *ins_count >= max_ins {
+                        warn!("[ScrOni][{}] Script exceeded {} instructions in a single frame natively, force-yielding to prevent engine lockup!", self.get_thread(tid).script.name, max_ins);
+                        self.get_thread_mut(tid).state = ExecState::Yielded;
+                        return (true, true);
+                    }
+                    *ins_count += 1;
+
                     let stmt = body[*pc].clone();
                     *pc += 1;
                     self.exec_stmt(tid, &stmt, now, ctx);
@@ -1296,6 +1373,7 @@ impl ScriptExec {
                 if ctx.player != Some(self.owner) {
                     self.sys_requests.push(SysRequest::UsePad(self.owner));
                 }
+                self.get_thread_mut(tid).state = ExecState::Yielded;
             }
 
             Stmt::CameraSetPackage(expr) => {
@@ -1413,6 +1491,14 @@ impl ScriptExec {
                     }
                 }
             }
+            // AI Commands that inherently block execution natively waiting for physical locomotion responses
+            Stmt::Retreat | Stmt::Patrol(_) | Stmt::Follow(_) | Stmt::Attack(_) => {
+                if self.warned_unimplemented.insert(format!("{:?}", stmt)) {
+                    info!("VM: Unimplemented AI action {:?} (Yielding continuously)", stmt);
+                }
+                self.get_thread_mut(tid).state = ExecState::Yielded;
+            }
+
             _ => {
                 // Non-silently ignore unimplemented commands for now
                 if self.warned_unimplemented.insert(format!("{:?}", stmt)) {
@@ -1815,6 +1901,12 @@ pub fn scroni_tick_system(
     let player_ent = player_query.iter().next();
 
     for (entity, mut script, transform) in &mut query {
+        if script.exec.ticks_alive == 0 {
+            script.exec.ticks_alive += 1;
+            continue;
+        }
+        script.exec.ticks_alive += 1;
+
         let mut ctx = ScroniContext {
             all_entities: &all_entities,
             triggers: &triggers,
@@ -1888,6 +1980,7 @@ pub fn scroni_tick_system(
                 }
                 SysRequest::Teleport { target, to, face } => {
                     commands.trigger(ScrOniSysEvent::Teleport {
+                        script_entity: entity,
                         target,
                         to,
                         face,
@@ -2017,6 +2110,7 @@ pub fn scroni_sys_event_observer(
     mut camera_query: Query<&mut crate::camera::components::CameraRig>,
     mut lights_query: Query<(&Name, Option<&mut PointLight>, Option<&mut SpotLight>)>,
     mut script_query: Query<(Entity, &mut ScrOniScript, Option<&Name>)>,
+    player_query: Query<(), With<crate::player::components::Player>>,
 ) {
     let ev = (*trigger).clone();
     let (mut materials, mut meshes, mut images, mut skinned_mesh_ibp) = assets;
@@ -2101,7 +2195,8 @@ pub fn scroni_sys_event_observer(
         ScrOniSysEvent::Spawn { script_entity: _, script, assign_to, at, name } => {
             info!("Received spawn request: script={}, at={:?}, name={:?}", script, at, name);
             
-            let pos = at.unwrap_or(Vec3::ZERO);
+            // Scripts operate purely in ONI coordinates recursively natively. Translate down into Bevy spatial coordinates physically here.
+            let pos_opt = at.map(|p| Vec3::new(-p.x, p.y, -p.z));
             let actor_name = name.clone().unwrap_or(script.clone());
             
             if let (Some(ctx), Some(paths)) = (layout_data.0.as_ref(), layout_data.1.as_ref()) {
@@ -2122,11 +2217,11 @@ pub fn scroni_sys_event_observer(
                     &script,
                     ctx,
                     paths,
-                    Some(pos),
+                    pos_opt,
                     true,
                     Some(&actor_name),
                 ) {
-                    info!("Spawned {} at {:?}", actor_name, pos);
+                    info!("Spawned {} with position override {:?}", actor_name, pos_opt);
                     if let Some(var_name) = assign_to {
                         warn!("Assigning spawn result to {} is not yet supported synchronously.", var_name);
                     }
@@ -2139,8 +2234,9 @@ pub fn scroni_sys_event_observer(
             }
 
             // Fallback Stub: spawn a basic entity placeholder instead if proper spawning fails
+            let pos_fallback = pos_opt.unwrap_or(Vec3::ZERO);
             let _new_entity = commands.spawn((
-                Transform::from_translation(pos),
+                Transform::from_translation(pos_fallback),
                 Visibility::Visible,
                 crate::oni2_loader::Oni2Entity { name: actor_name.clone() },
                 Name::new(actor_name.clone()),
@@ -2151,7 +2247,14 @@ pub fn scroni_sys_event_observer(
                 warn!("Assigning spawn result to {} is not yet supported synchronously.", var_name);
             }
         }
-        ScrOniSysEvent::Teleport { target, to, face } => {
+        ScrOniSysEvent::Teleport { script_entity, target, to, face } => {
+            if player_query.get(target).is_ok() {
+                let caller_name = if let Ok((_, script, _)) = script_query.get(script_entity) {
+                    script.exec.main_thread.script.name.clone()
+                } else {
+                    "UnknownScript".to_string()
+                };
+            }
             if let Ok((mut transform, mut opt_vel)) = transform_query.get_mut(target) {
                 if let Some(pos) = to {
                     let bevy_pos = Vec3::new(-pos.x, pos.y, -pos.z);

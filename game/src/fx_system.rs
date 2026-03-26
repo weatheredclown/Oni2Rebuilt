@@ -40,8 +40,8 @@ impl Plugin for FxPlugin {
            .add_observer(handle_fx_action)
            .add_systems(Update, handle_actor_fx_attachments)
            .add_systems(Update, apply_fx_start_inactive)
-           .add_systems(Update, uv_animator_system)
-           .add_systems(Update, (handle_actor_sleep, handle_actor_awake));
+           .add_systems(Update, sync_intended_fx_state)
+           .add_systems(Update, uv_animator_system);
     }
 }
 
@@ -283,7 +283,8 @@ fn handle_spawn_fx(
                 }
 
                 if let Some(parent) = ev.parent {
-                    ec.set_parent_in_place(parent);
+                    let child_id = ec.id();
+                    commands.entity(parent).add_child(child_id);
                 }
             }
         }
@@ -331,7 +332,8 @@ fn handle_spawn_ptx(
         }
 
         if let Some(parent) = ev.parent {
-            ec.set_parent_in_place(parent);
+            let child_id = ec.id();
+            commands.entity(parent).add_child(child_id);
         }
     } else {
         warn!("SpawnPtx: Particle system '{}' not found in ParticleLibrary", ev.ptx_name);
@@ -346,6 +348,8 @@ fn handle_actor_fx_attachments(
     _ptx_lib: Res<ParticleLibrary>,
 ) {
     for (entity, fx_type) in query.iter() {
+        commands.entity(entity).insert(IntendedFxState(fx_type.start_active));
+        
         if let Some(ref fx_name) = fx_type.fx_name {
             let lower_name = fx_name.to_lowercase();
             if let Some(_fx_def) = fx_lib.effects.get(&lower_name) {
@@ -384,59 +388,40 @@ pub struct FxAction {
 /// Observer to intercept FxAction triggers and execute FX activation/deactivation.
 fn handle_fx_action(
     trigger: On<FxAction>,
-    children_query: Query<&Children>,
-    mut spawner_query: Query<(&mut EffectSpawner, &mut IntendedFxState)>,
-    actor_sleep_query: Query<&crate::oni2_loader::components::ActorAsleep>,
+    mut target_query: Query<&mut IntendedFxState>,
 ) {
     let evt = trigger.event();
     let act_lower = evt.action.to_lowercase();
     if act_lower == "activate" || act_lower == "deactivate" {
         let to_active = act_lower == "activate";
-        let is_asleep = actor_sleep_query.get(evt.target).is_ok();
-        let mut stack = vec![evt.target];
-        while let Some(ent) = stack.pop() {
-            if let Ok((mut spawner, mut intended)) = spawner_query.get_mut(ent) {
-                intended.0 = to_active;
-                spawner.active = to_active && !is_asleep;
-            }
-            if let Ok(children) = children_query.get(ent) {
-                stack.extend(children.iter());
-            }
+        if let Ok(mut intended) = target_query.get_mut(evt.target) {
+            intended.0 = to_active;
+        } else {
+            warn!("FxAction Target {:?} missing IntendedFxState", evt.target);
         }
     }
 }
 
-fn handle_actor_sleep(
-    query: Query<Entity, Added<crate::oni2_loader::components::ActorAsleep>>,
-    children_query: Query<&Children>,
-    mut spawner_query: Query<&mut EffectSpawner, With<IntendedFxState>>,
+/// Continuous system overriding missing initial state transfers mechanically verifying child effects 
+/// properly follow parent intended directives regardless of when commands natively flush spawning them.
+fn sync_intended_fx_state(
+    parent_q: Query<(&IntendedFxState, Option<&crate::oni2_loader::components::ActorAsleep>, &Children)>,
+    mut spawner_q: Query<(&mut EffectSpawner, &mut IntendedFxState), Without<Children>>,
 ) {
-    for entity in query.iter() {
-        let mut stack = vec![entity];
-        while let Some(ent) = stack.pop() {
-            if let Ok(mut spawner) = spawner_query.get_mut(ent) {
-                spawner.active = false;
-            }
-            if let Ok(children) = children_query.get(ent) {
-                stack.extend(children.iter());
-            }
-        }
-    }
-}
-
-fn handle_actor_awake(
-    mut removed: RemovedComponents<crate::oni2_loader::components::ActorAsleep>,
-    children_query: Query<&Children>,
-    mut spawner_query: Query<(&mut EffectSpawner, &IntendedFxState)>,
-) {
-    for entity in removed.read() {
-        let mut stack = vec![entity];
-        while let Some(ent) = stack.pop() {
-            if let Ok((mut spawner, intended)) = spawner_query.get_mut(ent) {
-                spawner.active = intended.0;
-            }
-            if let Ok(children) = children_query.get(ent) {
-                stack.extend(children.iter());
+    for (parent_intended, maybe_asleep, children) in &parent_q {
+        let should_be_active = parent_intended.0 && maybe_asleep.is_none();
+        for child_ent in children.iter() {
+            if let Ok((mut spawner, mut child_intended)) = spawner_q.get_mut(child_ent) {
+                if child_intended.0 != parent_intended.0 || spawner.active != should_be_active {
+                    if spawner.active && !should_be_active {
+                        // Instantly visually terminate particle emissions cleanly 
+                        // (without popping already birthed particles violently)
+                        spawner.active = false;
+                    } else {
+                        spawner.active = should_be_active;
+                    }
+                    child_intended.0 = parent_intended.0;
+                }
             }
         }
     }

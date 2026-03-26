@@ -159,7 +159,13 @@ pub fn parse_actor_xml(dir: &str, filename: &str, template_dir: &str) -> Option<
     // since they are heavily nested and commonly exist in 'Prop' or the root.
     for content in &chain {
         // Fallback or override values
-        if let Some(v) = extract_xml_attr(content, "EntityType") { entity_type = Some(v); }
+        if let Some(v) = extract_xml_attr(content, "EntityType") { 
+            if !v.eq_ignore_ascii_case("none") {
+                entity_type = Some(v); 
+            } else {
+                info!("EntityType is none in actor xml {}", filename);
+            }
+        }
         if let Some(v) = extract_root_xml_attr(content, "updatestate") { updatestate = Some(v); }
         if let Some(v) = extract_root_xml_attr(content, "spawnlater") { spawn_later = v == "1" || v.eq_ignore_ascii_case("true"); }
         if let Some(v) = extract_xml_attr(content, "Position").and_then(|s| parse_vec3(&s)) { position = v; }

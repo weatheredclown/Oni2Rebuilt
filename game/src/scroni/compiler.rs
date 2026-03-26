@@ -778,7 +778,12 @@ impl Compiler {
                 self.advance();
             }
 
-            let val = self.parse_expr();
+            let val = if is_expr_start(self.code()) {
+                self.parse_expr()
+            } else {
+                Expr::IntLit(1) // Flag keywords like 'enemy' take no args
+            };
+            
             conditions.push((key, val));
             
             // Optional comma between conditions
@@ -1036,7 +1041,13 @@ impl Compiler {
                         self.skip_if(TokenCode::RightParen);
                         Expr::Call { name, args }
                     } else {
-                        Expr::Var(name)
+                        if name == "true" {
+                            Expr::IntLit(1)
+                        } else if name == "false" {
+                            Expr::IntLit(0)
+                        } else {
+                            Expr::Var(name)
+                        }
                     }
                 } else {
                     self.error(format!("expected expression, found {:?} '{}'", self.code(), self.peek().text));

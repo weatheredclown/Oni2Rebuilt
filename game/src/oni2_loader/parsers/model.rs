@@ -92,15 +92,26 @@ pub fn parse_mod(content: &str, entity_dir: &str) -> Oni2Model {
                 i += 1;
             }
 
-            let shader_name = format!("{}.shader", name);
-            if let Ok(_sha_content) = crate::vfs::read_to_string(&entity_dir, &shader_name) {
-                // TODO: put shader loading here
-                
+            let mut passes = Vec::new();
+            let mut found_shader = None;
+            let mat_shader = format!("{}.shader", name);
+            
+            if crate::vfs::exists(entity_dir, &mat_shader) {
+                found_shader = Some(mat_shader);
+            } else if let Some(tex) = &texture_name {
+                let tex_shader = format!("{}.shader", tex);
+                if crate::vfs::exists(entity_dir, &tex_shader) {
+                    found_shader = Some(tex_shader);
+                }
             }
-                        let mut passes = Vec::new();
-            let shader_name = format!("{}.shader", name);
-            if let Ok(sha_content) = crate::vfs::read_to_string(entity_dir, &shader_name) {
-                passes = parse_shader(&sha_content);
+
+            if let Some(shader_name) = found_shader {
+                if let Ok(sha_content) = crate::vfs::read_to_string(entity_dir, &shader_name) {
+                    passes = parse_shader(&sha_content);
+                }
+            } else if texture_name.is_none() {
+                // If there's no shader and no explicit texture, the texture is the material name
+                texture_name = Some(name.clone());
             }
 
             materials.push(Oni2Material {
@@ -409,7 +420,7 @@ pub fn parse_mod_binary(data: &[u8], entity_dir: &str) -> Option<Oni2Model> {
             off += 1;
         }
         let texture_raw = std::str::from_utf8(&data[tex_start..off]).unwrap_or("").trim().to_string();
-        let texture_name = if texture_raw.is_empty() { None } else { Some(texture_raw) };
+        let mut texture_name = if texture_raw.is_empty() { None } else { Some(texture_raw) };
         // Skip null terminator + all consecutive null padding
         while off < data.len() && data[off] == 0 {
             off += 1;
@@ -418,9 +429,25 @@ pub fn parse_mod_binary(data: &[u8], entity_dir: &str) -> Option<Oni2Model> {
         info!("  Material: name='{}' pkts={} prims={} texture={:?}", name, pkt_count, prim_count, texture_name);
 
         let mut passes = Vec::new();
-        let shader_name = format!("{}.shader", name);
-        if let Ok(sha_content) = crate::vfs::read_to_string(entity_dir, &shader_name) {
-            passes = parse_shader(&sha_content);
+        let mut found_shader = None;
+        let mat_shader = format!("{}.shader", name);
+        
+        if crate::vfs::exists(entity_dir, &mat_shader) {
+            found_shader = Some(mat_shader);
+        } else if let Some(tex) = &texture_name {
+            let tex_shader = format!("{}.shader", tex);
+            if crate::vfs::exists(entity_dir, &tex_shader) {
+                found_shader = Some(tex_shader);
+            }
+        }
+
+        if let Some(shader_name) = found_shader {
+            if let Ok(sha_content) = crate::vfs::read_to_string(entity_dir, &shader_name) {
+                passes = parse_shader(&sha_content);
+            }
+        } else if texture_name.is_none() {
+            // If there's no shader and no explicit texture, the texture is the material name
+            texture_name = Some(name.clone());
         }
 
         materials.push(Oni2Material {
@@ -1878,7 +1905,7 @@ mod tests {
             eprintln!("\n=== {} ({} bytes, mats={} adj={} prim={} mtx={} reskin={}) ===",
                 fname, data.len(), n_materials, n_adjuncts, n_primitives, n_matrices, n_reskins);
 
-            if let Some(model) = parse_mod_binary(&data, base_str) {
+            if let Some(model) = parse_mod_binary(&data, &base_str) {
                 let total_adj: usize = model.packets.iter().map(|p| p.adjuncts.len()).sum();
                 let total_strips: usize = model.packets.iter().map(|p| p.strips.len()).sum();
                 let total_strip_verts: usize = model.packets.iter()
@@ -2436,19 +2463,18 @@ mod tests {
 
         let mut entries: Vec<_> = crate::vfs::read_dir(base).expect("read dir")
             .into_iter()
-            .filter_map(|e| e.ok())
-            .filter(|e: &crate::vfs::VfsEntry| e.path().extension().map_or(false, |ext| ext == "anim"))
+            .filter(|e| std::path::Path::new(&e.path).extension().map_or(false, |ext| ext == "anim"))
             .collect();
-        entries.sort_by_key(|e: &crate::vfs::VfsEntry| e.file_name());
+        entries.sort_by_key(|e| std::path::Path::new(&e.path).file_name().unwrap_or_default().to_string_lossy().to_string());
 
         let mut count_match = 0;
         let mut count_mismatch = 0;
         let mut channel_counts: std::collections::BTreeMap<u32, Vec<String>> = std::collections::BTreeMap::new();
 
         for entry in &entries {
-            let path = entry.path();
-            let name = path.file_name().unwrap().to_string_lossy().to_string();
-            let data = crate::vfs::read("", &path).expect("read anim");
+            let path = &entry.path;
+            let name = std::path::Path::new(path).file_name().unwrap_or_default().to_string_lossy().to_string();
+            let data = crate::vfs::read("", path).expect("read anim");
             match parse_anim(&data) {
                 Some(anim) => {
                     let marker = if anim.num_channels as usize == expected_channels { "MATCH" } else { "     " };
@@ -2488,12 +2514,12 @@ mod tests {
 
         let library = load_anim_library(entity_dir, "kno", &skel);
 
-        eprintln!("Loaded {} animations into library", library.anims.len());
-        let mut aliases: Vec<&str> = library.aliases();
+        eprintln!("Loaded {} animations into library", library.0.anims.len());
+        let mut aliases: Vec<&str> = library.0.aliases();
         aliases.sort();
         for alias in &aliases {
             let id = AnimId::new(alias);
-            let anim = library.anims.get(&id).unwrap();
+            let anim = library.0.anims.get(&id).unwrap();
             eprintln!("  {:40} -> {} frames, ch={}, loop={}",
                 alias, anim.num_frames, anim.num_channels, anim.is_loop);
         }
@@ -2504,12 +2530,12 @@ mod tests {
         assert_eq!(RUN_FWD, runtime);
         eprintln!("\nConst AnimId test: ANIMNAV_RUN_FORWARD = {}", RUN_FWD);
 
-        if library.anims.contains_key(&RUN_FWD) {
+        if library.0.anims.contains_key(&RUN_FWD) {
             eprintln!("ANIMNAV_RUN_FORWARD found in library!");
         } else {
             eprintln!("ANIMNAV_RUN_FORWARD NOT found (may be channel mismatch)");
         }
 
-        assert!(!library.anims.is_empty(), "Library should not be empty");
+        assert!(!library.0.anims.is_empty(), "Library should not be empty");
     }
 }

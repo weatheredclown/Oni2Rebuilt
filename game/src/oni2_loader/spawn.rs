@@ -740,15 +740,13 @@ pub fn spawn_oni2_entity_with_rotation(
         for t in &ent_type.bound_tris {
             tri_indices.push(*t);
         }
-        Collider::try_trimesh(ent_type.bounds.vertices.clone(), tri_indices).unwrap_or_else(|_| {
+        Collider::try_trimesh(ent_type.bounds.vertices.clone(), tri_indices).ok().or_else(|| {
             Collider::convex_hull(ent_type.bounds.vertices.clone())
-                .unwrap_or_else(|| Collider::cuboid(1.0, 1.0, 1.0))
         })
     } else if !ent_type.bounds.vertices.is_empty() {
         Collider::convex_hull(ent_type.bounds.vertices.clone())
-            .unwrap_or_else(|| Collider::cuboid(1.0, 1.0, 1.0))
     } else {
-        Collider::cuboid(1.0, 1.0, 1.0)
+        None
     };
 
     let transform = Transform::from_translation(position).with_rotation(rotation);
@@ -770,7 +768,7 @@ pub fn spawn_oni2_entity_with_rotation(
         InGameEntity,
     ));
 
-    if ent_type.skeleton.is_none() && ent_type.anim_library.is_none() {
+    if collider.is_some() && ent_type.skeleton.is_none() && ent_type.anim_library.is_none() {
         ec.insert(RigidBody::Static); // Truly static objects get static bodies
     }
 
@@ -799,12 +797,14 @@ pub fn spawn_oni2_entity_with_rotation(
         Vec::new()
     };
 
-    if use_gpu_skinning && ent_type.skeleton.as_ref().map(|s| s.positions.len()).unwrap_or(0) == 1 {
-        commands.entity(joint_entities[0]).insert((collider, RigidBody::Kinematic, avian3d::prelude::LinearVelocity::default(), avian3d::prelude::AngularVelocity::default()));
-    } else if use_gpu_skinning {
-        commands.entity(parent_entity).insert((collider, RigidBody::Kinematic, avian3d::prelude::LinearVelocity::default(), avian3d::prelude::AngularVelocity::default()));
-    } else {
-        commands.entity(parent_entity).insert(collider);
+    if let Some(c) = collider {
+        if use_gpu_skinning && ent_type.skeleton.as_ref().map(|s| s.positions.len()).unwrap_or(0) == 1 {
+            commands.entity(joint_entities[0]).insert((c, RigidBody::Kinematic, avian3d::prelude::LinearVelocity::default(), avian3d::prelude::AngularVelocity::default()));
+        } else if use_gpu_skinning {
+            commands.entity(parent_entity).insert((c, RigidBody::Kinematic, avian3d::prelude::LinearVelocity::default(), avian3d::prelude::AngularVelocity::default()));
+        } else {
+            commands.entity(parent_entity).insert(c);
+        }
     }
 
     // Determine the default animation

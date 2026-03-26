@@ -62,3 +62,69 @@ pub fn parse_entity_type(content: &str) -> Oni2EntityType {
         jump_controller: None,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn parsed(content: &str) -> Oni2EntityType {
+        parse_entity_type(content)
+    }
+
+    #[test]
+    fn parses_flat_format_with_missing_extensions() {
+        let text = r#"
+        {
+            BASICENTITY kno
+                LOD     kno_LODs0
+                SKEL    kno_skel
+                BOUND   Bound
+                RADIUS  42.5
+        }
+        "#;
+
+        let parsed = parsed(text);
+        assert_eq!(parsed.model_file.as_deref(), Some("kno_LODs0.mod"));
+        assert_eq!(parsed.skel_file.as_deref(), Some("kno_skel.skel"));
+        assert_eq!(parsed.bound_file.as_deref(), Some("Bound"));
+        assert!((parsed.lod_radius - 42.5).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn prefers_high_over_followup_lod_entries() {
+        let text = r#"
+        LodGroup {
+            high    HeroShape0        9999
+            lod     HeroFallback      200
+            radius  38.739
+        }
+        "#;
+
+        let parsed = parsed(text);
+        assert_eq!(parsed.model_file.as_deref(), Some("HeroShape0.mod"));
+        assert!((parsed.lod_radius - 38.739).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn ignores_none_entries_and_preserves_extensions() {
+        let text = r#"
+        version: 101
+        renderable {
+            LodGroup {
+                high    none    0
+                lod     gadgetShape1.mod 0
+                radius  15
+            }
+            skel    none
+        }
+        physics {
+            bound   none
+        }
+        "#;
+
+        let parsed = parsed(text);
+        assert_eq!(parsed.model_file.as_deref(), Some("gadgetShape1.mod"));
+        assert!(parsed.skel_file.is_none());
+        assert!(parsed.bound_file.is_none());
+    }
+}

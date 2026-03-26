@@ -17,6 +17,7 @@ use avian3d::prelude::*;
 use bevy::diagnostic::{FrameTimeDiagnosticsPlugin, DiagnosticsStore};
 use bevy::gizmos::config::GizmoConfigStore;
 use bevy::prelude::*;
+use bevy::ecs::relationship::Relationship;
 use uuid::Uuid;
 
 use camera::components::{CameraRig, PrototypeElement};
@@ -247,7 +248,7 @@ fn main() {
         ),
     )
     .add_systems(Startup, (setup_fps_counter, disable_physics_debug, oni2_loader::load_global_registries))
-    .add_systems(Update, (update_fps_counter, toggle_physics_debug, toggle_debug_light, debug_kill_creatures, oni2_loader::toggle_debug_fog, oni2_loader::toggle_debug_light_grid, oni2_loader::update_debug_light_grid));
+    .add_systems(Update, (update_fps_counter, toggle_physics_debug, toggle_debug_light, debug_kill_creatures, oni2_loader::toggle_debug_fog, oni2_loader::toggle_debug_light_grid, oni2_loader::update_debug_light_grid, debug_scan_player_geometry));
 
     if diagnostics_mode {
         app.add_plugins(bevy::diagnostic::LogDiagnosticsPlugin::default());
@@ -813,5 +814,44 @@ fn debug_kill_creatures(
             count += 1;
         }
         info!("Killed {} active AiFighter creatures!", count);
+    }
+}
+
+/// F9 scans all entities within 5 meters of the player and prints them to the console.
+fn debug_scan_player_geometry(
+    keyboard: Res<ButtonInput<KeyCode>>,
+    player_query: Query<&GlobalTransform, With<crate::player::components::Player>>,
+    query: Query<(Entity, &GlobalTransform, Option<&Name>, Option<&ChildOf>)>,
+    names: Query<&Name>,
+    parents: Query<&ChildOf>,
+) {
+    if keyboard.just_pressed(KeyCode::F9) {
+        let origin: Vec3 = if let Some(player_tf) = player_query.iter().next() {
+            player_tf.translation()
+        } else {
+            // Fallback for formation or sandbox modes without an explicit player
+            Vec3::ZERO
+        };
+
+        info!("--- SCANNING PLAYER GEOMETRY (< 5m from {:.2}, {:.2}, {:.2}) ---", origin.x, origin.y, origin.z);
+        let mut count = 0;
+        for (entity, global_transform, name_opt, parent_opt) in &query {
+            let dist = global_transform.translation().distance(origin);
+            if dist <= 5.0 {
+                count += 1;
+                let name = name_opt.map(|n: &Name| n.as_str()).unwrap_or("<unnamed>");
+                
+                let mut path = String::new();
+                let mut curr_parent: Option<&ChildOf> = parent_opt;
+                while let Some(p) = curr_parent {
+                    let p_name = names.get(p.get()).map(|n| n.as_str()).unwrap_or("<unnamed_parent>");
+                    path = format!("{} -> {}", p_name, path);
+                    curr_parent = parents.get(p.get()).ok();
+                }
+                
+                info!("Entity: {:?} | Name: '{}' | Dist: {:.2} | Path: {}", entity, name, dist, path);
+            }
+        }
+        info!("--- END SCAN (Total: {}) ---", count);
     }
 }
