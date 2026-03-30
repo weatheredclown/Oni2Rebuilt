@@ -17,17 +17,25 @@ pub fn curve_follower_system(
         // `follower.speed` represents real-world speed (meters per second).
         let current_pos = follower.curve.get_curve_point(follower.phase);
         let epsilon = 0.001;
-        
-        let delta_phase = if follower.speed > 0.0 { epsilon } else { -epsilon };
+
+        let delta_phase = if follower.speed > 0.0 {
+            epsilon
+        } else {
+            -epsilon
+        };
         let mut lookahead_phase = follower.phase + delta_phase;
-        
+
         // Handle boundaries to evaluate interior derivatives
-        if lookahead_phase > 1.0 { lookahead_phase = 1.0; }
-        if lookahead_phase < 0.0 { lookahead_phase = 0.0; }
-        
+        if lookahead_phase > 1.0 {
+            lookahead_phase = 1.0;
+        }
+        if lookahead_phase < 0.0 {
+            lookahead_phase = 0.0;
+        }
+
         let lookahead_pos = follower.curve.get_curve_point(lookahead_phase);
         let dist = current_pos.distance(lookahead_pos);
-        
+
         let phase_per_meter = if dist > 0.00001 {
             (lookahead_phase - follower.phase).abs() / dist
         } else {
@@ -141,7 +149,11 @@ pub fn scroni_curve_bridge_system(
                                     let target_val = *target;
                                     let seconds_val = *seconds;
                                     let dist = target_val - follower.phase;
-                                    follower.speed = if seconds_val > 0.0 { dist / seconds_val } else { 0.0 };
+                                    follower.speed = if seconds_val > 0.0 {
+                                        dist / seconds_val
+                                    } else {
+                                        0.0
+                                    };
                                     follower.target_phase = target_val;
                                     follower.reached_target = false;
                                     follower.wrap_around = false;
@@ -157,7 +169,13 @@ pub fn scroni_curve_bridge_system(
                                 }
                             }
                         }
-                        scroni::vm::BlockingAction::PlayAnimation { name, hold, loop_anim, rate, .. } => {
+                        scroni::vm::BlockingAction::PlayAnimation {
+                            name,
+                            hold,
+                            loop_anim,
+                            rate,
+                            ..
+                        } => {
                             if let Some(lib) = anim_lib.as_ref() {
                                 if let Some(ref mut state) = anim_state.as_deref_mut() {
                                     let name_val = name.clone();
@@ -167,7 +185,9 @@ pub fn scroni_curve_bridge_system(
                                         state.looping = *loop_anim;
                                         state.speed_multiplier = rate_val.unwrap_or(1.0);
                                         if hold_val {
-                                            t.blocking = Some(scroni::vm::BlockingAction::WaitingForAnimation);
+                                            t.blocking = Some(
+                                                scroni::vm::BlockingAction::WaitingForAnimation,
+                                            );
                                         } else {
                                             t.blocking = None;
                                             t.state = scroni::vm::ExecState::Running;
@@ -188,7 +208,10 @@ pub fn scroni_curve_bridge_system(
                         scroni::vm::BlockingAction::WaitingForAnimation => {
                             if let Some(ref state) = anim_state.as_deref() {
                                 let num_frames = state.anim.frames.len() as f32;
-                                if num_frames > 0.0 && state.current_time >= num_frames - 1.0 && !state.looping {
+                                if num_frames > 0.0
+                                    && state.current_time >= num_frames - 1.0
+                                    && !state.looping
+                                {
                                     t.blocking = None;
                                     t.state = scroni::vm::ExecState::Running;
                                 }
@@ -334,7 +357,11 @@ pub fn load_anim_library(
     entity_dir: &str,
     entity_name: &str,
     skeleton: &Oni2Skeleton,
-) -> (Oni2AnimLibrary, Option<crate::oni2_loader::parsers::loco::LocomotionController>, Option<crate::oni2_loader::parsers::jump::JumpController>) {
+) -> (
+    Oni2AnimLibrary,
+    Option<crate::oni2_loader::parsers::loco::LocomotionController>,
+    Option<crate::oni2_loader::parsers::jump::JumpController>,
+) {
     let mut expected_channels = skeleton.expected_anim_channels();
     if expected_channels == 0 {
         expected_channels = skeleton.positions.len() * 3 + 3;
@@ -350,7 +377,10 @@ pub fn load_anim_library(
     let tune_anims = format!("{}/{}.anims", tune_entity, entity_name);
     let entity_anims = format!("{}/{}.anims", entity_dir, entity_name);
 
-    info!("Attempting to load anims from tune: {} and fallback entity: {}", tune_anims, entity_anims);
+    info!(
+        "Attempting to load anims from tune: {} and fallback entity: {}",
+        tune_anims, entity_anims
+    );
 
     let anims_path = if crate::vfs::exists("", &tune_anims) {
         tune_anims
@@ -359,7 +389,12 @@ pub fn load_anim_library(
     };
 
     if let Ok(content) = crate::vfs::read_to_string("", &anims_path) {
-        crate::oni2_loader::parsers::anims::parse_anims_content(&content, &mut alias_map, &mut loco_pkg, &mut jump_pkg);
+        crate::oni2_loader::parsers::anims::parse_anims_content(
+            &content,
+            &mut alias_map,
+            &mut loco_pkg,
+            &mut jump_pkg,
+        );
     } else {
         info!("No .anims file found for {}", entity_name);
     }
@@ -436,9 +471,14 @@ pub fn load_anim_library(
             }
             let loco_path = format!("{}.loco", filename);
             if let Ok(loco_content) = crate::vfs::read_to_string(&loco_dir, &loco_path) {
-                Some(crate::oni2_loader::parsers::loco::parse_loco_content(&loco_content))
+                Some(crate::oni2_loader::parsers::loco::parse_loco_content(
+                    &loco_content,
+                ))
             } else {
-                warn!("Could not read locomotion package: {}/{}", loco_dir, loco_path);
+                warn!(
+                    "Could not read locomotion package: {}/{}",
+                    loco_dir, loco_path
+                );
                 None
             }
         } else {
@@ -460,7 +500,9 @@ pub fn load_anim_library(
             }
             let jump_path = format!("{}.jump", filename);
             if let Ok(jump_content) = crate::vfs::read_to_string(&jump_dir, &jump_path) {
-                Some(crate::oni2_loader::parsers::jump::parse_jump_content(&jump_content))
+                Some(crate::oni2_loader::parsers::jump::parse_jump_content(
+                    &jump_content,
+                ))
             } else {
                 warn!("Could not read jump package: {}/{}", jump_dir, jump_path);
                 None
@@ -472,7 +514,11 @@ pub fn load_anim_library(
         None
     };
 
-    (Oni2AnimLibrary { anims, debug_names }, locomotion, jump_controller)
+    (
+        Oni2AnimLibrary { anims, debug_names },
+        locomotion,
+        jump_controller,
+    )
 }
 
 /// Controls visibility of debug collision bounds wireframes.
@@ -731,9 +777,9 @@ pub fn frame_lerp(state: &mut Oni2AnimState, idx_a: usize, idx_b: usize, t: f32)
     let a = &anim.frames[idx_a];
     let b = &anim.frames[idx_b];
     let len = current_frame.len().min(a.len()).min(b.len());
-    
+
     let rot_flags = &skeleton.channel_is_rot;
-    
+
     for i in 0..len {
         let is_rot = if rot_flags.len() >= len {
             rot_flags[i]
@@ -751,9 +797,9 @@ pub fn frame_lerp(state: &mut Oni2AnimState, idx_a: usize, idx_b: usize, t: f32)
             current_frame[i] = a[i] + diff * t;
         } else {
             // Linear interpolation for translations
-        current_frame[i] = a[i] + (b[i] - a[i]) * t;
+            current_frame[i] = a[i] + (b[i] - a[i]) * t;
+        }
     }
-}
 }
 
 /// Update animation: advance frame, recompute bone transforms, rebuild meshes.
@@ -834,7 +880,7 @@ pub fn update_oni2_animation(
             if let Some(y_rot) = frame.first() {
                 if let Ok((mut tf, mut opt_lvel, mut opt_avel)) = transform_query.get_mut(entity) {
                     let new_rot = anim_state.base_rotation * Quat::from_rotation_y(*y_rot);
-                    
+
                     let dt = time.delta_secs();
                     if dt > 0.0001 {
                         if let Some(lv) = opt_lvel.as_deref_mut() {
@@ -844,7 +890,9 @@ pub fn update_oni2_animation(
                             let diff = new_rot * tf.rotation.inverse();
                             let (axis, angle) = diff.to_axis_angle();
                             let mut angular_vel = axis * (angle / dt);
-                            if angular_vel.is_nan() { angular_vel = Vec3::ZERO; }
+                            if angular_vel.is_nan() {
+                                angular_vel = Vec3::ZERO;
+                            }
                             av.0 = angular_vel;
                         }
                     }
@@ -855,7 +903,10 @@ pub fn update_oni2_animation(
             continue;
         }
 
-        let mut bone_transforms = crate::oni2_loader::utils::bone::compute_animated_bone_transforms(&anim_state.skeleton, frame);
+        let mut bone_transforms = crate::oni2_loader::utils::bone::compute_animated_bone_transforms(
+            &anim_state.skeleton,
+            frame,
+        );
 
         // Strip root motion for characters: zero out root bone XZ translation so the model
         // stays pinned to its entity origin. Keep Y for vertical anim motion.
@@ -873,7 +924,9 @@ pub fn update_oni2_animation(
         // Update joint entity transforms for GPU skinning
         for (i, (rot, pos)) in bone_transforms.iter().enumerate() {
             if let Some(&joint_entity) = anim_state.joint_entities.get(i) {
-                if let Ok((mut joint_tf, mut opt_lvel, mut opt_avel)) = transform_query.get_mut(joint_entity) {
+                if let Ok((mut joint_tf, mut opt_lvel, mut opt_avel)) =
+                    transform_query.get_mut(joint_entity)
+                {
                     // Convert from Oni2 coordinates to Bevy: negate X and Z
                     let bevy_pos = Vec3::new(-pos.x, pos.y + y_offset, -pos.z);
                     // Conjugate rotation by 180° Y rotation: negate X and Z components
@@ -892,7 +945,9 @@ pub fn update_oni2_animation(
                             let diff = final_rot * joint_tf.rotation.inverse();
                             let (axis, angle) = diff.to_axis_angle();
                             let mut angular_vel = axis * (angle / dt);
-                            if angular_vel.is_nan() { angular_vel = Vec3::ZERO; }
+                            if angular_vel.is_nan() {
+                                angular_vel = Vec3::ZERO;
+                            }
                             av.0 = angular_vel;
                         }
                     }

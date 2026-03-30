@@ -42,19 +42,35 @@ pub type Block = Vec<Stmt>;
 #[derive(Debug, Clone)]
 pub enum Stmt {
     /// `set <var> to <expr>`
-    Set { var: String, value: Expr },
+    Set {
+        var: String,
+        value: Expr,
+    },
     /// `if <expr> then <stmt> [else <stmt>]`
-    If { condition: Expr, then_branch: Box<Stmt>, else_branch: Option<Box<Stmt>> },
+    If {
+        condition: Expr,
+        then_branch: Box<Stmt>,
+        else_branch: Option<Box<Stmt>>,
+    },
     /// `begin ... end` block
     Block(Block),
     /// `do forever <stmt>`
     DoForever(Box<Stmt>),
     /// `do while <expr> <stmt>`
-    DoWhile { condition: Expr, body: Box<Stmt> },
+    DoWhile {
+        condition: Expr,
+        body: Box<Stmt>,
+    },
     /// `do <expr> times <stmt>`
-    DoNTimes { count: Expr, body: Box<Stmt> },
+    DoNTimes {
+        count: Expr,
+        body: Box<Stmt>,
+    },
     /// `do for <expr> seconds <stmt>`
-    DoForSeconds { seconds: Expr, body: Box<Stmt> },
+    DoForSeconds {
+        seconds: Expr,
+        body: Box<Stmt>,
+    },
     /// `exit`
     Exit,
     /// `done`
@@ -68,11 +84,20 @@ pub enum Stmt {
     /// `idle <expr>`
     Idle(Expr),
     /// `GotoCurvePhase <expr> in <expr>`
-    GotoCurvePhase { phase: Expr, seconds: Expr },
+    GotoCurvePhase {
+        phase: Expr,
+        seconds: Expr,
+    },
     /// `GotoCurveKnot <expr> in <expr>`
-    GotoCurveKnot { knot: Expr, seconds: Expr },
+    GotoCurveKnot {
+        knot: Expr,
+        seconds: Expr,
+    },
     /// `GotoCurveLerp <expr> in <expr>`
-    GotoCurveLerp { lerp: Expr, seconds: Expr },
+    GotoCurveLerp {
+        lerp: Expr,
+        seconds: Expr,
+    },
     /// `SetCurvePhase <expr>`
     SetCurvePhase(Expr),
     /// `SetCurveSpeed <expr>`
@@ -82,7 +107,10 @@ pub enum Stmt {
     /// `SetCurvePingPong <expr>`
     SetCurvePingPong(Expr),
     /// `SetCurve <string> at <expr>`
-    SetCurve { name: Expr, at_phase: Option<Expr> },
+    SetCurve {
+        name: Expr,
+        at_phase: Option<Expr>,
+    },
     /// `SetLerpCurve <string>`
     SetLerpCurve(Expr),
     /// `SetLookUpCurve <string>`
@@ -95,16 +123,37 @@ pub enum Stmt {
     SetCurveLookAlongDirection(Expr),
 
     /// `PlayAnimation <string> [hold] [loop] [rate <expr>] [for <expr>]`
-    PlayAnimation { name: Expr, hold: bool, loop_anim: bool, rate: Option<Expr>, duration: Option<Expr> },
+    PlayAnimation {
+        name: Expr,
+        hold: bool,
+        loop_anim: bool,
+        rate: Option<Expr>,
+        duration: Option<Expr>,
+    },
     /// `PlayActionAnimation <string> [hold] [loop] [for <expr>]`
-    PlayActionAnimation { name: Expr, hold: bool, loop_anim: bool, duration: Option<Expr> },
+    PlayActionAnimation {
+        name: Expr,
+        hold: bool,
+        loop_anim: bool,
+        duration: Option<Expr>,
+    },
     /// `ControlAnimation <string> ...`
-    ControlAnimation { name: Expr },
+    ControlAnimation {
+        name: Expr,
+    },
 
     /// `face <expr> [in <expr>]`
-    Face { target: Expr, seconds: Option<Expr> },
+    Face {
+        target: Expr,
+        seconds: Option<Expr>,
+    },
     /// `goto <expr> [within <expr>] [speed <expr>] [for <expr>]`
-    GotoPoint { target: Expr, within: Option<Expr>, speed: Option<Expr>, duration: Option<Expr> },
+    GotoPoint {
+        target: Expr,
+        within: Option<Expr>,
+        speed: Option<Expr>,
+        duration: Option<Expr>,
+    },
     /// `fight`
     Fight,
     /// `shoot`
@@ -123,9 +172,15 @@ pub enum Stmt {
     /// `switch <string>`
     Switch(Expr),
     /// `childstack <var> <string>`
-    ChildStack { var: String, script: Expr },
+    ChildStack {
+        var: String,
+        script: Expr,
+    },
     /// `childswitch <var> <string>`
-    ChildSwitch { var: String, script: Expr },
+    ChildSwitch {
+        var: String,
+        script: Expr,
+    },
     /// `childdone`
     ChildDone,
     /// `childhome`
@@ -134,33 +189,70 @@ pub enum Stmt {
     ChildStop,
 
     /// `spawn <string> [assign to <var>] [at <expr>] [name <string>]`
-    Spawn { script: Expr, assign_to: Option<String>, at: Option<Expr>, name: Option<Expr> },
+    Spawn {
+        script: Expr,
+        assign_to: Option<String>,
+        at: Option<Expr>,
+        name: Option<Expr>,
+    },
     /// `destroy`
     Destroy,
     /// `teleport <expr> [to <vector>] [face <expr>]`
-    Teleport { target: Expr, to: Option<Expr>, face: Option<Expr> },
+    Teleport {
+        target: Expr,
+        to: Option<Expr>,
+        face: Option<Expr>,
+    },
     /// `makefx <string> [at <expr>]`
-    MakeFx { name: Expr, at: Option<Expr> },
+    MakeFx {
+        name: Expr,
+        at: Option<Expr>,
+    },
     /// `sendaction <expr> to <expr> [component <string>]`
-    SendAction { action: Expr, target: Option<Expr>, component: Option<Expr> },
+    SendAction {
+        action: Expr,
+        target: Option<Expr>,
+        component: Option<Expr>,
+    },
 
     /// `pickup <expr>`
     Pickup(Expr),
     /// `dropoff [at <expr>]`
-    Dropoff { at: Option<Expr> },
+    Dropoff {
+        at: Option<Expr>,
+    },
 
     /// `sendmessage <string> to <expr> [with <expr>, ...]`
-    SendMessage { msg: Expr, to: Expr, with: Vec<Expr> },
+    SendMessage {
+        msg: Expr,
+        to: Expr,
+        with: Vec<Expr>,
+    },
     /// `sendgroupmessage <string> to <expr>`
-    SendGroupMessage { msg: Expr, to: Expr },
+    SendGroupMessage {
+        msg: Expr,
+        to: Expr,
+    },
     /// `sendgroupmembersmessage <string> to <expr>`
-    SendGroupMembersMessage { msg: Expr, to: Expr },
+    SendGroupMembersMessage {
+        msg: Expr,
+        to: Expr,
+    },
 
     /// `find <var> [conditions...] range <expr>`
-    Find { list_var: String, conditions: Vec<(String, Expr)>, range: Option<Expr> },
+    Find {
+        list_var: String,
+        conditions: Vec<(String, Expr)>,
+        range: Option<Expr>,
+    },
 
     /// `TextureMovie <string> [pass <expr>] <action> <expr>`
-    TextureMovie { name: Expr, pass: Option<Expr>, action: TextureMovieAction, arg: Expr },
+    TextureMovie {
+        name: Expr,
+        pass: Option<Expr>,
+        action: TextureMovieAction,
+        arg: Expr,
+    },
 
     /// `SetHealth <expr>`
     SetHealth(Expr),
@@ -186,50 +278,103 @@ pub enum Stmt {
     CameraReset,
     CameraMode(Expr),
     CameraLetterbox(Expr),
-    CameraFollowActor { args: Vec<Expr> },
-    CameraTrackActor { args: Vec<Expr> },
-    CameraTrackPoint { args: Vec<Expr> },
-    CameraMoveToActor { args: Vec<Expr> },
-    CameraMoveToPoint { args: Vec<Expr> },
-    CameraCutToActor { args: Vec<Expr> },
-    CameraCutToPoint { args: Vec<Expr> },
-    CameraSetFOV { args: Vec<Expr> },
+    CameraFollowActor {
+        args: Vec<Expr>,
+    },
+    CameraTrackActor {
+        args: Vec<Expr>,
+    },
+    CameraTrackPoint {
+        args: Vec<Expr>,
+    },
+    CameraMoveToActor {
+        args: Vec<Expr>,
+    },
+    CameraMoveToPoint {
+        args: Vec<Expr>,
+    },
+    CameraCutToActor {
+        args: Vec<Expr>,
+    },
+    CameraCutToPoint {
+        args: Vec<Expr>,
+    },
+    CameraSetFOV {
+        args: Vec<Expr>,
+    },
     CameraSetPackage(Expr),
     CameraShake,
 
     /// Sound commands
-    Sound { args: Vec<Expr> },
-    PlayAmbientSound { name: Expr, volume: Option<Expr> },
-    AmbientSound { args: Vec<Expr> },
+    Sound {
+        args: Vec<Expr>,
+    },
+    PlayAmbientSound {
+        name: Expr,
+        volume: Option<Expr>,
+    },
+    AmbientSound {
+        args: Vec<Expr>,
+    },
     MusicPlay(Expr),
     MusicStop,
 
     /// Fog commands
     SetFogType(Expr),
-    SetFogRange { min: Expr, max: Expr },
-    SetFogColor { args: Vec<Expr> },
-    SetFogClamp { args: Vec<Expr> },
-    SetFogPalettePower { args: Vec<Expr> },
-    
+    SetFogRange {
+        min: Expr,
+        max: Expr,
+    },
+    SetFogColor {
+        args: Vec<Expr>,
+    },
+    SetFogClamp {
+        args: Vec<Expr>,
+    },
+    SetFogPalettePower {
+        args: Vec<Expr>,
+    },
+
     /// Shader and lighting commands
-    SetShaderLocal { args: Vec<Expr> },
-    SetLightParameter { args: Vec<Expr> },
-    Intensity { args: Vec<Expr> },
-    
+    SetShaderLocal {
+        args: Vec<Expr>,
+    },
+    SetLightParameter {
+        args: Vec<Expr>,
+    },
+    Intensity {
+        args: Vec<Expr>,
+    },
+
     /// Global Screen commands
-    SetFullScreenColor { args: Vec<Expr> },
-    SetUpdateState { target: Expr, state: Expr },
+    SetFullScreenColor {
+        args: Vec<Expr>,
+    },
+    SetUpdateState {
+        target: Expr,
+        state: Expr,
+    },
 
     /// HUD
-    SetHud { args: Vec<Expr> },
+    SetHud {
+        args: Vec<Expr>,
+    },
 
     /// `ControlHead <keyword> [<expr>]`
-    ControlHead { args: Vec<Expr> },
+    ControlHead {
+        args: Vec<Expr>,
+    },
 
     /// `add <expr> to <list>`
-    AddToList { expr: Expr, list: String },
+    AddToList {
+        expr: Expr,
+        list: String,
+    },
     /// `remove <expr> from <list>`
-    RemoveFromList { expr: Expr, list: String },
+    RemoveFromList {
+        expr: Expr,
+        list: String,
+    },
 
     /// Inline variable declaration: `integer x = <expr>`
     InlineVarDecl(VarDecl),
@@ -243,7 +388,10 @@ pub enum Stmt {
 
     /// Catch-all for commands we parse but don't fully implement yet.
     /// Stores the command name and any trailing arguments.
-    Unimplemented { command: String, args: Vec<Expr> },
+    Unimplemented {
+        command: String,
+        args: Vec<Expr>,
+    },
 }
 
 /// Expression in ScrOni.
@@ -262,7 +410,11 @@ pub enum Expr {
     /// `(player)` - player actor reference
     Player,
     /// Binary op: `<expr> <op> <expr>`
-    BinOp { op: BinOp, left: Box<Expr>, right: Box<Expr> },
+    BinOp {
+        op: BinOp,
+        left: Box<Expr>,
+        right: Box<Expr>,
+    },
     /// Unary not: `not <expr>`
     Not(Box<Expr>),
     /// Unary negate: `-<expr>`

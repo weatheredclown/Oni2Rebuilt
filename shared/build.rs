@@ -3,6 +3,5 @@ fn main() {
     let file_descriptors = protox::compile(["proto/telemetry.proto"], ["proto/"])
         .expect("failed to compile proto files");
 
-    tonic_build::compile_fds(file_descriptors)
-        .expect("failed to generate gRPC code from proto");
+    tonic_build::compile_fds(file_descriptors).expect("failed to generate gRPC code from proto");
 }

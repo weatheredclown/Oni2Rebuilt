@@ -1,6 +1,6 @@
+use super::types::{Oni2Adjunct, Oni2Material, Oni2MaterialPass, Oni2Model, Oni2Packet};
+use crate::oni2_loader::utils::binary::{read_f32_le, read_u16_le, read_u32_le};
 use bevy::prelude::*;
-use crate::oni2_loader::utils::binary::{read_u32_le, read_u16_le, read_f32_le};
-use super::types::{Oni2Model, Oni2Material, Oni2Packet, Oni2Adjunct, Oni2MaterialPass};
 
 pub fn parse_mod(content: &str, entity_dir: &str) -> Oni2Model {
     let mut vertices = Vec::new();
@@ -95,7 +95,7 @@ pub fn parse_mod(content: &str, entity_dir: &str) -> Oni2Model {
             let mut passes = Vec::new();
             let mut found_shader = None;
             let mat_shader = format!("{}.shader", name);
-            
+
             if crate::vfs::exists(entity_dir, &mat_shader) {
                 found_shader = Some(mat_shader);
             } else if let Some(tex) = &texture_name {
@@ -153,22 +153,25 @@ pub fn parse_mod(content: &str, entity_dir: &str) -> Oni2Model {
                             bone_idx,
                         });
                     }
-                } else if pkt_line.starts_with("stp") || pkt_line.starts_with("str")
+                } else if pkt_line.starts_with("stp")
+                    || pkt_line.starts_with("str")
                     || pkt_line.starts_with("tri")
                 {
                     let parts: Vec<&str> = pkt_line.split_whitespace().collect();
                     if pkt_line.starts_with("tri") {
                         // tri a b c — individual triangle
                         if parts.len() >= 4 {
-                            let indices: Vec<u32> = parts[1..4]
-                                .iter()
-                                .filter_map(|s| s.parse().ok())
-                                .collect();
+                            let indices: Vec<u32> =
+                                parts[1..4].iter().filter_map(|s| s.parse().ok()).collect();
                             strips.push(indices);
                             strip_types.push(1); // tri = normal winding
                         }
                     } else if parts.len() >= 2 {
-                        let stype = if pkt_line.starts_with("stp") { 2u32 } else { 1u32 };
+                        let stype = if pkt_line.starts_with("stp") {
+                            2u32
+                        } else {
+                            1u32
+                        };
                         let count: usize = parts[1].parse().unwrap_or(0);
                         let indices: Vec<u32> = parts[2..2 + count]
                             .iter()
@@ -177,11 +180,12 @@ pub fn parse_mod(content: &str, entity_dir: &str) -> Oni2Model {
                         strips.push(indices);
                         strip_types.push(stype);
                     }
-                } else if pkt_line.starts_with("mtx") && !pkt_line.starts_with("mtxv") && !pkt_line.starts_with("mtxn") {
+                } else if pkt_line.starts_with("mtx")
+                    && !pkt_line.starts_with("mtxv")
+                    && !pkt_line.starts_with("mtxn")
+                {
                     let parts: Vec<&str> = pkt_line.split_whitespace().collect();
-                    bone_map = parts[1..].iter()
-                        .filter_map(|s| s.parse().ok())
-                        .collect();
+                    bone_map = parts[1..].iter().filter_map(|s| s.parse().ok()).collect();
                 }
                 i += 1;
             }
@@ -257,8 +261,10 @@ pub fn parse_shader(content: &str) -> Vec<Oni2MaterialPass> {
 
     for line in content.lines() {
         let trimmed = line.trim();
-        if trimmed.is_empty() { continue; }
-        
+        if trimmed.is_empty() {
+            continue;
+        }
+
         if trimmed == "nextpass" {
             passes.push(current_pass);
             current_pass = Oni2MaterialPass::default();
@@ -266,8 +272,10 @@ pub fn parse_shader(content: &str) -> Vec<Oni2MaterialPass> {
         }
 
         let parts: Vec<&str> = trimmed.split_whitespace().collect();
-        if parts.is_empty() { continue; }
-        
+        if parts.is_empty() {
+            continue;
+        }
+
         match parts[0].to_lowercase().as_str() {
             "texture" => {
                 if parts.len() > 1 {
@@ -275,36 +283,54 @@ pub fn parse_shader(content: &str) -> Vec<Oni2MaterialPass> {
                 }
             }
             "lighting" => {
-                if parts.len() > 1 { current_pass.lighting = Some(parts[1].to_string()); }
+                if parts.len() > 1 {
+                    current_pass.lighting = Some(parts[1].to_string());
+                }
             }
             "blendset" => {
-                if parts.len() > 1 { current_pass.blendset = Some(parts[1].to_string()); }
+                if parts.len() > 1 {
+                    current_pass.blendset = Some(parts[1].to_string());
+                }
             }
             "texcombine" => {
-                if parts.len() > 1 { current_pass.texcombine = Some(parts[1].to_string()); }
+                if parts.len() > 1 {
+                    current_pass.texcombine = Some(parts[1].to_string());
+                }
             }
             "texsrc" => {
-                if parts.len() > 1 { current_pass.texsrc = parts[1].parse().ok(); }
+                if parts.len() > 1 {
+                    current_pass.texsrc = parts[1].parse().ok();
+                }
             }
             "alphafunc" => {
-                if parts.len() > 1 { current_pass.alphafunc = Some(parts[1].to_string()); }
+                if parts.len() > 1 {
+                    current_pass.alphafunc = Some(parts[1].to_string());
+                }
             }
             "slides" => {
-                if parts.len() > 1 { current_pass.slides = Some(parts[1..].join(" ")); }
+                if parts.len() > 1 {
+                    current_pass.slides = Some(parts[1..].join(" "));
+                }
             }
             "slidet" => {
-                if parts.len() > 1 { current_pass.slidet = Some(parts[1..].join(" ")); }
+                if parts.len() > 1 {
+                    current_pass.slidet = Some(parts[1..].join(" "));
+                }
             }
             "rotate" => {
-                if parts.len() > 1 { current_pass.rotate = Some(parts[1..].join(" ")); }
+                if parts.len() > 1 {
+                    current_pass.rotate = Some(parts[1..].join(" "));
+                }
             }
             "scalet" => {
-                if parts.len() > 1 { current_pass.scalet = Some(parts[1..].join(" ")); }
+                if parts.len() > 1 {
+                    current_pass.scalet = Some(parts[1..].join(" "));
+                }
             }
             _ => {}
         }
     }
-    
+
     passes.push(current_pass);
     passes
 }
@@ -334,39 +360,62 @@ pub fn parse_mod_binary(data: &[u8], entity_dir: &str) -> Option<Oni2Model> {
     let n_matrices = read_u32_le(data, 50) as usize;
     let _n_reskins = read_u32_le(data, 54) as usize;
 
-    info!("Binary v2.10: verts={} normals={} colors={} tex1s={} materials={} adjuncts={} primitives={} matrices={}",
-        n_verts, n_normals, n_colors, n_tex1s, n_materials, n_adjuncts, n_primitives, n_matrices);
+    info!(
+        "Binary v2.10: verts={} normals={} colors={} tex1s={} materials={} adjuncts={} primitives={} matrices={}",
+        n_verts, n_normals, n_colors, n_tex1s, n_materials, n_adjuncts, n_primitives, n_matrices
+    );
 
     let mut off = 58usize;
 
     // Read vertices: n_verts × 3 × f32
     let mut vertices = Vec::with_capacity(n_verts);
     for _ in 0..n_verts {
-        if off + 12 > data.len() { break; }
-        vertices.push([read_f32_le(data, off), read_f32_le(data, off + 4), read_f32_le(data, off + 8)]);
+        if off + 12 > data.len() {
+            break;
+        }
+        vertices.push([
+            read_f32_le(data, off),
+            read_f32_le(data, off + 4),
+            read_f32_le(data, off + 8),
+        ]);
         off += 12;
     }
 
     // Read normals: n_normals × 3 × f32
     let mut normals = Vec::with_capacity(n_normals);
     for _ in 0..n_normals {
-        if off + 12 > data.len() { break; }
-        normals.push([read_f32_le(data, off), read_f32_le(data, off + 4), read_f32_le(data, off + 8)]);
+        if off + 12 > data.len() {
+            break;
+        }
+        normals.push([
+            read_f32_le(data, off),
+            read_f32_le(data, off + 4),
+            read_f32_le(data, off + 8),
+        ]);
         off += 12;
     }
 
     // Read colors: n_colors × 4 × f32
     let mut colors = Vec::with_capacity(n_colors);
     for _ in 0..n_colors {
-        if off + 16 > data.len() { break; }
-        colors.push([read_f32_le(data, off), read_f32_le(data, off + 4), read_f32_le(data, off + 8), read_f32_le(data, off + 12)]);
+        if off + 16 > data.len() {
+            break;
+        }
+        colors.push([
+            read_f32_le(data, off),
+            read_f32_le(data, off + 4),
+            read_f32_le(data, off + 8),
+            read_f32_le(data, off + 12),
+        ]);
         off += 16;
     }
 
     // Read tex1s: n_tex1s × 2 × f32
     let mut tex_coords = Vec::with_capacity(n_tex1s);
     for _ in 0..n_tex1s {
-        if off + 8 > data.len() { break; }
+        if off + 8 > data.len() {
+            break;
+        }
         tex_coords.push([read_f32_le(data, off), read_f32_le(data, off + 4)]);
         off += 8;
     }
@@ -384,18 +433,30 @@ pub fn parse_mod_binary(data: &[u8], entity_dir: &str) -> Option<Oni2Model> {
         while off < data.len() && data[off] != 0x20 && data[off] != 0x00 {
             off += 1;
         }
-        let name = std::str::from_utf8(&data[name_start..off]).unwrap_or("").to_string();
-        if off < data.len() { off += 1; } // skip space terminator
+        let name = std::str::from_utf8(&data[name_start..off])
+            .unwrap_or("")
+            .to_string();
+        if off < data.len() {
+            off += 1;
+        } // skip space terminator
 
         // 2. u32 fields: packet_count, primitive_count, texture_count, illum
-        if off + 16 > data.len() { break; }
-        let pkt_count = read_u32_le(data, off);       off += 4;
-        let prim_count = read_u32_le(data, off);      off += 4;
-        let _tex_count = read_u32_le(data, off);      off += 4;
-        let _illum = read_u32_le(data, off);           off += 4;
+        if off + 16 > data.len() {
+            break;
+        }
+        let pkt_count = read_u32_le(data, off);
+        off += 4;
+        let prim_count = read_u32_le(data, off);
+        off += 4;
+        let _tex_count = read_u32_le(data, off);
+        off += 4;
+        let _illum = read_u32_le(data, off);
+        off += 4;
 
         // 3. 9 floats: ambient(3) + diffuse(3) + specular(3)
-        if off + 36 > data.len() { break; }
+        if off + 36 > data.len() {
+            break;
+        }
         // Skip ambient (3 floats)
         off += 12;
         // Read diffuse (3 floats)
@@ -419,19 +480,29 @@ pub fn parse_mod_binary(data: &[u8], entity_dir: &str) -> Option<Oni2Model> {
         while off < data.len() && data[off] != 0 {
             off += 1;
         }
-        let texture_raw = std::str::from_utf8(&data[tex_start..off]).unwrap_or("").trim().to_string();
-        let mut texture_name = if texture_raw.is_empty() { None } else { Some(texture_raw) };
+        let texture_raw = std::str::from_utf8(&data[tex_start..off])
+            .unwrap_or("")
+            .trim()
+            .to_string();
+        let mut texture_name = if texture_raw.is_empty() {
+            None
+        } else {
+            Some(texture_raw)
+        };
         // Skip null terminator + all consecutive null padding
         while off < data.len() && data[off] == 0 {
             off += 1;
         }
 
-        info!("  Material: name='{}' pkts={} prims={} texture={:?}", name, pkt_count, prim_count, texture_name);
+        info!(
+            "  Material: name='{}' pkts={} prims={} texture={:?}",
+            name, pkt_count, prim_count, texture_name
+        );
 
         let mut passes = Vec::new();
         let mut found_shader = None;
         let mat_shader = format!("{}.shader", name);
-        
+
         if crate::vfs::exists(entity_dir, &mat_shader) {
             found_shader = Some(mat_shader);
         } else if let Some(tex) = &texture_name {
@@ -462,7 +533,8 @@ pub fn parse_mod_binary(data: &[u8], entity_dir: &str) -> Option<Oni2Model> {
 
     // --- Find mtxv marker (end of packet region) ---
     let search_start = data.len().saturating_sub(500);
-    let mtxv_pos = data[search_start..].windows(4)
+    let mtxv_pos = data[search_start..]
+        .windows(4)
         .position(|w| w == b"mtxv")
         .map(|p| search_start + p)
         .unwrap_or(data.len());
@@ -477,8 +549,13 @@ pub fn parse_mod_binary(data: &[u8], entity_dir: &str) -> Option<Oni2Model> {
     let mut cur_mat = 0usize;
     let mut mat_pkt_counter = 0u32;
 
-    info!("  Packet region: offset {} .. {} ({} bytes, {} packets)",
-        off, mtxv_pos, mtxv_pos.saturating_sub(off), total_pkts);
+    info!(
+        "  Packet region: offset {} .. {} ({} bytes, {} packets)",
+        off,
+        mtxv_pos,
+        mtxv_pos.saturating_sub(off),
+        total_pkts
+    );
 
     for _pkt_idx in 0..total_pkts as usize {
         // Determine current material
@@ -493,15 +570,21 @@ pub fn parse_mod_binary(data: &[u8], entity_dir: &str) -> Option<Oni2Model> {
             break;
         }
 
-        let adj_count = read_u32_le(data, off) as usize;    off += 4;
-        let strip_count = read_u32_le(data, off) as usize;   off += 4;
-        let mtx_count = read_u32_le(data, off) as usize;     off += 4;
-        let mw_count = read_u32_le(data, off) as usize;      off += 4;
+        let adj_count = read_u32_le(data, off) as usize;
+        off += 4;
+        let strip_count = read_u32_le(data, off) as usize;
+        off += 4;
+        let mtx_count = read_u32_le(data, off) as usize;
+        off += 4;
+        let mw_count = read_u32_le(data, off) as usize;
+        off += 4;
 
         // Adjuncts: 6 × u32 each
         let mut adjuncts = Vec::with_capacity(adj_count);
         for _ in 0..adj_count {
-            if off + 24 > mtxv_pos { break; }
+            if off + 24 > mtxv_pos {
+                break;
+            }
             let v = read_u32_le(data, off);
             let n = read_u32_le(data, off + 4);
             let c = read_u32_le(data, off + 8);
@@ -526,10 +609,16 @@ pub fn parse_mod_binary(data: &[u8], entity_dir: &str) -> Option<Oni2Model> {
         let mut strips = Vec::with_capacity(strip_count);
         let mut strip_types = Vec::with_capacity(strip_count);
         for _ in 0..strip_count {
-            if off + 8 > mtxv_pos { break; }
-            let stype = read_u32_le(data, off);  off += 4;
-            let scount = read_u32_le(data, off) as usize;  off += 4;
-            if off + scount * 4 > mtxv_pos { break; }
+            if off + 8 > mtxv_pos {
+                break;
+            }
+            let stype = read_u32_le(data, off);
+            off += 4;
+            let scount = read_u32_le(data, off) as usize;
+            off += 4;
+            if off + scount * 4 > mtxv_pos {
+                break;
+            }
             let indices: Vec<u32> = (0..scount)
                 .map(|j| read_u32_le(data, off + j * 4))
                 .collect();
@@ -599,13 +688,13 @@ struct BoneMapGroup {
 #[derive(Debug)]
 struct ParsedBlock {
     offset: usize,
-    header: [u32; 4], // A, B, C, D
+    header: [u32; 4],               // A, B, C, D
     table1: Vec<PacketEntry>,       // primary packet entries
     bounds: Vec<[f32; 6]>,          // bounding data (6 floats each)
     bone_groups: Vec<BoneMapGroup>, // B groups
     table2: Vec<PacketEntry>,       // secondary packet entries
     sub_header: Vec<u32>,           // sub-header between bone groups and table2
-    bone_bounds: Vec<[f32; 6]>,     // tail[1] × 24-byte bone influence bounding volumes (u32 bone_id, u32 sub_id, f32×4 as raw)
+    bone_bounds: Vec<[f32; 6]>, // tail[1] × 24-byte bone influence bounding volumes (u32 bone_id, u32 sub_id, f32×4 as raw)
     end_offset: usize,
 }
 
@@ -623,7 +712,9 @@ fn read_packet_entry(data: &[u8], off: usize) -> PacketEntry {
 
 /// Check if 6 u32s at the given offset look like a packet entry (f2=0, f4=0, values plausible).
 fn looks_like_packet_entry(data: &[u8], off: usize) -> bool {
-    if off + 24 > data.len() { return false; }
+    if off + 24 > data.len() {
+        return false;
+    }
     let f0 = read_u32_le(data, off);
     let f1 = read_u32_le(data, off + 4);
     let f2 = read_u32_le(data, off + 8);
@@ -635,30 +726,41 @@ fn looks_like_packet_entry(data: &[u8], off: usize) -> bool {
 /// Read a bone-map group: u32 type, u32 count, count × u32 bone indices.
 /// Returns (group, bytes_consumed) or None.
 fn read_bone_group(data: &[u8], off: usize, max_bone: u32) -> Option<(BoneMapGroup, usize)> {
-    if off + 8 > data.len() { return None; }
+    if off + 8 > data.len() {
+        return None;
+    }
     let group_type = read_u32_le(data, off);
     let count = read_u32_le(data, off + 4) as usize;
 
     // Sanity: type should be small, count should be reasonable
-    if group_type > 16 || count == 0 || count > 64 { return None; }
-    if off + 8 + count * 4 > data.len() { return None; }
+    if group_type > 16 || count == 0 || count > 64 {
+        return None;
+    }
+    if off + 8 + count * 4 > data.len() {
+        return None;
+    }
 
     let mut indices = Vec::with_capacity(count);
     for i in 0..count {
         let idx = read_u32_le(data, off + 8 + i * 4);
-        if idx > max_bone { return None; }
+        if idx > max_bone {
+            return None;
+        }
         indices.push(idx);
     }
 
-    Some((BoneMapGroup { group_type, bone_indices: indices }, 8 + count * 4))
+    Some((
+        BoneMapGroup {
+            group_type,
+            bone_indices: indices,
+        },
+        8 + count * 4,
+    ))
 }
 
 /// Check if a 4-u32 header looks like a plausible block header.
 fn is_plausible_header(a: u32, b: u32, c: u32, d: u32) -> bool {
-    a > 0 && a < 200
-        && b < 100
-        && c < 100
-        && d < 200
+    a > 0 && a < 200 && b < 100 && c < 100 && d < 200
 }
 
 /// Walk the packet region starting at `start_off` and parse blocks.
@@ -670,7 +772,13 @@ fn is_plausible_header(a: u32, b: u32, c: u32, d: u32) -> bool {
 ///   bounds: D × 24 bytes (6 floats each)
 ///   bone_groups: B groups (u32 type, u32 count, count × u32 bone_indices)
 ///   sub-header + table2 + trailing structures
-fn parse_blocks(data: &[u8], start_off: usize, end_off: usize, n_adjuncts: usize, n_primitives: usize) -> Vec<ParsedBlock> {
+fn parse_blocks(
+    data: &[u8],
+    start_off: usize,
+    end_off: usize,
+    n_adjuncts: usize,
+    n_primitives: usize,
+) -> Vec<ParsedBlock> {
     // Use macro that outputs to both tracing and stderr (for test visibility)
     macro_rules! blk_log {
         ($($arg:tt)*) => {
@@ -679,8 +787,17 @@ fn parse_blocks(data: &[u8], start_off: usize, end_off: usize, n_adjuncts: usize
         }
     }
     blk_log!("=== BLOCK REGION WALK (v2) ===");
-    blk_log!("  region: {} .. {} ({} bytes)", start_off, end_off, end_off - start_off);
-    blk_log!("  header counts: adjuncts={}, primitives={}", n_adjuncts, n_primitives);
+    blk_log!(
+        "  region: {} .. {} ({} bytes)",
+        start_off,
+        end_off,
+        end_off - start_off
+    );
+    blk_log!(
+        "  header counts: adjuncts={}, primitives={}",
+        n_adjuncts,
+        n_primitives
+    );
 
     let mut off = start_off;
     let mut block_idx = 0;
@@ -708,8 +825,13 @@ fn parse_blocks(data: &[u8], start_off: usize, end_off: usize, n_adjuncts: usize
                         let peek_f2 = read_u32_le(data, soff + 16 + 8);
                         let peek_f4 = read_u32_le(data, soff + 16 + 16);
                         if peek_f2 == 0 && peek_f4 == 0 {
-                            blk_log!("  [{}] skipped {} bytes gap at offset {} to find next header at {}",
-                                block_idx, soff - off, off, soff);
+                            blk_log!(
+                                "  [{}] skipped {} bytes gap at offset {} to find next header at {}",
+                                block_idx,
+                                soff - off,
+                                off,
+                                soff
+                            );
                             off = soff;
                             found_next = true;
                             break;
@@ -719,8 +841,11 @@ fn parse_blocks(data: &[u8], start_off: usize, end_off: usize, n_adjuncts: usize
                 soff += 4;
             }
             if !found_next {
-                blk_log!("  [{}] offset {} — no valid header within 256 bytes, stopping block walk",
-                    block_idx, off);
+                blk_log!(
+                    "  [{}] offset {} — no valid header within 256 bytes, stopping block walk",
+                    block_idx,
+                    off
+                );
                 // Dump stop-point data
                 let dump_end = (off + 128).min(data.len());
                 let mut vals = Vec::new();
@@ -745,7 +870,15 @@ fn parse_blocks(data: &[u8], start_off: usize, end_off: usize, n_adjuncts: usize
             }
         }
 
-        blk_log!("  [BLOCK {}] offset {} — header: (A={}, B={}, C={}, D={})", block_idx, off, a, b, c, d);
+        blk_log!(
+            "  [BLOCK {}] offset {} — header: (A={}, B={}, C={}, D={})",
+            block_idx,
+            off,
+            a,
+            b,
+            c,
+            d
+        );
 
         let header_end = off + 16;
         let table1_size = a as usize * 24;
@@ -767,7 +900,9 @@ fn parse_blocks(data: &[u8], start_off: usize, end_off: usize, n_adjuncts: usize
         // === Read bounds: D × 24 bytes (as 6 floats each) ===
         let mut bounds = Vec::with_capacity(d as usize);
         for _ in 0..d {
-            if toff + 24 > data.len() { break; }
+            if toff + 24 > data.len() {
+                break;
+            }
             bounds.push([
                 read_f32_le(data, toff),
                 read_f32_le(data, toff + 4),
@@ -791,9 +926,17 @@ fn parse_blocks(data: &[u8], start_off: usize, end_off: usize, n_adjuncts: usize
                     goff += consumed;
                 }
                 None => {
-                    blk_log!("    bone group {}/{} at offset {} failed to parse", gi, b, goff);
+                    blk_log!(
+                        "    bone group {}/{} at offset {} failed to parse",
+                        gi,
+                        b,
+                        goff
+                    );
                     let dump_end = (goff + 48).min(data.len());
-                    let hex: Vec<String> = data[goff..dump_end].iter().map(|b| format!("{:02X}", b)).collect();
+                    let hex: Vec<String> = data[goff..dump_end]
+                        .iter()
+                        .map(|b| format!("{:02X}", b))
+                        .collect();
                     blk_log!("    hex: {}", hex.join(" "));
                     groups_ok = false;
                     break;
@@ -822,7 +965,9 @@ fn parse_blocks(data: &[u8], start_off: usize, end_off: usize, n_adjuncts: usize
             // Read sub-header: C values + 4 more u32s
             let sub_header_len = c as usize + 4; // C values + (table2_count, t2_groups, unknown, terminator)
             for _ in 0..sub_header_len {
-                if scan_off + 4 > end_off { break; }
+                if scan_off + 4 > end_off {
+                    break;
+                }
                 sub_header.push(read_u32_le(data, scan_off));
                 scan_off += 4;
             }
@@ -836,14 +981,18 @@ fn parse_blocks(data: &[u8], start_off: usize, end_off: usize, n_adjuncts: usize
             // Read table2 entries using the discovered count
             if t2_count > 0 && t2_count < 500 {
                 for _ in 0..t2_count {
-                    if scan_off + 24 > end_off { break; }
+                    if scan_off + 24 > end_off {
+                        break;
+                    }
                     table2.push(read_packet_entry(data, scan_off));
                     scan_off += 24;
                 }
             } else {
                 // Fallback: scan for packet entries
                 while scan_off + 24 <= end_off {
-                    if !looks_like_packet_entry(data, scan_off) { break; }
+                    if !looks_like_packet_entry(data, scan_off) {
+                        break;
+                    }
                     table2.push(read_packet_entry(data, scan_off));
                     scan_off += 24;
                 }
@@ -870,10 +1019,12 @@ fn parse_blocks(data: &[u8], start_off: usize, end_off: usize, n_adjuncts: usize
             };
             if bone_bounds_count > 0 && bone_bounds_count < 500 {
                 for _ in 0..bone_bounds_count {
-                    if scan_off + 24 > end_off { break; }
+                    if scan_off + 24 > end_off {
+                        break;
+                    }
                     bone_bounds.push([
-                        f32::from_bits(read_u32_le(data, scan_off)),      // bone_id as f32 bits
-                        f32::from_bits(read_u32_le(data, scan_off + 4)),  // sub_id as f32 bits
+                        f32::from_bits(read_u32_le(data, scan_off)), // bone_id as f32 bits
+                        f32::from_bits(read_u32_le(data, scan_off + 4)), // sub_id as f32 bits
                         read_f32_le(data, scan_off + 8),
                         read_f32_le(data, scan_off + 12),
                         read_f32_le(data, scan_off + 16),
@@ -924,7 +1075,9 @@ fn parse_blocks(data: &[u8], start_off: usize, end_off: usize, n_adjuncts: usize
             // Skip any zero padding first.
             while scan_off + 4 <= end_off {
                 let val = read_u32_le(data, scan_off);
-                if val != 0 { break; }
+                if val != 0 {
+                    break;
+                }
                 scan_off += 4;
             }
         }
@@ -940,13 +1093,25 @@ fn parse_blocks(data: &[u8], start_off: usize, end_off: usize, n_adjuncts: usize
             let max_f3 = table1.iter().map(|e| e.f3).max().unwrap();
             let max_f5 = table1.iter().map(|e| e.f5).max().unwrap();
             let sum_d: i64 = table1.iter().map(|e| e.f1 as i64 - e.f0 as i64).sum();
-            blk_log!("    TABLE1 summary: max(f0)={} max(f1)={} max(f3)={} max(f5)={} sum(Δ01)={}",
-                max_f0, max_f1, max_f3, max_f5, sum_d);
-            blk_log!("      f2_all_zero={} f4_all_zero={}",
-                table1.iter().all(|e| e.f2 == 0), table1.iter().all(|e| e.f4 == 0));
+            blk_log!(
+                "    TABLE1 summary: max(f0)={} max(f1)={} max(f3)={} max(f5)={} sum(Δ01)={}",
+                max_f0,
+                max_f1,
+                max_f3,
+                max_f5,
+                sum_d
+            );
+            blk_log!(
+                "      f2_all_zero={} f4_all_zero={}",
+                table1.iter().all(|e| e.f2 == 0),
+                table1.iter().all(|e| e.f4 == 0)
+            );
 
-            let mut f5_counts: std::collections::HashMap<u32, usize> = std::collections::HashMap::new();
-            for e in &table1 { *f5_counts.entry(e.f5).or_insert(0) += 1; }
+            let mut f5_counts: std::collections::HashMap<u32, usize> =
+                std::collections::HashMap::new();
+            for e in &table1 {
+                *f5_counts.entry(e.f5).or_insert(0) += 1;
+            }
             let mut f5_dist: Vec<_> = f5_counts.into_iter().collect();
             f5_dist.sort();
             blk_log!("      f5 distribution: {:?}", f5_dist);
@@ -955,18 +1120,35 @@ fn parse_blocks(data: &[u8], start_off: usize, end_off: usize, n_adjuncts: usize
         blk_log!("    BOUNDS: {} entries", bounds.len());
 
         // Bone groups
-        blk_log!("    BONE GROUPS ({}/{} parsed, {} total bones):", bone_groups.len(), b,
-            bone_groups.iter().map(|g| g.bone_indices.len()).sum::<usize>());
+        blk_log!(
+            "    BONE GROUPS ({}/{} parsed, {} total bones):",
+            bone_groups.len(),
+            b,
+            bone_groups
+                .iter()
+                .map(|g| g.bone_indices.len())
+                .sum::<usize>()
+        );
         for (i, g) in bone_groups.iter().enumerate() {
-            blk_log!("      [{}] type={} count={} bones={:?}", i, g.group_type, g.bone_indices.len(), g.bone_indices);
+            blk_log!(
+                "      [{}] type={} count={} bones={:?}",
+                i,
+                g.group_type,
+                g.bone_indices.len(),
+                g.bone_indices
+            );
         }
 
         // Sub-header
         if !sub_header.is_empty() {
             let c_values = &sub_header[..sub_header.len().min(c as usize)];
-            blk_log!("    SUB-HEADER: C_data={:?} table2_count={} t2_groups={} tail={:?}",
-                c_values, t2_count, t2_group_count,
-                &sub_header[sub_header.len().min(c as usize + 2)..]);
+            blk_log!(
+                "    SUB-HEADER: C_data={:?} table2_count={} t2_groups={} tail={:?}",
+                c_values,
+                t2_count,
+                t2_group_count,
+                &sub_header[sub_header.len().min(c as usize + 2)..]
+            );
         }
 
         // Table2 (summary only)
@@ -976,31 +1158,63 @@ fn parse_blocks(data: &[u8], start_off: usize, end_off: usize, n_adjuncts: usize
             let max_f3 = table2.iter().map(|e| e.f3).max().unwrap();
             let max_f5 = table2.iter().map(|e| e.f5).max().unwrap();
             let sum_d: i64 = table2.iter().map(|e| e.f1 as i64 - e.f0 as i64).sum();
-            blk_log!("    TABLE2 summary: max(f0)={} max(f1)={} max(f3)={} max(f5)={} sum(Δ01)={}",
-                max_f0, max_f1, max_f3, max_f5, sum_d);
-            blk_log!("      f2_all_zero={} f4_all_zero={}",
-                table2.iter().all(|e| e.f2 == 0), table2.iter().all(|e| e.f4 == 0));
+            blk_log!(
+                "    TABLE2 summary: max(f0)={} max(f1)={} max(f3)={} max(f5)={} sum(Δ01)={}",
+                max_f0,
+                max_f1,
+                max_f3,
+                max_f5,
+                sum_d
+            );
+            blk_log!(
+                "      f2_all_zero={} f4_all_zero={}",
+                table2.iter().all(|e| e.f2 == 0),
+                table2.iter().all(|e| e.f4 == 0)
+            );
         }
 
         // Table2 bone groups
         if !table2_bone_groups.is_empty() {
-            blk_log!("    TABLE2 BONE GROUPS ({} groups, {} total indices):",
+            blk_log!(
+                "    TABLE2 BONE GROUPS ({} groups, {} total indices):",
                 table2_bone_groups.len(),
-                table2_bone_groups.iter().map(|g| g.bone_indices.len()).sum::<usize>());
+                table2_bone_groups
+                    .iter()
+                    .map(|g| g.bone_indices.len())
+                    .sum::<usize>()
+            );
             for (i, g) in table2_bone_groups.iter().enumerate() {
-                blk_log!("      [{}] type={} count={} indices={:?}", i, g.group_type, g.bone_indices.len(), g.bone_indices);
+                blk_log!(
+                    "      [{}] type={} count={} indices={:?}",
+                    i,
+                    g.group_type,
+                    g.bone_indices.len(),
+                    g.bone_indices
+                );
             }
         }
 
         // Bone influence bounding volumes
         if !bone_bounds.is_empty() {
-            blk_log!("    BONE BOUNDS ({} records, {} bytes):", bone_bounds.len(), bone_bounds.len() * 24);
+            blk_log!(
+                "    BONE BOUNDS ({} records, {} bytes):",
+                bone_bounds.len(),
+                bone_bounds.len() * 24
+            );
             for (i, bb) in bone_bounds.iter().enumerate().take(8) {
                 // Reinterpret first two as u32 (bone_id, sub_id)
                 let bone_id = bb[0].to_bits();
                 let sub_id = bb[1].to_bits();
-                blk_log!("      [{}] bone={} sub={} vals=({:.3}, {:.3}, {:.3}, {:.3})",
-                    i, bone_id, sub_id, bb[2], bb[3], bb[4], bb[5]);
+                blk_log!(
+                    "      [{}] bone={} sub={} vals=({:.3}, {:.3}, {:.3}, {:.3})",
+                    i,
+                    bone_id,
+                    sub_id,
+                    bb[2],
+                    bb[3],
+                    bb[4],
+                    bb[5]
+                );
             }
             if bone_bounds.len() > 8 {
                 blk_log!("      ... ({} more)", bone_bounds.len() - 8);
@@ -1009,20 +1223,40 @@ fn parse_blocks(data: &[u8], start_off: usize, end_off: usize, n_adjuncts: usize
 
         // Trailing bone groups
         if !trailing_bone_groups.is_empty() {
-            blk_log!("    TRAILING BONE GROUPS ({} groups, tail[0]={}, {} total indices):",
-                trailing_bone_groups.len(), tail0,
-                trailing_bone_groups.iter().map(|g| g.bone_indices.len()).sum::<usize>());
+            blk_log!(
+                "    TRAILING BONE GROUPS ({} groups, tail[0]={}, {} total indices):",
+                trailing_bone_groups.len(),
+                tail0,
+                trailing_bone_groups
+                    .iter()
+                    .map(|g| g.bone_indices.len())
+                    .sum::<usize>()
+            );
             for (i, g) in trailing_bone_groups.iter().enumerate().take(8) {
-                blk_log!("      [{}] type={} count={} indices={:?}", i, g.group_type, g.bone_indices.len(), g.bone_indices);
+                blk_log!(
+                    "      [{}] type={} count={} indices={:?}",
+                    i,
+                    g.group_type,
+                    g.bone_indices.len(),
+                    g.bone_indices
+                );
             }
             if trailing_bone_groups.len() > 8 {
                 blk_log!("      ... ({} more)", trailing_bone_groups.len() - 8);
             }
         } else if tail0 > 0 {
-            blk_log!("    TRAILING BONE GROUPS: expected {} (tail[0]) but parsed 0", tail0);
+            blk_log!(
+                "    TRAILING BONE GROUPS: expected {} (tail[0]) but parsed 0",
+                tail0
+            );
         }
 
-        blk_log!("    block spans: {} .. {} ({} bytes)", off, block_end, block_end - off);
+        blk_log!(
+            "    block spans: {} .. {} ({} bytes)",
+            off,
+            block_end,
+            block_end - off
+        );
 
         // Post-parse validation: reject if bone groups failed or table1 looks wrong
         let t1_clean = table1.is_empty() || table1.iter().all(|e| e.f2 == 0 && e.f4 == 0);
@@ -1037,7 +1271,11 @@ fn parse_blocks(data: &[u8], start_off: usize, end_off: usize, n_adjuncts: usize
         // Dump post-block data (first 256 bytes after block) for gap analysis
         let peek_end = (block_end + 256).min(end_off);
         if block_end < peek_end {
-            blk_log!("    POST-BLOCK peek ({} bytes at offset {}):", peek_end - block_end, block_end);
+            blk_log!(
+                "    POST-BLOCK peek ({} bytes at offset {}):",
+                peek_end - block_end,
+                block_end
+            );
             // Show as u32s
             let mut poff = block_end;
             let mut u32_vals = Vec::new();
@@ -1046,7 +1284,10 @@ fn parse_blocks(data: &[u8], start_off: usize, end_off: usize, n_adjuncts: usize
                 poff += 4;
             }
             // First 32 as u32s
-            blk_log!("      as u32[0..32]: {:?}", &u32_vals[..u32_vals.len().min(32)]);
+            blk_log!(
+                "      as u32[0..32]: {:?}",
+                &u32_vals[..u32_vals.len().min(32)]
+            );
             if u32_vals.len() > 32 {
                 blk_log!("      as u32[32..]: {:?}", &u32_vals[32..]);
             }
@@ -1058,7 +1299,10 @@ fn parse_blocks(data: &[u8], start_off: usize, end_off: usize, n_adjuncts: usize
                 u16_vals.push(read_u16_le(data, poff));
                 poff += 2;
             }
-            blk_log!("      as u16[0..32]: {:?}", &u16_vals[..u16_vals.len().min(32)]);
+            blk_log!(
+                "      as u16[0..32]: {:?}",
+                &u16_vals[..u16_vals.len().min(32)]
+            );
         }
 
         all_blocks.push(ParsedBlock {
@@ -1109,17 +1353,39 @@ fn parse_blocks(data: &[u8], start_off: usize, end_off: usize, n_adjuncts: usize
         }
     }
 
-    blk_log!("  TABLE1 total: {} entries, sum(Δ01)={}, max(f1)={}, max(f3)={}",
-        g_t1_count, g_t1_sum, g_t1_max_f1, g_t1_max_f3);
-    blk_log!("  TABLE2 total: {} entries, sum(Δ01)={}, max(f1)={}, max(f3)={}",
-        g_t2_count, g_t2_sum, g_t2_max_f1, g_t2_max_f3);
-    blk_log!("  Expected: adjuncts={}, primitives={}", n_adjuncts, n_primitives);
-    blk_log!("  Match: t1_sum==adj? {}  t1_sum==prim? {}  t2_sum==adj? {}  t2_sum==prim? {}",
-        g_t1_sum == n_adjuncts as i64, g_t1_sum == n_primitives as i64,
-        g_t2_sum == n_adjuncts as i64, g_t2_sum == n_primitives as i64);
-    blk_log!("  Match: t1_max_f1==adj? {}  t1_max_f1==prim? {}  t2_max_f1==adj? {}  t2_max_f1==prim? {}",
-        g_t1_max_f1 == n_adjuncts as u32, g_t1_max_f1 == n_primitives as u32,
-        g_t2_max_f1 == n_adjuncts as u32, g_t2_max_f1 == n_primitives as u32);
+    blk_log!(
+        "  TABLE1 total: {} entries, sum(Δ01)={}, max(f1)={}, max(f3)={}",
+        g_t1_count,
+        g_t1_sum,
+        g_t1_max_f1,
+        g_t1_max_f3
+    );
+    blk_log!(
+        "  TABLE2 total: {} entries, sum(Δ01)={}, max(f1)={}, max(f3)={}",
+        g_t2_count,
+        g_t2_sum,
+        g_t2_max_f1,
+        g_t2_max_f3
+    );
+    blk_log!(
+        "  Expected: adjuncts={}, primitives={}",
+        n_adjuncts,
+        n_primitives
+    );
+    blk_log!(
+        "  Match: t1_sum==adj? {}  t1_sum==prim? {}  t2_sum==adj? {}  t2_sum==prim? {}",
+        g_t1_sum == n_adjuncts as i64,
+        g_t1_sum == n_primitives as i64,
+        g_t2_sum == n_adjuncts as i64,
+        g_t2_sum == n_primitives as i64
+    );
+    blk_log!(
+        "  Match: t1_max_f1==adj? {}  t1_max_f1==prim? {}  t2_max_f1==adj? {}  t2_max_f1==prim? {}",
+        g_t1_max_f1 == n_adjuncts as u32,
+        g_t1_max_f1 == n_primitives as u32,
+        g_t2_max_f1 == n_adjuncts as u32,
+        g_t2_max_f1 == n_primitives as u32
+    );
 
     // Remaining bytes = payload region
     // Use last block's end_offset as payload start (block walker may have overshot)
@@ -1129,22 +1395,36 @@ fn parse_blocks(data: &[u8], start_off: usize, end_off: usize, n_adjuncts: usize
         off
     };
     let remaining = end_off.saturating_sub(payload_off);
-    blk_log!("  remaining: {} bytes at offset {} ({:.1}% of region)",
-        remaining, payload_off, (remaining as f64 / (end_off - start_off) as f64) * 100.0);
+    blk_log!(
+        "  remaining: {} bytes at offset {} ({:.1}% of region)",
+        remaining,
+        payload_off,
+        (remaining as f64 / (end_off - start_off) as f64) * 100.0
+    );
     let off = payload_off; // shadow off for payload analysis
 
     // === Payload region analysis: alignment test + raw dump ===
     if remaining >= 24 {
         blk_log!("=== PAYLOAD REGION ANALYSIS ===");
-        blk_log!("  payload: offset {} .. {} ({} bytes, mod24={})",
-            off, end_off, remaining, remaining % 24);
+        blk_log!(
+            "  payload: offset {} .. {} ({} bytes, mod24={})",
+            off,
+            end_off,
+            remaining,
+            remaining % 24
+        );
 
         // Test two alignments: records starting at off (no count prefix) vs off+4 (with count prefix)
-        for &(label, base) in &[("align0 (no prefix)", off), ("align4 (skip first u32)", off + 4)] {
+        for &(label, base) in &[
+            ("align0 (no prefix)", off),
+            ("align4 (skip first u32)", off + 4),
+        ] {
             let avail = end_off.saturating_sub(base);
             let n_recs = avail / 24;
             let sample = n_recs.min(200);
-            if sample < 4 { continue; }
+            if sample < 4 {
+                continue;
+            }
 
             let mut zeros = [0usize; 6];
             let mut maxes = [0u32; 6];
@@ -1153,16 +1433,30 @@ fn parse_blocks(data: &[u8], start_off: usize, end_off: usize, n_adjuncts: usize
                 let roff = base + i * 24;
                 for j in 0..6 {
                     let v = read_u32_le(data, roff + j * 4);
-                    if v == 0 { zeros[j] += 1; }
+                    if v == 0 {
+                        zeros[j] += 1;
+                    }
                     maxes[j] = maxes[j].max(v);
-                    if v < 500 { all_small[j] += 1; }
+                    if v < 500 {
+                        all_small[j] += 1;
+                    }
                 }
             }
-            let zero_pct: Vec<String> = (0..6).map(|j| format!("f{}:{:.0}%", j, zeros[j] as f64 / sample as f64 * 100.0)).collect();
-            let small_pct: Vec<String> = (0..6).map(|j| format!("f{}:{:.0}%", j, all_small[j] as f64 / sample as f64 * 100.0)).collect();
+            let zero_pct: Vec<String> = (0..6)
+                .map(|j| format!("f{}:{:.0}%", j, zeros[j] as f64 / sample as f64 * 100.0))
+                .collect();
+            let small_pct: Vec<String> = (0..6)
+                .map(|j| format!("f{}:{:.0}%", j, all_small[j] as f64 / sample as f64 * 100.0))
+                .collect();
             let total_zeros: usize = zeros.iter().sum();
             let total_small: usize = all_small.iter().sum();
-            blk_log!("  {} — {} recs, zero_score={}, small_score={}", label, n_recs, total_zeros, total_small);
+            blk_log!(
+                "  {} — {} recs, zero_score={}, small_score={}",
+                label,
+                n_recs,
+                total_zeros,
+                total_small
+            );
             blk_log!("    zero%: {}", zero_pct.join(" "));
             blk_log!("    <500%: {}", small_pct.join(" "));
         }
@@ -1177,13 +1471,27 @@ fn parse_blocks(data: &[u8], start_off: usize, end_off: usize, n_adjuncts: usize
             let f2f = read_f32_le(data, roff + 8);
             let float_note = if r[0] > 1000 || r[2] > 1000 {
                 format!("  (f0={:.3} f2={:.3})", f0f, f2f)
-            } else { String::new() };
-            blk_log!("    [{:3}] {:6} {:6} {:6} {:6} {:6} {:6}{}",
-                i, r[0], r[1], r[2], r[3], r[4], r[5], float_note);
+            } else {
+                String::new()
+            };
+            blk_log!(
+                "    [{:3}] {:6} {:6} {:6} {:6} {:6} {:6}{}",
+                i,
+                r[0],
+                r[1],
+                r[2],
+                r[3],
+                r[4],
+                r[5],
+                float_note
+            );
         }
 
-        blk_log!("  --- RAW RECORDS (with u32 prefix={}, starting at {}) ---",
-            read_u32_le(data, off), off + 4);
+        blk_log!(
+            "  --- RAW RECORDS (with u32 prefix={}, starting at {}) ---",
+            read_u32_le(data, off),
+            off + 4
+        );
         let base2 = off + 4;
         for i in 0..15.min((end_off - base2) / 24) {
             let roff = base2 + i * 24;
@@ -1192,61 +1500,125 @@ fn parse_blocks(data: &[u8], start_off: usize, end_off: usize, n_adjuncts: usize
             let f2f = read_f32_le(data, roff + 8);
             let float_note = if r[0] > 1000 || r[2] > 1000 {
                 format!("  (f0={:.3} f2={:.3})", f0f, f2f)
-            } else { String::new() };
-            blk_log!("    [{:3}] {:6} {:6} {:6} {:6} {:6} {:6}{}",
-                i, r[0], r[1], r[2], r[3], r[4], r[5], float_note);
+            } else {
+                String::new()
+            };
+            blk_log!(
+                "    [{:3}] {:6} {:6} {:6} {:6} {:6} {:6}{}",
+                i,
+                r[0],
+                r[1],
+                r[2],
+                r[3],
+                r[4],
+                r[5],
+                float_note
+            );
         }
 
         // === Sliding window zero-pattern analysis ===
         let total_recs = (end_off - off) / 24;
         let window = 20;
-        blk_log!("  --- ZERO PATTERN WINDOWS (align0, {} recs of 24 bytes) ---", total_recs);
+        blk_log!(
+            "  --- ZERO PATTERN WINDOWS (align0, {} recs of 24 bytes) ---",
+            total_recs
+        );
         let mut prev_pattern = String::new();
         for start in (0..total_recs).step_by(window) {
             let end = (start + window).min(total_recs);
-            if end - start < 5 { break; }
+            if end - start < 5 {
+                break;
+            }
             let mut zeros = [0usize; 6];
             let cnt = end - start;
             for i in start..end {
                 let roff = off + i * 24;
                 for j in 0..6 {
-                    if read_u32_le(data, roff + j * 4) == 0 { zeros[j] += 1; }
+                    if read_u32_le(data, roff + j * 4) == 0 {
+                        zeros[j] += 1;
+                    }
                 }
             }
-            let pattern: String = (0..6).map(|j| {
-                if zeros[j] == cnt { '0' } else if zeros[j] == 0 { 'X' } else { '.' }
-            }).collect();
+            let pattern: String = (0..6)
+                .map(|j| {
+                    if zeros[j] == cnt {
+                        '0'
+                    } else if zeros[j] == 0 {
+                        'X'
+                    } else {
+                        '.'
+                    }
+                })
+                .collect();
             if pattern != prev_pattern {
-                blk_log!("    recs {:4}..{:4}: [{}]  zeros={:?}", start, end, pattern, zeros);
+                blk_log!(
+                    "    recs {:4}..{:4}: [{}]  zeros={:?}",
+                    start,
+                    end,
+                    pattern,
+                    zeros
+                );
                 prev_pattern = pattern;
             }
         }
 
         // === Records around n_adjuncts boundary (key hypothesis: pattern repeats at n_adjuncts) ===
         if n_adjuncts > 5 && n_adjuncts + 3 < total_recs {
-            blk_log!("  --- RECORDS AROUND n_adjuncts={} (align0) ---", n_adjuncts);
+            blk_log!(
+                "  --- RECORDS AROUND n_adjuncts={} (align0) ---",
+                n_adjuncts
+            );
             let show_start = n_adjuncts.saturating_sub(3);
             let show_end = (n_adjuncts + 5).min(total_recs);
             for i in show_start..show_end {
                 let roff = off + i * 24;
                 let r: Vec<u32> = (0..6).map(|j| read_u32_le(data, roff + j * 4)).collect();
-                let marker = if i == n_adjuncts { " <== n_adjuncts" } else { "" };
-                blk_log!("    [{:3}] {:6} {:6} {:6} {:6} {:6} {:6}{}",
-                    i, r[0], r[1], r[2], r[3], r[4], r[5], marker);
+                let marker = if i == n_adjuncts {
+                    " <== n_adjuncts"
+                } else {
+                    ""
+                };
+                blk_log!(
+                    "    [{:3}] {:6} {:6} {:6} {:6} {:6} {:6}{}",
+                    i,
+                    r[0],
+                    r[1],
+                    r[2],
+                    r[3],
+                    r[4],
+                    r[5],
+                    marker
+                );
             }
         }
 
         // === Records around n_primitives boundary ===
         if n_primitives > 5 && n_primitives + 3 < total_recs {
-            blk_log!("  --- RECORDS AROUND n_primitives={} (align0) ---", n_primitives);
+            blk_log!(
+                "  --- RECORDS AROUND n_primitives={} (align0) ---",
+                n_primitives
+            );
             let show_start = n_primitives.saturating_sub(3);
             let show_end = (n_primitives + 5).min(total_recs);
             for i in show_start..show_end {
                 let roff = off + i * 24;
                 let r: Vec<u32> = (0..6).map(|j| read_u32_le(data, roff + j * 4)).collect();
-                let marker = if i == n_primitives { " <== n_primitives" } else { "" };
-                blk_log!("    [{:3}] {:6} {:6} {:6} {:6} {:6} {:6}{}",
-                    i, r[0], r[1], r[2], r[3], r[4], r[5], marker);
+                let marker = if i == n_primitives {
+                    " <== n_primitives"
+                } else {
+                    ""
+                };
+                blk_log!(
+                    "    [{:3}] {:6} {:6} {:6} {:6} {:6} {:6}{}",
+                    i,
+                    r[0],
+                    r[1],
+                    r[2],
+                    r[3],
+                    r[4],
+                    r[5],
+                    marker
+                );
             }
         }
 
@@ -1261,9 +1633,23 @@ fn parse_blocks(data: &[u8], start_off: usize, end_off: usize, n_adjuncts: usize
                 let r: Vec<u32> = (0..6).map(|j| read_u32_le(data, roff + j * 4)).collect();
                 let f_vals: Vec<f32> = (0..6).map(|j| read_f32_le(data, roff + j * 4)).collect();
                 let marker = if i == combined { " <== adj+prim" } else { "" };
-                blk_log!("    [{:3}] {:6} {:6} {:6} {:6} {:6} {:6}  f32=({:.3},{:.3},{:.3},{:.3},{:.3},{:.3}){}",
-                    i, r[0], r[1], r[2], r[3], r[4], r[5],
-                    f_vals[0], f_vals[1], f_vals[2], f_vals[3], f_vals[4], f_vals[5], marker);
+                blk_log!(
+                    "    [{:3}] {:6} {:6} {:6} {:6} {:6} {:6}  f32=({:.3},{:.3},{:.3},{:.3},{:.3},{:.3}){}",
+                    i,
+                    r[0],
+                    r[1],
+                    r[2],
+                    r[3],
+                    r[4],
+                    r[5],
+                    f_vals[0],
+                    f_vals[1],
+                    f_vals[2],
+                    f_vals[3],
+                    f_vals[4],
+                    f_vals[5],
+                    marker
+                );
             }
         }
 
@@ -1271,8 +1657,13 @@ fn parse_blocks(data: &[u8], start_off: usize, end_off: usize, n_adjuncts: usize
         let adj_bytes = n_adjuncts * 24;
         let post_adj_off = off + adj_bytes;
         let post_adj_bytes = end_off.saturating_sub(post_adj_off);
-        blk_log!("  total: {} bytes = {} adjunct recs × 24 ({} bytes) + {} post-adjunct bytes",
-            remaining, n_adjuncts, adj_bytes, post_adj_bytes);
+        blk_log!(
+            "  total: {} bytes = {} adjunct recs × 24 ({} bytes) + {} post-adjunct bytes",
+            remaining,
+            n_adjuncts,
+            adj_bytes,
+            post_adj_bytes
+        );
 
         // Adjunct section analysis
         if adj_bytes <= remaining {
@@ -1289,23 +1680,39 @@ fn parse_blocks(data: &[u8], start_off: usize, end_off: usize, n_adjuncts: usize
                 let is_mixed = vals.iter().any(|&v| v > 5000);
                 if is_mixed {
                     n_mixed += 1;
-                    if first_mixed.is_none() { first_mixed = Some(i); }
+                    if first_mixed.is_none() {
+                        first_mixed = Some(i);
+                    }
                 } else {
                     n_pure_index += 1;
                     for j in 0..6 {
                         idx_maxes[j] = idx_maxes[j].max(vals[j]);
-                        if vals[j] == 0 { idx_zeros[j] += 1; }
+                        if vals[j] == 0 {
+                            idx_zeros[j] += 1;
+                        }
                     }
                 }
             }
 
-            blk_log!("  ADJUNCT SECTION ({} records): {} pure index, {} mixed/float",
-                n_adjuncts, n_pure_index, n_mixed);
+            blk_log!(
+                "  ADJUNCT SECTION ({} records): {} pure index, {} mixed/float",
+                n_adjuncts,
+                n_pure_index,
+                n_mixed
+            );
             if n_pure_index > 0 {
-                let range_str: Vec<String> = (0..6).map(|j| format!("f{}:0..{}", j, idx_maxes[j])).collect();
-                let zero_str: Vec<String> = (0..6).map(|j| {
-                    format!("f{}:{:.0}%", j, idx_zeros[j] as f64 / n_pure_index as f64 * 100.0)
-                }).collect();
+                let range_str: Vec<String> = (0..6)
+                    .map(|j| format!("f{}:0..{}", j, idx_maxes[j]))
+                    .collect();
+                let zero_str: Vec<String> = (0..6)
+                    .map(|j| {
+                        format!(
+                            "f{}:{:.0}%",
+                            j,
+                            idx_zeros[j] as f64 / n_pure_index as f64 * 100.0
+                        )
+                    })
+                    .collect();
                 blk_log!("    index records — max: {}", range_str.join("  "));
                 blk_log!("    index records — zero%: {}", zero_str.join(" "));
             }
@@ -1318,7 +1725,16 @@ fn parse_blocks(data: &[u8], start_off: usize, end_off: usize, n_adjuncts: usize
             for i in 0..5.min(n_adjuncts) {
                 let roff = off + i * 24;
                 let r: [u32; 6] = std::array::from_fn(|j| read_u32_le(data, roff + j * 4));
-                blk_log!("      [{:4}] {:6} {:6} {:6} {:6} {:6} {:6}", i, r[0], r[1], r[2], r[3], r[4], r[5]);
+                blk_log!(
+                    "      [{:4}] {:6} {:6} {:6} {:6} {:6} {:6}",
+                    i,
+                    r[0],
+                    r[1],
+                    r[2],
+                    r[3],
+                    r[4],
+                    r[5]
+                );
             }
             if n_adjuncts > 10 {
                 blk_log!("    last 5 adjunct records:");
@@ -1327,7 +1743,17 @@ fn parse_blocks(data: &[u8], start_off: usize, end_off: usize, n_adjuncts: usize
                     let r: [u32; 6] = std::array::from_fn(|j| read_u32_le(data, roff + j * 4));
                     let is_mixed = r.iter().any(|&v| v > 5000);
                     let note = if is_mixed { "  [FLOAT]" } else { "" };
-                    blk_log!("      [{:4}] {:6} {:6} {:6} {:6} {:6} {:6}{}", i, r[0], r[1], r[2], r[3], r[4], r[5], note);
+                    blk_log!(
+                        "      [{:4}] {:6} {:6} {:6} {:6} {:6} {:6}{}",
+                        i,
+                        r[0],
+                        r[1],
+                        r[2],
+                        r[3],
+                        r[4],
+                        r[5],
+                        note
+                    );
                 }
             }
             if let Some(fm) = first_mixed {
@@ -1339,10 +1765,33 @@ fn parse_blocks(data: &[u8], start_off: usize, end_off: usize, n_adjuncts: usize
                         let f: [f32; 6] = std::array::from_fn(|j| read_f32_le(data, roff + j * 4));
                         let is_mixed = r.iter().any(|&v| v > 5000);
                         if is_mixed {
-                            blk_log!("      [{:4}] {:6} {:6} {:6} {:6} {:6} {:6}  f32=({:.3},{:.3},{:.3},{:.3},{:.3},{:.3})",
-                                i, r[0], r[1], r[2], r[3], r[4], r[5], f[0], f[1], f[2], f[3], f[4], f[5]);
+                            blk_log!(
+                                "      [{:4}] {:6} {:6} {:6} {:6} {:6} {:6}  f32=({:.3},{:.3},{:.3},{:.3},{:.3},{:.3})",
+                                i,
+                                r[0],
+                                r[1],
+                                r[2],
+                                r[3],
+                                r[4],
+                                r[5],
+                                f[0],
+                                f[1],
+                                f[2],
+                                f[3],
+                                f[4],
+                                f[5]
+                            );
                         } else {
-                            blk_log!("      [{:4}] {:6} {:6} {:6} {:6} {:6} {:6}", i, r[0], r[1], r[2], r[3], r[4], r[5]);
+                            blk_log!(
+                                "      [{:4}] {:6} {:6} {:6} {:6} {:6} {:6}",
+                                i,
+                                r[0],
+                                r[1],
+                                r[2],
+                                r[3],
+                                r[4],
+                                r[5]
+                            );
                         }
                     }
                 }
@@ -1351,7 +1800,11 @@ fn parse_blocks(data: &[u8], start_off: usize, end_off: usize, n_adjuncts: usize
 
         // Post-adjunct section analysis
         if post_adj_bytes > 0 && adj_bytes <= remaining {
-            blk_log!("  POST-ADJUNCT SECTION ({} bytes at offset {}):", post_adj_bytes, post_adj_off);
+            blk_log!(
+                "  POST-ADJUNCT SECTION ({} bytes at offset {}):",
+                post_adj_bytes,
+                post_adj_off
+            );
 
             // Find where float data starts (first record with any field > 50000)
             let post_recs = post_adj_bytes / 24;
@@ -1372,14 +1825,24 @@ fn parse_blocks(data: &[u8], start_off: usize, end_off: usize, n_adjuncts: usize
                 }
             }
 
-            blk_log!("    {} 24-byte records, {} leftover bytes", post_recs, post_adj_bytes % 24);
+            blk_log!(
+                "    {} 24-byte records, {} leftover bytes",
+                post_recs,
+                post_adj_bytes % 24
+            );
             if let Some(fs) = float_start {
-                blk_log!("    float data starts at post-adj record {} (abs offset {})",
-                    fs, post_adj_off + fs * 24);
+                blk_log!(
+                    "    float data starts at post-adj record {} (abs offset {})",
+                    fs,
+                    post_adj_off + fs * 24
+                );
             }
             if let Some(ir) = index_resume {
-                blk_log!("    index data resumes at post-adj record {} (abs offset {})",
-                    ir, post_adj_off + ir * 24);
+                blk_log!(
+                    "    index data resumes at post-adj record {} (abs offset {})",
+                    ir,
+                    post_adj_off + ir * 24
+                );
                 // Dump first few index records
                 let idx_off = post_adj_off + ir * 24;
                 blk_log!("    index records (as flat u32 stream):");
@@ -1395,11 +1858,19 @@ fn parse_blocks(data: &[u8], start_off: usize, end_off: usize, n_adjuncts: usize
                 let idx_bytes = end_off - idx_off;
                 let n_u32_indices = idx_bytes / 4;
                 let n_u16_indices = idx_bytes / 2;
-                blk_log!("      {} bytes = {} u32s or {} u16s", idx_bytes, n_u32_indices, n_u16_indices);
-                blk_log!("      n_primitives={} × 3 = {}  match u32? {}  match u16? {}",
-                    n_primitives, n_primitives * 3,
+                blk_log!(
+                    "      {} bytes = {} u32s or {} u16s",
+                    idx_bytes,
+                    n_u32_indices,
+                    n_u16_indices
+                );
+                blk_log!(
+                    "      n_primitives={} × 3 = {}  match u32? {}  match u16? {}",
+                    n_primitives,
+                    n_primitives * 3,
                     n_u32_indices == n_primitives * 3,
-                    n_u16_indices == n_primitives * 3);
+                    n_u16_indices == n_primitives * 3
+                );
             }
 
             // Show first 5 and last 5 post-adjunct records
@@ -1411,10 +1882,24 @@ fn parse_blocks(data: &[u8], start_off: usize, end_off: usize, n_adjuncts: usize
                 let f: Vec<f32> = (0..6).map(|j| read_f32_le(data, roff + j * 4)).collect();
                 let any_large = r.iter().any(|&v| v > 50000);
                 let note = if any_large {
-                    format!("  f32=({:.3},{:.3},{:.3},{:.3},{:.3},{:.3})", f[0],f[1],f[2],f[3],f[4],f[5])
-                } else { String::new() };
-                blk_log!("      [{:3}] {:6} {:6} {:6} {:6} {:6} {:6}{}",
-                    i, r[0], r[1], r[2], r[3], r[4], r[5], note);
+                    format!(
+                        "  f32=({:.3},{:.3},{:.3},{:.3},{:.3},{:.3})",
+                        f[0], f[1], f[2], f[3], f[4], f[5]
+                    )
+                } else {
+                    String::new()
+                };
+                blk_log!(
+                    "      [{:3}] {:6} {:6} {:6} {:6} {:6} {:6}{}",
+                    i,
+                    r[0],
+                    r[1],
+                    r[2],
+                    r[3],
+                    r[4],
+                    r[5],
+                    note
+                );
             }
             if post_recs > 10 {
                 let last_start = post_recs - 5;
@@ -1422,8 +1907,16 @@ fn parse_blocks(data: &[u8], start_off: usize, end_off: usize, n_adjuncts: usize
                 for i in last_start..post_recs {
                     let roff = post_adj_off + i * 24;
                     let r: Vec<u32> = (0..6).map(|j| read_u32_le(data, roff + j * 4)).collect();
-                    blk_log!("      [{:3}] {:6} {:6} {:6} {:6} {:6} {:6}",
-                        i, r[0], r[1], r[2], r[3], r[4], r[5]);
+                    blk_log!(
+                        "      [{:3}] {:6} {:6} {:6} {:6} {:6} {:6}",
+                        i,
+                        r[0],
+                        r[1],
+                        r[2],
+                        r[3],
+                        r[4],
+                        r[5]
+                    );
                 }
             }
         }
@@ -1436,13 +1929,16 @@ fn parse_blocks(data: &[u8], start_off: usize, end_off: usize, n_adjuncts: usize
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::oni2_loader::parsers::skeleton::parse_skel;
-    use crate::oni2_loader::parsers::animation::parse_anim;
     use crate::oni2_loader::animation::load_anim_library;
+    use crate::oni2_loader::parsers::animation::parse_anim;
+    use crate::oni2_loader::parsers::skeleton::parse_skel;
 
     #[test]
     fn test_file_structure_analysis() {
-        let path_str = format!("{}/Entity/Tim/win32_tim_LODs3.mod", crate::get_assets_path());
+        let path_str = format!(
+            "{}/Entity/Tim/win32_tim_LODs3.mod",
+            crate::get_assets_path()
+        );
         let path = path_str.as_str();
         let data = crate::vfs::read("", path).expect("Failed to read tim LODs3.mod");
         eprintln!("=== TIM LOD3 FILE STRUCTURE ANALYSIS ===");
@@ -1486,8 +1982,10 @@ mod tests {
         let verts_off = 58;
         let verts_size = n_verts * 12;
         let verts_end = verts_off + verts_size;
-        eprintln!("\n--- VERTICES (offset {}..{}, {} bytes, {} verts * 12) ---",
-            verts_off, verts_end, verts_size, n_verts);
+        eprintln!(
+            "\n--- VERTICES (offset {}..{}, {} bytes, {} verts * 12) ---",
+            verts_off, verts_end, verts_size, n_verts
+        );
 
         // =============================================
         // 3. NORMALS (n_normals * 12 bytes)
@@ -1495,8 +1993,10 @@ mod tests {
         let normals_off = verts_end;
         let normals_size = n_normals * 12;
         let normals_end = normals_off + normals_size;
-        eprintln!("--- NORMALS (offset {}..{}, {} bytes, {} normals * 12) ---",
-            normals_off, normals_end, normals_size, n_normals);
+        eprintln!(
+            "--- NORMALS (offset {}..{}, {} bytes, {} normals * 12) ---",
+            normals_off, normals_end, normals_size, n_normals
+        );
 
         // =============================================
         // 4. COLORS (n_colors * 16 bytes)
@@ -1504,8 +2004,10 @@ mod tests {
         let colors_off = normals_end;
         let colors_size = n_colors * 16;
         let colors_end = colors_off + colors_size;
-        eprintln!("--- COLORS (offset {}..{}, {} bytes, {} colors * 16) ---",
-            colors_off, colors_end, colors_size, n_colors);
+        eprintln!(
+            "--- COLORS (offset {}..{}, {} bytes, {} colors * 16) ---",
+            colors_off, colors_end, colors_size, n_colors
+        );
 
         // =============================================
         // 5. TEX COORDS (n_tex1s * 8 bytes)
@@ -1513,8 +2015,10 @@ mod tests {
         let tex_off = colors_end;
         let tex_size = n_tex1s * 8;
         let tex_end = tex_off + tex_size;
-        eprintln!("--- TEX COORDS (offset {}..{}, {} bytes, {} tex1s * 8) ---",
-            tex_off, tex_end, tex_size, n_tex1s);
+        eprintln!(
+            "--- TEX COORDS (offset {}..{}, {} bytes, {} tex1s * 8) ---",
+            tex_off, tex_end, tex_size, n_tex1s
+        );
 
         // Skip tex2s and tangents
         let tex2_off = tex_end;
@@ -1524,10 +2028,16 @@ mod tests {
         let tang_size = n_tangents * 12;
         let tang_end = tang_off + tang_size;
         if n_tex2s > 0 {
-            eprintln!("--- TEX2 (offset {}..{}, {} bytes) ---", tex2_off, tex2_end, tex2_size);
+            eprintln!(
+                "--- TEX2 (offset {}..{}, {} bytes) ---",
+                tex2_off, tex2_end, tex2_size
+            );
         }
         if n_tangents > 0 {
-            eprintln!("--- TANGENTS (offset {}..{}, {} bytes) ---", tang_off, tang_end, tang_size);
+            eprintln!(
+                "--- TANGENTS (offset {}..{}, {} bytes) ---",
+                tang_off, tang_end, tang_size
+            );
         }
 
         // =============================================
@@ -1536,8 +2046,10 @@ mod tests {
         let mat_off = tang_end;
         let mat_size = n_materials * 86;
         let mat_end = mat_off + mat_size;
-        eprintln!("--- MATERIALS (offset {}..{}, {} bytes, {} materials * 86) ---",
-            mat_off, mat_end, mat_size, n_materials);
+        eprintln!(
+            "--- MATERIALS (offset {}..{}, {} bytes, {} materials * 86) ---",
+            mat_off, mat_end, mat_size, n_materials
+        );
         for i in 0..n_materials {
             let mo = mat_off + i * 86;
             let name = read_null_string(&data[mo..mo + 12]);
@@ -1551,15 +2063,24 @@ mod tests {
             let u32_12 = read_u32_le(&data, mo + 12);
             let u32_16 = read_u32_le(&data, mo + 16);
             let u32_20 = read_u32_le(&data, mo + 20);
-            eprintln!("  mat[{}]: name='{}' texture='{}' u16s=[{}] u32@12={} u32@16={} u32@20={}",
-                i, name, tex_name, u16_vals.join(", "), u32_12, u32_16, u32_20);
+            eprintln!(
+                "  mat[{}]: name='{}' texture='{}' u16s=[{}] u32@12={} u32@16={} u32@20={}",
+                i,
+                name,
+                tex_name,
+                u16_vals.join(", "),
+                u32_12,
+                u32_16,
+                u32_20
+            );
         }
 
         // =============================================
         // 7. FIND mtxv marker
         // =============================================
         let search_start = data.len().saturating_sub(500);
-        let mtxv_pos = data[search_start..].windows(4)
+        let mtxv_pos = data[search_start..]
+            .windows(4)
             .position(|w| w == b"mtxv")
             .map(|p| search_start + p);
 
@@ -1573,20 +2094,39 @@ mod tests {
         let gap_end = mtxv_offset;
         let gap_size = gap_end - gap_start;
         eprintln!("\n====================================================");
-        eprintln!("=== PACKET REGION: offset {}..{} ({} bytes) ===", gap_start, gap_end, gap_size);
+        eprintln!(
+            "=== PACKET REGION: offset {}..{} ({} bytes) ===",
+            gap_start, gap_end, gap_size
+        );
         eprintln!("====================================================");
 
-        eprintln!("\n  Context: n_adjuncts={}, n_primitives={}", n_adjuncts, n_primitives);
-        eprintln!("  n_adjuncts * 24 = {} bytes (if adjuncts are 6*u32 records)", n_adjuncts * 24);
-        eprintln!("  n_primitives * 2 = {} bytes (if primitives are u16 indices)", n_primitives * 2);
-        eprintln!("  n_adjuncts*24 + n_primitives*2 = {} bytes",
-            n_adjuncts * 24 + n_primitives * 2);
+        eprintln!(
+            "\n  Context: n_adjuncts={}, n_primitives={}",
+            n_adjuncts, n_primitives
+        );
+        eprintln!(
+            "  n_adjuncts * 24 = {} bytes (if adjuncts are 6*u32 records)",
+            n_adjuncts * 24
+        );
+        eprintln!(
+            "  n_primitives * 2 = {} bytes (if primitives are u16 indices)",
+            n_primitives * 2
+        );
+        eprintln!(
+            "  n_adjuncts*24 + n_primitives*2 = {} bytes",
+            n_adjuncts * 24 + n_primitives * 2
+        );
         eprintln!("  gap size = {} bytes", gap_size);
-        eprintln!("  gap_size - n_adjuncts*24 = {} bytes (leftover for indices + headers)",
-            gap_size as isize - (n_adjuncts * 24) as isize);
+        eprintln!(
+            "  gap_size - n_adjuncts*24 = {} bytes (leftover for indices + headers)",
+            gap_size as isize - (n_adjuncts * 24) as isize
+        );
 
         // --- Dump the ENTIRE gap region as u16 values ---
-        eprintln!("\n--- FULL GAP DUMP as u16 values ({} u16s) ---", gap_size / 2);
+        eprintln!(
+            "\n--- FULL GAP DUMP as u16 values ({} u16s) ---",
+            gap_size / 2
+        );
         let mut u16_vals: Vec<u16> = Vec::new();
         let mut off = gap_start;
         while off + 2 <= gap_end {
@@ -1640,14 +2180,26 @@ mod tests {
             }
         }
 
-        eprintln!("  u16 values < {} (n_adjuncts): {} / {} ({:.1}%)",
-            n_adjuncts, in_range_count, u16_vals.len(),
-            in_range_count as f64 / u16_vals.len() as f64 * 100.0);
-        eprintln!("  u16 values >= {}: {} / {}", n_adjuncts, out_of_range_count, u16_vals.len());
+        eprintln!(
+            "  u16 values < {} (n_adjuncts): {} / {} ({:.1}%)",
+            n_adjuncts,
+            in_range_count,
+            u16_vals.len(),
+            in_range_count as f64 / u16_vals.len() as f64 * 100.0
+        );
+        eprintln!(
+            "  u16 values >= {}: {} / {}",
+            n_adjuncts,
+            out_of_range_count,
+            u16_vals.len()
+        );
 
         // Look for RUNS of consecutive u16 values all in range 0..n_adjuncts
         // (these would be candidate strip index arrays)
-        eprintln!("\n--- RUNS of consecutive u16 values in range 0..{} ---", n_adjuncts);
+        eprintln!(
+            "\n--- RUNS of consecutive u16 values in range 0..{} ---",
+            n_adjuncts
+        );
         let mut run_start: Option<usize> = None;
         let mut runs: Vec<(usize, usize, Vec<u16>)> = Vec::new(); // (byte_offset, length, values)
 
@@ -1659,7 +2211,8 @@ mod tests {
             } else {
                 if let Some(start) = run_start {
                     let len = i - start;
-                    if len >= 3 { // At least 3 consecutive indices to form a triangle
+                    if len >= 3 {
+                        // At least 3 consecutive indices to form a triangle
                         let vals: Vec<u16> = u16_vals[start..i].to_vec();
                         runs.push((gap_start + start * 2, len, vals));
                     }
@@ -1676,28 +2229,50 @@ mod tests {
             }
         }
 
-        eprintln!("  Found {} runs of 3+ consecutive in-range u16 values:", runs.len());
+        eprintln!(
+            "  Found {} runs of 3+ consecutive in-range u16 values:",
+            runs.len()
+        );
         for (byte_off, len, vals) in &runs {
             let preview: Vec<String> = vals.iter().take(30).map(|v| format!("{}", v)).collect();
-            let suffix = if vals.len() > 30 { format!(" ... ({} more)", vals.len() - 30) } else { String::new() };
-            eprintln!("    @offset {}: {} u16 values: [{}]{}", byte_off, len, preview.join(", "), suffix);
+            let suffix = if vals.len() > 30 {
+                format!(" ... ({} more)", vals.len() - 30)
+            } else {
+                String::new()
+            };
+            eprintln!(
+                "    @offset {}: {} u16 values: [{}]{}",
+                byte_off,
+                len,
+                preview.join(", "),
+                suffix
+            );
 
             // Check if this run looks like a triangle strip
             // In a triangle strip, you'd see index values that repeat in patterns
             let unique: std::collections::HashSet<u16> = vals.iter().copied().collect();
             let max_val = vals.iter().max().copied().unwrap_or(0);
             let min_val = vals.iter().min().copied().unwrap_or(0);
-            eprintln!("      range: {}..{}, {} unique values, density: {:.1}%",
-                min_val, max_val, unique.len(),
-                unique.len() as f64 / (max_val as f64 - min_val as f64 + 1.0) * 100.0);
+            eprintln!(
+                "      range: {}..{}, {} unique values, density: {:.1}%",
+                min_val,
+                max_val,
+                unique.len(),
+                unique.len() as f64 / (max_val as f64 - min_val as f64 + 1.0) * 100.0
+            );
 
             // Check for degenerate strip markers (repeated consecutive values)
             let mut degen_count = 0;
             for w in vals.windows(2) {
-                if w[0] == w[1] { degen_count += 1; }
+                if w[0] == w[1] {
+                    degen_count += 1;
+                }
             }
             if degen_count > 0 {
-                eprintln!("      degenerate pairs (repeated consecutive): {}", degen_count);
+                eprintln!(
+                    "      degenerate pairs (repeated consecutive): {}",
+                    degen_count
+                );
             }
         }
 
@@ -1711,24 +2286,38 @@ mod tests {
             let b = read_u32_le(&data, gap_start + 4);
             let c = read_u32_le(&data, gap_start + 8);
             let d = read_u32_le(&data, gap_start + 12);
-            eprintln!("  First 4 u32s (potential block header): A={} B={} C={} D={}", a, b, c, d);
+            eprintln!(
+                "  First 4 u32s (potential block header): A={} B={} C={} D={}",
+                a, b, c, d
+            );
 
             // If A looks like adjunct count, the adjunct table follows
             let table1_end = gap_start + 16 + a as usize * 24;
-            eprintln!("  If A={} is table1 count: table1 ends at offset {}", a, table1_end);
+            eprintln!(
+                "  If A={} is table1 count: table1 ends at offset {}",
+                a, table1_end
+            );
 
             // After table1, D bounds records
             let bounds_end = table1_end + d as usize * 24;
-            eprintln!("  If D={} is bounds count: bounds end at offset {}", d, bounds_end);
+            eprintln!(
+                "  If D={} is bounds count: bounds end at offset {}",
+                d, bounds_end
+            );
 
             // After bounds, B bone groups
             // Then sub-header, then... index data?
-            eprintln!("  Remaining after table1+bounds: {} bytes",
-                gap_end as isize - bounds_end as isize);
+            eprintln!(
+                "  Remaining after table1+bounds: {} bytes",
+                gap_end as isize - bounds_end as isize
+            );
         }
 
         // --- Try interpreting data at various offsets as u16 index arrays ---
-        eprintln!("\n--- SCANNING FOR u16 INDEX ARRAYS (values 0..{}) ---", n_adjuncts);
+        eprintln!(
+            "\n--- SCANNING FOR u16 INDEX ARRAYS (values 0..{}) ---",
+            n_adjuncts
+        );
 
         // Scan every 2-byte aligned position and count how many consecutive
         // u16 values are in range 0..n_adjuncts
@@ -1741,7 +2330,9 @@ mod tests {
                 let mut j = i + 2;
                 while j + 2 <= gap_size {
                     let v = read_u16_le(&data, gap_start + j);
-                    if v >= max_adj { break; }
+                    if v >= max_adj {
+                        break;
+                    }
                     j += 2;
                 }
                 let count = (j - start) / 2;
@@ -1757,13 +2348,23 @@ mod tests {
         best_runs.sort_by(|a, b| b.1.cmp(&a.1));
         eprintln!("  Top runs of u16 values in range 0..{}:", n_adjuncts);
         for (off, count) in best_runs.iter().take(10) {
-            let preview: Vec<u16> = (0..*count.min(&20)).map(|i| {
-                read_u16_le(&data, off + i * 2)
-            }).collect();
+            let preview: Vec<u16> = (0..*count.min(&20))
+                .map(|i| read_u16_le(&data, off + i * 2))
+                .collect();
             let preview_str: Vec<String> = preview.iter().map(|v| format!("{}", v)).collect();
-            let suffix = if *count > 20 { format!(" ... ({} more)", count - 20) } else { String::new() };
-            eprintln!("    @offset {} ({} from gap start): {} u16 values: [{}]{}",
-                off, off - gap_start, count, preview_str.join(", "), suffix);
+            let suffix = if *count > 20 {
+                format!(" ... ({} more)", count - 20)
+            } else {
+                String::new()
+            };
+            eprintln!(
+                "    @offset {} ({} from gap start): {} u16 values: [{}]{}",
+                off,
+                off - gap_start,
+                count,
+                preview_str.join(", "),
+                suffix
+            );
 
             // Does this count relate to n_primitives?
             if *count == n_primitives || *count == n_primitives + 2 || *count == n_primitives - 1 {
@@ -1774,46 +2375,74 @@ mod tests {
         // --- Total u16 count across all runs ---
         let total_run_u16s: usize = best_runs.iter().map(|(_, c)| c).sum();
         eprintln!("\n  Total u16 values in runs of 5+: {}", total_run_u16s);
-        eprintln!("  n_primitives = {} (if these are strip indices, expect close match)", n_primitives);
+        eprintln!(
+            "  n_primitives = {} (if these are strip indices, expect close match)",
+            n_primitives
+        );
 
         // =============================================
         // 8. mtxv section to end
         // =============================================
-        eprintln!("\n--- mtxv SECTION (offset {}..{}, {} bytes) ---",
-            mtxv_offset, data.len(), data.len() - mtxv_offset);
+        eprintln!(
+            "\n--- mtxv SECTION (offset {}..{}, {} bytes) ---",
+            mtxv_offset,
+            data.len(),
+            data.len() - mtxv_offset
+        );
 
         // Read mtxv entries
         let mut moff = mtxv_offset + 4; // skip "mtxv"
         let mut mtxv_entries: Vec<u32> = Vec::new();
         for _ in 0..n_matrices {
-            if moff + 5 > data.len() { break; }
-            if data[moff] != b' ' { break; }
+            if moff + 5 > data.len() {
+                break;
+            }
+            if data[moff] != b' ' {
+                break;
+            }
             moff += 1;
-            if moff + 4 > data.len() { break; }
+            if moff + 4 > data.len() {
+                break;
+            }
             mtxv_entries.push(read_u32_le(&data, moff));
             moff += 4;
         }
         let sum: u32 = mtxv_entries.iter().sum();
-        eprintln!("  {} entries (n_matrices={}), sum={} (n_verts={})",
-            mtxv_entries.len(), n_matrices, sum, n_verts);
+        eprintln!(
+            "  {} entries (n_matrices={}), sum={} (n_verts={})",
+            mtxv_entries.len(),
+            n_matrices,
+            sum,
+            n_verts
+        );
         for (i, &v) in mtxv_entries.iter().enumerate() {
             eprintln!("    bone[{}]: {} vertices", i, v);
         }
 
         // Remaining bytes after mtxv entries
         eprintln!("  mtxv entries end at offset {}", moff);
-        eprintln!("  Remaining after mtxv entries: {} bytes", data.len() - moff);
+        eprintln!(
+            "  Remaining after mtxv entries: {} bytes",
+            data.len() - moff
+        );
         if moff < data.len() {
             let remaining = &data[moff..];
             let dump_len = remaining.len().min(128);
-            let hex: Vec<String> = remaining[..dump_len].iter().map(|b| format!("{:02X}", b)).collect();
+            let hex: Vec<String> = remaining[..dump_len]
+                .iter()
+                .map(|b| format!("{:02X}", b))
+                .collect();
             eprintln!("  Remaining hex: {}", hex.join(" "));
 
             // Check for other markers
             for marker in &[b"mtx " as &[u8], b"rsem", b"bone", b"skin"] {
                 if let Some(pos) = remaining.windows(marker.len()).position(|w| w == *marker) {
-                    eprintln!("  Found marker '{}' at offset {} (abs {})",
-                        std::str::from_utf8(marker).unwrap_or("?"), pos, moff + pos);
+                    eprintln!(
+                        "  Found marker '{}' at offset {} (abs {})",
+                        std::str::from_utf8(marker).unwrap_or("?"),
+                        pos,
+                        moff + pos
+                    );
                 }
             }
         }
@@ -1825,22 +2454,61 @@ mod tests {
         eprintln!("=== COMPLETE BYTE MAP SUMMARY ===");
         eprintln!("====================================================");
         eprintln!("  Header:       {:6}..{:6}  ({:5} bytes)", 0, 58, 58);
-        eprintln!("  Vertices:     {:6}..{:6}  ({:5} bytes)  {} * 12", verts_off, verts_end, verts_size, n_verts);
-        eprintln!("  Normals:      {:6}..{:6}  ({:5} bytes)  {} * 12", normals_off, normals_end, normals_size, n_normals);
-        eprintln!("  Colors:       {:6}..{:6}  ({:5} bytes)  {} * 16", colors_off, colors_end, colors_size, n_colors);
-        eprintln!("  TexCoords:    {:6}..{:6}  ({:5} bytes)  {} * 8", tex_off, tex_end, tex_size, n_tex1s);
+        eprintln!(
+            "  Vertices:     {:6}..{:6}  ({:5} bytes)  {} * 12",
+            verts_off, verts_end, verts_size, n_verts
+        );
+        eprintln!(
+            "  Normals:      {:6}..{:6}  ({:5} bytes)  {} * 12",
+            normals_off, normals_end, normals_size, n_normals
+        );
+        eprintln!(
+            "  Colors:       {:6}..{:6}  ({:5} bytes)  {} * 16",
+            colors_off, colors_end, colors_size, n_colors
+        );
+        eprintln!(
+            "  TexCoords:    {:6}..{:6}  ({:5} bytes)  {} * 8",
+            tex_off, tex_end, tex_size, n_tex1s
+        );
         if n_tex2s > 0 {
-            eprintln!("  Tex2:         {:6}..{:6}  ({:5} bytes)  {} * 8", tex2_off, tex2_end, tex2_size, n_tex2s);
+            eprintln!(
+                "  Tex2:         {:6}..{:6}  ({:5} bytes)  {} * 8",
+                tex2_off, tex2_end, tex2_size, n_tex2s
+            );
         }
         if n_tangents > 0 {
-            eprintln!("  Tangents:     {:6}..{:6}  ({:5} bytes)  {} * 12", tang_off, tang_end, tang_size, n_tangents);
+            eprintln!(
+                "  Tangents:     {:6}..{:6}  ({:5} bytes)  {} * 12",
+                tang_off, tang_end, tang_size, n_tangents
+            );
         }
-        eprintln!("  Materials:    {:6}..{:6}  ({:5} bytes)  {} * 86", mat_off, mat_end, mat_size, n_materials);
-        eprintln!("  Packet rgn:   {:6}..{:6}  ({:5} bytes)  [blocks + indices?]", gap_start, gap_end, gap_size);
-        eprintln!("  mtxv:         {:6}..{:6}  ({:5} bytes)", mtxv_offset, data.len(), data.len() - mtxv_offset);
+        eprintln!(
+            "  Materials:    {:6}..{:6}  ({:5} bytes)  {} * 86",
+            mat_off, mat_end, mat_size, n_materials
+        );
+        eprintln!(
+            "  Packet rgn:   {:6}..{:6}  ({:5} bytes)  [blocks + indices?]",
+            gap_start, gap_end, gap_size
+        );
+        eprintln!(
+            "  mtxv:         {:6}..{:6}  ({:5} bytes)",
+            mtxv_offset,
+            data.len(),
+            data.len() - mtxv_offset
+        );
         eprintln!("  TOTAL:        {:6} bytes", data.len());
-        eprintln!("  Accounted:    {:6} bytes (header+verts+normals+colors+tex+mat+gap+mtxv)",
-            58 + verts_size + normals_size + colors_size + tex_size + tex2_size + tang_size + mat_size + gap_size + (data.len() - mtxv_offset));
+        eprintln!(
+            "  Accounted:    {:6} bytes (header+verts+normals+colors+tex+mat+gap+mtxv)",
+            58 + verts_size
+                + normals_size
+                + colors_size
+                + tex_size
+                + tex2_size
+                + tang_size
+                + mat_size
+                + gap_size
+                + (data.len() - mtxv_offset)
+        );
     }
 
     #[test]
@@ -1893,7 +2561,9 @@ mod tests {
                 Ok(d) => d,
                 Err(_) => continue,
             };
-            if !data.starts_with(b"version: 2.10\0") { continue; }
+            if !data.starts_with(b"version: 2.10\0") {
+                continue;
+            }
 
             let fname = path.split('/').last().unwrap().to_string();
             let n_materials = read_u32_le(&data, 38);
@@ -1902,26 +2572,49 @@ mod tests {
             let n_matrices = read_u32_le(&data, 50);
             let n_reskins = read_u32_le(&data, 54);
 
-            eprintln!("\n=== {} ({} bytes, mats={} adj={} prim={} mtx={} reskin={}) ===",
-                fname, data.len(), n_materials, n_adjuncts, n_primitives, n_matrices, n_reskins);
+            eprintln!(
+                "\n=== {} ({} bytes, mats={} adj={} prim={} mtx={} reskin={}) ===",
+                fname,
+                data.len(),
+                n_materials,
+                n_adjuncts,
+                n_primitives,
+                n_matrices,
+                n_reskins
+            );
 
             if let Some(model) = parse_mod_binary(&data, &base_str) {
                 let total_adj: usize = model.packets.iter().map(|p| p.adjuncts.len()).sum();
                 let total_strips: usize = model.packets.iter().map(|p| p.strips.len()).sum();
-                let total_strip_verts: usize = model.packets.iter()
+                let total_strip_verts: usize = model
+                    .packets
+                    .iter()
                     .flat_map(|p| p.strips.iter())
                     .map(|s| s.len())
                     .sum();
-                let total_tris: usize = model.packets.iter()
+                let total_tris: usize = model
+                    .packets
+                    .iter()
                     .flat_map(|p| p.strips.iter())
                     .map(|s| s.len().saturating_sub(2))
                     .sum();
-                eprintln!("  → {} packets, {} adjuncts, {} strips, {} strip verts, ~{} triangles",
-                    model.packets.len(), total_adj, total_strips, total_strip_verts, total_tris);
+                eprintln!(
+                    "  → {} packets, {} adjuncts, {} strips, {} strip verts, ~{} triangles",
+                    model.packets.len(),
+                    total_adj,
+                    total_strips,
+                    total_strip_verts,
+                    total_tris
+                );
                 for (pi, pkt) in model.packets.iter().enumerate() {
                     let strip_lens: Vec<usize> = pkt.strips.iter().map(|s| s.len()).collect();
-                    eprintln!("    pkt[{}]: {} adj, {} strips, strip_lens={:?}",
-                        pi, pkt.adjuncts.len(), pkt.strips.len(), strip_lens);
+                    eprintln!(
+                        "    pkt[{}]: {} adj, {} strips, strip_lens={:?}",
+                        pi,
+                        pkt.adjuncts.len(),
+                        pkt.strips.len(),
+                        strip_lens
+                    );
                 }
             }
         }
@@ -1935,7 +2628,9 @@ mod tests {
         while end < data.len() && data[end] != 0 {
             end += 1;
         }
-        let s = std::str::from_utf8(&data[off..end]).unwrap_or("").to_string();
+        let s = std::str::from_utf8(&data[off..end])
+            .unwrap_or("")
+            .to_string();
         // Skip past the null terminator AND all consecutive null bytes
         let mut pos = end;
         while pos < data.len() && data[pos] == 0 {
@@ -1953,8 +2648,14 @@ mod tests {
         while end < data.len() && data[end] != 0x20 && data[end] != 0x00 {
             end += 1;
         }
-        let s = std::str::from_utf8(&data[off..end]).unwrap_or("").to_string();
-        let consumed = if end < data.len() { end - off + 1 } else { end - off }; // include terminator
+        let s = std::str::from_utf8(&data[off..end])
+            .unwrap_or("")
+            .to_string();
+        let consumed = if end < data.len() {
+            end - off + 1
+        } else {
+            end - off
+        }; // include terminator
         (s, consumed)
     }
 
@@ -1984,15 +2685,20 @@ mod tests {
             format!("{base}/kno/win32_kno_LODs0.mod"),
             format!("{base}/Tim/win32_tim_LODs0.mod"),
             format!("{base}/Sci/win32_sci_LODs0.mod"),
-            format!("{base}/Ted/win32_ted_LODs0.mod"),  // single material
+            format!("{base}/Ted/win32_ted_LODs0.mod"), // single material
         ];
 
         for path in &files {
             let data = match crate::vfs::read("", path) {
                 Ok(d) => d,
-                Err(_) => { eprintln!("SKIP: {}", path); continue; }
+                Err(_) => {
+                    eprintln!("SKIP: {}", path);
+                    continue;
+                }
             };
-            if data.len() < 58 { continue; }
+            if data.len() < 58 {
+                continue;
+            }
 
             let fname = path.rsplit('/').next().unwrap_or(path);
             let n_verts = read_u32_le(&data, 14) as usize;
@@ -2005,11 +2711,18 @@ mod tests {
             let n_adjuncts = read_u32_le(&data, 42) as usize;
             let n_primitives = read_u32_le(&data, 46) as usize;
 
-            let mat_off = 58 + n_verts * 12 + n_normals * 12 + n_colors * 16
-                + n_tex1s * 8 + n_tex2s * 8 + n_tangents * 12;
+            let mat_off = 58
+                + n_verts * 12
+                + n_normals * 12
+                + n_colors * 16
+                + n_tex1s * 8
+                + n_tex2s * 8
+                + n_tangents * 12;
 
-            eprintln!("\n=== {} ({} mats, {} adj, {} prims) mat_off={} ===",
-                fname, n_materials, n_adjuncts, n_primitives, mat_off);
+            eprintln!(
+                "\n=== {} ({} mats, {} adj, {} prims) mat_off={} ===",
+                fname, n_materials, n_adjuncts, n_primitives, mat_off
+            );
 
             let mut off = mat_off;
             let mut total_pkts = 0u32;
@@ -2023,25 +2736,35 @@ mod tests {
                 off += name_len;
 
                 // 2. u32 fields
-                let packets = read_u32_le(&data, off);     off += 4;
-                let prims = read_u32_le(&data, off);       off += 4;
-                let tex_count = read_u32_le(&data, off);   off += 4;
-                let illum = read_u32_le(&data, off);       off += 4;
+                let packets = read_u32_le(&data, off);
+                off += 4;
+                let prims = read_u32_le(&data, off);
+                off += 4;
+                let tex_count = read_u32_le(&data, off);
+                off += 4;
+                let illum = read_u32_le(&data, off);
+                off += 4;
 
                 total_pkts += packets;
                 total_prims += prims;
 
                 // 3. Read 9 floats (ambient + diffuse + specular)
                 let ambient: [f32; 3] = [
-                    read_f32_le(&data, off), read_f32_le(&data, off + 4), read_f32_le(&data, off + 8)
+                    read_f32_le(&data, off),
+                    read_f32_le(&data, off + 4),
+                    read_f32_le(&data, off + 8),
                 ];
                 off += 12;
                 let diffuse: [f32; 3] = [
-                    read_f32_le(&data, off), read_f32_le(&data, off + 4), read_f32_le(&data, off + 8)
+                    read_f32_le(&data, off),
+                    read_f32_le(&data, off + 4),
+                    read_f32_le(&data, off + 8),
                 ];
                 off += 12;
                 let specular: [f32; 3] = [
-                    read_f32_le(&data, off), read_f32_le(&data, off + 4), read_f32_le(&data, off + 8)
+                    read_f32_le(&data, off),
+                    read_f32_le(&data, off + 4),
+                    read_f32_le(&data, off + 8),
                 ];
                 off += 12;
 
@@ -2051,7 +2774,9 @@ mod tests {
                 let scan_start = off;
                 while off + 4 <= data.len() {
                     // Check if next 4 bytes look like start of a string (printable ASCII)
-                    if data[off] >= b'a' && data[off] <= b'z' || data[off] >= b'A' && data[off] <= b'Z' {
+                    if data[off] >= b'a' && data[off] <= b'z'
+                        || data[off] >= b'A' && data[off] <= b'Z'
+                    {
                         break;
                     }
                     let val = read_u32_le(&data, off);
@@ -2065,15 +2790,28 @@ mod tests {
                 off += tex_len;
 
                 // Print everything
-                eprintln!("  mat[{}] '{}' pkts={} prims={} texs={} illum={}", i, name, packets, prims, tex_count, illum);
-                eprintln!("    ambient={:?} diffuse={:?} specular={:?}", ambient, diffuse, specular);
+                eprintln!(
+                    "  mat[{}] '{}' pkts={} prims={} texs={} illum={}",
+                    i, name, packets, prims, tex_count, illum
+                );
+                eprintln!(
+                    "    ambient={:?} diffuse={:?} specular={:?}",
+                    ambient, diffuse, specular
+                );
                 eprintln!("    extra after specular: [{}]", extra_vals.join(", "));
                 eprintln!("    texture='{}' ({} bytes)", tex_name, tex_len);
                 eprintln!("    record size: {} bytes (off={})", off - mat_start, off);
             }
 
-            eprintln!("  TOTALS: pkts={} prims={} (header says {} prims)", total_pkts, total_prims, n_primitives);
-            eprintln!("  Materials consumed {} bytes, ending at offset {}", off - mat_off, off);
+            eprintln!(
+                "  TOTALS: pkts={} prims={} (header says {} prims)",
+                total_pkts, total_prims, n_primitives
+            );
+            eprintln!(
+                "  Materials consumed {} bytes, ending at offset {}",
+                off - mat_off,
+                off
+            );
         }
     }
 
@@ -2101,9 +2839,14 @@ mod tests {
         for path in &files {
             let data = match crate::vfs::read("", path) {
                 Ok(d) => d,
-                Err(_) => { eprintln!("SKIP: {}", path); continue; }
+                Err(_) => {
+                    eprintln!("SKIP: {}", path);
+                    continue;
+                }
             };
-            if data.len() < 58 { continue; }
+            if data.len() < 58 {
+                continue;
+            }
 
             let fname = path.rsplit('/').next().unwrap_or(path);
             let n_verts = read_u32_le(&data, 14) as usize;
@@ -2117,41 +2860,70 @@ mod tests {
             let n_primitives = read_u32_le(&data, 46) as usize;
 
             // Skip to materials, parse them sequentially to find exact end
-            let mut off = 58 + n_verts * 12 + n_normals * 12 + n_colors * 16
-                + n_tex1s * 8 + n_tex2s * 8 + n_tangents * 12;
+            let mut off = 58
+                + n_verts * 12
+                + n_normals * 12
+                + n_colors * 16
+                + n_tex1s * 8
+                + n_tex2s * 8
+                + n_tangents * 12;
 
             let mut mat_info: Vec<(String, u32, u32)> = Vec::new();
             for _ in 0..n_materials {
                 let name_start = off;
-                while off < data.len() && data[off] != 0x20 && data[off] != 0x00 { off += 1; }
-                let name = std::str::from_utf8(&data[name_start..off]).unwrap_or("").to_string();
-                if off < data.len() { off += 1; }
-                let pkts = read_u32_le(&data, off);   off += 4;
-                let prims = read_u32_le(&data, off);   off += 4;
+                while off < data.len() && data[off] != 0x20 && data[off] != 0x00 {
+                    off += 1;
+                }
+                let name = std::str::from_utf8(&data[name_start..off])
+                    .unwrap_or("")
+                    .to_string();
+                if off < data.len() {
+                    off += 1;
+                }
+                let pkts = read_u32_le(&data, off);
+                off += 4;
+                let prims = read_u32_le(&data, off);
+                off += 4;
                 off += 4; // tex_count
                 off += 4; // illum
                 off += 36; // 9 floats
                 while off + 4 <= data.len() {
-                    if data[off] >= b'a' && data[off] <= b'z' || data[off] >= b'A' && data[off] <= b'Z' { break; }
+                    if data[off] >= b'a' && data[off] <= b'z'
+                        || data[off] >= b'A' && data[off] <= b'Z'
+                    {
+                        break;
+                    }
                     off += 4;
                 }
-                while off < data.len() && data[off] != 0 { off += 1; }
-                while off < data.len() && data[off] == 0 { off += 1; }
+                while off < data.len() && data[off] != 0 {
+                    off += 1;
+                }
+                while off < data.len() && data[off] == 0 {
+                    off += 1;
+                }
                 mat_info.push((name, pkts, prims));
             }
 
             let pkt_region_start = off;
             let search_start = data.len().saturating_sub(500);
-            let mtxv_pos = data[search_start..].windows(4)
+            let mtxv_pos = data[search_start..]
+                .windows(4)
                 .position(|w| w == b"mtxv")
                 .map(|p| search_start + p)
                 .unwrap_or(data.len());
 
             let total_pkts: u32 = mat_info.iter().map(|m| m.1).sum();
 
-            eprintln!("\n=== {} ({} pkts, {} adj, {} prims, {} verts, {} norms) ===",
-                fname, total_pkts, n_adjuncts, n_primitives, n_verts, n_normals);
-            eprintln!("  Packet region: {}..{} ({} bytes)", pkt_region_start, mtxv_pos, mtxv_pos - pkt_region_start);
+            eprintln!(
+                "\n=== {} ({} pkts, {} adj, {} prims, {} verts, {} norms) ===",
+                fname, total_pkts, n_adjuncts, n_primitives, n_verts, n_normals
+            );
+            eprintln!(
+                "  Packet region: {}..{} ({} bytes)",
+                pkt_region_start,
+                mtxv_pos,
+                mtxv_pos - pkt_region_start
+            );
 
             // Strict sequential parse
             off = pkt_region_start;
@@ -2163,33 +2935,81 @@ mod tests {
                 let pkt_start = off;
 
                 // --- Header: 3 u32 + 1 u32 multiweight ---
-                assert!(off + 16 <= mtxv_pos, "pkt[{}] header truncated at {}", pkt_idx, off);
-                let adj_count = read_u32_le(&data, off) as usize;   off += 4;
-                let strip_count = read_u32_le(&data, off) as usize;  off += 4;
-                let mtx_count = read_u32_le(&data, off) as usize;    off += 4;
-                let mw_count = read_u32_le(&data, off) as usize;     off += 4;
+                assert!(
+                    off + 16 <= mtxv_pos,
+                    "pkt[{}] header truncated at {}",
+                    pkt_idx,
+                    off
+                );
+                let adj_count = read_u32_le(&data, off) as usize;
+                off += 4;
+                let strip_count = read_u32_le(&data, off) as usize;
+                off += 4;
+                let mtx_count = read_u32_le(&data, off) as usize;
+                off += 4;
+                let mw_count = read_u32_le(&data, off) as usize;
+                off += 4;
 
-                assert!(adj_count <= 256,
-                    "pkt[{}] adj_count={} too large (offset {})", pkt_idx, adj_count, pkt_start);
-                assert!(strip_count <= 256,
-                    "pkt[{}] strip_count={} too large (offset {})", pkt_idx, strip_count, pkt_start);
-                assert!(mtx_count <= 256,
-                    "pkt[{}] mtx_count={} too large (offset {})", pkt_idx, mtx_count, pkt_start);
-                assert!(mw_count <= 256,
-                    "pkt[{}] mw_count={} too large (offset {})", pkt_idx, mw_count, pkt_start);
+                assert!(
+                    adj_count <= 256,
+                    "pkt[{}] adj_count={} too large (offset {})",
+                    pkt_idx,
+                    adj_count,
+                    pkt_start
+                );
+                assert!(
+                    strip_count <= 256,
+                    "pkt[{}] strip_count={} too large (offset {})",
+                    pkt_idx,
+                    strip_count,
+                    pkt_start
+                );
+                assert!(
+                    mtx_count <= 256,
+                    "pkt[{}] mtx_count={} too large (offset {})",
+                    pkt_idx,
+                    mtx_count,
+                    pkt_start
+                );
+                assert!(
+                    mw_count <= 256,
+                    "pkt[{}] mw_count={} too large (offset {})",
+                    pkt_idx,
+                    mw_count,
+                    pkt_start
+                );
 
                 // --- Adjuncts: adj_count × 6 u32 = 24 bytes each ---
                 let adj_bytes = adj_count * 24;
-                assert!(off + adj_bytes <= mtxv_pos,
-                    "pkt[{}] adjuncts overflow at {} (need {})", pkt_idx, off, adj_bytes);
+                assert!(
+                    off + adj_bytes <= mtxv_pos,
+                    "pkt[{}] adjuncts overflow at {} (need {})",
+                    pkt_idx,
+                    off,
+                    adj_bytes
+                );
                 // Validate all adjuncts
                 for a in 0..adj_count {
                     let ao = off + a * 24;
                     let v = read_u32_le(&data, ao) as usize;
                     let n = read_u32_le(&data, ao + 4) as usize;
                     let c = read_u32_le(&data, ao + 8) as usize;
-                    assert!(v < n_verts, "pkt[{}] adj[{}] vert={} >= n_verts={}", pkt_idx, a, v, n_verts);
-                    assert!(n < n_normals, "pkt[{}] adj[{}] norm={} >= n_normals={}", pkt_idx, a, n, n_normals);
+                    assert!(
+                        v < n_verts,
+                        "pkt[{}] adj[{}] vert={} >= n_verts={}",
+                        pkt_idx,
+                        a,
+                        v,
+                        n_verts
+                    );
+                    assert!(
+                        n < n_normals,
+                        "pkt[{}] adj[{}] norm={} >= n_normals={}",
+                        pkt_idx,
+                        a,
+                        n,
+                        n_normals
+                    );
                     assert!(c <= 1, "pkt[{}] adj[{}] color={} > 1", pkt_idx, a, c);
                 }
                 off += adj_bytes;
@@ -2197,17 +3017,32 @@ mod tests {
 
                 // --- Multiweight: mw_count × 24 bytes each ---
                 let mw_bytes = mw_count * 24;
-                assert!(off + mw_bytes <= mtxv_pos,
-                    "pkt[{}] multiweight overflow at {} (need {})", pkt_idx, off, mw_bytes);
+                assert!(
+                    off + mw_bytes <= mtxv_pos,
+                    "pkt[{}] multiweight overflow at {} (need {})",
+                    pkt_idx,
+                    off,
+                    mw_bytes
+                );
                 // Validate: first 2 u32 should be small (bone indices), next 4 should be valid floats
                 for m in 0..mw_count {
                     let mo = off + m * 24;
                     let bone_id = read_u32_le(&data, mo) as usize;
                     let w = read_f32_le(&data, mo + 8);
-                    assert!(bone_id < 256,
-                        "pkt[{}] mw[{}] bone_id={} too large", pkt_idx, m, bone_id);
-                    assert!(w.is_finite() && w.abs() <= 1.0,
-                        "pkt[{}] mw[{}] weight={} invalid", pkt_idx, m, w);
+                    assert!(
+                        bone_id < 256,
+                        "pkt[{}] mw[{}] bone_id={} too large",
+                        pkt_idx,
+                        m,
+                        bone_id
+                    );
+                    assert!(
+                        w.is_finite() && w.abs() <= 1.0,
+                        "pkt[{}] mw[{}] weight={} invalid",
+                        pkt_idx,
+                        m,
+                        w
+                    );
                 }
                 off += mw_bytes;
                 total_mw += mw_count;
@@ -2216,70 +3051,126 @@ mod tests {
                 // (ASCII: "str N i0 i1 ... iN-1" or "stp N i0 i1 ... iN-1")
                 let mut pkt_prims = 0usize;
                 for s in 0..strip_count {
-                    assert!(off + 4 <= mtxv_pos,
-                        "pkt[{}] strip[{}] count truncated at {}", pkt_idx, s, off);
+                    assert!(
+                        off + 4 <= mtxv_pos,
+                        "pkt[{}] strip[{}] count truncated at {}",
+                        pkt_idx,
+                        s,
+                        off
+                    );
                     let scount = read_u32_le(&data, off) as usize;
                     off += 4;
-                    assert!(scount <= 256,
-                        "pkt[{}] strip[{}] count={} too large", pkt_idx, s, scount);
+                    assert!(
+                        scount <= 256,
+                        "pkt[{}] strip[{}] count={} too large",
+                        pkt_idx,
+                        s,
+                        scount
+                    );
                     let idx_bytes = scount * 4;
-                    assert!(off + idx_bytes <= mtxv_pos,
-                        "pkt[{}] strip[{}] indices overflow at {} (need {})", pkt_idx, s, off, idx_bytes);
+                    assert!(
+                        off + idx_bytes <= mtxv_pos,
+                        "pkt[{}] strip[{}] indices overflow at {} (need {})",
+                        pkt_idx,
+                        s,
+                        off,
+                        idx_bytes
+                    );
                     for j in 0..scount {
                         let idx = read_u32_le(&data, off + j * 4) as usize;
-                        assert!(idx < adj_count,
+                        assert!(
+                            idx < adj_count,
                             "pkt[{}] strip[{}] index[{}]={} >= adj_count={}",
-                            pkt_idx, s, j, idx, adj_count);
+                            pkt_idx,
+                            s,
+                            j,
+                            idx,
+                            adj_count
+                        );
                     }
                     off += idx_bytes;
                     // Triangle count: strip of N vertices = N-2 triangles (if N >= 3)
-                    if scount >= 3 { pkt_prims += scount - 2; }
+                    if scount >= 3 {
+                        pkt_prims += scount - 2;
+                    }
                 }
                 total_tri += pkt_prims;
 
                 // --- Bone map: mtx_count × u32 ---
                 let mtx_bytes = mtx_count * 4;
-                assert!(off + mtx_bytes <= mtxv_pos,
-                    "pkt[{}] bone_map overflow at {} (need {})", pkt_idx, off, mtx_bytes);
+                assert!(
+                    off + mtx_bytes <= mtxv_pos,
+                    "pkt[{}] bone_map overflow at {} (need {})",
+                    pkt_idx,
+                    off,
+                    mtx_bytes
+                );
                 off += mtx_bytes;
 
                 if pkt_idx < 3 {
-                    eprintln!("  pkt[{}] adj={} strip={} mtx={} mw={} prims={} size={}",
-                        pkt_idx, adj_count, strip_count, mtx_count, mw_count, pkt_prims, off - pkt_start);
+                    eprintln!(
+                        "  pkt[{}] adj={} strip={} mtx={} mw={} prims={} size={}",
+                        pkt_idx,
+                        adj_count,
+                        strip_count,
+                        mtx_count,
+                        mw_count,
+                        pkt_prims,
+                        off - pkt_start
+                    );
                     // Print strip details
                     {
                         let mut soff = pkt_start + 16 + adj_count * 24 + mw_count * 24;
                         for s in 0..strip_count {
                             let sc = read_u32_le(&data, soff) as usize;
-                            let indices: Vec<u32> = (0..sc.min(10)).map(|j| read_u32_le(&data, soff + 4 + j * 4)).collect();
-                            eprintln!("    strip[{}]: count={} indices={:?}{}", s, sc, indices, if sc > 10 { "..." } else { "" });
+                            let indices: Vec<u32> = (0..sc.min(10))
+                                .map(|j| read_u32_le(&data, soff + 4 + j * 4))
+                                .collect();
+                            eprintln!(
+                                "    strip[{}]: count={} indices={:?}{}",
+                                s,
+                                sc,
+                                indices,
+                                if sc > 10 { "..." } else { "" }
+                            );
                             soff += 4 + sc * 4;
                         }
                         // Print bone map
-                        let bone_map: Vec<u32> = (0..mtx_count).map(|i| read_u32_le(&data, soff + i * 4)).collect();
+                        let bone_map: Vec<u32> = (0..mtx_count)
+                            .map(|i| read_u32_le(&data, soff + i * 4))
+                            .collect();
                         eprintln!("    bone_map: {:?}", bone_map);
                         // Print next 8 u32s after bone map (should be next header)
                         let after_bm = soff + mtx_count * 4;
-                        let peek: Vec<String> = (0..8.min((mtxv_pos - after_bm) / 4)).map(|i| {
-                            format!("{}", read_u32_le(&data, after_bm + i * 4))
-                        }).collect();
-                        eprintln!("    next after bonemap at {}: [{}]", after_bm, peek.join(", "));
+                        let peek: Vec<String> = (0..8.min((mtxv_pos - after_bm) / 4))
+                            .map(|i| format!("{}", read_u32_le(&data, after_bm + i * 4)))
+                            .collect();
+                        eprintln!(
+                            "    next after bonemap at {}: [{}]",
+                            after_bm,
+                            peek.join(", ")
+                        );
                     }
                 }
             }
 
             let consumed = off - pkt_region_start;
             let region_size = mtxv_pos - pkt_region_start;
-            eprintln!("  Parsed all {} pkts: adj={} (expect {}), tri={} (expect {}), mw={}",
-                total_pkts, total_adj, n_adjuncts, total_tri, n_primitives, total_mw);
-            eprintln!("  Consumed {}/{} bytes, remaining: {}",
-                consumed, region_size, region_size - consumed);
+            eprintln!(
+                "  Parsed all {} pkts: adj={} (expect {}), tri={} (expect {}), mw={}",
+                total_pkts, total_adj, n_adjuncts, total_tri, n_primitives, total_mw
+            );
+            eprintln!(
+                "  Consumed {}/{} bytes, remaining: {}",
+                consumed,
+                region_size,
+                region_size - consumed
+            );
             if consumed == region_size {
                 eprintln!("  >>> PERFECT MATCH <<<");
             }
         }
     }
-
 
     #[test]
     fn test_packet_region_analysis() {
@@ -2297,9 +3188,14 @@ mod tests {
         for path in &files {
             let data = match crate::vfs::read("", path) {
                 Ok(d) => d,
-                Err(_) => { eprintln!("SKIP: {}", path); continue; }
+                Err(_) => {
+                    eprintln!("SKIP: {}", path);
+                    continue;
+                }
             };
-            if data.len() < 58 { continue; }
+            if data.len() < 58 {
+                continue;
+            }
 
             let fname = path.rsplit('/').next().unwrap_or(path);
             let n_verts = read_u32_le(&data, 14) as usize;
@@ -2314,36 +3210,60 @@ mod tests {
             let n_matrices = read_u32_le(&data, 50) as usize;
 
             // Skip to material region
-            let mut off = 58 + n_verts * 12 + n_normals * 12 + n_colors * 16
-                + n_tex1s * 8 + n_tex2s * 8 + n_tangents * 12;
+            let mut off = 58
+                + n_verts * 12
+                + n_normals * 12
+                + n_colors * 16
+                + n_tex1s * 8
+                + n_tex2s * 8
+                + n_tangents * 12;
 
             // Parse materials sequentially to find exact end
             let mut mat_info: Vec<(String, u32, u32)> = Vec::new(); // (name, pkts, prims)
             for _ in 0..n_materials {
                 let name_start = off;
-                while off < data.len() && data[off] != 0x20 && data[off] != 0x00 { off += 1; }
-                let name = std::str::from_utf8(&data[name_start..off]).unwrap_or("").to_string();
-                if off < data.len() { off += 1; }
-                let pkts = read_u32_le(&data, off);   off += 4;
-                let prims = read_u32_le(&data, off);   off += 4;
-                let _texs = read_u32_le(&data, off);   off += 4;
-                let _illum = read_u32_le(&data, off);  off += 4;
+                while off < data.len() && data[off] != 0x20 && data[off] != 0x00 {
+                    off += 1;
+                }
+                let name = std::str::from_utf8(&data[name_start..off])
+                    .unwrap_or("")
+                    .to_string();
+                if off < data.len() {
+                    off += 1;
+                }
+                let pkts = read_u32_le(&data, off);
+                off += 4;
+                let prims = read_u32_le(&data, off);
+                off += 4;
+                let _texs = read_u32_le(&data, off);
+                off += 4;
+                let _illum = read_u32_le(&data, off);
+                off += 4;
                 off += 36; // 9 floats
                 // Skip extra values until printable ASCII
                 while off + 4 <= data.len() {
-                    if data[off] >= b'a' && data[off] <= b'z' || data[off] >= b'A' && data[off] <= b'Z' { break; }
+                    if data[off] >= b'a' && data[off] <= b'z'
+                        || data[off] >= b'A' && data[off] <= b'Z'
+                    {
+                        break;
+                    }
                     off += 4;
                 }
                 // Skip texture name (null-terminated + null padding)
-                while off < data.len() && data[off] != 0 { off += 1; }
-                while off < data.len() && data[off] == 0 { off += 1; }
+                while off < data.len() && data[off] != 0 {
+                    off += 1;
+                }
+                while off < data.len() && data[off] == 0 {
+                    off += 1;
+                }
                 mat_info.push((name, pkts, prims));
             }
 
             let pkt_region_start = off;
             // Find mtxv
             let search_start = data.len().saturating_sub(500);
-            let mtxv_pos = data[search_start..].windows(4)
+            let mtxv_pos = data[search_start..]
+                .windows(4)
                 .position(|w| w == b"mtxv")
                 .map(|p| search_start + p)
                 .unwrap_or(data.len());
@@ -2354,12 +3274,17 @@ mod tests {
             let total_prims: u32 = mat_info.iter().map(|m| m.2).sum();
 
             eprintln!("\n=== {} ===", fname);
-            eprintln!("  {} materials, {} total pkts, {} adjuncts, {} primitives, {} matrices",
-                n_materials, total_pkts, n_adjuncts, n_primitives, n_matrices);
+            eprintln!(
+                "  {} materials, {} total pkts, {} adjuncts, {} primitives, {} matrices",
+                n_materials, total_pkts, n_adjuncts, n_primitives, n_matrices
+            );
             for (i, (name, pkts, prims)) in mat_info.iter().enumerate() {
                 eprintln!("    mat[{}] '{}': {} pkts, {} prims", i, name, pkts, prims);
             }
-            eprintln!("  Packet region: {}..{} ({} bytes)", pkt_region_start, pkt_region_end, pkt_region_size);
+            eprintln!(
+                "  Packet region: {}..{} ({} bytes)",
+                pkt_region_start, pkt_region_end, pkt_region_size
+            );
 
             // Size analysis: what could fit in the packet region?
             // Each adjunct record in ASCII has 6 fields (vert, norm, color, tex1, tex2?, bone)
@@ -2372,12 +3297,28 @@ mod tests {
             let prim_bytes_u32 = n_primitives * 4;
 
             eprintln!("  Size analysis:");
-            eprintln!("    adjuncts×24 = {} bytes ({:.1}% of region)", adjunct_bytes_24, adjunct_bytes_24 as f64 / pkt_region_size as f64 * 100.0);
-            eprintln!("    adjuncts×12 = {} bytes ({:.1}% of region)", adjunct_bytes_12, adjunct_bytes_12 as f64 / pkt_region_size as f64 * 100.0);
+            eprintln!(
+                "    adjuncts×24 = {} bytes ({:.1}% of region)",
+                adjunct_bytes_24,
+                adjunct_bytes_24 as f64 / pkt_region_size as f64 * 100.0
+            );
+            eprintln!(
+                "    adjuncts×12 = {} bytes ({:.1}% of region)",
+                adjunct_bytes_12,
+                adjunct_bytes_12 as f64 / pkt_region_size as f64 * 100.0
+            );
             eprintln!("    prims×2(u16) = {} bytes", prim_bytes_u16);
             eprintln!("    prims×4(u32) = {} bytes", prim_bytes_u32);
-            eprintln!("    adj×24 + prims×2 = {} bytes ({:.1}%)", adjunct_bytes_24 + prim_bytes_u16, (adjunct_bytes_24 + prim_bytes_u16) as f64 / pkt_region_size as f64 * 100.0);
-            eprintln!("    adj×12 + prims×2 = {} bytes ({:.1}%)", adjunct_bytes_12 + prim_bytes_u16, (adjunct_bytes_12 + prim_bytes_u16) as f64 / pkt_region_size as f64 * 100.0);
+            eprintln!(
+                "    adj×24 + prims×2 = {} bytes ({:.1}%)",
+                adjunct_bytes_24 + prim_bytes_u16,
+                (adjunct_bytes_24 + prim_bytes_u16) as f64 / pkt_region_size as f64 * 100.0
+            );
+            eprintln!(
+                "    adj×12 + prims×2 = {} bytes ({:.1}%)",
+                adjunct_bytes_12 + prim_bytes_u16,
+                (adjunct_bytes_12 + prim_bytes_u16) as f64 / pkt_region_size as f64 * 100.0
+            );
 
             // Average bytes per packet
             let avg_bytes_per_pkt = pkt_region_size as f64 / total_pkts as f64;
@@ -2389,11 +3330,19 @@ mod tests {
             for row in (0..dump_len).step_by(16) {
                 let abs = pkt_region_start + row;
                 let end = (row + 16).min(dump_len);
-                let hex: Vec<String> = (row..end).map(|j| format!("{:02X}", data[pkt_region_start + j])).collect();
-                let ascii: String = (row..end).map(|j| {
-                    let b = data[pkt_region_start + j];
-                    if b >= 0x20 && b < 0x7F { b as char } else { '.' }
-                }).collect();
+                let hex: Vec<String> = (row..end)
+                    .map(|j| format!("{:02X}", data[pkt_region_start + j]))
+                    .collect();
+                let ascii: String = (row..end)
+                    .map(|j| {
+                        let b = data[pkt_region_start + j];
+                        if b >= 0x20 && b < 0x7F {
+                            b as char
+                        } else {
+                            '.'
+                        }
+                    })
+                    .collect();
                 // Also show as u32 values
                 let mut u32s = Vec::new();
                 let mut p = row;
@@ -2401,12 +3350,21 @@ mod tests {
                     u32s.push(format!("{}", read_u32_le(&data, pkt_region_start + p)));
                     p += 4;
                 }
-                eprintln!("  {:5}: {:48} |{}| u32: [{}]", abs, hex.join(" "), ascii, u32s.join(", "));
+                eprintln!(
+                    "  {:5}: {:48} |{}| u32: [{}]",
+                    abs,
+                    hex.join(" "),
+                    ascii,
+                    u32s.join(", ")
+                );
             }
 
             // Look for patterns: try reading as array of u32 and check for small values
             // (adjunct indices should be < n_verts, < n_normals, etc.)
-            eprintln!("  --- Scanning for adjunct-like patterns (6 consecutive u32s where v<{}, n<{}) ---", n_verts, n_normals);
+            eprintln!(
+                "  --- Scanning for adjunct-like patterns (6 consecutive u32s where v<{}, n<{}) ---",
+                n_verts, n_normals
+            );
             let mut found = 0;
             for i in (0..pkt_region_size.saturating_sub(24)).step_by(4) {
                 let abs = pkt_region_start + i;
@@ -2419,12 +3377,18 @@ mod tests {
                     if found < 10 {
                         let v4 = read_u32_le(&data, abs + 16) as usize;
                         let v5 = read_u32_le(&data, abs + 20) as usize;
-                        eprintln!("    offset {}: [{}, {}, {}, {}, {}, {}]", abs, v0, v1, v2, v3, v4, v5);
+                        eprintln!(
+                            "    offset {}: [{}, {}, {}, {}, {}, {}]",
+                            abs, v0, v1, v2, v3, v4, v5
+                        );
                     }
                     found += 1;
                 }
             }
-            eprintln!("    Total adjunct-like u32×6 patterns found: {} (expected {})", found, n_adjuncts);
+            eprintln!(
+                "    Total adjunct-like u32×6 patterns found: {} (expected {})",
+                found, n_adjuncts
+            );
 
             // Also try u16 adjuncts
             eprintln!("  --- Scanning for adjunct-like patterns as u16×6 ---");
@@ -2439,15 +3403,20 @@ mod tests {
                     if found16 < 10 {
                         let v4 = read_u16_le(&data, abs + 8) as usize;
                         let v5 = read_u16_le(&data, abs + 10) as usize;
-                        eprintln!("    offset {}: [{}, {}, {}, {}, {}, {}]", abs, v0, v1, v2, v3, v4, v5);
+                        eprintln!(
+                            "    offset {}: [{}, {}, {}, {}, {}, {}]",
+                            abs, v0, v1, v2, v3, v4, v5
+                        );
                     }
                     found16 += 1;
                 }
             }
-            eprintln!("    Total adjunct-like u16×6 patterns found: {} (expected {})", found16, n_adjuncts);
+            eprintln!(
+                "    Total adjunct-like u16×6 patterns found: {} (expected {})",
+                found16, n_adjuncts
+            );
         }
     }
-
 
     #[test]
     fn test_scan_all_kno_anim_channels() {
@@ -2458,30 +3427,67 @@ mod tests {
         let num_bones = skel.positions.len();
         let expected_channels = num_bones * 3 + 3; // 39*3+3 = 120
 
-        eprintln!("Skeleton has {} bones, expected {} channels", num_bones, expected_channels);
+        eprintln!(
+            "Skeleton has {} bones, expected {} channels",
+            num_bones, expected_channels
+        );
         eprintln!("{:-<80}", "");
 
-        let mut entries: Vec<_> = crate::vfs::read_dir(base).expect("read dir")
+        let mut entries: Vec<_> = crate::vfs::read_dir(base)
+            .expect("read dir")
             .into_iter()
-            .filter(|e| std::path::Path::new(&e.path).extension().map_or(false, |ext| ext == "anim"))
+            .filter(|e| {
+                std::path::Path::new(&e.path)
+                    .extension()
+                    .map_or(false, |ext| ext == "anim")
+            })
             .collect();
-        entries.sort_by_key(|e| std::path::Path::new(&e.path).file_name().unwrap_or_default().to_string_lossy().to_string());
+        entries.sort_by_key(|e| {
+            std::path::Path::new(&e.path)
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .to_string()
+        });
 
         let mut count_match = 0;
         let mut count_mismatch = 0;
-        let mut channel_counts: std::collections::BTreeMap<u32, Vec<String>> = std::collections::BTreeMap::new();
+        let mut channel_counts: std::collections::BTreeMap<u32, Vec<String>> =
+            std::collections::BTreeMap::new();
 
         for entry in &entries {
             let path = &entry.path;
-            let name = std::path::Path::new(path).file_name().unwrap_or_default().to_string_lossy().to_string();
+            let name = std::path::Path::new(path)
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .to_string();
             let data = crate::vfs::read("", path).expect("read anim");
             match parse_anim(&data) {
                 Some(anim) => {
-                    let marker = if anim.num_channels as usize == expected_channels { "MATCH" } else { "     " };
-                    if anim.num_channels as usize == expected_channels { count_match += 1; } else { count_mismatch += 1; }
-                    eprintln!("  {} {:40} channels={:4} frames={:4} stride_z={:.3} loop={}",
-                        marker, name, anim.num_channels, anim.num_frames, anim.stride_z, anim.is_loop);
-                    channel_counts.entry(anim.num_channels).or_default().push(name);
+                    let marker = if anim.num_channels as usize == expected_channels {
+                        "MATCH"
+                    } else {
+                        "     "
+                    };
+                    if anim.num_channels as usize == expected_channels {
+                        count_match += 1;
+                    } else {
+                        count_mismatch += 1;
+                    }
+                    eprintln!(
+                        "  {} {:40} channels={:4} frames={:4} stride_z={:.3} loop={}",
+                        marker,
+                        name,
+                        anim.num_channels,
+                        anim.num_frames,
+                        anim.stride_z,
+                        anim.is_loop
+                    );
+                    channel_counts
+                        .entry(anim.num_channels)
+                        .or_default()
+                        .push(name);
                 }
                 None => {
                     eprintln!("  FAIL  {:40} could not parse", name);
@@ -2490,11 +3496,19 @@ mod tests {
         }
 
         eprintln!("\n{:-<80}", "");
-        eprintln!("Summary: {} match ({} channels), {} mismatch", count_match, expected_channels, count_mismatch);
+        eprintln!(
+            "Summary: {} match ({} channels), {} mismatch",
+            count_match, expected_channels, count_mismatch
+        );
         eprintln!("\nChannel count distribution:");
         for (ch, names) in &channel_counts {
             let implied_bones = if *ch >= 3 { (*ch - 3) / 3 } else { 0 };
-            eprintln!("  {} channels ({} implied bones): {} anims", ch, implied_bones, names.len());
+            eprintln!(
+                "  {} channels ({} implied bones): {} anims",
+                ch,
+                implied_bones,
+                names.len()
+            );
             for n in names {
                 eprintln!("    {}", n);
             }
@@ -2510,7 +3524,7 @@ mod tests {
         let skel_data = crate::vfs::read_to_string(entity_dir, "kno.skel").expect("skel");
         let skel = parse_skel(&skel_data);
 
-        use crate::oni2_loader::{load_anim_library, AnimId};
+        use crate::oni2_loader::{AnimId, load_anim_library};
 
         let library = load_anim_library(entity_dir, "kno", &skel);
 
@@ -2520,8 +3534,10 @@ mod tests {
         for alias in &aliases {
             let id = AnimId::new(alias);
             let anim = library.0.anims.get(&id).unwrap();
-            eprintln!("  {:40} -> {} frames, ch={}, loop={}",
-                alias, anim.num_frames, anim.num_channels, anim.is_loop);
+            eprintln!(
+                "  {:40} -> {} frames, ch={}, loop={}",
+                alias, anim.num_frames, anim.num_channels, anim.is_loop
+            );
         }
 
         // Verify const-time hash matches runtime hash

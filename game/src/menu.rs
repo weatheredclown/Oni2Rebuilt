@@ -1,7 +1,6 @@
 use bevy::input::mouse::AccumulatedMouseScroll;
 use bevy::prelude::*;
 
-
 #[derive(States, Debug, Clone, PartialEq, Eq, Hash, Default)]
 pub enum AppState {
     #[default]
@@ -73,10 +72,7 @@ impl Plugin for MenuPlugin {
                 update_loading_screen.run_if(in_state(AppState::LoadingLayout)),
             )
             .add_systems(OnExit(AppState::LoadingLayout), cleanup_loading_screen)
-            .add_systems(
-                Update,
-                escape_to_menu.run_if(in_state(AppState::InGame)),
-            )
+            .add_systems(Update, escape_to_menu.run_if(in_state(AppState::InGame)))
             .add_systems(OnExit(AppState::InGame), cleanup_game);
     }
 }
@@ -89,14 +85,19 @@ fn setup_loading_screen(
     selected_layout: Option<Res<SelectedLayout>>,
     mut images: ResMut<Assets<Image>>,
 ) {
-    let layout_name = selected_layout.as_ref().map(|s| s.0.as_str()).unwrap_or("tim06");
+    let layout_name = selected_layout
+        .as_ref()
+        .map(|s| s.0.as_str())
+        .unwrap_or("tim06");
     let tex_filename = format!("texture/load_{}.tex", layout_name);
     let tga_filename = format!("texture/load_{}.tga", layout_name);
     let mut loaded_handle = None;
 
     if crate::vfs::exists("", &tex_filename) {
         if let Ok(tex_bytes) = crate::vfs::read("", &tex_filename) {
-            if let Some((width, height, rgba, _)) = crate::oni2_loader::parsers::texture::decode_tex(&tex_bytes) {
+            if let Some((width, height, rgba, _)) =
+                crate::oni2_loader::parsers::texture::decode_tex(&tex_bytes)
+            {
                 let image = Image::new(
                     bevy::render::render_resource::Extent3d {
                         width,
@@ -112,7 +113,9 @@ fn setup_loading_screen(
             }
         }
     } else if crate::vfs::exists("", &tga_filename) {
-        if let Some((handle, _)) = crate::oni2_loader::parsers::texture::load_tga_file("", &tga_filename, &mut images) {
+        if let Some((handle, _)) =
+            crate::oni2_loader::parsers::texture::load_tga_file("", &tga_filename, &mut images)
+        {
             loaded_handle = Some(handle);
         }
     }
@@ -120,26 +123,28 @@ fn setup_loading_screen(
     commands.spawn((Camera2d, LoadingScreenEntity));
 
     if let Some(handle) = loaded_handle {
-        commands.spawn((
-            Node {
-                width: Val::Percent(100.0),
-                height: Val::Percent(100.0),
-                align_items: AlignItems::Center,
-                justify_content: JustifyContent::Center,
-                ..default()
-            },
-            BackgroundColor(Color::BLACK),
-            LoadingScreenEntity,
-        )).with_children(|parent| {
-            parent.spawn((
-                ImageNode::new(handle),
+        commands
+            .spawn((
                 Node {
                     width: Val::Percent(100.0),
                     height: Val::Percent(100.0),
+                    align_items: AlignItems::Center,
+                    justify_content: JustifyContent::Center,
                     ..default()
                 },
-            ));
-        });
+                BackgroundColor(Color::BLACK),
+                LoadingScreenEntity,
+            ))
+            .with_children(|parent| {
+                parent.spawn((
+                    ImageNode::new(handle),
+                    Node {
+                        width: Val::Percent(100.0),
+                        height: Val::Percent(100.0),
+                        ..default()
+                    },
+                ));
+            });
     } else {
         commands.spawn((
             Node {
@@ -165,10 +170,7 @@ fn update_loading_screen(
     }
 }
 
-fn cleanup_loading_screen(
-    mut commands: Commands,
-    query: Query<Entity, With<LoadingScreenEntity>>,
-) {
+fn cleanup_loading_screen(mut commands: Commands, query: Query<Entity, With<LoadingScreenEntity>>) {
     for entity in &query {
         commands.entity(entity).despawn();
     }
@@ -302,10 +304,7 @@ fn setup_menu(mut commands: Commands, scroll_state: Res<MenuScrollState>) {
 }
 
 fn menu_interaction(
-    mut query: Query<
-        (&Interaction, &LayoutButton, &mut BackgroundColor),
-        Changed<Interaction>,
-    >,
+    mut query: Query<(&Interaction, &LayoutButton, &mut BackgroundColor), Changed<Interaction>>,
     mut next_state: ResMut<NextState<AppState>>,
     mut commands: Commands,
 ) {
@@ -337,7 +336,7 @@ fn scroll_list(
     for mut pos in &mut query {
         pos.y -= scroll.delta.y * 30.0;
         pos.y = pos.y.max(0.0);
-        
+
         match app_state.get() {
             AppState::Menu => scroll_state.layout = pos.y,
             AppState::AnimMenu => scroll_state.anim = pos.y,
@@ -402,8 +401,13 @@ fn scan_anims_for_entity(entity: &str) -> Vec<(String, String)> {
     let mut loco_pkg = None;
 
     if let Ok(content) = crate::vfs::read_to_string("", &anims_path) {
-        crate::oni2_loader::parsers::anims::parse_anims_content(&content, &mut alias_map, &mut loco_pkg, &mut None);
-    } 
+        crate::oni2_loader::parsers::anims::parse_anims_content(
+            &content,
+            &mut alias_map,
+            &mut loco_pkg,
+            &mut None,
+        );
+    }
 
     let mut results = Vec::new();
     for (alias, anim_name) in &alias_map {
@@ -429,7 +433,11 @@ fn scan_anims_for_entity(entity: &str) -> Vec<(String, String)> {
     results
 }
 
-fn setup_anim_menu(mut commands: Commands, test_ent: Res<TestAnimEntity>, scroll_state: Res<MenuScrollState>) {
+fn setup_anim_menu(
+    mut commands: Commands,
+    test_ent: Res<TestAnimEntity>,
+    scroll_state: Res<MenuScrollState>,
+) {
     let anims = scan_anims_for_entity(&test_ent.0);
 
     // Camera for menu UI rendering
@@ -491,7 +499,11 @@ fn setup_anim_menu(mut commands: Commands, test_ent: Res<TestAnimEntity>, scroll
                     ))
                     .with_children(|btn| {
                         btn.spawn((
-                            Text::new(format!("{}  ->  {}", alias, file_path.split('/').last().unwrap_or(file_path))),
+                            Text::new(format!(
+                                "{}  ->  {}",
+                                alias,
+                                file_path.split('/').last().unwrap_or(file_path)
+                            )),
                             TextFont {
                                 font_size: 20.0,
                                 ..default()
@@ -505,10 +517,7 @@ fn setup_anim_menu(mut commands: Commands, test_ent: Res<TestAnimEntity>, scroll
 }
 
 fn anim_menu_interaction(
-    mut query: Query<
-        (&Interaction, &AnimButton, &mut BackgroundColor),
-        Changed<Interaction>,
-    >,
+    mut query: Query<(&Interaction, &AnimButton, &mut BackgroundColor), Changed<Interaction>>,
     mut next_state: ResMut<NextState<AppState>>,
     mut commands: Commands,
 ) {
@@ -573,9 +582,15 @@ fn setup_entity_menu(mut commands: Commands, scroll_state: Res<MenuScrollState>)
         .with_children(|root| {
             root.spawn((
                 Text::new("Select Entity"),
-                TextFont { font_size: 48.0, ..default() },
+                TextFont {
+                    font_size: 48.0,
+                    ..default()
+                },
                 TextColor(Color::WHITE),
-                Node { margin: UiRect::bottom(Val::Px(20.0)), ..default() },
+                Node {
+                    margin: UiRect::bottom(Val::Px(20.0)),
+                    ..default()
+                },
             ));
 
             root.spawn((
@@ -605,7 +620,10 @@ fn setup_entity_menu(mut commands: Commands, scroll_state: Res<MenuScrollState>)
                     .with_children(|btn| {
                         btn.spawn((
                             Text::new(folder_name.as_str()),
-                            TextFont { font_size: 20.0, ..default() },
+                            TextFont {
+                                font_size: 20.0,
+                                ..default()
+                            },
                             TextColor(Color::WHITE),
                         ));
                     });

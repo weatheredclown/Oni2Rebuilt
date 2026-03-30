@@ -1,7 +1,7 @@
-use bevy::prelude::*;
-use std::collections::HashMap;
 use super::projectile::SettingsExt;
 use super::settings::SettingsBlock;
+use bevy::prelude::*;
+use std::collections::HashMap;
 
 #[derive(Debug, Clone)]
 pub enum EffectDef {
@@ -118,17 +118,23 @@ pub fn parse_particle_ref(block: &SettingsBlock) -> Option<ParticleSystemRef> {
     None
 }
 
-pub fn parse_effect(def_type: &str, name: &str, block: &SettingsBlock, asset_server: &AssetServer, images: &mut Assets<Image>) -> Option<EffectDef> {
+pub fn parse_effect(
+    def_type: &str,
+    name: &str,
+    block: &SettingsBlock,
+    asset_server: &AssetServer,
+    images: &mut Assets<Image>,
+) -> Option<EffectDef> {
     match def_type {
-        "SFX" => {
-            Some(EffectDef::Sfx(SfxDef {
-                name: name.to_string(),
-                audio_package: block.get_string("AudioPackage"),
-            }))
-        }
+        "SFX" => Some(EffectDef::Sfx(SfxDef {
+            name: name.to_string(),
+            audio_package: block.get_string("AudioPackage"),
+        })),
         "SPRITEEFFECT" => {
             let tex_name = block.get_string("TextureName").unwrap_or_default();
-            let tex_handle = if let Some((h, _)) = crate::oni2_loader::parsers::texture::load_tga_texture("texture", &tex_name, images) {
+            let tex_handle = if let Some((h, _)) =
+                crate::oni2_loader::parsers::texture::load_tga_texture("texture", &tex_name, images)
+            {
                 h
             } else {
                 asset_server.load(format!("texture/{}.tga", tex_name))
@@ -179,16 +185,14 @@ pub fn parse_effect(def_type: &str, name: &str, block: &SettingsBlock, asset_ser
                 mid_percentage: block.get_f32("MidPercentage", 50.0),
             }))
         }
-        "CAMERASHAKE" => {
-            Some(EffectDef::CameraShake(CameraShakeDef {
-                name: name.to_string(),
-                range_eulers: block.get_vec3("RangeEulers", Vec3::ZERO),
-                time_to_shake: block.get_f32("TimeToShake", 0.15),
-                time_left_when_start_dampening: block.get_f32("TimeLeftWhenStartDampening", 0.10),
-                radius_max_shake: block.get_f32("RadiusMaxShake", 2.0),
-                radius_no_shake: block.get_f32("RadiusNoShake", 10.0),
-            }))
-        }
+        "CAMERASHAKE" => Some(EffectDef::CameraShake(CameraShakeDef {
+            name: name.to_string(),
+            range_eulers: block.get_vec3("RangeEulers", Vec3::ZERO),
+            time_to_shake: block.get_f32("TimeToShake", 0.15),
+            time_left_when_start_dampening: block.get_f32("TimeLeftWhenStartDampening", 0.10),
+            radius_max_shake: block.get_f32("RadiusMaxShake", 2.0),
+            radius_no_shake: block.get_f32("RadiusNoShake", 10.0),
+        })),
         "LIGHTNINGGENERATOR" => {
             let mut params = block;
             if let Some(child) = block.children.first() {
@@ -206,24 +210,20 @@ pub fn parse_effect(def_type: &str, name: &str, block: &SettingsBlock, asset_ser
                 position2_var: block.get_vec3("Position2Var", Vec3::ZERO),
             }))
         }
-        "CHUNKEMITTER" => {
-            Some(EffectDef::ChunkEmitter(ChunkEmitterDef {
-                name: name.to_string(),
-                projectile_type: block.get_string("ProjectileType").unwrap_or_default(),
-                num_initial_chunks: block.get_i32("NumInitialChunks", 0),
-                birth_rate: block.get_f32("BirthRate", 1.0),
-                duration: block.get_f32("Duration", 0.0),
-                initial_velocity: block.get_vec3("InitialVelocity", Vec3::ZERO),
-                velocity_var: block.get_vec3("InitialVelocityVar", Vec3::ZERO),
-            }))
-        }
-        "BULLETCASING" => {
-            Some(EffectDef::BulletCasing(BulletCasingFxDef {
-                name: name.to_string(),
-                projectile_type: block.get_string("ProjectileType").unwrap_or_default(),
-                initial_velocity: block.get_vec3("InitialVelocity", Vec3::ZERO),
-            }))
-        }
-        _ => None
+        "CHUNKEMITTER" => Some(EffectDef::ChunkEmitter(ChunkEmitterDef {
+            name: name.to_string(),
+            projectile_type: block.get_string("ProjectileType").unwrap_or_default(),
+            num_initial_chunks: block.get_i32("NumInitialChunks", 0),
+            birth_rate: block.get_f32("BirthRate", 1.0),
+            duration: block.get_f32("Duration", 0.0),
+            initial_velocity: block.get_vec3("InitialVelocity", Vec3::ZERO),
+            velocity_var: block.get_vec3("InitialVelocityVar", Vec3::ZERO),
+        })),
+        "BULLETCASING" => Some(EffectDef::BulletCasing(BulletCasingFxDef {
+            name: name.to_string(),
+            projectile_type: block.get_string("ProjectileType").unwrap_or_default(),
+            initial_velocity: block.get_vec3("InitialVelocity", Vec3::ZERO),
+        })),
+        _ => None,
     }
 }

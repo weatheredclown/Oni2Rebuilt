@@ -15,8 +15,13 @@ pub fn parse_skel(content: &str) -> Oni2Skeleton {
         let trimmed = line.trim();
 
         if trimmed.starts_with("bone ") && trimmed.ends_with('{') {
-            let name = trimmed.strip_prefix("bone ").unwrap()
-                .strip_suffix(" {").unwrap().trim().to_string();
+            let name = trimmed
+                .strip_prefix("bone ")
+                .unwrap()
+                .strip_suffix(" {")
+                .unwrap()
+                .trim()
+                .to_string();
             let (parent_pos, parent_idx) = *parent_stack.last().unwrap_or(&([0.0; 3], None));
             let bone_idx = positions.len();
             // Placeholder position — will be updated by offset line
@@ -74,7 +79,14 @@ pub fn parse_skel(content: &str) -> Oni2Skeleton {
         }
     }
 
-    let mut skel = Oni2Skeleton { positions, parent_indices, names, local_offsets, channels, channel_is_rot: Vec::new() };
+    let mut skel = Oni2Skeleton {
+        positions,
+        parent_indices,
+        names,
+        local_offsets,
+        channels,
+        channel_is_rot: Vec::new(),
+    };
     skel.build_channel_map();
     skel
 }

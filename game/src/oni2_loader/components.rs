@@ -1,5 +1,5 @@
-use bevy::prelude::*;
 use super::curve::NurbsCurve;
+use bevy::prelude::*;
 
 /// Marker component for ONI2-loaded entities.
 #[derive(Component, Debug, Clone)]
@@ -11,12 +11,12 @@ pub struct Oni2Entity {
 #[derive(Component)]
 pub struct CurveFollower {
     pub curve: NurbsCurve,
-    pub phase: f32,           // current t ∈ [0, 1]
-    pub speed: f32,           // knots/sec (parametric speed)
-    pub target_phase: f32,    // target t value
-    pub wrap_around: bool,    // loop when reaching end
-    pub ping_pong: bool,      // reverse direction at ends
-    pub look_along_xz: bool,  // constrain orientation to XZ plane
+    pub phase: f32,              // current t ∈ [0, 1]
+    pub speed: f32,              // knots/sec (parametric speed)
+    pub target_phase: f32,       // target t value
+    pub wrap_around: bool,       // loop when reaching end
+    pub ping_pong: bool,         // reverse direction at ends
+    pub look_along_xz: bool,     // constrain orientation to XZ plane
     pub fixed_orientation: bool, // disable rotation completely
     pub reached_target: bool,
 }

@@ -27,20 +27,20 @@ pub struct SettingsDefinition {
 pub fn parse_settings_file(content: &str) -> Vec<SettingsDefinition> {
     let tokens = tokenize_settings(content);
     let mut defs = Vec::new();
-    
+
     let mut i = 0;
     while i < tokens.len() {
         if tokens[i] == "{" || tokens[i] == "}" {
             i += 1;
             continue;
         }
-        
+
         // Expect: TYPE "Name" {
-        if i + 2 < tokens.len() && tokens[i+2] == "{" {
+        if i + 2 < tokens.len() && tokens[i + 2] == "{" {
             let def_type = tokens[i].clone();
-            let name = tokens[i+1].trim_matches('"').to_string();
+            let name = tokens[i + 1].trim_matches('"').to_string();
             i += 3; // skip TYPE, "Name", and {
-            
+
             let (block, next_i) = parse_block(&tokens, i);
             defs.push(SettingsDefinition {
                 def_type,
@@ -52,39 +52,41 @@ pub fn parse_settings_file(content: &str) -> Vec<SettingsDefinition> {
             i += 1;
         }
     }
-    
+
     defs
 }
 
 fn parse_block(tokens: &[String], start_idx: usize) -> (SettingsBlock, usize) {
     let mut block = SettingsBlock::default();
     let mut i = start_idx;
-    
+
     while i < tokens.len() {
         let token = &tokens[i];
         if token == "}" {
             return (block, i + 1);
         }
-        
+
         // Property Name
         let key = token.clone();
         i += 1;
-        
+
         // Is it a nested block? e.g. Damage { ... }
         if i < tokens.len() && tokens[i] == "{" {
             i += 1;
             let (child_block, next_i) = parse_block(tokens, i);
-            block.properties.insert(key, SettingsValue::Block(child_block));
+            block
+                .properties
+                .insert(key, SettingsValue::Block(child_block));
             i = next_i;
             continue;
         }
-        
+
         // Otherwise, gather values until the next newline or recognizable key
         // In our simplistic tokenizer, we just grab until the next token that looks like a key
         // but we'll cheat by just grabbing the rest of the line (tokenizer keeps lines separate)
         let mut _vals: Vec<String> = Vec::new();
         while i < tokens.len() && tokens[i] != "}" && tokens[i] != "{" {
-            // Very naive line-break detection isn't in this token stream, 
+            // Very naive line-break detection isn't in this token stream,
             // so we just grab strings/numbers.
             // Actually, we'll need a slightly smarter tokenizer that groups by line,
             // or we just assume all subsequent tokens on this line are part of the value.
@@ -92,7 +94,7 @@ fn parse_block(tokens: &[String], start_idx: usize) -> (SettingsBlock, usize) {
             unreachable!("Use parse_settings_file_lines instead");
         }
     }
-    
+
     (block, i)
 }
 
@@ -101,13 +103,21 @@ fn tokenize_lines(content: &str) -> Vec<Vec<String>> {
     let mut lines = Vec::new();
     for line in content.lines() {
         // Strip comments
-        let line = if let Some(idx) = line.find("//") { &line[..idx] } else { line };
-        let line = if let Some(idx) = line.find('#') { &line[..idx] } else { line };
-        
+        let line = if let Some(idx) = line.find("//") {
+            &line[..idx]
+        } else {
+            line
+        };
+        let line = if let Some(idx) = line.find('#') {
+            &line[..idx]
+        } else {
+            line
+        };
+
         let mut tokens = Vec::new();
         let mut current_token = String::new();
         let mut in_quotes = false;
-        
+
         for c in line.chars() {
             if c == '"' {
                 in_quotes = !in_quotes;
@@ -132,7 +142,7 @@ fn tokenize_lines(content: &str) -> Vec<Vec<String>> {
         if !current_token.is_empty() {
             tokens.push(current_token);
         }
-        
+
         if !tokens.is_empty() {
             lines.push(tokens);
         }
@@ -143,14 +153,14 @@ fn tokenize_lines(content: &str) -> Vec<Vec<String>> {
 pub fn parse_settings(content: &str) -> Vec<SettingsDefinition> {
     let lines = tokenize_lines(content);
     let mut defs = Vec::new();
-    
+
     let mut iter = lines.into_iter().peekable();
-    
+
     while let Some(line) = iter.next() {
         if line.len() == 2 || (line.len() == 3 && line[2] == "{") {
             let def_type = line[0].clone();
             let name = line[1].trim_matches('"').to_string();
-            
+
             // Consume opening brace if it's on the next line
             if line.len() == 2 {
                 if let Some(next) = iter.peek() {
@@ -159,18 +169,24 @@ pub fn parse_settings(content: &str) -> Vec<SettingsDefinition> {
                     }
                 }
             }
-            
+
             let block = parse_block_lines(&mut iter);
-            defs.push(SettingsDefinition { def_type, name, block });
+            defs.push(SettingsDefinition {
+                def_type,
+                name,
+                block,
+            });
         }
     }
-    
+
     defs
 }
 
-fn parse_block_lines(iter: &mut std::iter::Peekable<std::vec::IntoIter<Vec<String>>>) -> SettingsBlock {
+fn parse_block_lines(
+    iter: &mut std::iter::Peekable<std::vec::IntoIter<Vec<String>>>,
+) -> SettingsBlock {
     let mut block = SettingsBlock::default();
-    
+
     while let Some(line) = iter.next() {
         if line.len() == 1 && line[0] == "}" {
             break;
@@ -181,9 +197,9 @@ fn parse_block_lines(iter: &mut std::iter::Peekable<std::vec::IntoIter<Vec<Strin
             block.children.push(child);
             continue;
         }
-        
+
         let key = line[0].clone();
-        
+
         if line.len() == 1 {
             // Lookahead for opening brace
             if let Some(next) = iter.peek() {
@@ -195,20 +211,24 @@ fn parse_block_lines(iter: &mut std::iter::Peekable<std::vec::IntoIter<Vec<Strin
                 }
             }
         }
-        
+
         // Values are the rest of the line
         if line.len() > 1 {
             let vals = &line[1..];
             if vals.len() == 1 {
                 let v = &vals[0];
                 if v.starts_with('"') && v.ends_with('"') {
-                    block.properties.insert(key, SettingsValue::String(v.trim_matches('"').to_string()));
+                    block
+                        .properties
+                        .insert(key, SettingsValue::String(v.trim_matches('"').to_string()));
                 } else if let Ok(i) = v.parse::<i32>() {
                     block.properties.insert(key, SettingsValue::Int(i));
                 } else if let Ok(f) = v.parse::<f32>() {
                     block.properties.insert(key, SettingsValue::Float(f));
                 } else {
-                    block.properties.insert(key, SettingsValue::String(v.clone()));
+                    block
+                        .properties
+                        .insert(key, SettingsValue::String(v.clone()));
                 }
             } else {
                 // Array of floats
@@ -218,15 +238,19 @@ fn parse_block_lines(iter: &mut std::iter::Peekable<std::vec::IntoIter<Vec<Strin
                         floats.push(f);
                     }
                 }
-                block.properties.insert(key, SettingsValue::FloatArray(floats));
+                block
+                    .properties
+                    .insert(key, SettingsValue::FloatArray(floats));
             }
         }
     }
-    
+
     block
 }
 
-fn tokenize_settings(_content: &str) -> Vec<String> { vec![] }
+fn tokenize_settings(_content: &str) -> Vec<String> {
+    vec![]
+}
 
 #[cfg(test)]
 mod tests {

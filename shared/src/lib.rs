@@ -32,8 +32,7 @@ impl From<proto::telemetry::CombatEventProto> for events::CombatEvent {
     fn from(p: proto::telemetry::CombatEventProto) -> Self {
         Self {
             event_id: p.event_id.parse().unwrap_or_default(),
-            timestamp: chrono::DateTime::from_timestamp_millis(p.timestamp_ms)
-                .unwrap_or_default(),
+            timestamp: chrono::DateTime::from_timestamp_millis(p.timestamp_ms).unwrap_or_default(),
             event_type: match p.event_type.as_str() {
                 "Death" => events::CombatEventType::Death,
                 "Block" => events::CombatEventType::Block,

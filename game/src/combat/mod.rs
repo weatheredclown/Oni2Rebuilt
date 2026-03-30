@@ -39,10 +39,7 @@ impl Plugin for CombatPlugin {
             )
             .add_systems(
                 Update,
-                (
-                    systems::fist_visual_system,
-                    systems::shield_visual_system,
-                )
+                (systems::fist_visual_system, systems::shield_visual_system)
                     .run_if(in_state(AppState::InGame))
                     .run_if(resource_exists::<components::CombatMaterials>),
             );

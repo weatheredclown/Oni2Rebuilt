@@ -123,8 +123,7 @@ impl Tokenizer {
         if ch == '-' {
             let next = self.peek_at(1);
             if next.is_some_and(|c| c.is_ascii_digit())
-                || (next == Some('.')
-                    && self.peek_at(2).is_some_and(|c| c.is_ascii_digit()))
+                || (next == Some('.') && self.peek_at(2).is_some_and(|c| c.is_ascii_digit()))
             {
                 return self.read_number(line, col);
             }
@@ -247,13 +246,20 @@ impl Tokenizer {
 
     fn read_word(&mut self, line: usize, col: usize) -> Token {
         let start = self.pos;
-        while self.peek().is_some_and(|c| c.is_ascii_alphanumeric() || c == '_') {
+        while self
+            .peek()
+            .is_some_and(|c| c.is_ascii_alphanumeric() || c == '_')
+        {
             self.advance();
         }
         let text: String = self.chars[start..self.pos].iter().collect();
         let lower = text.to_lowercase();
 
-        let code = self.keywords.get(&lower).copied().unwrap_or(TokenCode::Identifier);
+        let code = self
+            .keywords
+            .get(&lower)
+            .copied()
+            .unwrap_or(TokenCode::Identifier);
         Token::new(code, line, col, text)
     }
 }

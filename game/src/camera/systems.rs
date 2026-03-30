@@ -57,7 +57,13 @@ pub fn camera_follow_system(
     active_camera_package: Option<Res<crate::oni2_loader::environment::ActiveCameraPackage>>,
     camera_packages: Option<Res<crate::oni2_loader::environment::CameraPackages>>,
     camera_sets: Option<Res<crate::oni2_loader::environment::CameraParameterSets>>,
-    enemies_query: Query<(&Transform, &crate::combat::components::Fighter), (Without<crate::player::components::Player>, Without<CameraRig>)>,
+    enemies_query: Query<
+        (&Transform, &crate::combat::components::Fighter),
+        (
+            Without<crate::player::components::Player>,
+            Without<CameraRig>,
+        ),
+    >,
 ) {
     let dt = time.delta_secs();
 
@@ -147,7 +153,9 @@ pub fn camera_follow_system(
                 let mut spin_thresh = rig.spin_threshold;
                 let mut z_lerp_rates = rig.zone_lerp_rates;
 
-                if let (Some(active_pkg), Some(pkgs), Some(sets)) = (&active_camera_package, &camera_packages, &camera_sets) {
+                if let (Some(active_pkg), Some(pkgs), Some(sets)) =
+                    (&active_camera_package, &camera_packages, &camera_sets)
+                {
                     if let Some(pkg) = pkgs.packages.get(&active_pkg.name) {
                         // Check if we should be in Fight mode
                         let mut in_fight = false;
@@ -169,10 +177,18 @@ pub fn camera_follow_system(
                         if let Some(params) = sets.sets.get(set_name) {
                             fov = params.fov;
                             follow_distance = params.distance;
-                            inner_dz = if in_fight { params.inner_radius } else { params.dead_zone_inner_radius };
-                            outer_dz = if in_fight { params.outer_radius } else { params.dead_zone_outer_radius };
+                            inner_dz = if in_fight {
+                                params.inner_radius
+                            } else {
+                                params.dead_zone_inner_radius
+                            };
+                            outer_dz = if in_fight {
+                                params.outer_radius
+                            } else {
+                                params.dead_zone_outer_radius
+                            };
                             spin_thresh = params.spin_threshold;
-                            
+
                             if !in_fight {
                                 z_lerp_rates = [
                                     params.lerp_rate_azimuth_zone1,
@@ -188,14 +204,14 @@ pub fn camera_follow_system(
                 // Manual arrow key overrides
                 let mut manual_yaw = 0.0;
                 let manual_turn_speed = 3.0;
-                
+
                 if keyboard.pressed(KeyCode::ArrowLeft) {
                     manual_yaw += manual_turn_speed * dt;
                 }
                 if keyboard.pressed(KeyCode::ArrowRight) {
                     manual_yaw -= manual_turn_speed * dt;
                 }
-                
+
                 let manual_pitch_speed = 5.0;
                 if keyboard.pressed(KeyCode::ArrowUp) {
                     rig.height -= manual_pitch_speed * dt;

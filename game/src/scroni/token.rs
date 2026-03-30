@@ -391,7 +391,14 @@ pub struct Token {
 
 impl Token {
     pub fn new(code: TokenCode, line: usize, col: usize, text: String) -> Self {
-        Self { code, line, col, text, int_value: 0, float_value: 0.0 }
+        Self {
+            code,
+            line,
+            col,
+            text,
+            int_value: 0,
+            float_value: 0.0,
+        }
     }
 
     pub fn eof(line: usize, col: usize) -> Self {

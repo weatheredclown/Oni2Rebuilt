@@ -1,8 +1,8 @@
 use bevy::prelude::*;
 use crossbeam_channel::{Receiver, Sender};
 use rb_shared::events::CombatEvent;
-use rb_shared::proto::telemetry::telemetry_service_client::TelemetryServiceClient;
 use rb_shared::proto::telemetry::SendEventsRequest;
+use rb_shared::proto::telemetry::telemetry_service_client::TelemetryServiceClient;
 
 #[derive(Resource)]
 pub struct TelemetryChannel {
@@ -18,8 +18,8 @@ pub fn spawn_telemetry_thread(receiver: Receiver<CombatEvent>) {
 
         rt.block_on(async move {
             // Lazy connection - won't block if server isn't up yet
-            let channel = tonic::transport::Channel::from_static("http://localhost:50051")
-                .connect_lazy();
+            let channel =
+                tonic::transport::Channel::from_static("http://localhost:50051").connect_lazy();
             let mut client = TelemetryServiceClient::new(channel);
 
             let mut buffer: Vec<CombatEvent> = Vec::new();
@@ -36,8 +36,7 @@ pub fn spawn_telemetry_thread(receiver: Receiver<CombatEvent>) {
                     || (last_flush.elapsed().as_secs() >= 2 && !buffer.is_empty());
 
                 if should_flush {
-                    let proto_events: Vec<_> =
-                        buffer.drain(..).map(Into::into).collect();
+                    let proto_events: Vec<_> = buffer.drain(..).map(Into::into).collect();
                     let count = proto_events.len();
 
                     let request = tonic::Request::new(SendEventsRequest {

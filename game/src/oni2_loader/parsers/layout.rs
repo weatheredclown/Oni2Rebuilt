@@ -1,5 +1,5 @@
-use bevy::prelude::*;
 use crate::oni2_loader::utils::parse::parse_vec3;
+use bevy::prelude::*;
 
 /// A parsed layout light entry.
 pub struct LayoutLight {
@@ -90,7 +90,8 @@ pub fn parse_lights_file(dir: &str) -> Vec<LayoutLight> {
             } else if let Some(val) = field.strip_prefix("SpotAngle ") {
                 light.spot_angle = val.trim().parse().unwrap_or(45.0);
             } else if let Some(val) = field.strip_prefix("Color ") {
-                let parts: Vec<f32> = val.split_whitespace()
+                let parts: Vec<f32> = val
+                    .split_whitespace()
                     .filter_map(|p| p.parse().ok())
                     .collect();
                 if parts.len() >= 4 {
@@ -125,7 +126,8 @@ pub fn parse_environment(dir: &str) -> Option<LayoutEnvironment> {
         if trimmed == "lightDirection:" {
             // Next line is the primary directional light vector
             if let Some(next) = lines.get(i + 1) {
-                let parts: Vec<f32> = next.split_whitespace()
+                let parts: Vec<f32> = next
+                    .split_whitespace()
                     .filter_map(|p| p.parse().ok())
                     .collect();
                 if parts.len() >= 3 {
@@ -135,7 +137,8 @@ pub fn parse_environment(dir: &str) -> Option<LayoutEnvironment> {
         } else if trimmed == "lightColor:" {
             // Row 0 = primary light color, row 3 = ambient
             if let Some(next) = lines.get(i + 1) {
-                let parts: Vec<f32> = next.split_whitespace()
+                let parts: Vec<f32> = next
+                    .split_whitespace()
                     .filter_map(|p| p.parse().ok())
                     .collect();
                 if parts.len() >= 3 {
@@ -143,7 +146,8 @@ pub fn parse_environment(dir: &str) -> Option<LayoutEnvironment> {
                 }
             }
             if let Some(row3) = lines.get(i + 4) {
-                let parts: Vec<f32> = row3.split_whitespace()
+                let parts: Vec<f32> = row3
+                    .split_whitespace()
                     .filter_map(|p| p.parse().ok())
                     .collect();
                 if parts.len() >= 3 {
@@ -151,7 +155,8 @@ pub fn parse_environment(dir: &str) -> Option<LayoutEnvironment> {
                 }
             }
         } else if let Some(val) = trimmed.strip_prefix("fogColor:") {
-            let parts: Vec<f32> = val.split_whitespace()
+            let parts: Vec<f32> = val
+                .split_whitespace()
                 .filter_map(|p| p.parse().ok())
                 .collect();
             if parts.len() >= 4 {
@@ -187,14 +192,19 @@ pub fn parse_layout_fog(dir: &str) -> Option<LayoutFogFile> {
     let content = crate::vfs::read_to_string(dir, "layout.fog").ok()?;
     let lines: Vec<&str> = content.lines().collect();
 
-    if lines.len() < 6 { return None; }
+    if lines.len() < 6 {
+        return None;
+    }
 
     // Line 0: "version: 1"
     // Line 1: enabled fogStart fogEnd colorR colorG colorB colorA
-    let fog_parts: Vec<f32> = lines[1].split_whitespace()
+    let fog_parts: Vec<f32> = lines[1]
+        .split_whitespace()
         .filter_map(|p| p.parse().ok())
         .collect();
-    if fog_parts.len() < 7 { return None; }
+    if fog_parts.len() < 7 {
+        return None;
+    }
     let fog_enabled = fog_parts[0] as i32 != 0;
     let fog_start = fog_parts[1];
     let fog_end = fog_parts[2];
@@ -203,8 +213,11 @@ pub fn parse_layout_fog(dir: &str) -> Option<LayoutFogFile> {
     // Lines 3-5: directional/ambient lights
     let mut lights = Vec::new();
     for i in 3..=5 {
-        if i >= lines.len() { break; }
-        let parts: Vec<f32> = lines[i].split_whitespace()
+        if i >= lines.len() {
+            break;
+        }
+        let parts: Vec<f32> = lines[i]
+            .split_whitespace()
             .filter_map(|p| p.parse().ok())
             .collect();
         if parts.len() >= 7 {
@@ -240,13 +253,18 @@ pub fn parse_layout_paths(dir: &str) -> Vec<(String, Vec<Vec3>)> {
         // Match: curveName[count] {
         if let Some(bracket_pos) = trimmed.find('[') {
             let name = trimmed[..bracket_pos].to_string();
-            if !trimmed.ends_with('{') { continue; }
+            if !trimmed.ends_with('{') {
+                continue;
+            }
 
             let mut points = Vec::new();
             for line in lines.by_ref() {
                 let pt = line.trim();
-                if pt == "}" { break; }
-                let coords: Vec<f32> = pt.split_whitespace()
+                if pt == "}" {
+                    break;
+                }
+                let coords: Vec<f32> = pt
+                    .split_whitespace()
                     .filter_map(|p| p.parse().ok())
                     .collect();
                 if coords.len() >= 3 {

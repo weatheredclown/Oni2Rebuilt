@@ -75,7 +75,9 @@ pub fn parse_campacknew(dir: &str) -> HashMap<String, CameraPackageDef> {
                     "Targeting" => pkg.targeting = value.to_string(),
                     "Fighting" => pkg.fighting = value.to_string(),
                     "FightModeRadius" => pkg.fight_mode_radius = value.parse().unwrap_or(0.0),
-                    "FightModeRunningAwayTime" => pkg.fight_mode_running_away_time = value.parse().unwrap_or(0.0),
+                    "FightModeRunningAwayTime" => {
+                        pkg.fight_mode_running_away_time = value.parse().unwrap_or(0.0)
+                    }
                     _ => {}
                 }
             }
@@ -88,7 +90,7 @@ pub fn parse_campacknew(dir: &str) -> HashMap<String, CameraPackageDef> {
 /// Parses a cam_*.xml file into a CameraParameterSet
 pub fn parse_camera_xml(dir: &str, filename: &str) -> Option<CameraParameterSet> {
     let content = crate::vfs::read_to_string(dir, filename).ok()?;
-    
+
     let mut params = CameraParameterSet::default();
     // Default FOV and distance to sensible values in case missing
     params.fov = 50.0;
@@ -99,7 +101,7 @@ pub fn parse_camera_xml(dir: &str, filename: &str) -> Option<CameraParameterSet>
         if !trimmed.starts_with("<m_") {
             continue;
         }
-        
+
         // Example: <m_FOV type="double" value="50.000"/>
         let name_start = trimmed.find("<m_").unwrap() + 3;
         let name_end = trimmed[name_start..].find(' ').unwrap_or(0) + name_start;
@@ -120,19 +122,39 @@ pub fn parse_camera_xml(dir: &str, filename: &str) -> Option<CameraParameterSet>
             "FOV" => params.fov = value_str.parse().unwrap_or(50.0),
             "Distance" => params.distance = value_str.parse().unwrap_or(3.0),
             "InclineOffset" => params.incline_offset = value_str.parse().unwrap_or(0.0),
-            "InclineOffsetRunning" => params.incline_offset_running = value_str.parse().unwrap_or(0.0),
-            "DeadZoneInnerRadius" => params.dead_zone_inner_radius = value_str.parse().unwrap_or(0.0),
-            "DeadZoneOuterRadius" => params.dead_zone_outer_radius = value_str.parse().unwrap_or(0.0),
-            "LerpRateAzimuthZone1" => params.lerp_rate_azimuth_zone1 = value_str.parse().unwrap_or(0.0),
-            "LerpRateAzimuthZone2" => params.lerp_rate_azimuth_zone2 = value_str.parse().unwrap_or(0.0),
-            "LerpRateAzimuthZone3" => params.lerp_rate_azimuth_zone3 = value_str.parse().unwrap_or(0.0),
-            "LerpRateAzimuthZone4" => params.lerp_rate_azimuth_zone4 = value_str.parse().unwrap_or(0.0),
-            "LockHeadingUntilMove" => params.lock_heading_until_move = value_str == "1" || value_str.eq_ignore_ascii_case("true"),
+            "InclineOffsetRunning" => {
+                params.incline_offset_running = value_str.parse().unwrap_or(0.0)
+            }
+            "DeadZoneInnerRadius" => {
+                params.dead_zone_inner_radius = value_str.parse().unwrap_or(0.0)
+            }
+            "DeadZoneOuterRadius" => {
+                params.dead_zone_outer_radius = value_str.parse().unwrap_or(0.0)
+            }
+            "LerpRateAzimuthZone1" => {
+                params.lerp_rate_azimuth_zone1 = value_str.parse().unwrap_or(0.0)
+            }
+            "LerpRateAzimuthZone2" => {
+                params.lerp_rate_azimuth_zone2 = value_str.parse().unwrap_or(0.0)
+            }
+            "LerpRateAzimuthZone3" => {
+                params.lerp_rate_azimuth_zone3 = value_str.parse().unwrap_or(0.0)
+            }
+            "LerpRateAzimuthZone4" => {
+                params.lerp_rate_azimuth_zone4 = value_str.parse().unwrap_or(0.0)
+            }
+            "LockHeadingUntilMove" => {
+                params.lock_heading_until_move =
+                    value_str == "1" || value_str.eq_ignore_ascii_case("true")
+            }
             "SpinThreshold" => params.spin_threshold = value_str.parse().unwrap_or(0.0),
             "InnerRadius" => params.inner_radius = value_str.parse().unwrap_or(0.0), // from fight schema
             "OuterRadius" => params.outer_radius = value_str.parse().unwrap_or(0.0), // from fight schema
             "FocusOffset" => {
-                let parts: Vec<f32> = value_str.split_whitespace().filter_map(|s| s.parse().ok()).collect();
+                let parts: Vec<f32> = value_str
+                    .split_whitespace()
+                    .filter_map(|s| s.parse().ok())
+                    .collect();
                 if parts.len() >= 3 {
                     params.focus_offset = [parts[0], parts[1], parts[2]];
                 }

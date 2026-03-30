@@ -99,13 +99,38 @@ pub struct ScriptMessage {
 /// Represents a blocking command that the VM has issued and is waiting on.
 #[derive(Debug, Clone)]
 pub enum BlockingAction {
-    Idle { end_time: f64 },
-    GotoCurvePhase { target: f32, seconds: f32 },
-    GotoCurveKnot { knot: i32, seconds: f32 },
-    GotoCurveLerp { target: f32, seconds: f32 },
-    Face { target: Value, seconds: Option<f32> },
-    GotoPoint { target: Value, within: Option<f32>, speed: Option<f32>, duration: Option<f32> },
-    PlayAnimation { name: String, hold: bool, loop_anim: bool, rate: Option<f32>, duration: Option<f32> },
+    Idle {
+        end_time: f64,
+    },
+    GotoCurvePhase {
+        target: f32,
+        seconds: f32,
+    },
+    GotoCurveKnot {
+        knot: i32,
+        seconds: f32,
+    },
+    GotoCurveLerp {
+        target: f32,
+        seconds: f32,
+    },
+    Face {
+        target: Value,
+        seconds: Option<f32>,
+    },
+    GotoPoint {
+        target: Value,
+        within: Option<f32>,
+        speed: Option<f32>,
+        duration: Option<f32>,
+    },
+    PlayAnimation {
+        name: String,
+        hold: bool,
+        loop_anim: bool,
+        rate: Option<f32>,
+        duration: Option<f32>,
+    },
     Fight,
     Shoot,
     Patrol(Value),
@@ -118,22 +143,56 @@ pub enum BlockingAction {
     /// Internal: waiting for a non-looping animation to finish playing.
     WaitingForAnimation,
     /// Request to the ECS system to query entities and return an actor list.
-    Find { list_var: String, conditions: Vec<(String, Value)>, range: Option<f32> },
+    Find {
+        list_var: String,
+        conditions: Vec<(String, Value)>,
+        range: Option<f32>,
+    },
 }
 
 #[derive(Debug, Clone)]
 pub enum SysRequest {
-    TextureMovie { target_name: String, action: super::ast::TextureMovieAction, arg: Value },
-    Spawn { script: String, assign_to: Option<String>, at: Option<Vec3>, name: Option<String> },
-    Teleport { target: Entity, to: Option<Vec3>, face: Option<f32> },
+    TextureMovie {
+        target_name: String,
+        action: super::ast::TextureMovieAction,
+        arg: Value,
+    },
+    Spawn {
+        script: String,
+        assign_to: Option<String>,
+        at: Option<Vec3>,
+        name: Option<String>,
+    },
+    Teleport {
+        target: Entity,
+        to: Option<Vec3>,
+        face: Option<f32>,
+    },
     CameraSetPackage(String),
     DrawText(String),
     At(f32, f32),
-    MakeFx { script_entity: Entity, name: String, at: Option<Vec3> },
-    SendAction { action: String, target: Entity, component: String },
-    SetLightIntensity { light: String, intensity: f32 },
-    SetShaderLocal { name: String, val: f32 },
-    SetUpdateState { target: String, state: String },
+    MakeFx {
+        script_entity: Entity,
+        name: String,
+        at: Option<Vec3>,
+    },
+    SendAction {
+        action: String,
+        target: Entity,
+        component: String,
+    },
+    SetLightIntensity {
+        light: String,
+        intensity: f32,
+    },
+    SetShaderLocal {
+        name: String,
+        val: f32,
+    },
+    SetUpdateState {
+        target: String,
+        state: String,
+    },
     UsePad(Entity),
 }
 
@@ -214,7 +273,12 @@ pub struct ScrOniThread {
 }
 
 impl ScrOniThread {
-    pub fn new(thread_id: u32, parent_thread_id: Option<u32>, script: ScriptDef, start_time: f64) -> Self {
+    pub fn new(
+        thread_id: u32,
+        parent_thread_id: Option<u32>,
+        script: ScriptDef,
+        start_time: f64,
+    ) -> Self {
         let mut variables = HashMap::new();
         init_variables(&mut variables, &script.variables);
 
@@ -242,7 +306,7 @@ impl ScrOniThread {
 }
 
 pub fn hash_name(s: &str) -> i32 {
-    // We must use a fully deterministic hash across identical executions, not DefaultHasher 
+    // We must use a fully deterministic hash across identical executions, not DefaultHasher
     // which generates random seeds via RandomState internally each iteration.
     let mut hash: u32 = 2166136261;
     for byte in s.bytes() {
@@ -268,10 +332,15 @@ pub fn eval_constant(expr: &Expr) -> Option<Value> {
     }
 }
 
-pub fn init_variables(variables: &mut HashMap<String, Value>, decls: &[crate::scroni::ast::VarDecl]) {
+pub fn init_variables(
+    variables: &mut HashMap<String, Value>,
+    decls: &[crate::scroni::ast::VarDecl],
+) {
     variables.clear();
     for var in decls {
-        if var.is_parent { continue; }
+        if var.is_parent {
+            continue;
+        }
         let mut val = Value::default_for_type(&var.var_type);
         if let Some(ref expr) = var.initializer {
             if let Some(c) = eval_constant(expr) {
@@ -287,7 +356,7 @@ pub struct ScriptExec {
     pub main_thread: ScrOniThread,
     pub child_threads: Vec<ScrOniThread>,
     pub next_thread_id: u32,
-    
+
     pub available_scripts: HashMap<String, ScriptDef>,
     pub message_queue: Vec<ScriptMessage>,
     /// Outgoing message queue.
@@ -320,7 +389,9 @@ impl<'a, 'w_e, 's_e, 'w_t, 's_t> ScroniContext<'a, 'w_e, 's_e, 'w_t, 's_t> {
         let mut targets = Vec::new();
         match val {
             Value::Actor(act) => {
-                if self.all_entities.get(*act).is_ok() { targets.push(*act); }
+                if self.all_entities.get(*act).is_ok() {
+                    targets.push(*act);
+                }
             }
             Value::Int(guid) => {
                 for (e, _, name_opt) in self.all_entities.iter() {
@@ -333,7 +404,9 @@ impl<'a, 'w_e, 's_e, 'w_t, 's_t> ScroniContext<'a, 'w_e, 's_e, 'w_t, 's_t> {
             }
             Value::ActorList(acts, _) => {
                 for act in acts {
-                    if self.all_entities.get(*act).is_ok() { targets.push(*act); }
+                    if self.all_entities.get(*act).is_ok() {
+                        targets.push(*act);
+                    }
                 }
             }
             _ => {}
@@ -358,7 +431,7 @@ pub fn update_broadcast_triggers(
     for (trigger_ent, mut trigger, trigger_tf) in &mut triggers {
         let center = trigger_tf.translation();
         trigger.world_center = center;
-        
+
         // Take the max scale axis to conservatively size the radius
         let scale_vec = trigger_tf.compute_transform().scale;
         let scale_max = scale_vec.x.max(scale_vec.y).max(scale_vec.z);
@@ -368,11 +441,13 @@ pub fn update_broadcast_triggers(
         let mut currently_inside = std::collections::HashSet::new();
 
         for (target_ent, target_tf) in &targets {
-            if target_ent == trigger_ent { continue; }
+            if target_ent == trigger_ent {
+                continue;
+            }
             let d_x = target_tf.translation().x - center.x;
             let d_z = target_tf.translation().z - center.z;
             let d_y = (target_tf.translation().y - center.y).abs();
-            // Convert to 2D cylinder volume since Oni triggers often ignore Y variance 
+            // Convert to 2D cylinder volume since Oni triggers often ignore Y variance
             if d_x * d_x + d_z * d_z <= r_sq && d_y < 50.0 {
                 currently_inside.insert(target_ent);
             }
@@ -400,11 +475,29 @@ pub fn update_broadcast_triggers(
 
 #[derive(Debug, Clone)]
 pub enum LoopState {
-    Forever { body: Vec<Stmt>, pc: usize },
-    While { condition: Expr, body: Vec<Stmt>, pc: usize },
-    NTimes { remaining: i32, body: Vec<Stmt>, pc: usize },
-    ForSeconds { end_time: f64, body: Vec<Stmt>, pc: usize },
-    Block { stmts: Vec<Stmt>, pc: usize },
+    Forever {
+        body: Vec<Stmt>,
+        pc: usize,
+    },
+    While {
+        condition: Expr,
+        body: Vec<Stmt>,
+        pc: usize,
+    },
+    NTimes {
+        remaining: i32,
+        body: Vec<Stmt>,
+        pc: usize,
+    },
+    ForSeconds {
+        end_time: f64,
+        body: Vec<Stmt>,
+        pc: usize,
+    },
+    Block {
+        stmts: Vec<Stmt>,
+        pc: usize,
+    },
 }
 
 impl ScriptExec {
@@ -440,14 +533,20 @@ impl ScriptExec {
             };
             let target_script = &script_name[colon + 1..];
 
-            let script_fname = format!("{}.oni", filename.trim_end_matches(".xml").trim_end_matches(".oni"));
+            let script_fname = format!(
+                "{}.oni",
+                filename.trim_end_matches(".xml").trim_end_matches(".oni")
+            );
 
             let mut paths_to_try = Vec::new();
             let mut push_path = |path: String| {
                 if path.is_empty() {
                     return;
                 }
-                if !paths_to_try.iter().any(|p: &String| p.eq_ignore_ascii_case(&path)) {
+                if !paths_to_try
+                    .iter()
+                    .any(|p: &String| p.eq_ignore_ascii_case(&path))
+                {
                     paths_to_try.push(path);
                 }
             };
@@ -479,15 +578,19 @@ impl ScriptExec {
                             return self.available_scripts.get(target_script).cloned();
                         }
                         Err(e) => {
-                            warn!("[ScrOni][{}] resolve_script: Error loading {}:\n{}", 
-                                  self.main_thread.script.name, script_fname, e);
+                            warn!(
+                                "[ScrOni][{}] resolve_script: Error loading {}:\n{}",
+                                self.main_thread.script.name, script_fname, e
+                            );
                         }
                     }
                 }
             }
 
-            warn!("[ScrOni][{}] resolve_script: Failed to load cross-reference script file {}", 
-                  self.main_thread.script.name, script_fname);
+            warn!(
+                "[ScrOni][{}] resolve_script: Failed to load cross-reference script file {}",
+                self.main_thread.script.name, script_fname
+            );
         }
         None
     }
@@ -500,7 +603,10 @@ impl ScriptExec {
         if tid == 0 {
             &self.main_thread
         } else {
-            self.child_threads.iter().find(|t| t.thread_id == tid).unwrap()
+            self.child_threads
+                .iter()
+                .find(|t| t.thread_id == tid)
+                .unwrap()
         }
     }
 
@@ -508,7 +614,10 @@ impl ScriptExec {
         if tid == 0 {
             &mut self.main_thread
         } else {
-            self.child_threads.iter_mut().find(|t| t.thread_id == tid).unwrap()
+            self.child_threads
+                .iter_mut()
+                .find(|t| t.thread_id == tid)
+                .unwrap()
         }
     }
 
@@ -533,7 +642,7 @@ impl ScriptExec {
             self.get_thread_mut(tid).variables.insert(name, val);
             return;
         }
-        
+
         let mut found_in_call_stack = false;
         {
             let thread = self.get_thread_mut(tid);
@@ -548,7 +657,7 @@ impl ScriptExec {
         if found_in_call_stack {
             return;
         }
-        
+
         let mut current = self.get_thread(tid).parent_thread_id;
         while let Some(pid) = current {
             if self.get_thread(pid).variables.contains_key(&name) {
@@ -563,12 +672,21 @@ impl ScriptExec {
 
     /// Execute one frame's worth of the script. Returns the execution state.
     /// Tick the script executor. Process messages, then the main thread and child threads.
-    pub fn tick(&mut self, current_time: f64, delta_time: f32, ctx: &mut ScroniContext) -> ExecState {
-        if !self.active { return ExecState::Blocked; }
-        
+    pub fn tick(
+        &mut self,
+        current_time: f64,
+        delta_time: f32,
+        ctx: &mut ScroniContext,
+    ) -> ExecState {
+        if !self.active {
+            return ExecState::Blocked;
+        }
+
         // Degrade timer variables (only local ones to avoid double-decrement on inherited variables)
         for thread in std::iter::once(&mut self.main_thread).chain(self.child_threads.iter_mut()) {
-            if thread.state == ExecState::Done { continue; }
+            if thread.state == ExecState::Done {
+                continue;
+            }
             for var_decl in &thread.script.variables {
                 if var_decl.var_type == VarType::Timer && !var_decl.is_parent {
                     if let Some(val) = thread.variables.get(&var_decl.name) {
@@ -576,16 +694,24 @@ impl ScriptExec {
                             Value::Float(f) => {
                                 if *f > 0.0 {
                                     let mut new_val = *f - delta_time;
-                                    if new_val < 0.0 { new_val = 0.0; }
-                                    thread.variables.insert(var_decl.name.clone(), Value::Float(new_val));
+                                    if new_val < 0.0 {
+                                        new_val = 0.0;
+                                    }
+                                    thread
+                                        .variables
+                                        .insert(var_decl.name.clone(), Value::Float(new_val));
                                 }
                             }
                             Value::Int(i) => {
                                 let f = *i as f32;
                                 if f > 0.0 {
                                     let mut new_val = f - delta_time;
-                                    if new_val < 0.0 { new_val = 0.0; }
-                                    thread.variables.insert(var_decl.name.clone(), Value::Float(new_val));
+                                    if new_val < 0.0 {
+                                        new_val = 0.0;
+                                    }
+                                    thread
+                                        .variables
+                                        .insert(var_decl.name.clone(), Value::Float(new_val));
                                 }
                             }
                             _ => {}
@@ -621,26 +747,32 @@ impl ScriptExec {
             // Save state before whenever runs
             let pre_state = self.get_thread(tid).state;
             let pre_blocking = self.get_thread(tid).blocking.clone();
-            
+
             // Force state to running temporarily for whenever
             if pre_state != ExecState::Running {
                 self.get_thread_mut(tid).state = ExecState::Running;
             }
-            
+
             self.get_thread_mut(tid).in_whenever = true;
             for stmt in whenever_stmts {
                 self.exec_stmt(tid, stmt, now, ctx);
                 let current_state = self.get_thread(tid).state;
                 if current_state == ExecState::Yielded || current_state == ExecState::Blocked {
-                    warn!("[ScrOni] Whenever block attempted to block or yield (state: {:?})", current_state);
-                    self.get_thread_mut(tid).state = ExecState::Running; 
+                    warn!(
+                        "[ScrOni] Whenever block attempted to block or yield (state: {:?})",
+                        current_state
+                    );
+                    self.get_thread_mut(tid).state = ExecState::Running;
                 } else if current_state == ExecState::PushLoop {
-                    warn!("[ScrOni][{}] Whenever block pushed a loop, this is not fully supported and drops to sequence.", self.get_thread(tid).script.name);
+                    warn!(
+                        "[ScrOni][{}] Whenever block pushed a loop, this is not fully supported and drops to sequence.",
+                        self.get_thread(tid).script.name
+                    );
                     self.get_thread_mut(tid).state = ExecState::Running;
                 }
             }
             self.get_thread_mut(tid).in_whenever = false;
-            
+
             // If the whenever block switched scripts or exited, we should keep that state
             // Otherwise, restore the state of the sequence
             let post_state = self.get_thread(tid).state;
@@ -657,7 +789,6 @@ impl ScriptExec {
 
         // Check if blocking action completed
         if let Some(ref action) = self.get_thread(tid).blocking.clone() {
-
             match action {
                 BlockingAction::Idle { end_time } => {
                     if now >= *end_time {
@@ -693,37 +824,50 @@ impl ScriptExec {
                 if self.get_thread(tid).state != ExecState::Running {
                     return;
                 }
-                
+
                 let mut ls = self.get_thread_mut(tid).loop_stack.pop().unwrap();
                 let pre_len = self.get_thread(tid).loop_stack.len();
-                
-                let (active, push_back) = self.step_loop(tid, &mut ls, &mut instruction_count, max_instructions, now, ctx);
-                
+
+                let (active, push_back) = self.step_loop(
+                    tid,
+                    &mut ls,
+                    &mut instruction_count,
+                    max_instructions,
+                    now,
+                    ctx,
+                );
+
                 if push_back {
                     let cur_len = self.get_thread(tid).loop_stack.len();
                     if cur_len >= pre_len {
                         self.get_thread_mut(tid).loop_stack.insert(pre_len, ls);
                     }
                 }
-                
+
                 if self.get_thread(tid).state == ExecState::PushLoop {
                     self.get_thread_mut(tid).state = ExecState::Running;
                     continue; // Re-evaluate loop stack, top is now the new inner loop!
                 }
-                
+
                 if active {
                     return;
                 }
             }
 
-            if self.get_thread(tid).state != ExecState::Running { return; }
+            if self.get_thread(tid).state != ExecState::Running {
+                return;
+            }
 
             let mut broke_for_loop = false;
-            
+
             // Continue sequence from PC
             while self.get_thread(tid).state == ExecState::Running {
                 if instruction_count >= max_instructions {
-                    warn!("[ScrOni][{}] Script exceeded {} instructions in a single frame natively, force-yielding to prevent engine lockup!", self.get_thread(tid).script.name, max_instructions);
+                    warn!(
+                        "[ScrOni][{}] Script exceeded {} instructions in a single frame natively, force-yielding to prevent engine lockup!",
+                        self.get_thread(tid).script.name,
+                        max_instructions
+                    );
                     self.get_thread_mut(tid).state = ExecState::Yielded;
                     return;
                 }
@@ -735,7 +879,7 @@ impl ScriptExec {
                     let stmt = self.get_thread(tid).script.sequence[seq_pc].clone();
                     self.get_thread_mut(tid).seq_pc += 1;
                     self.exec_stmt(tid, &stmt, now, ctx);
-                    
+
                     if self.get_thread(tid).state == ExecState::PushLoop {
                         self.get_thread_mut(tid).state = ExecState::Running;
                         broke_for_loop = true;
@@ -760,7 +904,7 @@ impl ScriptExec {
                     }
                 }
             }
-            
+
             if !broke_for_loop {
                 break; // If we didn't break to push a loop, the sequence is done or yielded, so end run_sequence
             }
@@ -783,29 +927,47 @@ impl ScriptExec {
     }
 
     /// Step a loop. Returns (still_active, should_push_back).
-    fn step_loop(&mut self, tid: u32, ls: &mut LoopState, ins_count: &mut usize, max_ins: usize, now: f64, ctx: &mut ScroniContext) -> (bool, bool) {
+    fn step_loop(
+        &mut self,
+        tid: u32,
+        ls: &mut LoopState,
+        ins_count: &mut usize,
+        max_ins: usize,
+        now: f64,
+        ctx: &mut ScroniContext,
+    ) -> (bool, bool) {
         match ls {
             LoopState::Forever { body, pc } => {
                 while *pc < body.len() && self.get_thread(tid).state == ExecState::Running {
                     if *ins_count >= max_ins {
-                        warn!("[ScrOni][{}] Script exceeded {} instructions in a single frame conditionally, force-yielding to prevent engine lockup!", self.get_thread(tid).script.name, max_ins);
+                        warn!(
+                            "[ScrOni][{}] Script exceeded {} instructions in a single frame conditionally, force-yielding to prevent engine lockup!",
+                            self.get_thread(tid).script.name,
+                            max_ins
+                        );
                         self.get_thread_mut(tid).state = ExecState::Yielded;
                         return (true, true);
                     }
                     *ins_count += 1;
-                    
+
                     let stmt = body[*pc].clone();
                     *pc += 1;
                     self.exec_stmt(tid, &stmt, now, ctx);
                 }
-                if let Some(res) = self.check_loop_state(tid) { return res; }
+                if let Some(res) = self.check_loop_state(tid) {
+                    return res;
+                }
                 if self.get_thread(tid).state == ExecState::Running {
                     *pc = 0; // restart loop
                     return (false, true); // active=false, push_back=true -> instantly loops without yielding a frame
                 }
                 (true, true) // blocked — keep loop
             }
-            LoopState::While { condition, body, pc } => {
+            LoopState::While {
+                condition,
+                body,
+                pc,
+            } => {
                 let cond = condition.clone();
                 let cond_val = self.eval_expr(tid, &cond, now, ctx);
                 if !cond_val.as_bool() {
@@ -813,40 +975,56 @@ impl ScriptExec {
                 }
                 while *pc < body.len() && self.get_thread(tid).state == ExecState::Running {
                     if *ins_count >= max_ins {
-                        warn!("[ScrOni][{}] Script exceeded {} instructions in a single frame natively, force-yielding to prevent engine lockup!", self.get_thread(tid).script.name, max_ins);
+                        warn!(
+                            "[ScrOni][{}] Script exceeded {} instructions in a single frame natively, force-yielding to prevent engine lockup!",
+                            self.get_thread(tid).script.name,
+                            max_ins
+                        );
                         self.get_thread_mut(tid).state = ExecState::Yielded;
                         return (true, true);
                     }
                     *ins_count += 1;
-                    
+
                     let stmt = body[*pc].clone();
                     *pc += 1;
                     self.exec_stmt(tid, &stmt, now, ctx);
                 }
-                if let Some(res) = self.check_loop_state(tid) { return res; }
+                if let Some(res) = self.check_loop_state(tid) {
+                    return res;
+                }
                 if self.get_thread(tid).state == ExecState::Running {
                     *pc = 0;
                     return (false, true); // loop instantly to condition evaluater without yielding
                 }
                 (true, true)
             }
-            LoopState::NTimes { remaining, body, pc } => {
+            LoopState::NTimes {
+                remaining,
+                body,
+                pc,
+            } => {
                 if *remaining <= 0 {
                     return (false, false);
                 }
                 while *pc < body.len() && self.get_thread(tid).state == ExecState::Running {
                     if *ins_count >= max_ins {
-                        warn!("[ScrOni][{}] Script exceeded {} instructions in a single frame natively, force-yielding to prevent engine lockup!", self.get_thread(tid).script.name, max_ins);
+                        warn!(
+                            "[ScrOni][{}] Script exceeded {} instructions in a single frame natively, force-yielding to prevent engine lockup!",
+                            self.get_thread(tid).script.name,
+                            max_ins
+                        );
                         self.get_thread_mut(tid).state = ExecState::Yielded;
                         return (true, true);
                     }
                     *ins_count += 1;
-                    
+
                     let stmt = body[*pc].clone();
                     *pc += 1;
                     self.exec_stmt(tid, &stmt, now, ctx);
                 }
-                if let Some(res) = self.check_loop_state(tid) { return res; }
+                if let Some(res) = self.check_loop_state(tid) {
+                    return res;
+                }
                 if self.get_thread(tid).state == ExecState::Running {
                     *remaining -= 1;
                     *pc = 0;
@@ -861,7 +1039,11 @@ impl ScriptExec {
                 }
                 while *pc < body.len() && self.get_thread(tid).state == ExecState::Running {
                     if *ins_count >= max_ins {
-                        warn!("[ScrOni][{}] Script exceeded {} instructions in a single frame natively, force-yielding to prevent engine lockup!", self.get_thread(tid).script.name, max_ins);
+                        warn!(
+                            "[ScrOni][{}] Script exceeded {} instructions in a single frame natively, force-yielding to prevent engine lockup!",
+                            self.get_thread(tid).script.name,
+                            max_ins
+                        );
                         self.get_thread_mut(tid).state = ExecState::Yielded;
                         return (true, true);
                     }
@@ -871,7 +1053,9 @@ impl ScriptExec {
                     *pc += 1;
                     self.exec_stmt(tid, &stmt, now, ctx);
                 }
-                if let Some(res) = self.check_loop_state(tid) { return res; }
+                if let Some(res) = self.check_loop_state(tid) {
+                    return res;
+                }
                 if self.get_thread(tid).state == ExecState::Running {
                     *pc = 0;
                     return (true, true);
@@ -884,7 +1068,9 @@ impl ScriptExec {
                     *pc += 1;
                     self.exec_stmt(tid, &stmt, now, ctx);
                 }
-                if let Some(res) = self.check_loop_state(tid) { return res; }
+                if let Some(res) = self.check_loop_state(tid) {
+                    return res;
+                }
                 if *pc >= stmts.len() {
                     return (false, false); // block done
                 }
@@ -906,7 +1092,7 @@ impl ScriptExec {
             Stmt::AddToList { expr, list } => {
                 let val = self.eval_expr(tid, expr, now, ctx);
                 let mut current_list = self.get_var(tid, list);
-                
+
                 if matches!(current_list, Value::None | Value::Int(0)) {
                     current_list = Value::ActorList(Vec::new(), 0);
                 }
@@ -918,8 +1104,8 @@ impl ScriptExec {
             }
             Stmt::RemoveFromList { expr, list } => {
                 let val = self.eval_expr(tid, expr, now, ctx);
-                
-                // Directly extract entities without validating ECS liveness 
+
+                // Directly extract entities without validating ECS liveness
                 // so we can properly clean dead handles out of memory lists!
                 let targets = match val {
                     Value::Actor(act) => vec![act],
@@ -927,9 +1113,11 @@ impl ScriptExec {
                     Value::Int(_) => ctx.resolve_targets(&val),
                     _ => Vec::new(),
                 };
-                
-                if targets.is_empty() { return; }
-                
+
+                if targets.is_empty() {
+                    return;
+                }
+
                 let current_list = self.get_var(tid, list);
                 if let Value::ActorList(mut vec, mut idx) = current_list {
                     let original_len = vec.len();
@@ -941,7 +1129,11 @@ impl ScriptExec {
                     self.set_var(tid, list.clone(), Value::ActorList(vec, idx));
                 }
             }
-            Stmt::If { condition, then_branch, else_branch } => {
+            Stmt::If {
+                condition,
+                then_branch,
+                else_branch,
+            } => {
                 let cond = self.eval_expr(tid, condition, now, ctx);
                 if cond.as_bool() {
                     self.exec_stmt(tid, then_branch, now, ctx);
@@ -955,13 +1147,18 @@ impl ScriptExec {
                         self.exec_stmt(tid, stmt, now, ctx);
                     }
                 } else {
-                    self.get_thread_mut(tid).loop_stack.push(LoopState::Block { stmts: stmts.clone(), pc: 0 });
+                    self.get_thread_mut(tid).loop_stack.push(LoopState::Block {
+                        stmts: stmts.clone(),
+                        pc: 0,
+                    });
                     self.get_thread_mut(tid).state = ExecState::PushLoop;
                 }
             }
             Stmt::DoForever(body) => {
                 let stmts = self.flatten_to_block(body);
-                self.get_thread_mut(tid).loop_stack.push(LoopState::Forever { body: stmts, pc: 0 });
+                self.get_thread_mut(tid)
+                    .loop_stack
+                    .push(LoopState::Forever { body: stmts, pc: 0 });
                 self.get_thread_mut(tid).state = ExecState::PushLoop;
             }
             Stmt::DoWhile { condition, body } => {
@@ -976,17 +1173,23 @@ impl ScriptExec {
             Stmt::DoNTimes { count, body } => {
                 let n = self.eval_expr(tid, count, now, ctx).as_int();
                 let stmts = self.flatten_to_block(body);
-                self.get_thread_mut(tid).loop_stack.push(LoopState::NTimes { remaining: n, body: stmts, pc: 0 });
+                self.get_thread_mut(tid).loop_stack.push(LoopState::NTimes {
+                    remaining: n,
+                    body: stmts,
+                    pc: 0,
+                });
                 self.get_thread_mut(tid).state = ExecState::PushLoop;
             }
             Stmt::DoForSeconds { seconds, body } => {
                 let secs = self.eval_expr(tid, seconds, now, ctx).as_float();
                 let stmts = self.flatten_to_block(body);
-                self.get_thread_mut(tid).loop_stack.push(LoopState::ForSeconds {
-                    end_time: now + secs as f64,
-                    body: stmts,
-                    pc: 0,
-                });
+                self.get_thread_mut(tid)
+                    .loop_stack
+                    .push(LoopState::ForSeconds {
+                        end_time: now + secs as f64,
+                        body: stmts,
+                        pc: 0,
+                    });
                 self.get_thread_mut(tid).state = ExecState::PushLoop;
             }
             Stmt::Exit => {
@@ -1012,62 +1215,130 @@ impl ScriptExec {
                 t.state = ExecState::AbortSequence;
             }
             Stmt::Log(exprs) => {
-                let parts: Vec<String> = exprs.iter().map(|e| {
-                    let v = self.eval_expr(tid, e, now, ctx);
-                    v.as_string()
-                }).collect();
-                info!("[ScrOni][{}] {}", self.get_thread(tid).script.name, parts.join(" "));
+                let parts: Vec<String> = exprs
+                    .iter()
+                    .map(|e| {
+                        let v = self.eval_expr(tid, e, now, ctx);
+                        v.as_string()
+                    })
+                    .collect();
+                info!(
+                    "[ScrOni][{}] {}",
+                    self.get_thread(tid).script.name,
+                    parts.join(" ")
+                );
             }
 
             // Blocking commands — set blocking action and yield
             Stmt::Idle(expr) => {
                 let secs = self.eval_expr(tid, expr, now, ctx).as_float();
-                self.get_thread_mut(tid).blocking = Some(BlockingAction::Idle { end_time: now + secs as f64 });
+                self.get_thread_mut(tid).blocking = Some(BlockingAction::Idle {
+                    end_time: now + secs as f64,
+                });
                 self.get_thread_mut(tid).state = ExecState::Blocked;
             }
             Stmt::GotoCurvePhase { phase, seconds } => {
                 let p = self.eval_expr(tid, phase, now, ctx).as_float();
                 let s = self.eval_expr(tid, seconds, now, ctx).as_float();
-                self.get_thread_mut(tid).blocking = Some(BlockingAction::GotoCurvePhase { target: p, seconds: s });
+                self.get_thread_mut(tid).blocking = Some(BlockingAction::GotoCurvePhase {
+                    target: p,
+                    seconds: s,
+                });
                 self.get_thread_mut(tid).state = ExecState::Blocked;
             }
             Stmt::GotoCurveKnot { knot, seconds } => {
                 let k = self.eval_expr(tid, knot, now, ctx).as_int();
                 let s = self.eval_expr(tid, seconds, now, ctx).as_float();
-                self.get_thread_mut(tid).blocking = Some(BlockingAction::GotoCurveKnot { knot: k, seconds: s });
+                self.get_thread_mut(tid).blocking = Some(BlockingAction::GotoCurveKnot {
+                    knot: k,
+                    seconds: s,
+                });
                 self.get_thread_mut(tid).state = ExecState::Blocked;
             }
             Stmt::GotoCurveLerp { lerp, seconds } => {
                 let l = self.eval_expr(tid, lerp, now, ctx).as_float();
                 let s = self.eval_expr(tid, seconds, now, ctx).as_float();
-                self.get_thread_mut(tid).blocking = Some(BlockingAction::GotoCurveLerp { target: l, seconds: s });
+                self.get_thread_mut(tid).blocking = Some(BlockingAction::GotoCurveLerp {
+                    target: l,
+                    seconds: s,
+                });
                 self.get_thread_mut(tid).state = ExecState::Blocked;
             }
             Stmt::Face { target, seconds } => {
                 let t = self.eval_expr(tid, target, now, ctx);
-                let s = seconds.as_ref().map(|e| self.eval_expr(tid, e, now, ctx).as_float());
-                self.get_thread_mut(tid).blocking = Some(BlockingAction::Face { target: t, seconds: s });
+                let s = seconds
+                    .as_ref()
+                    .map(|e| self.eval_expr(tid, e, now, ctx).as_float());
+                self.get_thread_mut(tid).blocking = Some(BlockingAction::Face {
+                    target: t,
+                    seconds: s,
+                });
                 self.get_thread_mut(tid).state = ExecState::Blocked;
             }
-            Stmt::GotoPoint { target, within, speed, duration } => {
+            Stmt::GotoPoint {
+                target,
+                within,
+                speed,
+                duration,
+            } => {
                 let t = self.eval_expr(tid, target, now, ctx);
-                let w = within.as_ref().map(|e| self.eval_expr(tid, e, now, ctx).as_float());
-                let s = speed.as_ref().map(|e| self.eval_expr(tid, e, now, ctx).as_float());
-                let d = duration.as_ref().map(|e| self.eval_expr(tid, e, now, ctx).as_float());
-                self.get_thread_mut(tid).blocking = Some(BlockingAction::GotoPoint { target: t, within: w, speed: s, duration: d });
+                let w = within
+                    .as_ref()
+                    .map(|e| self.eval_expr(tid, e, now, ctx).as_float());
+                let s = speed
+                    .as_ref()
+                    .map(|e| self.eval_expr(tid, e, now, ctx).as_float());
+                let d = duration
+                    .as_ref()
+                    .map(|e| self.eval_expr(tid, e, now, ctx).as_float());
+                self.get_thread_mut(tid).blocking = Some(BlockingAction::GotoPoint {
+                    target: t,
+                    within: w,
+                    speed: s,
+                    duration: d,
+                });
                 self.get_thread_mut(tid).state = ExecState::Blocked;
             }
-            Stmt::PlayAnimation { name, hold, loop_anim, rate, duration } => {
+            Stmt::PlayAnimation {
+                name,
+                hold,
+                loop_anim,
+                rate,
+                duration,
+            } => {
                 let n = self.eval_expr(tid, name, now, ctx).as_string();
-                let r = rate.as_ref().map(|e| self.eval_expr(tid, e, now, ctx).as_float());
-                let d = duration.as_ref().map(|e| self.eval_expr(tid, e, now, ctx).as_float());
-                self.get_thread_mut(tid).blocking = Some(BlockingAction::PlayAnimation { name: n, hold: *hold, loop_anim: *loop_anim, rate: r, duration: d });
+                let r = rate
+                    .as_ref()
+                    .map(|e| self.eval_expr(tid, e, now, ctx).as_float());
+                let d = duration
+                    .as_ref()
+                    .map(|e| self.eval_expr(tid, e, now, ctx).as_float());
+                self.get_thread_mut(tid).blocking = Some(BlockingAction::PlayAnimation {
+                    name: n,
+                    hold: *hold,
+                    loop_anim: *loop_anim,
+                    rate: r,
+                    duration: d,
+                });
                 self.get_thread_mut(tid).state = ExecState::Blocked;
             }
-            Stmt::PlayActionAnimation { name, hold, loop_anim, duration } => {
+            Stmt::PlayActionAnimation {
+                name,
+                hold,
+                loop_anim,
+                duration,
+            } => {
                 let n = self.eval_expr(tid, name, now, ctx).as_string();
-                let d = duration.as_ref().map(|e| self.eval_expr(tid, e, now, ctx).as_float());
-                self.get_thread_mut(tid).blocking = Some(BlockingAction::PlayAnimation { name: n, hold: *hold, loop_anim: *loop_anim, rate: None, duration: d });
+                let d = duration
+                    .as_ref()
+                    .map(|e| self.eval_expr(tid, e, now, ctx).as_float());
+                self.get_thread_mut(tid).blocking = Some(BlockingAction::PlayAnimation {
+                    name: n,
+                    hold: *hold,
+                    loop_anim: *loop_anim,
+                    rate: None,
+                    duration: d,
+                });
                 self.get_thread_mut(tid).state = ExecState::Blocked;
             }
             Stmt::Fight => {
@@ -1149,9 +1420,18 @@ impl ScriptExec {
                 self.set_var(tid, decl.name.clone(), val);
             }
 
-            Stmt::Find { list_var, conditions, range } => {
-                let eval_conds = conditions.iter().map(|(k, e)| (k.clone(), self.eval_expr(tid, e, now, ctx))).collect();
-                let eval_range = range.as_ref().map(|e| self.eval_expr(tid, e, now, ctx).as_float());
+            Stmt::Find {
+                list_var,
+                conditions,
+                range,
+            } => {
+                let eval_conds = conditions
+                    .iter()
+                    .map(|(k, e)| (k.clone(), self.eval_expr(tid, e, now, ctx)))
+                    .collect();
+                let eval_range = range
+                    .as_ref()
+                    .map(|e| self.eval_expr(tid, e, now, ctx).as_float());
                 self.get_thread_mut(tid).blocking = Some(BlockingAction::Find {
                     list_var: list_var.clone(),
                     conditions: eval_conds,
@@ -1160,7 +1440,12 @@ impl ScriptExec {
                 self.get_thread_mut(tid).state = ExecState::Blocked;
             }
 
-            Stmt::TextureMovie { name, pass: _, action, arg } => {
+            Stmt::TextureMovie {
+                name,
+                pass: _,
+                action,
+                arg,
+            } => {
                 let target_name = self.eval_expr(tid, name, now, ctx).as_string();
                 let arg_val = self.eval_expr(tid, arg, now, ctx);
                 self.sys_requests.push(SysRequest::TextureMovie {
@@ -1173,7 +1458,7 @@ impl ScriptExec {
             Stmt::SendMessage { msg, to, with } => {
                 let msg_str = self.eval_expr(tid, msg, now, ctx).as_string();
                 let target = self.eval_expr(tid, to, now, ctx);
-                
+
                 let mut args = Vec::new();
                 for a in with {
                     args.push(self.eval_expr(tid, a, now, ctx));
@@ -1181,11 +1466,22 @@ impl ScriptExec {
 
                 let targets = ctx.resolve_targets(&target);
                 if targets.is_empty() {
-                    warn!("[ScrOni][{}] VM: SendMessage '{}' failed, target {:?} unresolved", self.get_thread(tid).script.name, msg_str, target);
+                    warn!(
+                        "[ScrOni][{}] VM: SendMessage '{}' failed, target {:?} unresolved",
+                        self.get_thread(tid).script.name,
+                        msg_str,
+                        target
+                    );
                 }
 
                 for entity in targets {
-                    info!("[ScrOni][{}] VM: SendMessage '{}' from {:?} to {:?}", self.get_thread(tid).script.name, msg_str, self.owner, entity);   
+                    info!(
+                        "[ScrOni][{}] VM: SendMessage '{}' from {:?} to {:?}",
+                        self.get_thread(tid).script.name,
+                        msg_str,
+                        self.owner,
+                        entity
+                    );
                     self.outgoing_messages.push(ScriptMessage {
                         msg: msg_str.clone(),
                         from: self.owner,
@@ -1195,18 +1491,25 @@ impl ScriptExec {
                     });
                 }
             }
-            Stmt::SendAction { action, target, component } => {
+            Stmt::SendAction {
+                action,
+                target,
+                component,
+            } => {
                 let act_str = match action {
                     Expr::Var(n) => n.clone(),
                     Expr::StringLit(s) => s.clone(),
                     _ => self.eval_expr(tid, action, now, ctx).as_string(),
                 };
-                
+
                 let mut targets = if let Some(target_expr) = target {
                     let tgt = self.eval_expr(tid, target_expr, now, ctx);
                     let res = ctx.resolve_targets(&tgt);
                     if res.is_empty() {
-                        warn!("VM: SendAction '{}' failed, target {:?} unresolved", act_str, tgt);
+                        warn!(
+                            "VM: SendAction '{}' failed, target {:?} unresolved",
+                            act_str, tgt
+                        );
                     }
                     res
                 } else {
@@ -1238,14 +1541,14 @@ impl ScriptExec {
             }
             Stmt::Teleport { target, to, face } => {
                 if let Value::Actor(ent) = self.eval_expr(tid, target, now, ctx) {
-                    let to_vec = to.as_ref().map(|e| {
-                        match self.eval_expr(tid, e, now, ctx) {
-                            Value::Vector(v) => v,
-                            _ => Vec3::ZERO,
-                        }
+                    let to_vec = to.as_ref().map(|e| match self.eval_expr(tid, e, now, ctx) {
+                        Value::Vector(v) => v,
+                        _ => Vec3::ZERO,
                     });
-                    let face_float = face.as_ref().map(|e| self.eval_expr(tid, e, now, ctx).as_float());
-                    
+                    let face_float = face
+                        .as_ref()
+                        .map(|e| self.eval_expr(tid, e, now, ctx).as_float());
+
                     self.sys_requests.push(SysRequest::Teleport {
                         target: ent,
                         to: to_vec,
@@ -1254,18 +1557,26 @@ impl ScriptExec {
                 }
             }
 
-            Stmt::Spawn { script, assign_to, at, name } => {
-                info!("Spawn command: script={:?}, assign_to={:?}, at={:?}, name={:?}", script, assign_to, at, name);
+            Stmt::Spawn {
+                script,
+                assign_to,
+                at,
+                name,
+            } => {
+                info!(
+                    "Spawn command: script={:?}, assign_to={:?}, at={:?}, name={:?}",
+                    script, assign_to, at, name
+                );
                 let script_str = self.eval_expr(tid, script, now, ctx).as_string();
                 let assign = assign_to.clone();
-                let at_pos = at.as_ref().map(|e| {
-                    match self.eval_expr(tid, e, now, ctx) {
-                        Value::Vector(v) => v,
-                        _ => Vec3::ZERO,
-                    }
+                let at_pos = at.as_ref().map(|e| match self.eval_expr(tid, e, now, ctx) {
+                    Value::Vector(v) => v,
+                    _ => Vec3::ZERO,
                 });
-                let target_name = name.as_ref().map(|e| self.eval_expr(tid, e, now, ctx).as_string());
-                
+                let target_name = name
+                    .as_ref()
+                    .map(|e| self.eval_expr(tid, e, now, ctx).as_string());
+
                 self.sys_requests.push(SysRequest::Spawn {
                     script: script_str,
                     assign_to: assign,
@@ -1276,18 +1587,16 @@ impl ScriptExec {
 
             Stmt::MakeFx { name, at } => {
                 let fx_name = self.eval_expr(tid, name, now, ctx).as_string();
-                let fx_pos = at.as_ref().map(|e| {
-                    match self.eval_expr(tid, e, now, ctx) {
-                        Value::Vector(v) => v,
-                        Value::Actor(ent) => {
-                            if let Ok((_, tf, _)) = ctx.all_entities.get(ent) {
-                                tf.translation
-                            } else {
-                                Vec3::ZERO
-                            }
+                let fx_pos = at.as_ref().map(|e| match self.eval_expr(tid, e, now, ctx) {
+                    Value::Vector(v) => v,
+                    Value::Actor(ent) => {
+                        if let Ok((_, tf, _)) = ctx.all_entities.get(ent) {
+                            tf.translation
+                        } else {
+                            Vec3::ZERO
                         }
-                        _ => Vec3::ZERO,
                     }
+                    _ => Vec3::ZERO,
                 });
 
                 self.sys_requests.push(SysRequest::MakeFx {
@@ -1314,7 +1623,11 @@ impl ScriptExec {
                     t.loop_stack.clear();
                     t.state = ExecState::AbortSequence; // Yield to prevent executing rest of old block
                 } else {
-                    warn!("[ScrOni][{}] Fork: Target Script '{}' not found", self.get_thread(tid).script.name, name);
+                    warn!(
+                        "[ScrOni][{}] Fork: Target Script '{}' not found",
+                        self.get_thread(tid).script.name,
+                        name
+                    );
                 }
             }
 
@@ -1326,16 +1639,20 @@ impl ScriptExec {
                     init_variables(&mut t.variables, &t.script.variables);
                     t.seq_pc = 0;
                     t.loop_stack.clear();
-                    
-                    // Clear the message queue when the main script switches, 
+
+                    // Clear the message queue when the main script switches,
                     // matching the original engine's scrGroupContext::Reset behavior.
                     if tid == 0 {
                         self.message_queue.clear();
                     }
-                    
+
                     self.get_thread_mut(tid).state = ExecState::AbortSequence; // Yield to prevent executing rest of old block
                 } else {
-                    warn!("[ScrOni][{}] Switch: Target Script '{}' not found", self.get_thread(tid).script.name, name);
+                    warn!(
+                        "[ScrOni][{}] Switch: Target Script '{}' not found",
+                        self.get_thread(tid).script.name,
+                        name
+                    );
                 }
             }
 
@@ -1346,13 +1663,22 @@ impl ScriptExec {
                     self.next_thread_id += 1;
                     let mut new_thread = ScrOniThread::new(new_tid, Some(tid), new_script, now);
                     for var_decl in &new_thread.script.variables {
-                        if var_decl.is_parent { continue; }
-                        new_thread.variables.insert(var_decl.name.clone(), Value::default_for_type(&var_decl.var_type));
+                        if var_decl.is_parent {
+                            continue;
+                        }
+                        new_thread.variables.insert(
+                            var_decl.name.clone(),
+                            Value::default_for_type(&var_decl.var_type),
+                        );
                     }
                     self.child_threads.push(new_thread);
                     self.set_var(tid, var.clone(), Value::Int(new_tid as i32));
                 } else {
-                    warn!("[ScrOni][{}] ChildStack: Target Script '{}' not found", self.get_thread(tid).script.name, script_name);
+                    warn!(
+                        "[ScrOni][{}] ChildStack: Target Script '{}' not found",
+                        self.get_thread(tid).script.name,
+                        script_name
+                    );
                 }
             }
 
@@ -1365,7 +1691,11 @@ impl ScriptExec {
                     self.child_threads.push(new_thread);
                     self.set_var(tid, var.clone(), Value::Int(new_tid as i32));
                 } else {
-                    warn!("[ScrOni][{}] ChildSwitch: Target Script '{}' not found", self.get_thread(tid).script.name, script_name);
+                    warn!(
+                        "[ScrOni][{}] ChildSwitch: Target Script '{}' not found",
+                        self.get_thread(tid).script.name,
+                        script_name
+                    );
                 }
             }
 
@@ -1378,7 +1708,8 @@ impl ScriptExec {
 
             Stmt::CameraSetPackage(expr) => {
                 let pkg_name = self.eval_expr(tid, expr, now, ctx).as_string();
-                self.sys_requests.push(SysRequest::CameraSetPackage(pkg_name));
+                self.sys_requests
+                    .push(SysRequest::CameraSetPackage(pkg_name));
             }
             Stmt::At(x_expr, y_expr) => {
                 let x = self.eval_expr(tid, x_expr, now, ctx).as_float();
@@ -1397,7 +1728,9 @@ impl ScriptExec {
             }
             Stmt::PlayAmbientSound { name, volume } => {
                 let n = self.eval_expr(tid, name, now, ctx).as_string();
-                let v = volume.as_ref().map(|e| self.eval_expr(tid, e, now, ctx).as_float());
+                let v = volume
+                    .as_ref()
+                    .map(|e| self.eval_expr(tid, e, now, ctx).as_float());
                 info!("VM: PlayAmbientSound {} {:?} (unimplemented)", n, v);
             }
             Stmt::MusicPlay(expr) => {
@@ -1418,15 +1751,33 @@ impl ScriptExec {
                 let b = self.eval_expr(tid, expr, now, ctx).as_int();
                 info!("VM: CameraLetterbox {} (unimplemented)", b);
             }
-            Stmt::CameraFollowActor { args } => { info!("VM: CameraFollowActor {:?} (unimplemented)", args); }
-            Stmt::CameraTrackActor { args } => { info!("VM: CameraTrackActor {:?} (unimplemented)", args); }
-            Stmt::CameraTrackPoint { args } => { info!("VM: CameraTrackPoint {:?} (unimplemented)", args); }
-            Stmt::CameraMoveToActor { args } => { info!("VM: CameraMoveToActor {:?} (unimplemented)", args); }
-            Stmt::CameraMoveToPoint { args } => { info!("VM: CameraMoveToPoint {:?} (unimplemented)", args); }
-            Stmt::CameraCutToActor { args } => { info!("VM: CameraCutToActor {:?} (unimplemented)", args); }
-            Stmt::CameraCutToPoint { args } => { info!("VM: CameraCutToPoint {:?} (unimplemented)", args); }
-            Stmt::CameraSetFOV { args } => { info!("VM: CameraSetFOV {:?} (unimplemented)", args); }
-            Stmt::CameraShake => { info!("VM: CameraShake (unimplemented)"); }
+            Stmt::CameraFollowActor { args } => {
+                info!("VM: CameraFollowActor {:?} (unimplemented)", args);
+            }
+            Stmt::CameraTrackActor { args } => {
+                info!("VM: CameraTrackActor {:?} (unimplemented)", args);
+            }
+            Stmt::CameraTrackPoint { args } => {
+                info!("VM: CameraTrackPoint {:?} (unimplemented)", args);
+            }
+            Stmt::CameraMoveToActor { args } => {
+                info!("VM: CameraMoveToActor {:?} (unimplemented)", args);
+            }
+            Stmt::CameraMoveToPoint { args } => {
+                info!("VM: CameraMoveToPoint {:?} (unimplemented)", args);
+            }
+            Stmt::CameraCutToActor { args } => {
+                info!("VM: CameraCutToActor {:?} (unimplemented)", args);
+            }
+            Stmt::CameraCutToPoint { args } => {
+                info!("VM: CameraCutToPoint {:?} (unimplemented)", args);
+            }
+            Stmt::CameraSetFOV { args } => {
+                info!("VM: CameraSetFOV {:?} (unimplemented)", args);
+            }
+            Stmt::CameraShake => {
+                info!("VM: CameraShake (unimplemented)");
+            }
 
             Stmt::SetFogType(expr) => {
                 let fog_type = self.eval_expr(tid, expr, now, ctx).as_string();
@@ -1447,7 +1798,8 @@ impl ScriptExec {
             Stmt::SetShaderLocal { args } => {
                 let name = self.eval_expr(tid, &args[0], now, ctx).as_string();
                 let val = self.eval_expr(tid, &args[1], now, ctx).as_float();
-                self.sys_requests.push(SysRequest::SetShaderLocal { name, val });
+                self.sys_requests
+                    .push(SysRequest::SetShaderLocal { name, val });
             }
             Stmt::SetLightParameter { args } => {
                 let light = self.eval_expr(tid, &args[0], now, ctx).as_string();
@@ -1456,7 +1808,10 @@ impl ScriptExec {
             Stmt::Intensity { args } => {
                 let val = self.eval_expr(tid, &args[0], now, ctx).as_float();
                 if let Some(light) = &self.current_light {
-                    self.sys_requests.push(SysRequest::SetLightIntensity { light: light.clone(), intensity: val });
+                    self.sys_requests.push(SysRequest::SetLightIntensity {
+                        light: light.clone(),
+                        intensity: val,
+                    });
                 }
             }
             Stmt::SetFullScreenColor { args } => {
@@ -1482,7 +1837,10 @@ impl ScriptExec {
                     } else {
                         "me".to_string()
                     };
-                    if self.warned_unimplemented.insert(format!("retreat_{}", target_str)) {
+                    if self
+                        .warned_unimplemented
+                        .insert(format!("retreat_{}", target_str))
+                    {
                         info!("VM: Retreat {} (unimplemented)", target_str);
                     }
                 } else {
@@ -1494,7 +1852,10 @@ impl ScriptExec {
             // AI Commands that inherently block execution natively waiting for physical locomotion responses
             Stmt::Retreat | Stmt::Patrol(_) | Stmt::Follow(_) | Stmt::Attack(_) => {
                 if self.warned_unimplemented.insert(format!("{:?}", stmt)) {
-                    info!("VM: Unimplemented AI action {:?} (Yielding continuously)", stmt);
+                    info!(
+                        "VM: Unimplemented AI action {:?} (Yielding continuously)",
+                        stmt
+                    );
                 }
                 self.get_thread_mut(tid).state = ExecState::Yielded;
             }
@@ -1530,9 +1891,7 @@ impl ScriptExec {
                 }
                 Value::ActorList(ents, 0)
             }
-            Expr::Var(name) => {
-                self.get_var(tid, name)
-            }
+            Expr::Var(name) => self.get_var(tid, name),
             Expr::Me => Value::Actor(self.owner),
             Expr::Player => {
                 if let Some(p) = ctx.player {
@@ -1589,7 +1948,7 @@ impl ScriptExec {
                         Value::String(s)
                     }
                     "random" => Value::Int(rand::random::<i32>().abs() % 100),
-                    "randomrange" => Value::Int(0), // stub
+                    "randomrange" => Value::Int(0),          // stub
                     "randomrangefloat" => Value::Float(0.0), // stub
                     "guid" => {
                         if let Some(e) = args.get(0) {
@@ -1602,7 +1961,9 @@ impl ScriptExec {
                         let target = args.get(0).map(|e| self.eval_expr(tid, e, now, ctx));
                         if let Some(t) = target {
                             let ents = ctx.resolve_targets(&t);
-                            if !ents.is_empty() { return Value::Int(1); }
+                            if !ents.is_empty() {
+                                return Value::Int(1);
+                            }
                         }
                         Value::Int(0)
                     }
@@ -1619,7 +1980,7 @@ impl ScriptExec {
                     "distance" => {
                         let arg1 = args.get(0).map(|e| self.eval_expr(tid, e, now, ctx));
                         let arg2 = args.get(1).map(|e| self.eval_expr(tid, e, now, ctx));
-                        
+
                         let resolve_pos = |val: Value| -> Option<Vec3> {
                             match val {
                                 Value::Vector(v) => Some(v),
@@ -1631,13 +1992,13 @@ impl ScriptExec {
                                         None
                                     }
                                 }
-                                _ => None
+                                _ => None,
                             }
                         };
-                        
+
                         let mut p1 = arg1.and_then(resolve_pos);
                         let mut p2 = arg2.and_then(resolve_pos);
-                        
+
                         if p1.is_some() && p2.is_none() {
                             if let Ok((_, my_tf, _)) = ctx.all_entities.get(self.owner) {
                                 p2 = p1;
@@ -1645,7 +2006,7 @@ impl ScriptExec {
                                 p1 = Some(Vec3::new(-my_p.x, my_p.y, -my_p.z));
                             }
                         }
-                        
+
                         if let (Some(a), Some(b)) = (p1, p2) {
                             return Value::Float(a.distance(b));
                         }
@@ -1657,28 +2018,37 @@ impl ScriptExec {
                                 Expr::Var(n) => n.clone(),
                                 Expr::StringLit(s) => s.clone(),
                                 _ => self.eval_expr(tid, event_expr, now, ctx).as_string(),
-                            }.to_lowercase();
+                            }
+                            .to_lowercase();
 
                             if let Ok(trigger) = ctx.triggers.get(self.owner) {
                                 match event_name.as_str() {
                                     "playerenter" => {
                                         if let Some(p) = ctx.player {
-                                            if trigger.just_entered.contains(&p) { return Value::Int(1); }
+                                            if trigger.just_entered.contains(&p) {
+                                                return Value::Int(1);
+                                            }
                                         }
                                     }
                                     "playerexit" => {
                                         if let Some(p) = ctx.player {
-                                            if trigger.just_exited.contains(&p) { return Value::Int(1); }
+                                            if trigger.just_exited.contains(&p) {
+                                                return Value::Int(1);
+                                            }
                                         }
                                     }
                                     "playerinside" => {
                                         if let Some(p) = ctx.player {
-                                            if trigger.inside.contains(&p) { return Value::Int(1); }
+                                            if trigger.inside.contains(&p) {
+                                                return Value::Int(1);
+                                            }
                                         }
                                     }
                                     "playeroutside" => {
                                         if let Some(p) = ctx.player {
-                                            if !trigger.inside.contains(&p) { return Value::Int(1); }
+                                            if !trigger.inside.contains(&p) {
+                                                return Value::Int(1);
+                                            }
                                         }
                                     }
                                     _ => {}
@@ -1690,7 +2060,8 @@ impl ScriptExec {
                     "triggerentered" => {
                         let trig_ent = args.get(0).map(|e| self.eval_expr(tid, e, now, ctx));
                         let targ_ent = args.get(1).map(|e| self.eval_expr(tid, e, now, ctx));
-                        if let (Some(Value::Actor(t)), Some(Value::Actor(e))) = (trig_ent, targ_ent) {
+                        if let (Some(Value::Actor(t)), Some(Value::Actor(e))) = (trig_ent, targ_ent)
+                        {
                             if let Ok(trigger) = ctx.triggers.get(t) {
                                 if trigger.just_entered.contains(&e) {
                                     return Value::Int(1);
@@ -1702,7 +2073,8 @@ impl ScriptExec {
                     "triggerexited" => {
                         let trig_ent = args.get(0).map(|e| self.eval_expr(tid, e, now, ctx));
                         let targ_ent = args.get(1).map(|e| self.eval_expr(tid, e, now, ctx));
-                        if let (Some(Value::Actor(t)), Some(Value::Actor(e))) = (trig_ent, targ_ent) {
+                        if let (Some(Value::Actor(t)), Some(Value::Actor(e))) = (trig_ent, targ_ent)
+                        {
                             if let Ok(trigger) = ctx.triggers.get(t) {
                                 if trigger.just_exited.contains(&e) {
                                     return Value::Int(1);
@@ -1714,7 +2086,8 @@ impl ScriptExec {
                     "triggerinside" => {
                         let trig_ent = args.get(0).map(|e| self.eval_expr(tid, e, now, ctx));
                         let targ_ent = args.get(1).map(|e| self.eval_expr(tid, e, now, ctx));
-                        if let (Some(Value::Actor(t)), Some(Value::Actor(e))) = (trig_ent, targ_ent) {
+                        if let (Some(Value::Actor(t)), Some(Value::Actor(e))) = (trig_ent, targ_ent)
+                        {
                             if let Ok(trigger) = ctx.triggers.get(t) {
                                 if trigger.inside.contains(&e) {
                                     return Value::Int(1);
@@ -1726,8 +2099,15 @@ impl ScriptExec {
                     "receivemessage" => {
                         if let Some(msg_expr) = args.get(0) {
                             let target_msg = self.eval_expr(tid, msg_expr, now, ctx).as_string();
-                            if let Some(idx) = self.message_queue.iter().position(|m| !m.is_action && m.msg == target_msg) {
-                                info!("VM: Received message '{}' (from {:?})", target_msg, self.message_queue[idx].from);
+                            if let Some(idx) = self
+                                .message_queue
+                                .iter()
+                                .position(|m| !m.is_action && m.msg == target_msg)
+                            {
+                                info!(
+                                    "VM: Received message '{}' (from {:?})",
+                                    target_msg, self.message_queue[idx].from
+                                );
                                 self.message_queue.remove(idx);
                                 return Value::Int(1);
                             }
@@ -1737,7 +2117,11 @@ impl ScriptExec {
                     "receiveaction" => {
                         if let Some(msg_expr) = args.get(0) {
                             let target_msg = self.eval_expr(tid, msg_expr, now, ctx).as_string();
-                            if let Some(idx) = self.message_queue.iter().position(|m| m.is_action && m.msg == target_msg) {
+                            if let Some(idx) = self
+                                .message_queue
+                                .iter()
+                                .position(|m| m.is_action && m.msg == target_msg)
+                            {
                                 self.message_queue.remove(idx);
                                 return Value::Int(1);
                             }
@@ -1749,18 +2133,22 @@ impl ScriptExec {
                         }
                         Value::Int(0)
                     }
-                    "getcheckpointindex" => {
-                        Value::Int(ctx.current_checkpoint)
-                    }
+                    "getcheckpointindex" => Value::Int(ctx.current_checkpoint),
                     "first" => {
                         if let Some(Expr::Var(list_name)) = args.get(0) {
-                            if let Some(Value::ActorList(entities, _)) = self.get_thread(tid).variables.get(list_name) {
+                            if let Some(Value::ActorList(entities, _)) =
+                                self.get_thread(tid).variables.get(list_name)
+                            {
                                 let updated = entities.clone();
                                 if let Some(&first_ent) = updated.first() {
-                                    self.get_thread_mut(tid).variables.insert(list_name.clone(), Value::ActorList(updated, 1));
+                                    self.get_thread_mut(tid)
+                                        .variables
+                                        .insert(list_name.clone(), Value::ActorList(updated, 1));
                                     return Value::Actor(first_ent);
                                 } else {
-                                    self.get_thread_mut(tid).variables.insert(list_name.clone(), Value::ActorList(updated, 0));
+                                    self.get_thread_mut(tid)
+                                        .variables
+                                        .insert(list_name.clone(), Value::ActorList(updated, 0));
                                     return Value::None;
                                 }
                             }
@@ -1769,7 +2157,9 @@ impl ScriptExec {
                     }
                     "size" => {
                         if let Some(Expr::Var(list_name)) = args.get(0) {
-                            if let Some(Value::ActorList(entities, _)) = self.get_thread(tid).variables.get(list_name) {
+                            if let Some(Value::ActorList(entities, _)) =
+                                self.get_thread(tid).variables.get(list_name)
+                            {
                                 return Value::Int(entities.len() as i32);
                             }
                         }
@@ -1777,15 +2167,23 @@ impl ScriptExec {
                     }
                     "next" => {
                         if let Some(Expr::Var(list_name)) = args.get(0) {
-                            if let Some(Value::ActorList(entities, idx)) = self.get_thread(tid).variables.get(list_name) {
+                            if let Some(Value::ActorList(entities, idx)) =
+                                self.get_thread(tid).variables.get(list_name)
+                            {
                                 let updated = entities.clone();
                                 let current_idx = *idx;
                                 if current_idx < updated.len() {
                                     let ent = updated[current_idx];
-                                    self.get_thread_mut(tid).variables.insert(list_name.clone(), Value::ActorList(updated, current_idx + 1));
+                                    self.get_thread_mut(tid).variables.insert(
+                                        list_name.clone(),
+                                        Value::ActorList(updated, current_idx + 1),
+                                    );
                                     return Value::Actor(ent);
                                 } else {
-                                    self.get_thread_mut(tid).variables.insert(list_name.clone(), Value::ActorList(updated, current_idx));
+                                    self.get_thread_mut(tid).variables.insert(
+                                        list_name.clone(),
+                                        Value::ActorList(updated, current_idx),
+                                    );
                                     return Value::None;
                                 }
                             }
@@ -1816,9 +2214,18 @@ impl ScriptExec {
 
     // Helper to unblock a thread
     pub fn clear_blocking(&mut self, tid: u32) {
-        if let Some(t) = self.child_threads.iter_mut().find(|t| t.thread_id == tid).or_else(|| {
-            if tid == 0 { Some(&mut self.main_thread) } else { None }
-        }) {
+        if let Some(t) = self
+            .child_threads
+            .iter_mut()
+            .find(|t| t.thread_id == tid)
+            .or_else(|| {
+                if tid == 0 {
+                    Some(&mut self.main_thread)
+                } else {
+                    None
+                }
+            })
+        {
             t.blocking = None;
             if t.state == ExecState::Blocked {
                 t.state = ExecState::Running;
@@ -1829,43 +2236,55 @@ impl ScriptExec {
 
 fn eval_binop(op: BinOp, l: &Value, r: &Value) -> Value {
     match op {
-        BinOp::Mod => {
-            match (l, r) {
-                (Value::Int(a), Value::Int(b)) => {
-                    if *b == 0 { Value::Int(0) } else { Value::Int(a % b) }
-                }
-                _ => {
-                    let rv = r.as_float();
-                    if rv == 0.0 { Value::Float(0.0) } else { Value::Float(l.as_float() % rv) }
+        BinOp::Mod => match (l, r) {
+            (Value::Int(a), Value::Int(b)) => {
+                if *b == 0 {
+                    Value::Int(0)
+                } else {
+                    Value::Int(a % b)
                 }
             }
-        }
-        BinOp::Add => {
-            match (l, r) {
-                (Value::Int(a), Value::Int(b)) => Value::Int(a + b),
-                (Value::Vector(a), Value::Vector(b)) => Value::Vector(*a + *b),
-                _ => Value::Float(l.as_float() + r.as_float()),
+            _ => {
+                let rv = r.as_float();
+                if rv == 0.0 {
+                    Value::Float(0.0)
+                } else {
+                    Value::Float(l.as_float() % rv)
+                }
             }
-        }
-        BinOp::Sub => {
-            match (l, r) {
-                (Value::Int(a), Value::Int(b)) => Value::Int(a - b),
-                (Value::Vector(a), Value::Vector(b)) => Value::Vector(*a - *b),
-                _ => Value::Float(l.as_float() - r.as_float()),
-            }
-        }
-        BinOp::Mul => {
-            match (l, r) {
-                (Value::Int(a), Value::Int(b)) => Value::Int(a * b),
-                _ => Value::Float(l.as_float() * r.as_float()),
-            }
-        }
+        },
+        BinOp::Add => match (l, r) {
+            (Value::Int(a), Value::Int(b)) => Value::Int(a + b),
+            (Value::Vector(a), Value::Vector(b)) => Value::Vector(*a + *b),
+            _ => Value::Float(l.as_float() + r.as_float()),
+        },
+        BinOp::Sub => match (l, r) {
+            (Value::Int(a), Value::Int(b)) => Value::Int(a - b),
+            (Value::Vector(a), Value::Vector(b)) => Value::Vector(*a - *b),
+            _ => Value::Float(l.as_float() - r.as_float()),
+        },
+        BinOp::Mul => match (l, r) {
+            (Value::Int(a), Value::Int(b)) => Value::Int(a * b),
+            _ => Value::Float(l.as_float() * r.as_float()),
+        },
         BinOp::Div => {
             let rv = r.as_float();
-            if rv == 0.0 { Value::Float(0.0) } else { Value::Float(l.as_float() / rv) }
+            if rv == 0.0 {
+                Value::Float(0.0)
+            } else {
+                Value::Float(l.as_float() / rv)
+            }
         }
-        BinOp::Equal => Value::Int(if (l.as_float() - r.as_float()).abs() < f32::EPSILON { 1 } else { 0 }),
-        BinOp::NotEqual => Value::Int(if (l.as_float() - r.as_float()).abs() >= f32::EPSILON { 1 } else { 0 }),
+        BinOp::Equal => Value::Int(if (l.as_float() - r.as_float()).abs() < f32::EPSILON {
+            1
+        } else {
+            0
+        }),
+        BinOp::NotEqual => Value::Int(if (l.as_float() - r.as_float()).abs() >= f32::EPSILON {
+            1
+        } else {
+            0
+        }),
         BinOp::Less => Value::Int(if l.as_float() < r.as_float() { 1 } else { 0 }),
         BinOp::LessOrEqual => Value::Int(if l.as_float() <= r.as_float() { 1 } else { 0 }),
         BinOp::Greater => Value::Int(if l.as_float() > r.as_float() { 1 } else { 0 }),
@@ -1881,8 +2300,6 @@ fn eval_binop(op: BinOp, l: &Value, r: &Value) -> Value {
 pub struct ScrOniScript {
     pub exec: ScriptExec,
 }
-
-
 
 /// Bevy system: tick all ScrOni scripts each frame.
 pub fn scroni_tick_system(
@@ -1912,13 +2329,21 @@ pub fn scroni_tick_system(
             triggers: &triggers,
             player: player_ent,
             current_checkpoint: current_checkpoint.0,
-            layout_dir: layout_context.as_ref().map(|c| c.layout_dir.clone()).unwrap_or_default(),
+            layout_dir: layout_context
+                .as_ref()
+                .map(|c| c.layout_dir.clone())
+                .unwrap_or_default(),
         };
         script.exec.tick(now, delta_time, &mut ctx);
 
         let mut finds_to_resolve = Vec::new();
         for t in script.exec.all_threads_mut() {
-            if let Some(BlockingAction::Find { list_var, conditions, range }) = t.blocking.clone() {
+            if let Some(BlockingAction::Find {
+                list_var,
+                conditions,
+                range,
+            }) = t.blocking.clone()
+            {
                 finds_to_resolve.push((t.thread_id, list_var, conditions, range));
             }
         }
@@ -1930,7 +2355,9 @@ pub fn scroni_tick_system(
             let max_dist = range.unwrap_or(9999.0);
 
             for (other_ent, other_tf, name_opt) in &all_entities {
-                if entity == other_ent { continue; }
+                if entity == other_ent {
+                    continue;
+                }
 
                 let dist = my_pos.distance(other_tf.translation);
                 if dist <= max_dist {
@@ -1952,7 +2379,9 @@ pub fn scroni_tick_system(
                 }
             }
 
-            script.exec.set_var(tid, list_var, Value::ActorList(found, 0));
+            script
+                .exec
+                .set_var(tid, list_var, Value::ActorList(found, 0));
             script.exec.clear_blocking(tid);
             // Tick again to resume immediately
             script.exec.tick_thread(tid, now, &mut ctx);
@@ -1960,7 +2389,11 @@ pub fn scroni_tick_system(
 
         for req in script.exec.sys_requests.drain(..) {
             match req {
-                SysRequest::TextureMovie { target_name, action, arg } => {
+                SysRequest::TextureMovie {
+                    target_name,
+                    action,
+                    arg,
+                } => {
                     commands.trigger(ScrOniSysEvent::TextureMovie {
                         script_entity: entity,
                         target_name,
@@ -1968,8 +2401,16 @@ pub fn scroni_tick_system(
                         arg,
                     });
                 }
-                SysRequest::Spawn { script, assign_to, at, name } => {
-                    info!("Spawn command: script={}, assign_to={:?}, at={:?}, name={:?}", script, assign_to, at, name);
+                SysRequest::Spawn {
+                    script,
+                    assign_to,
+                    at,
+                    name,
+                } => {
+                    info!(
+                        "Spawn command: script={}, assign_to={:?}, at={:?}, name={:?}",
+                        script, assign_to, at, name
+                    );
                     commands.trigger(ScrOniSysEvent::Spawn {
                         script_entity: entity,
                         script,
@@ -1995,14 +2436,22 @@ pub fn scroni_tick_system(
                 SysRequest::DrawText(text) => {
                     commands.trigger(ScrOniSysEvent::DrawText(text));
                 }
-                SysRequest::MakeFx { script_entity, name, at } => {
+                SysRequest::MakeFx {
+                    script_entity,
+                    name,
+                    at,
+                } => {
                     commands.trigger(ScrOniSysEvent::MakeFx {
                         script_entity,
                         name,
                         at,
                     });
                 }
-                SysRequest::SendAction { action, target, component } => {
+                SysRequest::SendAction {
+                    action,
+                    target,
+                    component,
+                } => {
                     commands.trigger(ScrOniSysEvent::SendAction {
                         action,
                         target,
@@ -2024,10 +2473,7 @@ pub fn scroni_tick_system(
                     });
                 }
                 SysRequest::SetUpdateState { target, state } => {
-                    commands.trigger(ScrOniSysEvent::SetUpdateState {
-                        target,
-                        state,
-                    });
+                    commands.trigger(ScrOniSysEvent::SetUpdateState { target, state });
                 }
                 SysRequest::UsePad(ent) => {
                     commands.trigger(ScrOniSysEvent::UsePad { script_entity: ent });
@@ -2043,7 +2489,10 @@ pub fn scroni_tick_system(
         if let Ok((_, mut target_script, _)) = query.get_mut(msg.to) {
             target_script.exec.message_queue.push(msg);
         } else {
-            warn!("VM: Failed to deliver message '{}' to {:?}: target not found or has no ScrOniScript", msg.msg, msg.to);
+            warn!(
+                "VM: Failed to deliver message '{}' to {:?}: target not found or has no ScrOniScript",
+                msg.msg, msg.to
+            );
         }
     }
 }
@@ -2052,11 +2501,15 @@ pub fn scroni_tick_system(
 pub fn load_script_file(dir: &str, filename: &str) -> Result<ScriptFile, String> {
     let source = crate::vfs::read_to_string(dir, filename)
         .map_err(|e| format!("Failed to read {}/{}: {}", dir, filename, e))?;
-    Compiler::compile(&source)
-        .map_err(|errors| {
-            let msgs: Vec<String> = errors.iter().map(|e| e.to_string()).collect();
-            format!("Compile errors in {}/{}:\n{}", dir, filename, msgs.join("\n"))
-        })
+    Compiler::compile(&source).map_err(|errors| {
+        let msgs: Vec<String> = errors.iter().map(|e| e.to_string()).collect();
+        format!(
+            "Compile errors in {}/{}:\n{}",
+            dir,
+            filename,
+            msgs.join("\n")
+        )
+    })
 }
 
 #[derive(Resource, Default)]
@@ -2088,7 +2541,10 @@ pub fn cleanup_scroni_text(
 pub fn scroni_sys_event_observer(
     trigger: On<ScrOniSysEvent>,
     mut commands: Commands,
-    mut transform_query: Query<(&mut Transform, Option<&mut avian3d::prelude::LinearVelocity>)>,
+    mut transform_query: Query<(
+        &mut Transform,
+        Option<&mut avian3d::prelude::LinearVelocity>,
+    )>,
     children_query: Query<&Children>,
     mut materials_query: Query<&mut MeshMaterial3d<StandardMaterial>>,
     assets: (
@@ -2123,7 +2579,7 @@ pub fn scroni_sys_event_observer(
             // Coordinate system is top-left based, so (0.5, 0.5) is center.
             let px = scroni_text_state.current_x * 100.0;
             let py = scroni_text_state.current_y * 100.0;
-            
+
             commands.spawn((
                 Text::new(text),
                 TextFont {
@@ -2147,7 +2603,10 @@ pub fn scroni_sys_event_observer(
         ScrOniSysEvent::CameraSetPackage(pkg_name) => {
             if let Some(mut active_pkg) = active_camera_package {
                 if active_pkg.name != pkg_name {
-                    info!("Changing active camera package from {} to {}", active_pkg.name, pkg_name);
+                    info!(
+                        "Changing active camera package from {} to {}",
+                        active_pkg.name, pkg_name
+                    );
                     active_pkg.name = pkg_name;
                 }
             } else {
@@ -2158,11 +2617,16 @@ pub fn scroni_sys_event_observer(
                 rig.mode = crate::camera::components::CameraMode::SmartFollow;
             }
         }
-        ScrOniSysEvent::TextureMovie { script_entity, target_name, action, arg } => {
+        ScrOniSysEvent::TextureMovie {
+            script_entity,
+            target_name,
+            action,
+            arg,
+        } => {
             match action {
                 super::ast::TextureMovieAction::SetFrame => {
                     let frame = arg.as_int() as usize;
-                    
+
                     // Get preloaded texture handle directly from the collections resource
                     if let Some(frames) = texture_collections.collections.get(&target_name) {
                         if frame < frames.len() {
@@ -2183,22 +2647,37 @@ pub fn scroni_sys_event_observer(
                                 }
                             }
                         } else {
-                            warn!("TextureMovie SetFrame {} out of bounds for {}", frame, target_name);
+                            warn!(
+                                "TextureMovie SetFrame {} out of bounds for {}",
+                                frame, target_name
+                            );
                         }
                     } else {
-                        warn!("TextureMovie: No preloaded textures found for {}", target_name);
+                        warn!(
+                            "TextureMovie: No preloaded textures found for {}",
+                            target_name
+                        );
                     }
                 }
                 _ => {}
             }
         }
-        ScrOniSysEvent::Spawn { script_entity: _, script, assign_to, at, name } => {
-            info!("Received spawn request: script={}, at={:?}, name={:?}", script, at, name);
-            
+        ScrOniSysEvent::Spawn {
+            script_entity: _,
+            script,
+            assign_to,
+            at,
+            name,
+        } => {
+            info!(
+                "Received spawn request: script={}, at={:?}, name={:?}",
+                script, at, name
+            );
+
             // Scripts operate purely in ONI coordinates recursively natively. Translate down into Bevy spatial coordinates physically here.
             let pos_opt = at.map(|p| Vec3::new(-p.x, p.y, -p.z));
             let actor_name = name.clone().unwrap_or(script.clone());
-            
+
             if let (Some(ctx), Some(paths)) = (layout_data.0.as_ref(), layout_data.1.as_ref()) {
                 let mut spawn_assets = crate::oni2_loader::SpawnAssets {
                     commands: &mut commands,
@@ -2210,7 +2689,7 @@ pub fn scroni_sys_event_observer(
                     anim_registry: &mut anim_registry,
                     texture_collections: &mut texture_collections,
                 };
-                
+
                 // Call the shared spawn function
                 if let Some((_new_entity, _actor)) = crate::oni2_loader::spawn_layout_actor(
                     &mut spawn_assets,
@@ -2221,33 +2700,57 @@ pub fn scroni_sys_event_observer(
                     true,
                     Some(&actor_name),
                 ) {
-                    info!("Spawned {} with position override {:?}", actor_name, pos_opt);
+                    info!(
+                        "Spawned {} with position override {:?}",
+                        actor_name, pos_opt
+                    );
                     if let Some(var_name) = assign_to {
-                        warn!("Assigning spawn result to {} is not yet supported synchronously.", var_name);
+                        warn!(
+                            "Assigning spawn result to {} is not yet supported synchronously.",
+                            var_name
+                        );
                     }
                     return; // Successfully spawned!
                 } else {
-                    warn!("Failed to spawn actor {} using spawn_layout_actor", actor_name);
+                    warn!(
+                        "Failed to spawn actor {} using spawn_layout_actor",
+                        actor_name
+                    );
                 }
             } else {
-                warn!("Spawn command needs a LayoutContext and LayoutPaths resource to fully spawn {}.", script);
+                warn!(
+                    "Spawn command needs a LayoutContext and LayoutPaths resource to fully spawn {}.",
+                    script
+                );
             }
 
             // Fallback Stub: spawn a basic entity placeholder instead if proper spawning fails
             let pos_fallback = pos_opt.unwrap_or(Vec3::ZERO);
-            let _new_entity = commands.spawn((
-                Transform::from_translation(pos_fallback),
-                Visibility::Visible,
-                crate::oni2_loader::Oni2Entity { name: actor_name.clone() },
-                Name::new(actor_name.clone()),
-                crate::menu::InGameEntity,
-            )).id();
+            let _new_entity = commands
+                .spawn((
+                    Transform::from_translation(pos_fallback),
+                    Visibility::Visible,
+                    crate::oni2_loader::Oni2Entity {
+                        name: actor_name.clone(),
+                    },
+                    Name::new(actor_name.clone()),
+                    crate::menu::InGameEntity,
+                ))
+                .id();
 
             if let Some(var_name) = assign_to {
-                warn!("Assigning spawn result to {} is not yet supported synchronously.", var_name);
+                warn!(
+                    "Assigning spawn result to {} is not yet supported synchronously.",
+                    var_name
+                );
             }
         }
-        ScrOniSysEvent::Teleport { script_entity, target, to, face } => {
+        ScrOniSysEvent::Teleport {
+            script_entity,
+            target,
+            to,
+            face,
+        } => {
             if player_query.get(target).is_ok() {
                 let caller_name = if let Ok((_, script, _)) = script_query.get(script_entity) {
                     script.exec.main_thread.script.name.clone()
@@ -2259,23 +2762,30 @@ pub fn scroni_sys_event_observer(
                 if let Some(pos) = to {
                     let bevy_pos = Vec3::new(-pos.x, pos.y, -pos.z);
                     transform.translation = bevy_pos;
-                    commands.entity(target).insert(crate::oni2_loader::spawn::NeedsGroundSnap {
-                        origin: bevy_pos,
-                        wait_frames: 4,
-                    });
+                    commands
+                        .entity(target)
+                        .insert(crate::oni2_loader::spawn::NeedsGroundSnap {
+                            origin: bevy_pos,
+                            wait_frames: 4,
+                        });
                 }
                 if let Some(angles_y) = face {
                     let rad = angles_y.to_radians();
                     let current_rot = transform.rotation.to_euler(EulerRot::YXZ);
-                    transform.rotation = Quat::from_euler(EulerRot::YXZ, rad, current_rot.1, current_rot.2);
+                    transform.rotation =
+                        Quat::from_euler(EulerRot::YXZ, rad, current_rot.1, current_rot.2);
                 }
-                
+
                 if let Some(vel) = opt_vel.as_deref_mut() {
                     vel.0 = Vec3::ZERO;
                 }
             }
         }
-        ScrOniSysEvent::MakeFx { script_entity, name, at } => {
+        ScrOniSysEvent::MakeFx {
+            script_entity,
+            name,
+            at,
+        } => {
             commands.trigger(crate::fx_system::SpawnFx {
                 name: name,
                 at: at,
@@ -2283,7 +2793,11 @@ pub fn scroni_sys_event_observer(
                 start_active: true,
             });
         }
-        ScrOniSysEvent::SendAction { action, target, component } => {
+        ScrOniSysEvent::SendAction {
+            action,
+            target,
+            component,
+        } => {
             if component.eq_ignore_ascii_case("fx") {
                 commands.trigger(crate::fx_system::FxAction {
                     action: action.clone(),
@@ -2293,7 +2807,11 @@ pub fn scroni_sys_event_observer(
                 warn!("SendAction: Unrecognized component '{}'", component);
             }
         }
-        ScrOniSysEvent::SetLightIntensity { script_entity: _, light, intensity } => {
+        ScrOniSysEvent::SetLightIntensity {
+            script_entity: _,
+            light,
+            intensity,
+        } => {
             for (name, mut point, mut spot) in &mut lights_query {
                 if name.as_str().eq_ignore_ascii_case(&light) {
                     // Multiply scaling heuristic to adapt Oni floats to PBR luminous intensity
@@ -2306,8 +2824,15 @@ pub fn scroni_sys_event_observer(
                 }
             }
         }
-        ScrOniSysEvent::SetShaderLocal { script_entity: _, name, val } => {
-            debug!("VM: Observed SetShaderLocal {} = {} (Unimplemented Material Target)", name, val);
+        ScrOniSysEvent::SetShaderLocal {
+            script_entity: _,
+            name,
+            val,
+        } => {
+            debug!(
+                "VM: Observed SetShaderLocal {} = {} (Unimplemented Material Target)",
+                name, val
+            );
         }
         ScrOniSysEvent::SetUpdateState { target, state } => {
             let active = state.eq_ignore_ascii_case("Active");
@@ -2330,19 +2855,31 @@ pub fn scroni_sys_event_observer(
 
                     if is_match {
                         if active {
-                            commands.entity(entity).remove::<crate::oni2_loader::components::ActorAsleep>();
+                            commands
+                                .entity(entity)
+                                .remove::<crate::oni2_loader::components::ActorAsleep>();
                         } else {
-                            commands.entity(entity).insert(crate::oni2_loader::components::ActorAsleep);
+                            commands
+                                .entity(entity)
+                                .insert(crate::oni2_loader::components::ActorAsleep);
                         }
                         script.exec.active = active;
-                        info!("SetUpdateState: toggled '{}' script active={}", n.as_str(), active);
+                        info!(
+                            "SetUpdateState: toggled '{}' script active={}",
+                            n.as_str(),
+                            active
+                        );
                     }
                 }
             }
         }
         ScrOniSysEvent::UsePad { script_entity } => {
-            commands.entity(script_entity).insert(crate::player::components::Player);
-            commands.entity(script_entity).remove::<crate::ai::components::AiFighter>();
+            commands
+                .entity(script_entity)
+                .insert(crate::player::components::Player);
+            commands
+                .entity(script_entity)
+                .remove::<crate::ai::components::AiFighter>();
             for mut rig in &mut camera_query {
                 rig.target = script_entity;
             }
@@ -2353,18 +2890,26 @@ pub fn scroni_sys_event_observer(
 
 pub fn checkpoint_trigger_system(
     mut checkpoint_idx: ResMut<crate::oni2_loader::components::CurrentCheckpointIndex>,
-    trigger_query: Query<(&crate::oni2_loader::components::CheckpointTrigger, &GlobalTransform)>,
+    trigger_query: Query<(
+        &crate::oni2_loader::components::CheckpointTrigger,
+        &GlobalTransform,
+    )>,
     player_query: Query<&GlobalTransform, With<crate::player::components::Player>>,
 ) {
-    let Some(player_tf) = player_query.iter().next() else { return; };
+    let Some(player_tf) = player_query.iter().next() else {
+        return;
+    };
     let player_pos = player_tf.translation();
-    
+
     for (trigger, trigger_tf) in &trigger_query {
         let dist = player_pos.distance(trigger_tf.translation());
         if dist <= trigger.radius {
             if checkpoint_idx.0 != trigger.index {
                 checkpoint_idx.0 = trigger.index;
-                info!("Player entered CheckpointTrigger: updated checkpoint_index to {}", trigger.index);
+                info!(
+                    "Player entered CheckpointTrigger: updated checkpoint_index to {}",
+                    trigger.index
+                );
             }
         }
     }

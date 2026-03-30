@@ -1,14 +1,21 @@
-use bevy::prelude::*;
-use bevy::mesh::{Indices, PrimitiveTopology, VertexAttributeValues};
 use super::types::{Oni2Model, Oni2Skeleton};
+use bevy::mesh::{Indices, PrimitiveTopology, VertexAttributeValues};
+use bevy::prelude::*;
 
 /// Build one Bevy Mesh per material from an Oni2Model.
 /// Returns (material_index, Mesh) pairs so the caller can assign textures.
 pub fn build_meshes_by_material(model: &Oni2Model) -> Vec<(usize, Mesh)> {
     // Group packets by material index
     let mat_count = model.materials.len().max(1);
-    let mut per_mat: Vec<(Vec<[f32; 3]>, Vec<[f32; 3]>, Vec<[f32; 2]>, Vec<[f32; 4]>, Vec<u32>)> =
-        (0..mat_count).map(|_| (Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new())).collect();
+    let mut per_mat: Vec<(
+        Vec<[f32; 3]>,
+        Vec<[f32; 3]>,
+        Vec<[f32; 2]>,
+        Vec<[f32; 4]>,
+        Vec<u32>,
+    )> = (0..mat_count)
+        .map(|_| (Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new()))
+        .collect();
 
     for packet in &model.packets {
         let mat_idx = packet.material_index.min(mat_count - 1);
@@ -26,10 +33,16 @@ pub fn build_meshes_by_material(model: &Oni2Model) -> Vec<(usize, Mesh)> {
             for &adj_idx in strip {
                 let adj = &packet.adjuncts[adj_idx as usize];
 
-                let raw_pos = model.vertices.get(adj.vertex_idx as usize)
-                    .copied().unwrap_or([0.0; 3]);
-                let raw_norm = model.normals.get(adj.normal_idx as usize)
-                    .copied().unwrap_or([0.0, 1.0, 0.0]);
+                let raw_pos = model
+                    .vertices
+                    .get(adj.vertex_idx as usize)
+                    .copied()
+                    .unwrap_or([0.0; 3]);
+                let raw_norm = model
+                    .normals
+                    .get(adj.normal_idx as usize)
+                    .copied()
+                    .unwrap_or([0.0, 1.0, 0.0]);
 
                 // Apply bone transform: rotate vertex by bone rotation + offset by bone position
                 // Skip if vertices are already in world space (win32 binary models)
@@ -47,11 +60,17 @@ pub fn build_meshes_by_material(model: &Oni2Model) -> Vec<(usize, Mesh)> {
                     } else {
                         0
                     };
-                    let bone_offset = model.bone_world_positions.get(global_bone)
-                        .copied().unwrap_or([0.0; 3]);
+                    let bone_offset = model
+                        .bone_world_positions
+                        .get(global_bone)
+                        .copied()
+                        .unwrap_or([0.0; 3]);
                     let bone_rot = if !model.bone_rotations.is_empty() {
-                        let r = model.bone_rotations.get(global_bone)
-                            .copied().unwrap_or([0.0, 0.0, 0.0, 1.0]);
+                        let r = model
+                            .bone_rotations
+                            .get(global_bone)
+                            .copied()
+                            .unwrap_or([0.0, 0.0, 0.0, 1.0]);
                         Quat::from_xyzw(r[0], r[1], r[2], r[3])
                     } else {
                         Quat::IDENTITY
@@ -62,21 +81,28 @@ pub fn build_meshes_by_material(model: &Oni2Model) -> Vec<(usize, Mesh)> {
                         rv.y + bone_offset[1],
                         rv.z + bone_offset[2],
                     ];
-                    rotated_norm = bone_rot.mul_vec3(Vec3::new(raw_norm[0], raw_norm[1], raw_norm[2]));
+                    rotated_norm =
+                        bone_rot.mul_vec3(Vec3::new(raw_norm[0], raw_norm[1], raw_norm[2]));
                 };
 
                 // Left-handed → right-handed: negate X and Z (180° Y rotation, not a mirror)
                 let pos = [-transformed[0], transformed[1], -transformed[2]];
                 let norm = [-rotated_norm.x, rotated_norm.y, -rotated_norm.z];
                 let raw_uv = if adj.tex1_idx >= 0 {
-                    model.tex_coords.get(adj.tex1_idx as usize)
-                        .copied().unwrap_or([0.0; 2])
+                    model
+                        .tex_coords
+                        .get(adj.tex1_idx as usize)
+                        .copied()
+                        .unwrap_or([0.0; 2])
                 } else {
                     [0.0; 2]
                 };
                 let uv = [raw_uv[0], 1.0 - raw_uv[1]]; // DirectX V → OpenGL V
-                let color = model.colors.get(adj.color_idx as usize)
-                    .copied().unwrap_or([1.0, 1.0, 1.0, 1.0]);
+                let color = model
+                    .colors
+                    .get(adj.color_idx as usize)
+                    .copied()
+                    .unwrap_or([1.0, 1.0, 1.0, 1.0]);
 
                 let tinted = [
                     color[0] * mat_diffuse[0],
@@ -138,14 +164,34 @@ pub fn build_skinned_meshes_by_material(
 ) -> Vec<(usize, Mesh)> {
     let mat_count = model.materials.len().max(1);
     // positions, normals, uvs, colors, joint_indices, joint_weights, triangle indices
-    let mut per_mat: Vec<(Vec<[f32; 3]>, Vec<[f32; 3]>, Vec<[f32; 2]>, Vec<[f32; 4]>, Vec<[u16; 4]>, Vec<[f32; 4]>, Vec<u32>)> =
-        (0..mat_count).map(|_| (Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new())).collect();
+    let mut per_mat: Vec<(
+        Vec<[f32; 3]>,
+        Vec<[f32; 3]>,
+        Vec<[f32; 2]>,
+        Vec<[f32; 4]>,
+        Vec<[u16; 4]>,
+        Vec<[f32; 4]>,
+        Vec<u32>,
+    )> = (0..mat_count)
+        .map(|_| {
+            (
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+            )
+        })
+        .collect();
 
     for packet in &model.packets {
         let mat_idx = packet.material_index.min(mat_count - 1);
         let mat = model.materials.get(mat_idx);
         let mat_diffuse = mat.map(|m| m.diffuse).unwrap_or([0.8, 0.8, 0.8]);
-        let (positions, normals, uvs, colors, joint_indices, joint_weights, indices) = &mut per_mat[mat_idx];
+        let (positions, normals, uvs, colors, joint_indices, joint_weights, indices) =
+            &mut per_mat[mat_idx];
 
         for (strip_idx, strip) in packet.strips.iter().enumerate() {
             if strip.len() < 3 {
@@ -157,10 +203,16 @@ pub fn build_skinned_meshes_by_material(
             for &adj_idx in strip {
                 let adj = &packet.adjuncts[adj_idx as usize];
 
-                let raw_pos = model.vertices.get(adj.vertex_idx as usize)
-                    .copied().unwrap_or([0.0; 3]);
-                let raw_norm = model.normals.get(adj.normal_idx as usize)
-                    .copied().unwrap_or([0.0, 1.0, 0.0]);
+                let raw_pos = model
+                    .vertices
+                    .get(adj.vertex_idx as usize)
+                    .copied()
+                    .unwrap_or([0.0; 3]);
+                let raw_norm = model
+                    .normals
+                    .get(adj.normal_idx as usize)
+                    .copied()
+                    .unwrap_or([0.0, 1.0, 0.0]);
 
                 // Resolve global bone index
                 let global_bone = if !packet.bone_map.is_empty() {
@@ -184,14 +236,20 @@ pub fn build_skinned_meshes_by_material(
                 let norm = [-raw_norm[0], raw_norm[1], -raw_norm[2]];
 
                 let raw_uv = if adj.tex1_idx >= 0 {
-                    model.tex_coords.get(adj.tex1_idx as usize)
-                        .copied().unwrap_or([0.0; 2])
+                    model
+                        .tex_coords
+                        .get(adj.tex1_idx as usize)
+                        .copied()
+                        .unwrap_or([0.0; 2])
                 } else {
                     [0.0; 2]
                 };
                 let uv = [raw_uv[0], 1.0 - raw_uv[1]];
-                let color = model.colors.get(adj.color_idx as usize)
-                    .copied().unwrap_or([1.0, 1.0, 1.0, 1.0]);
+                let color = model
+                    .colors
+                    .get(adj.color_idx as usize)
+                    .copied()
+                    .unwrap_or([1.0, 1.0, 1.0, 1.0]);
                 let tinted = [
                     color[0] * mat_diffuse[0],
                     color[1] * mat_diffuse[1],
@@ -226,7 +284,9 @@ pub fn build_skinned_meshes_by_material(
     }
 
     let mut result = Vec::new();
-    for (mat_idx, (positions, normals, uvs, colors, joint_indices, joint_weights, indices)) in per_mat.into_iter().enumerate() {
+    for (mat_idx, (positions, normals, uvs, colors, joint_indices, joint_weights, indices)) in
+        per_mat.into_iter().enumerate()
+    {
         if positions.is_empty() {
             continue;
         }
@@ -236,7 +296,10 @@ pub fn build_skinned_meshes_by_material(
         mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, normals);
         mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, uvs);
         mesh.insert_attribute(Mesh::ATTRIBUTE_COLOR, colors);
-        mesh.insert_attribute(Mesh::ATTRIBUTE_JOINT_INDEX, VertexAttributeValues::Uint16x4(joint_indices));
+        mesh.insert_attribute(
+            Mesh::ATTRIBUTE_JOINT_INDEX,
+            VertexAttributeValues::Uint16x4(joint_indices),
+        );
         mesh.insert_attribute(Mesh::ATTRIBUTE_JOINT_WEIGHT, joint_weights);
         mesh.insert_indices(Indices::U32(indices));
 
@@ -249,8 +312,15 @@ pub fn build_skinned_meshes_by_material(
 /// Build point cloud meshes (one per material) — each vertex rendered as a tiny triangle "dot".
 pub fn build_point_clouds_by_material(model: &Oni2Model) -> Vec<(usize, Mesh)> {
     let mat_count = model.materials.len().max(1);
-    let mut per_mat: Vec<(Vec<[f32; 3]>, Vec<[f32; 3]>, Vec<[f32; 2]>, Vec<[f32; 4]>, Vec<u32>)> =
-        (0..mat_count).map(|_| (Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new())).collect();
+    let mut per_mat: Vec<(
+        Vec<[f32; 3]>,
+        Vec<[f32; 3]>,
+        Vec<[f32; 2]>,
+        Vec<[f32; 4]>,
+        Vec<u32>,
+    )> = (0..mat_count)
+        .map(|_| (Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new()))
+        .collect();
 
     let dot_size = 0.008; // radius of each dot triangle
 
@@ -261,10 +331,16 @@ pub fn build_point_clouds_by_material(model: &Oni2Model) -> Vec<(usize, Mesh)> {
         let (positions, normals, uvs, colors, indices) = &mut per_mat[mat_idx];
 
         for adj in &packet.adjuncts {
-            let raw_pos = model.vertices.get(adj.vertex_idx as usize)
-                .copied().unwrap_or([0.0; 3]);
-            let raw_norm = model.normals.get(adj.normal_idx as usize)
-                .copied().unwrap_or([0.0, 1.0, 0.0]);
+            let raw_pos = model
+                .vertices
+                .get(adj.vertex_idx as usize)
+                .copied()
+                .unwrap_or([0.0; 3]);
+            let raw_norm = model
+                .normals
+                .get(adj.normal_idx as usize)
+                .copied()
+                .unwrap_or([0.0, 1.0, 0.0]);
 
             let (transformed, rotated_norm);
             if model.world_space_verts {
@@ -280,17 +356,27 @@ pub fn build_point_clouds_by_material(model: &Oni2Model) -> Vec<(usize, Mesh)> {
                 } else {
                     0
                 };
-                let bone_offset = model.bone_world_positions.get(global_bone)
-                    .copied().unwrap_or([0.0; 3]);
+                let bone_offset = model
+                    .bone_world_positions
+                    .get(global_bone)
+                    .copied()
+                    .unwrap_or([0.0; 3]);
                 let bone_rot = if !model.bone_rotations.is_empty() {
-                    let r = model.bone_rotations.get(global_bone)
-                        .copied().unwrap_or([0.0, 0.0, 0.0, 1.0]);
+                    let r = model
+                        .bone_rotations
+                        .get(global_bone)
+                        .copied()
+                        .unwrap_or([0.0, 0.0, 0.0, 1.0]);
                     Quat::from_xyzw(r[0], r[1], r[2], r[3])
                 } else {
                     Quat::IDENTITY
                 };
                 let rv = bone_rot.mul_vec3(Vec3::new(raw_pos[0], raw_pos[1], raw_pos[2]));
-                transformed = [rv.x + bone_offset[0], rv.y + bone_offset[1], rv.z + bone_offset[2]];
+                transformed = [
+                    rv.x + bone_offset[0],
+                    rv.y + bone_offset[1],
+                    rv.z + bone_offset[2],
+                ];
                 rotated_norm = bone_rot.mul_vec3(Vec3::new(raw_norm[0], raw_norm[1], raw_norm[2]));
             };
 
@@ -299,12 +385,19 @@ pub fn build_point_clouds_by_material(model: &Oni2Model) -> Vec<(usize, Mesh)> {
             let cz = -transformed[2];
             let norm = [-rotated_norm.x, rotated_norm.y, -rotated_norm.z];
             let uv = if adj.tex1_idx >= 0 {
-                model.tex_coords.get(adj.tex1_idx as usize).copied().unwrap_or([0.0; 2])
+                model
+                    .tex_coords
+                    .get(adj.tex1_idx as usize)
+                    .copied()
+                    .unwrap_or([0.0; 2])
             } else {
                 [0.0; 2]
             };
-            let color = model.colors.get(adj.color_idx as usize)
-                .copied().unwrap_or([1.0, 1.0, 1.0, 1.0]);
+            let color = model
+                .colors
+                .get(adj.color_idx as usize)
+                .copied()
+                .unwrap_or([1.0, 1.0, 1.0, 1.0]);
             let tinted = [
                 color[0] * mat_diffuse[0],
                 color[1] * mat_diffuse[1],

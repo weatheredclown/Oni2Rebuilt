@@ -1,5 +1,5 @@
-use bevy::prelude::*;
 use crate::oni2_loader::parsers::types::{Oni2Model, Oni2Skeleton};
+use bevy::prelude::*;
 
 /// Convert world-space vertices to bone-local by subtracting each vertex's
 /// bind-pose bone position. This normalizes win32 (world-space) models to match
@@ -84,13 +84,49 @@ pub fn compute_animated_bone_transforms(
         } else {
             // Evaluated dynamic mapping bounds off explicitly declared AST variables
             let ch = &skel.channels[i];
-            
-            let tx = if ch.has_trans_x { let v = *frame_channels.get(ch_idx).unwrap_or(&0.0); ch_idx += 1; v } else { 0.0 };
-            let ty = if ch.has_trans_y { let v = *frame_channels.get(ch_idx).unwrap_or(&0.0); ch_idx += 1; v } else { 0.0 };
-            let tz = if ch.has_trans_z { let v = *frame_channels.get(ch_idx).unwrap_or(&0.0); ch_idx += 1; v } else { 0.0 };
-            let euler_x = if ch.has_rot_x { let v = *frame_channels.get(ch_idx).unwrap_or(&0.0); ch_idx += 1; v } else { 0.0 };
-            let euler_y = if ch.has_rot_y { let v = *frame_channels.get(ch_idx).unwrap_or(&0.0); ch_idx += 1; v } else { 0.0 };
-            let euler_z = if ch.has_rot_z { let v = *frame_channels.get(ch_idx).unwrap_or(&0.0); ch_idx += 1; v } else { 0.0 };
+
+            let tx = if ch.has_trans_x {
+                let v = *frame_channels.get(ch_idx).unwrap_or(&0.0);
+                ch_idx += 1;
+                v
+            } else {
+                0.0
+            };
+            let ty = if ch.has_trans_y {
+                let v = *frame_channels.get(ch_idx).unwrap_or(&0.0);
+                ch_idx += 1;
+                v
+            } else {
+                0.0
+            };
+            let tz = if ch.has_trans_z {
+                let v = *frame_channels.get(ch_idx).unwrap_or(&0.0);
+                ch_idx += 1;
+                v
+            } else {
+                0.0
+            };
+            let euler_x = if ch.has_rot_x {
+                let v = *frame_channels.get(ch_idx).unwrap_or(&0.0);
+                ch_idx += 1;
+                v
+            } else {
+                0.0
+            };
+            let euler_y = if ch.has_rot_y {
+                let v = *frame_channels.get(ch_idx).unwrap_or(&0.0);
+                ch_idx += 1;
+                v
+            } else {
+                0.0
+            };
+            let euler_z = if ch.has_rot_z {
+                let v = *frame_channels.get(ch_idx).unwrap_or(&0.0);
+                ch_idx += 1;
+                v
+            } else {
+                0.0
+            };
 
             let local_rot = Quat::from_euler(EulerRot::YZX, euler_y, euler_z, euler_x);
             let local_offset = Vec3::from(skel.local_offsets[i]);
@@ -117,9 +153,12 @@ pub fn compute_animated_bone_transforms(
 /// Bind pose is translation-only (no rotation), so inverse is just negated translation.
 /// Positions are in Oni2 coordinates; we apply X/Z negate for Bevy space.
 pub fn compute_inverse_bind_poses(skel: &Oni2Skeleton) -> Vec<Mat4> {
-    skel.positions.iter().map(|pos| {
-        // Bind-pose matrix: translation with X/Z negate for Bevy coordinate system
-        let bind = Mat4::from_translation(Vec3::new(-pos[0], pos[1], -pos[2]));
-        bind.inverse()
-    }).collect()
+    skel.positions
+        .iter()
+        .map(|pos| {
+            // Bind-pose matrix: translation with X/Z negate for Bevy coordinate system
+            let bind = Mat4::from_translation(Vec3::new(-pos[0], pos[1], -pos[2]));
+            bind.inverse()
+        })
+        .collect()
 }

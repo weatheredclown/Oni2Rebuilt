@@ -20,73 +20,94 @@ pub struct DiskVfs {
     pub base_path: String,
 }
 
-pub struct FallbackVfs {
-    primary: Box<dyn Vfs>,
-    fallback: Box<dyn Vfs>,
+pub struct MultiVfs {
+    mounts: Vec<Box<dyn Vfs>>,
 }
 
-impl FallbackVfs {
-    pub fn new(primary: Box<dyn Vfs>, fallback: Box<dyn Vfs>) -> Self {
-        Self { primary, fallback }
+impl MultiVfs {
+    pub fn new() -> Self {
+        Self { mounts: Vec::new() }
+    }
+
+    pub fn push(&mut self, vfs: Box<dyn Vfs>) {
+        self.mounts.push(vfs);
     }
 }
 
-impl Vfs for FallbackVfs {
+impl Default for MultiVfs {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Vfs for MultiVfs {
     fn read(&self, dir: &str, filename: &str) -> std::io::Result<Vec<u8>> {
-        if self.primary.exists(dir, filename) {
-            self.primary.read(dir, filename)
-        } else {
-            self.fallback.read(dir, filename)
+        for vfs in &self.mounts {
+            if vfs.exists(dir, filename) {
+                return vfs.read(dir, filename);
+            }
         }
+        Err(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            "File not found in any VFS mount",
+        ))
     }
 
     fn read_to_string(&self, dir: &str, filename: &str) -> std::io::Result<String> {
-        if self.primary.exists(dir, filename) {
-            self.primary.read_to_string(dir, filename)
-        } else {
-            self.fallback.read_to_string(dir, filename)
+        for vfs in &self.mounts {
+            if vfs.exists(dir, filename) {
+                return vfs.read_to_string(dir, filename);
+            }
         }
+        Err(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            "File not found in any VFS mount",
+        ))
     }
 
     fn read_dir(&self, path: &str) -> std::io::Result<Vec<VfsEntry>> {
-        // Ideally we merge them, but for now try primary then fallback
-        let mut primary_entries = match self.primary.read_dir(path) {
-            Ok(entries) => entries,
-            Err(_) => Vec::new(),
-        };
+        let mut all_entries = Vec::new();
+        let mut any_success = false;
 
-        let fallback_entries = match self.fallback.read_dir(path) {
-            Ok(entries) => entries,
-            Err(_) => Vec::new(),
-        };
-
-        if primary_entries.is_empty() && fallback_entries.is_empty() {
-            return Err(std::io::Error::new(std::io::ErrorKind::NotFound, "Directory not found in any VFS"));
-        }
-
-        // Deduplicate
-        for fb_entry in fallback_entries {
-            if !primary_entries.iter().any(|p| p.path.eq_ignore_ascii_case(&fb_entry.path)) {
-                primary_entries.push(fb_entry);
+        for vfs in &self.mounts {
+            if let Ok(entries) = vfs.read_dir(path) {
+                any_success = true;
+                for e in entries {
+                    if !all_entries
+                        .iter()
+                        .any(|existing: &VfsEntry| existing.path.eq_ignore_ascii_case(&e.path))
+                    {
+                        all_entries.push(e);
+                    }
+                }
             }
         }
 
-        Ok(primary_entries)
+        if !any_success {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                "Directory not found in any VFS mount",
+            ));
+        }
+
+        Ok(all_entries)
     }
 
     fn exists(&self, dir: &str, filename: &str) -> bool {
-        self.primary.exists(dir, filename) || self.fallback.exists(dir, filename)
+        self.mounts.iter().any(|vfs| vfs.exists(dir, filename))
     }
 }
 
 impl Vfs for DiskVfs {
     fn read(&self, dir: &str, filename: &str) -> std::io::Result<Vec<u8>> {
-        let path = if dir.is_empty() { filename.to_string() } else { format!("{}/{}", dir, filename) };
+        let path = if dir.is_empty() {
+            filename.to_string()
+        } else {
+            format!("{}/{}", dir, filename)
+        };
         let resolved = self.resolve(&path);
         match fs::read(&resolved) {
-            Ok(data) => {
-                Ok(data)
-            }
+            Ok(data) => Ok(data),
             Err(e) => {
                 warn!("VFS Read (MISS): {} -> {}", path, e);
                 Err(e)
@@ -95,12 +116,14 @@ impl Vfs for DiskVfs {
     }
 
     fn read_to_string(&self, dir: &str, filename: &str) -> std::io::Result<String> {
-        let path = if dir.is_empty() { filename.to_string() } else { format!("{}/{}", dir, filename) };
+        let path = if dir.is_empty() {
+            filename.to_string()
+        } else {
+            format!("{}/{}", dir, filename)
+        };
         let resolved = self.resolve(&path);
         match fs::read_to_string(&resolved) {
-            Ok(data) => {
-                Ok(data)
-            }
+            Ok(data) => Ok(data),
             Err(e) => {
                 warn!("VFS ReadString (MISS): {} -> {}", path, e);
                 Err(e)
@@ -111,18 +134,18 @@ impl Vfs for DiskVfs {
     fn read_dir(&self, path: &str) -> std::io::Result<Vec<VfsEntry>> {
         let resolved = self.resolve(path);
         let dir_res = fs::read_dir(&resolved);
-        
+
         if let Err(ref e) = dir_res {
             warn!("VFS ReadDir (MISS): {} -> {}", path, e);
             return Err(dir_res.unwrap_err());
         }
-        
+
         let mut result = Vec::new();
         for entry in dir_res.unwrap() {
             let entry = entry?;
             let ft = entry.file_type()?;
             let full_path = entry.path();
-            
+
             // Strip the base path to return relative paths mapping to our VFS
             let rel_path = full_path
                 .strip_prefix(Path::new(&self.base_path))
@@ -131,7 +154,7 @@ impl Vfs for DiskVfs {
                 .to_string()
                 // Normalize slashes for consistency
                 .replace('\\', "/");
-                
+
             // Avoid adding leading slash
             let final_path = if rel_path.starts_with('/') {
                 rel_path[1..].to_string()
@@ -149,12 +172,17 @@ impl Vfs for DiskVfs {
     }
 
     fn exists(&self, dir: &str, filename: &str) -> bool {
-        let path = if dir.is_empty() { filename.to_string() } else { format!("{}/{}", dir, filename) };
-        let exists = Path::new(&self.resolve(&path)).exists();
-        if exists {
+        let path = if dir.is_empty() {
+            filename.to_string()
         } else {
-            warn!("VFS Exists (MISS): {}", path);
-        }
+            format!("{}/{}", dir, filename)
+        };
+        let exists = Path::new(&self.resolve(&path)).exists();
+        // TODO: Think about how to warn about expected files (e.g. files referenced by other files
+        // are expected to exist because the inter-asset integrity is expected to be correct),
+        // whereas other files are optional and loaded greedily if available.
+        // It would be great to have a way to distinguish this in the VFS API so that we only warn
+        // when a strictly expected file is missing, rather than generating warnings for optional probing.
         exists
     }
 }
@@ -172,7 +200,7 @@ impl DiskVfs {
         } else {
             &normalized
         };
-        
+
         let exact = Path::new(&self.base_path).join(clean_path);
         if exact.exists() {
             return exact.to_string_lossy().to_string();
@@ -183,7 +211,9 @@ impl DiskVfs {
         let components: Vec<&str> = clean_path.split('/').collect();
 
         for comp in components {
-            if comp.is_empty() { continue; }
+            if comp.is_empty() {
+                continue;
+            }
             let exact_comp = current_path.join(comp);
             if exact_comp.exists() {
                 current_path = exact_comp;
@@ -220,7 +250,10 @@ pub fn set_vfs(vfs: Box<dyn Vfs>) {
 }
 
 fn get_vfs() -> &'static dyn Vfs {
-    VFS_INSTANCE.get().expect("Vfs not initialized! Call vfs::set_vfs() at startup.").as_ref()
+    VFS_INSTANCE
+        .get()
+        .expect("Vfs not initialized! Call vfs::set_vfs() at startup.")
+        .as_ref()
 }
 
 // Proxy functions acting like std::fs

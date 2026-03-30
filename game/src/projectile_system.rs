@@ -1,8 +1,8 @@
+use crate::fx_system::SpawnFx;
+use crate::oni2_loader::parsers::projectile::{HitType, ProjectileDef};
+use crate::oni2_loader::registries::ProjLibrary;
 use avian3d::prelude::*;
 use bevy::prelude::*;
-use crate::oni2_loader::parsers::projectile::{ProjectileDef, HitType};
-use crate::oni2_loader::registries::ProjLibrary;
-use crate::fx_system::SpawnFx;
 
 #[derive(Event, Debug, Clone)]
 pub struct SpawnProjectileEvent {
@@ -47,13 +47,17 @@ pub struct ProjectilePlugin;
 impl Plugin for ProjectilePlugin {
     fn build(&self, app: &mut App) {
         app.add_message::<ImpactMessage>()
-           .add_observer(handle_spawn_projectile)
-           .add_systems(Update, (
-               projectile_kinematics_system,
-               projectile_collision_system,
-               projectile_lifetime_system,
-               damage_router_system,
-           ).chain());
+            .add_observer(handle_spawn_projectile)
+            .add_systems(
+                Update,
+                (
+                    projectile_kinematics_system,
+                    projectile_collision_system,
+                    projectile_lifetime_system,
+                    damage_router_system,
+                )
+                    .chain(),
+            );
     }
 }
 
@@ -103,7 +107,12 @@ fn handle_spawn_projectile(
 
 fn projectile_kinematics_system(
     time: Res<Time>,
-    mut query: Query<(&mut Transform, &mut LinearVelocity, Option<&TumblingRotation>, &ProjectileInstance)>,
+    mut query: Query<(
+        &mut Transform,
+        &mut LinearVelocity,
+        Option<&TumblingRotation>,
+        &ProjectileInstance,
+    )>,
 ) {
     let dt = time.delta_secs();
     let gravity = Vec3::new(0.0, -9.81, 0.0);
@@ -146,25 +155,25 @@ fn projectile_collision_system(
             if let Some(hit) = spatial_query.cast_ray(prev_pos, dir3, distance, true, &filter) {
                 let hit_pos = prev_pos + direction * hit.distance;
 
-            impact_writer.write(ImpactMessage {
-                hit_entity: Some(hit.entity),
-                hit_position: hit_pos,
-                hit_normal: hit.normal,
-                hit_type: instance.def.damage().hit_type,
-                damage: instance.def.damage().hit_points,
-                impulse: direction * instance.def.damage().impulse,
-            });
-
-            if let Some(ref explode_fx) = instance.def.explode_fx() {
-                commands.trigger(SpawnFx {
-                    name: explode_fx.clone(),
-                    at: Some(hit_pos),
-                    parent: None,
-                    start_active: true,
+                impact_writer.write(ImpactMessage {
+                    hit_entity: Some(hit.entity),
+                    hit_position: hit_pos,
+                    hit_normal: hit.normal,
+                    hit_type: instance.def.damage().hit_type,
+                    damage: instance.def.damage().hit_points,
+                    impulse: direction * instance.def.damage().impulse,
                 });
+
+                if let Some(ref explode_fx) = instance.def.explode_fx() {
+                    commands.trigger(SpawnFx {
+                        name: explode_fx.clone(),
+                        at: Some(hit_pos),
+                        parent: None,
+                        start_active: true,
+                    });
+                }
+                commands.entity(entity).despawn();
             }
-            commands.entity(entity).despawn();
-        }
         }
     }
 }

@@ -170,8 +170,12 @@ pub fn creature_movement_anim_system(
             let mut throttle_right = -right_speed / MAX_RUN_SPEED;
 
             // Snap small movements to 0
-            if throttle_fwd.abs() < 0.05 { throttle_fwd = 0.0; }
-            if throttle_right.abs() < 0.05 { throttle_right = 0.0; }
+            if throttle_fwd.abs() < 0.05 {
+                throttle_fwd = 0.0;
+            }
+            if throttle_right.abs() < 0.05 {
+                throttle_right = 0.0;
+            }
 
             let (gaits, throttle) = if throttle_fwd.abs() >= throttle_right.abs() {
                 (loco.forward_gaits.as_slice(), throttle_fwd)
@@ -179,15 +183,20 @@ pub fn creature_movement_anim_system(
                 (loco.strafe_gaits.as_slice(), throttle_right)
             };
 
-            let best_gait = gaits.iter().find(|g| {
-                let lower = g.min_throttle.min(g.max_throttle);
-                let upper = g.min_throttle.max(g.max_throttle);
-                throttle >= lower && throttle <= upper
-            }).or_else(|| {
-                gaits.iter().min_by(|a, b| {
-                    (a.ideal_throttle - throttle).abs().total_cmp(&(b.ideal_throttle - throttle).abs())
+            let best_gait = gaits
+                .iter()
+                .find(|g| {
+                    let lower = g.min_throttle.min(g.max_throttle);
+                    let upper = g.min_throttle.max(g.max_throttle);
+                    throttle >= lower && throttle <= upper
                 })
-            });
+                .or_else(|| {
+                    gaits.iter().min_by(|a, b| {
+                        (a.ideal_throttle - throttle)
+                            .abs()
+                            .total_cmp(&(b.ideal_throttle - throttle).abs())
+                    })
+                });
 
             if let Some(gait) = best_gait {
                 if Some(gait.anim) != anim_state.current_anim_id {
@@ -234,15 +243,32 @@ pub fn spawn_mod_file(
                         None => (None, false),
                     };
 
-                    let diffuse = Color::srgb(oni_mat.diffuse[0], oni_mat.diffuse[1], oni_mat.diffuse[2]);
-                    let is_decal = pass.texcombine.as_ref().map(|s| s == "decal").unwrap_or(false);
-                    let is_blend = pass.blendset.as_ref().map(|s| s != "opaque").unwrap_or(false);
+                    let diffuse =
+                        Color::srgb(oni_mat.diffuse[0], oni_mat.diffuse[1], oni_mat.diffuse[2]);
+                    let is_decal = pass
+                        .texcombine
+                        .as_ref()
+                        .map(|s| s == "decal")
+                        .unwrap_or(false);
+                    let is_blend = pass
+                        .blendset
+                        .as_ref()
+                        .map(|s| s != "opaque")
+                        .unwrap_or(false);
 
                     handles.push(materials.add(StandardMaterial {
-                        base_color: if texture_handle.is_some() { Color::WHITE } else { diffuse },
+                        base_color: if texture_handle.is_some() {
+                            Color::WHITE
+                        } else {
+                            diffuse
+                        },
                         base_color_texture: texture_handle,
                         cull_mode: None,
-                        alpha_mode: if has_alpha || is_decal || is_blend { AlphaMode::Blend } else { AlphaMode::Opaque },
+                        alpha_mode: if has_alpha || is_decal || is_blend {
+                            AlphaMode::Blend
+                        } else {
+                            AlphaMode::Opaque
+                        },
                         perceptual_roughness: 1.0,
                         reflectance: 0.0,
                         depth_bias: pass_idx as f32 * 10.0,
@@ -258,12 +284,21 @@ pub fn spawn_mod_file(
                     None => (None, false),
                 };
 
-                let diffuse = Color::srgb(oni_mat.diffuse[0], oni_mat.diffuse[1], oni_mat.diffuse[2]);
+                let diffuse =
+                    Color::srgb(oni_mat.diffuse[0], oni_mat.diffuse[1], oni_mat.diffuse[2]);
                 handles.push(materials.add(StandardMaterial {
-                    base_color: if texture_handle.is_some() { Color::WHITE } else { diffuse },
+                    base_color: if texture_handle.is_some() {
+                        Color::WHITE
+                    } else {
+                        diffuse
+                    },
                     base_color_texture: texture_handle,
                     cull_mode: None,
-                    alpha_mode: if has_alpha { AlphaMode::Blend } else { AlphaMode::Opaque },
+                    alpha_mode: if has_alpha {
+                        AlphaMode::Blend
+                    } else {
+                        AlphaMode::Opaque
+                    },
                     perceptual_roughness: 1.0,
                     reflectance: 0.0,
                     ..default()
@@ -325,7 +360,7 @@ pub fn spawn_mod_file(
                     .get(mat_idx)
                     .cloned()
                     .unwrap_or_else(|| vec![fallback_mat.clone()]);
-                    
+
                 for pass_mat_handle in pass_handles {
                     parent.spawn((
                         Mesh3d(mesh_handle.clone()),
@@ -387,12 +422,22 @@ fn parse_sawtooth_speed(payload: &str) -> f32 {
     0.0
 }
 
-fn parse_uv_animator(pass: &crate::oni2_loader::parsers::types::Oni2MaterialPass) -> crate::oni2_loader::registries::TextureUVAnimator {
+fn parse_uv_animator(
+    pass: &crate::oni2_loader::parsers::types::Oni2MaterialPass,
+) -> crate::oni2_loader::registries::TextureUVAnimator {
     let mut anim = crate::oni2_loader::registries::TextureUVAnimator::default();
-    if let Some(s) = &pass.slides { anim.slides_speed = parse_sawtooth_speed(s); }
-    if let Some(s) = &pass.slidet { anim.slidet_speed = parse_sawtooth_speed(s); }
-    if let Some(s) = &pass.rotate { anim.rotate_speed = parse_sawtooth_speed(s); }
-    if let Some(s) = &pass.scalet { anim.scalet_speed = parse_sawtooth_speed(s); }
+    if let Some(s) = &pass.slides {
+        anim.slides_speed = parse_sawtooth_speed(s);
+    }
+    if let Some(s) = &pass.slidet {
+        anim.slidet_speed = parse_sawtooth_speed(s);
+    }
+    if let Some(s) = &pass.rotate {
+        anim.rotate_speed = parse_sawtooth_speed(s);
+    }
+    if let Some(s) = &pass.scalet {
+        anim.scalet_speed = parse_sawtooth_speed(s);
+    }
     anim
 }
 
@@ -431,7 +476,7 @@ pub fn load_oni2_entity_type(
                 }
             }
         }
-        None => None
+        None => None,
     };
 
     // Read and parse the .mod file
@@ -574,7 +619,9 @@ pub fn load_oni2_entity_type(
             cached.clone()
         } else {
             let loaded = load_anim_library(entity_dir, entity_type_name.unwrap_or(name), skel);
-            anim_registry.libraries.insert(cache_key.clone(), loaded.clone());
+            anim_registry
+                .libraries
+                .insert(cache_key.clone(), loaded.clone());
             loaded
         };
         let lib_opt = if !lib.anims.is_empty() {
@@ -607,14 +654,16 @@ pub fn load_oni2_entity_type(
     };
 
     let ibp_handle = if use_gpu_skinning {
-        let inverse_bind_poses =
-            compute_inverse_bind_poses(skeleton.as_ref().unwrap());
+        let inverse_bind_poses = compute_inverse_bind_poses(skeleton.as_ref().unwrap());
         Some(skinned_mesh_ibp.add(SkinnedMeshInverseBindposes::from(inverse_bind_poses)))
     } else {
         None
     };
 
-    let (bevy_materials, material_animators): (Vec<Vec<Handle<StandardMaterial>>>, Vec<Vec<crate::oni2_loader::registries::TextureUVAnimator>>) = if let Some(ref m) = model {
+    let (bevy_materials, material_animators): (
+        Vec<Vec<Handle<StandardMaterial>>>,
+        Vec<Vec<crate::oni2_loader::registries::TextureUVAnimator>>,
+    ) = if let Some(ref m) = model {
         m.materials
             .iter()
             .map(|oni_mat| {
@@ -623,22 +672,43 @@ pub fn load_oni2_entity_type(
                 if !oni_mat.passes.is_empty() {
                     for (pass_idx, pass) in oni_mat.passes.iter().enumerate() {
                         let (texture_handle, has_alpha) = match pass.texture_name.as_ref() {
-                            Some(tex_name) => match crate::oni2_loader::parsers::texture::load_tga_texture(dir, tex_name, images) {
-                                Some((h, alpha)) => (Some(h), alpha),
-                                None => (None, false),
-                            },
+                            Some(tex_name) => {
+                                match crate::oni2_loader::parsers::texture::load_tga_texture(
+                                    dir, tex_name, images,
+                                ) {
+                                    Some((h, alpha)) => (Some(h), alpha),
+                                    None => (None, false),
+                                }
+                            }
                             None => (None, false),
                         };
 
-                        let diffuse = Color::srgb(oni_mat.diffuse[0], oni_mat.diffuse[1], oni_mat.diffuse[2]);
-                        let is_decal = pass.texcombine.as_ref().map(|s| s == "decal").unwrap_or(false);
-                        let is_blend = pass.blendset.as_ref().map(|s| s != "opaque").unwrap_or(false);
+                        let diffuse =
+                            Color::srgb(oni_mat.diffuse[0], oni_mat.diffuse[1], oni_mat.diffuse[2]);
+                        let is_decal = pass
+                            .texcombine
+                            .as_ref()
+                            .map(|s| s == "decal")
+                            .unwrap_or(false);
+                        let is_blend = pass
+                            .blendset
+                            .as_ref()
+                            .map(|s| s != "opaque")
+                            .unwrap_or(false);
 
                         handles.push(materials.add(StandardMaterial {
-                            base_color: if texture_handle.is_some() { Color::WHITE } else { diffuse },
+                            base_color: if texture_handle.is_some() {
+                                Color::WHITE
+                            } else {
+                                diffuse
+                            },
                             base_color_texture: texture_handle,
                             cull_mode: None,
-                            alpha_mode: if has_alpha || is_decal || is_blend { AlphaMode::Blend } else { AlphaMode::Opaque },
+                            alpha_mode: if has_alpha || is_decal || is_blend {
+                                AlphaMode::Blend
+                            } else {
+                                AlphaMode::Opaque
+                            },
                             perceptual_roughness: 1.0,
                             reflectance: 0.0,
                             depth_bias: pass_idx as f32 * 10.0,
@@ -648,19 +718,32 @@ pub fn load_oni2_entity_type(
                     }
                 } else {
                     let (texture_handle, has_alpha) = match oni_mat.texture_name.as_ref() {
-                        Some(tex_name) => match crate::oni2_loader::parsers::texture::load_tga_texture(dir, tex_name, images) {
-                            Some((h, alpha)) => (Some(h), alpha),
-                            None => (None, false),
-                        },
+                        Some(tex_name) => {
+                            match crate::oni2_loader::parsers::texture::load_tga_texture(
+                                dir, tex_name, images,
+                            ) {
+                                Some((h, alpha)) => (Some(h), alpha),
+                                None => (None, false),
+                            }
+                        }
                         None => (None, false),
                     };
 
-                    let diffuse = Color::srgb(oni_mat.diffuse[0], oni_mat.diffuse[1], oni_mat.diffuse[2]);
+                    let diffuse =
+                        Color::srgb(oni_mat.diffuse[0], oni_mat.diffuse[1], oni_mat.diffuse[2]);
                     handles.push(materials.add(StandardMaterial {
-                        base_color: if texture_handle.is_some() { Color::WHITE } else { diffuse },
+                        base_color: if texture_handle.is_some() {
+                            Color::WHITE
+                        } else {
+                            diffuse
+                        },
                         base_color_texture: texture_handle,
                         cull_mode: None,
-                        alpha_mode: if has_alpha { AlphaMode::Blend } else { AlphaMode::Opaque },
+                        alpha_mode: if has_alpha {
+                            AlphaMode::Blend
+                        } else {
+                            AlphaMode::Opaque
+                        },
                         perceptual_roughness: 1.0,
                         reflectance: 0.0,
                         ..default()
@@ -676,7 +759,10 @@ pub fn load_oni2_entity_type(
 
     Some(crate::oni2_loader::registries::Oni2EntityType {
         name: name.to_string(),
-        sub_meshes: sub_meshes.into_iter().map(|(id, mesh)| (id, meshes.add(mesh))).collect(),
+        sub_meshes: sub_meshes
+            .into_iter()
+            .map(|(id, mesh)| (id, meshes.add(mesh)))
+            .collect(),
         materials: bevy_materials,
         material_animators,
         skeleton,
@@ -707,7 +793,7 @@ pub fn spawn_oni2_entity_with_rotation(
     entity_type_name: Option<&str>,
 ) -> Option<Entity> {
     let dir = entity_dir;
-    
+
     // 1. Get or load the EntityType
     let cache_key = dir.to_string();
     if !entity_lib.entities.contains_key(&cache_key) {
@@ -719,7 +805,7 @@ pub fn spawn_oni2_entity_with_rotation(
             anim_registry.as_mut(),
             entity_dir,
             name,
-            entity_type_name
+            entity_type_name,
         ) {
             entity_lib.entities.insert(cache_key.clone(), loaded);
         } else {
@@ -731,8 +817,11 @@ pub fn spawn_oni2_entity_with_rotation(
     let ent_type = entity_lib.entities.get(&cache_key)?;
 
     // 2. Build Collider from bounds on the fly
-    let collider = if !ent_type.bounds.vertices.is_empty() && (!ent_type.bound_quads.is_empty() || !ent_type.bound_tris.is_empty()) {
-        let mut tri_indices: Vec<[u32; 3]> = Vec::with_capacity(ent_type.bound_quads.len() * 2 + ent_type.bound_tris.len());
+    let collider = if !ent_type.bounds.vertices.is_empty()
+        && (!ent_type.bound_quads.is_empty() || !ent_type.bound_tris.is_empty())
+    {
+        let mut tri_indices: Vec<[u32; 3]> =
+            Vec::with_capacity(ent_type.bound_quads.len() * 2 + ent_type.bound_tris.len());
         for q in &ent_type.bound_quads {
             tri_indices.push([q[0], q[1], q[2]]);
             tri_indices.push([q[0], q[2], q[3]]);
@@ -740,9 +829,9 @@ pub fn spawn_oni2_entity_with_rotation(
         for t in &ent_type.bound_tris {
             tri_indices.push(*t);
         }
-        Collider::try_trimesh(ent_type.bounds.vertices.clone(), tri_indices).ok().or_else(|| {
-            Collider::convex_hull(ent_type.bounds.vertices.clone())
-        })
+        Collider::try_trimesh(ent_type.bounds.vertices.clone(), tri_indices)
+            .ok()
+            .or_else(|| Collider::convex_hull(ent_type.bounds.vertices.clone()))
     } else if !ent_type.bounds.vertices.is_empty() {
         Collider::convex_hull(ent_type.bounds.vertices.clone())
     } else {
@@ -787,7 +876,11 @@ pub fn spawn_oni2_entity_with_rotation(
         let mut joints = Vec::with_capacity(num_bones);
         for _ in 0..num_bones {
             let joint = commands
-                .spawn((Transform::IDENTITY, GlobalTransform::default(), Visibility::Hidden))
+                .spawn((
+                    Transform::IDENTITY,
+                    GlobalTransform::default(),
+                    Visibility::Hidden,
+                ))
                 .id();
             commands.entity(parent_entity).add_child(joint);
             joints.push(joint);
@@ -798,10 +891,27 @@ pub fn spawn_oni2_entity_with_rotation(
     };
 
     if let Some(c) = collider {
-        if use_gpu_skinning && ent_type.skeleton.as_ref().map(|s| s.positions.len()).unwrap_or(0) == 1 {
-            commands.entity(joint_entities[0]).insert((c, RigidBody::Kinematic, avian3d::prelude::LinearVelocity::default(), avian3d::prelude::AngularVelocity::default()));
+        if use_gpu_skinning
+            && ent_type
+                .skeleton
+                .as_ref()
+                .map(|s| s.positions.len())
+                .unwrap_or(0)
+                == 1
+        {
+            commands.entity(joint_entities[0]).insert((
+                c,
+                RigidBody::Kinematic,
+                avian3d::prelude::LinearVelocity::default(),
+                avian3d::prelude::AngularVelocity::default(),
+            ));
         } else if use_gpu_skinning {
-            commands.entity(parent_entity).insert((c, RigidBody::Kinematic, avian3d::prelude::LinearVelocity::default(), avian3d::prelude::AngularVelocity::default()));
+            commands.entity(parent_entity).insert((
+                c,
+                RigidBody::Kinematic,
+                avian3d::prelude::LinearVelocity::default(),
+                avian3d::prelude::AngularVelocity::default(),
+            ));
         } else {
             commands.entity(parent_entity).insert(c);
         }
@@ -817,7 +927,10 @@ pub fn spawn_oni2_entity_with_rotation(
     });
 
     let default_anim = loaded_anim.or_else(|| {
-        ent_type.anim_library.as_ref().and_then(|lib| lib.anims.values().next().cloned())
+        ent_type
+            .anim_library
+            .as_ref()
+            .and_then(|lib| lib.anims.values().next().cloned())
     });
 
     // Insert AnimState and Library even if there is no skeleton (for root-motion only animations)
@@ -826,22 +939,24 @@ pub fn spawn_oni2_entity_with_rotation(
         let skel = ent_type.skeleton.clone().unwrap_or_default();
         let current_anim = default_anim.unwrap_or_default();
         let looping = current_anim.is_loop;
-        
-        commands.entity(parent_entity).insert(crate::oni2_loader::animation::Oni2AnimState {
-            anim: current_anim,
-            skeleton: skel,
-            current_time: 0.0,
-            fps: 20.0,
-            paused: false,
-            looping,
-            speed_multiplier: 1.0,
-            pending_step: 0,
-            last_rendered_time: -1.0,
-            joint_entities: joint_entities.clone(),
-            base_rotation: rotation,
-            current_frame: Vec::new(),
-            current_anim_id: None,
-        });
+
+        commands
+            .entity(parent_entity)
+            .insert(crate::oni2_loader::animation::Oni2AnimState {
+                anim: current_anim,
+                skeleton: skel,
+                current_time: 0.0,
+                fps: 20.0,
+                paused: false,
+                looping,
+                speed_multiplier: 1.0,
+                pending_step: 0,
+                last_rendered_time: -1.0,
+                joint_entities: joint_entities.clone(),
+                base_rotation: rotation,
+                current_frame: Vec::new(),
+                current_anim_id: None,
+            });
     }
 
     if let Some(ref lib) = ent_type.anim_library {
@@ -858,12 +973,14 @@ pub fn spawn_oni2_entity_with_rotation(
 
     // 4. Mesh sub_meshes
     for (mat_idx, mesh_handle) in &ent_type.sub_meshes {
-        let pass_handles = ent_type.materials
+        let pass_handles = ent_type
+            .materials
             .get(*mat_idx)
             .cloned()
             .unwrap_or_else(|| vec![fallback_mat.clone()]);
-            
-        let pass_animators = ent_type.material_animators
+
+        let pass_animators = ent_type
+            .material_animators
             .get(*mat_idx)
             .cloned()
             .unwrap_or_default();
@@ -874,9 +991,13 @@ pub fn spawn_oni2_entity_with_rotation(
                 MeshMaterial3d(pass_mat_handle),
                 Transform::default(),
             ));
-            
+
             if let Some(anim) = pass_animators.get(pass_idx) {
-                if anim.slides_speed != 0.0 || anim.slidet_speed != 0.0 || anim.rotate_speed != 0.0 || anim.scalet_speed != 0.0 {
+                if anim.slides_speed != 0.0
+                    || anim.slidet_speed != 0.0
+                    || anim.rotate_speed != 0.0
+                    || anim.scalet_speed != 0.0
+                {
                     mesh_ec.insert(anim.clone());
                 }
             }
@@ -970,13 +1091,16 @@ pub fn spawn_oni2_creature(
 
     if let Some(ref skel) = skeleton {
         let cache_key = format!("{}/{}", anim_entity_dir, anim_name);
-        let (library, locomotion, jump_controller) = if let Some(cached) = anim_registry.libraries.get(&cache_key) {
-            cached.clone()
-        } else {
-            let loaded = load_anim_library(&anim_entity_dir, anim_name, skel);
-            anim_registry.libraries.insert(cache_key.clone(), loaded.clone());
-            loaded
-        };
+        let (library, locomotion, jump_controller) =
+            if let Some(cached) = anim_registry.libraries.get(&cache_key) {
+                cached.clone()
+            } else {
+                let loaded = load_anim_library(&anim_entity_dir, anim_name, skel);
+                anim_registry
+                    .libraries
+                    .insert(cache_key.clone(), loaded.clone());
+                loaded
+            };
         if !library.anims.is_empty() {
             commands.entity(entity).insert(library);
             if let Some(loco) = locomotion {

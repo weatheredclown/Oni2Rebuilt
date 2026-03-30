@@ -28,7 +28,11 @@ impl Compiler {
     pub fn compile(source: &str) -> Result<ScriptFile, Vec<CompileError>> {
         let mut tokenizer = Tokenizer::new(source);
         let tokens = tokenizer.tokenize();
-        let mut compiler = Compiler { tokens, pos: 0, errors: Vec::new() };
+        let mut compiler = Compiler {
+            tokens,
+            pos: 0,
+            errors: Vec::new(),
+        };
         let file = compiler.parse_file();
         if compiler.errors.is_empty() {
             Ok(file)
@@ -40,7 +44,9 @@ impl Compiler {
     // ---- Helpers ----
 
     fn peek(&self) -> &Token {
-        self.tokens.get(self.pos).unwrap_or(&self.tokens[self.tokens.len() - 1])
+        self.tokens
+            .get(self.pos)
+            .unwrap_or(&self.tokens[self.tokens.len() - 1])
     }
 
     fn code(&self) -> TokenCode {
@@ -60,7 +66,12 @@ impl Compiler {
             self.advance();
             true
         } else {
-            self.error(format!("expected {:?}, found {:?} '{}'", expected, self.code(), self.peek().text));
+            self.error(format!(
+                "expected {:?}, found {:?} '{}'",
+                expected,
+                self.code(),
+                self.peek().text
+            ));
             false
         }
     }
@@ -76,7 +87,11 @@ impl Compiler {
 
     fn error(&mut self, msg: String) {
         let tok = self.peek();
-        self.errors.push(CompileError { line: tok.line, col: tok.col, message: msg });
+        self.errors.push(CompileError {
+            line: tok.line,
+            col: tok.col,
+            message: msg,
+        });
     }
 
     fn at_end(&self) -> bool {
@@ -165,7 +180,12 @@ impl Compiler {
 
         self.skip_if(TokenCode::End); // skip 'end'
 
-        Some(ScriptDef { name, variables, whenever, sequence })
+        Some(ScriptDef {
+            name,
+            variables,
+            whenever,
+            sequence,
+        })
     }
 
     fn parse_var_decl(&mut self) -> Option<VarDecl> {
@@ -192,10 +212,16 @@ impl Compiler {
             let n = self.peek().text.clone().to_lowercase();
             self.advance();
             n
-        } else if !matches!(self.code(),
-            TokenCode::IntegerConstant | TokenCode::FloatConstant
-            | TokenCode::StringConstant | TokenCode::Eof
-            | TokenCode::Begin | TokenCode::End | TokenCode::Whenever | TokenCode::Sequence
+        } else if !matches!(
+            self.code(),
+            TokenCode::IntegerConstant
+                | TokenCode::FloatConstant
+                | TokenCode::StringConstant
+                | TokenCode::Eof
+                | TokenCode::Begin
+                | TokenCode::End
+                | TokenCode::Whenever
+                | TokenCode::Sequence
         ) {
             // Accept keyword tokens as variable names (ScrOni allows this)
             let n = self.peek().text.clone().to_lowercase();
@@ -223,7 +249,12 @@ impl Compiler {
             None
         };
 
-        Some(VarDecl { is_parent, var_type, name, initializer })
+        Some(VarDecl {
+            is_parent,
+            var_type,
+            name,
+            initializer,
+        })
     }
 
     // ---- Section / block parsing ----
@@ -259,19 +290,35 @@ impl Compiler {
                 Stmt::Block(block)
             }
             TokenCode::Do => self.parse_do(),
-            TokenCode::Exit => { self.advance(); Stmt::Exit }
-            TokenCode::Done => { self.advance(); Stmt::Done }
-            TokenCode::Home => { self.advance(); Stmt::Home }
+            TokenCode::Exit => {
+                self.advance();
+                Stmt::Exit
+            }
+            TokenCode::Done => {
+                self.advance();
+                Stmt::Done
+            }
+            TokenCode::Home => {
+                self.advance();
+                Stmt::Home
+            }
             TokenCode::Log => self.parse_log(),
 
             // Inline variable declarations
-            TokenCode::Integer | TokenCode::Float | TokenCode::Vector
-            | TokenCode::StringKw | TokenCode::Timer | TokenCode::Label
+            TokenCode::Integer
+            | TokenCode::Float
+            | TokenCode::Vector
+            | TokenCode::StringKw
+            | TokenCode::Timer
+            | TokenCode::Label
             | TokenCode::ActorList => {
                 if let Some(v) = self.parse_var_decl() {
                     Stmt::InlineVarDecl(v)
                 } else {
-                    Stmt::Unimplemented { command: "var_decl".into(), args: vec![] }
+                    Stmt::Unimplemented {
+                        command: "var_decl".into(),
+                        args: vec![],
+                    }
                 }
             }
 
@@ -279,37 +326,99 @@ impl Compiler {
             TokenCode::GotoCurvePhase => self.parse_goto_curve_phase(),
             TokenCode::GotoCurveKnot => self.parse_goto_curve_knot(),
             TokenCode::GotoCurveLerp => self.parse_goto_curve_lerp(),
-            TokenCode::SetCurvePhase => { self.advance(); Stmt::SetCurvePhase(self.parse_expr()) }
-            TokenCode::SetCurveSpeed => { self.advance(); Stmt::SetCurveSpeed(self.parse_expr()) }
-            TokenCode::SetCurveKs => { self.advance(); Stmt::SetCurveKs(self.parse_expr()) }
-            TokenCode::SetCurvePingPong => { self.advance(); Stmt::SetCurvePingPong(self.parse_expr()) }
+            TokenCode::SetCurvePhase => {
+                self.advance();
+                Stmt::SetCurvePhase(self.parse_expr())
+            }
+            TokenCode::SetCurveSpeed => {
+                self.advance();
+                Stmt::SetCurveSpeed(self.parse_expr())
+            }
+            TokenCode::SetCurveKs => {
+                self.advance();
+                Stmt::SetCurveKs(self.parse_expr())
+            }
+            TokenCode::SetCurvePingPong => {
+                self.advance();
+                Stmt::SetCurvePingPong(self.parse_expr())
+            }
             TokenCode::SetCurve => self.parse_set_curve(),
-            TokenCode::SetLerpCurve => { self.advance(); Stmt::SetLerpCurve(self.parse_expr()) }
-            TokenCode::SetLookUpCurve => { self.advance(); Stmt::SetLookUpCurve(self.parse_expr()) }
-            TokenCode::SetCurveLookAtActor => { self.advance(); Stmt::SetCurveLookAtActor(self.parse_expr()) }
-            TokenCode::SetCurveLookAlongDistance => { self.advance(); Stmt::SetCurveLookAlongDistance(self.parse_expr()) }
-            TokenCode::SetCurveLookAlongDirection => { self.advance(); Stmt::SetCurveLookAlongDirection(self.parse_expr()) }
+            TokenCode::SetLerpCurve => {
+                self.advance();
+                Stmt::SetLerpCurve(self.parse_expr())
+            }
+            TokenCode::SetLookUpCurve => {
+                self.advance();
+                Stmt::SetLookUpCurve(self.parse_expr())
+            }
+            TokenCode::SetCurveLookAtActor => {
+                self.advance();
+                Stmt::SetCurveLookAtActor(self.parse_expr())
+            }
+            TokenCode::SetCurveLookAlongDistance => {
+                self.advance();
+                Stmt::SetCurveLookAlongDistance(self.parse_expr())
+            }
+            TokenCode::SetCurveLookAlongDirection => {
+                self.advance();
+                Stmt::SetCurveLookAlongDirection(self.parse_expr())
+            }
 
             // Animation
             TokenCode::PlayAnimation => self.parse_play_animation(),
             TokenCode::PlayActionAnimation => self.parse_play_action_animation(),
-            TokenCode::ControlAnimation => { self.advance(); Stmt::ControlAnimation { name: self.parse_expr() } }
+            TokenCode::ControlAnimation => {
+                self.advance();
+                Stmt::ControlAnimation {
+                    name: self.parse_expr(),
+                }
+            }
 
             // Movement / combat (blocking)
-            TokenCode::Idle => { self.advance(); Stmt::Idle(self.parse_expr()) }
-            TokenCode::For => { self.advance(); Stmt::Idle(self.parse_expr()) }
+            TokenCode::Idle => {
+                self.advance();
+                Stmt::Idle(self.parse_expr())
+            }
+            TokenCode::For => {
+                self.advance();
+                Stmt::Idle(self.parse_expr())
+            }
             TokenCode::Face => self.parse_face(),
             TokenCode::Goto => self.parse_goto(),
-            TokenCode::Fight => { self.advance(); Stmt::Fight }
-            TokenCode::Shoot => { self.advance(); Stmt::Shoot }
-            TokenCode::Patrol => { self.advance(); Stmt::Patrol(self.parse_expr()) }
-            TokenCode::Follow => { self.advance(); Stmt::Follow(self.parse_expr()) }
-            TokenCode::Attack => { self.advance(); Stmt::Attack(self.parse_expr()) }
-            TokenCode::Retreat => { self.advance(); Stmt::Retreat }
+            TokenCode::Fight => {
+                self.advance();
+                Stmt::Fight
+            }
+            TokenCode::Shoot => {
+                self.advance();
+                Stmt::Shoot
+            }
+            TokenCode::Patrol => {
+                self.advance();
+                Stmt::Patrol(self.parse_expr())
+            }
+            TokenCode::Follow => {
+                self.advance();
+                Stmt::Follow(self.parse_expr())
+            }
+            TokenCode::Attack => {
+                self.advance();
+                Stmt::Attack(self.parse_expr())
+            }
+            TokenCode::Retreat => {
+                self.advance();
+                Stmt::Retreat
+            }
 
             // Script flow
-            TokenCode::Stack => { self.advance(); Stmt::Stack(self.parse_expr()) }
-            TokenCode::Switch => { self.advance(); Stmt::Switch(self.parse_expr()) }
+            TokenCode::Stack => {
+                self.advance();
+                Stmt::Stack(self.parse_expr())
+            }
+            TokenCode::Switch => {
+                self.advance();
+                Stmt::Switch(self.parse_expr())
+            }
             TokenCode::ChildStack => {
                 self.advance();
                 let var = self.peek().text.clone().to_lowercase();
@@ -324,9 +433,18 @@ impl Compiler {
                 let script = self.parse_expr();
                 Stmt::ChildSwitch { var, script }
             }
-            TokenCode::ChildDone => { self.advance(); Stmt::ChildDone }
-            TokenCode::ChildHome => { self.advance(); Stmt::ChildHome }
-            TokenCode::ChildStop => { self.advance(); Stmt::ChildStop }
+            TokenCode::ChildDone => {
+                self.advance();
+                Stmt::ChildDone
+            }
+            TokenCode::ChildHome => {
+                self.advance();
+                Stmt::ChildHome
+            }
+            TokenCode::ChildStop => {
+                self.advance();
+                Stmt::ChildStop
+            }
 
             // Lists
             TokenCode::Add => self.parse_add(),
@@ -334,69 +452,174 @@ impl Compiler {
 
             // Actor management
             TokenCode::Spawn => self.parse_spawn(),
-            TokenCode::Destroy => { self.advance(); Stmt::Destroy }
+            TokenCode::Destroy => {
+                self.advance();
+                Stmt::Destroy
+            }
             TokenCode::Teleport => self.parse_teleport(),
             TokenCode::MakeFX => self.parse_make_fx(),
-            TokenCode::UsePad => { self.advance(); Stmt::UsePad }
+            TokenCode::UsePad => {
+                self.advance();
+                Stmt::UsePad
+            }
 
             // Messaging
             TokenCode::SendMessage => self.parse_send_message(),
             TokenCode::SendGroupMessage => self.parse_send_group_message(),
             TokenCode::SendGroupMembersMessage => self.parse_send_group_members_message(),
             TokenCode::SendAction => self.parse_send_action(),
-            
+
             // Item interactions
-            TokenCode::Pickup => { self.advance(); Stmt::Pickup(self.parse_expr()) }
+            TokenCode::Pickup => {
+                self.advance();
+                Stmt::Pickup(self.parse_expr())
+            }
             TokenCode::Dropoff => self.parse_dropoff(),
 
             // Properties
-            TokenCode::SetHealth => { self.advance(); Stmt::SetHealth(self.parse_expr()) }
-            TokenCode::ResetHealth => { self.advance(); Stmt::ResetHealth }
-            TokenCode::SetActorEnabled => { self.advance(); Stmt::SetActorEnabled(self.parse_expr()) }
-            TokenCode::SetFaction => { self.advance(); Stmt::SetFaction(self.parse_expr()) }
-            TokenCode::SetUnbreakable => { self.advance(); Stmt::SetUnbreakable(self.parse_expr()) }
-            TokenCode::SetCrouch => { self.advance(); Stmt::SetCrouch(self.parse_expr()) }
-            TokenCode::SetAttackTable => { self.advance(); Stmt::SetAttackTable(self.parse_expr()) }
-            TokenCode::DrawWeapon => { self.advance(); Stmt::DrawWeapon }
-            TokenCode::HolsterWeapon => { self.advance(); Stmt::HolsterWeapon }
+            TokenCode::SetHealth => {
+                self.advance();
+                Stmt::SetHealth(self.parse_expr())
+            }
+            TokenCode::ResetHealth => {
+                self.advance();
+                Stmt::ResetHealth
+            }
+            TokenCode::SetActorEnabled => {
+                self.advance();
+                Stmt::SetActorEnabled(self.parse_expr())
+            }
+            TokenCode::SetFaction => {
+                self.advance();
+                Stmt::SetFaction(self.parse_expr())
+            }
+            TokenCode::SetUnbreakable => {
+                self.advance();
+                Stmt::SetUnbreakable(self.parse_expr())
+            }
+            TokenCode::SetCrouch => {
+                self.advance();
+                Stmt::SetCrouch(self.parse_expr())
+            }
+            TokenCode::SetAttackTable => {
+                self.advance();
+                Stmt::SetAttackTable(self.parse_expr())
+            }
+            TokenCode::DrawWeapon => {
+                self.advance();
+                Stmt::DrawWeapon
+            }
+            TokenCode::HolsterWeapon => {
+                self.advance();
+                Stmt::HolsterWeapon
+            }
 
             // Camera
-            TokenCode::CameraReset => { self.advance(); Stmt::CameraReset }
-            TokenCode::CameraMode => { self.advance(); Stmt::CameraMode(self.parse_expr()) }
-            TokenCode::CameraLetterbox => { self.advance(); Stmt::CameraLetterbox(self.parse_expr()) }
-            TokenCode::CameraFollowActor => self.parse_generic_args(TokenCode::CameraFollowActor, |args| Stmt::CameraFollowActor { args }),
-            TokenCode::CameraTrackActor => self.parse_generic_args(TokenCode::CameraTrackActor, |args| Stmt::CameraTrackActor { args }),
-            TokenCode::CameraTrackPoint => self.parse_generic_args(TokenCode::CameraTrackPoint, |args| Stmt::CameraTrackPoint { args }),
-            TokenCode::CameraMoveToActor => self.parse_generic_args(TokenCode::CameraMoveToActor, |args| Stmt::CameraMoveToActor { args }),
-            TokenCode::CameraMoveToPoint => self.parse_generic_args(TokenCode::CameraMoveToPoint, |args| Stmt::CameraMoveToPoint { args }),
-            TokenCode::CameraCutToActor => self.parse_generic_args(TokenCode::CameraCutToActor, |args| Stmt::CameraCutToActor { args }),
-            TokenCode::CameraCutToPoint => self.parse_generic_args(TokenCode::CameraCutToPoint, |args| Stmt::CameraCutToPoint { args }),
-            TokenCode::CameraSetFOV => self.parse_generic_args(TokenCode::CameraSetFOV, |args| Stmt::CameraSetFOV { args }),
-            TokenCode::CameraSetPackage => { self.advance(); Stmt::CameraSetPackage(self.parse_expr()) }
-            TokenCode::CameraShake => { self.advance(); Stmt::CameraShake }
+            TokenCode::CameraReset => {
+                self.advance();
+                Stmt::CameraReset
+            }
+            TokenCode::CameraMode => {
+                self.advance();
+                Stmt::CameraMode(self.parse_expr())
+            }
+            TokenCode::CameraLetterbox => {
+                self.advance();
+                Stmt::CameraLetterbox(self.parse_expr())
+            }
+            TokenCode::CameraFollowActor => self
+                .parse_generic_args(TokenCode::CameraFollowActor, |args| {
+                    Stmt::CameraFollowActor { args }
+                }),
+            TokenCode::CameraTrackActor => self
+                .parse_generic_args(TokenCode::CameraTrackActor, |args| Stmt::CameraTrackActor {
+                    args,
+                }),
+            TokenCode::CameraTrackPoint => self
+                .parse_generic_args(TokenCode::CameraTrackPoint, |args| Stmt::CameraTrackPoint {
+                    args,
+                }),
+            TokenCode::CameraMoveToActor => self
+                .parse_generic_args(TokenCode::CameraMoveToActor, |args| {
+                    Stmt::CameraMoveToActor { args }
+                }),
+            TokenCode::CameraMoveToPoint => self
+                .parse_generic_args(TokenCode::CameraMoveToPoint, |args| {
+                    Stmt::CameraMoveToPoint { args }
+                }),
+            TokenCode::CameraCutToActor => self
+                .parse_generic_args(TokenCode::CameraCutToActor, |args| Stmt::CameraCutToActor {
+                    args,
+                }),
+            TokenCode::CameraCutToPoint => self
+                .parse_generic_args(TokenCode::CameraCutToPoint, |args| Stmt::CameraCutToPoint {
+                    args,
+                }),
+            TokenCode::CameraSetFOV => {
+                self.parse_generic_args(TokenCode::CameraSetFOV, |args| Stmt::CameraSetFOV { args })
+            }
+            TokenCode::CameraSetPackage => {
+                self.advance();
+                Stmt::CameraSetPackage(self.parse_expr())
+            }
+            TokenCode::CameraShake => {
+                self.advance();
+                Stmt::CameraShake
+            }
 
             // Sound
-            TokenCode::Sound => self.parse_generic_args(TokenCode::Sound, |args| Stmt::Sound { args }),
+            TokenCode::Sound => {
+                self.parse_generic_args(TokenCode::Sound, |args| Stmt::Sound { args })
+            }
             TokenCode::PlayAmbientSound => self.parse_play_ambient_sound(),
-            TokenCode::AmbientSound => self.parse_generic_args(TokenCode::AmbientSound, |args| Stmt::AmbientSound { args }),
-            TokenCode::MusicPlay => { self.advance(); Stmt::MusicPlay(self.parse_expr()) }
-            TokenCode::MusicStop => { self.advance(); Stmt::MusicStop }
+            TokenCode::AmbientSound => {
+                self.parse_generic_args(TokenCode::AmbientSound, |args| Stmt::AmbientSound { args })
+            }
+            TokenCode::MusicPlay => {
+                self.advance();
+                Stmt::MusicPlay(self.parse_expr())
+            }
+            TokenCode::MusicStop => {
+                self.advance();
+                Stmt::MusicStop
+            }
 
             // Fog
-            TokenCode::SetFogType => { self.advance(); Stmt::SetFogType(self.parse_expr()) }
-            TokenCode::SetFogColor => self.parse_generic_args(TokenCode::SetFogColor, |args| Stmt::SetFogColor { args }),
-            TokenCode::SetFogClamp => self.parse_generic_args(TokenCode::SetFogClamp, |args| Stmt::SetFogClamp { args }),
-            TokenCode::SetFogPalettePower => self.parse_generic_args(TokenCode::SetFogPalettePower, |args| Stmt::SetFogPalettePower { args }),
+            TokenCode::SetFogType => {
+                self.advance();
+                Stmt::SetFogType(self.parse_expr())
+            }
+            TokenCode::SetFogColor => {
+                self.parse_generic_args(TokenCode::SetFogColor, |args| Stmt::SetFogColor { args })
+            }
+            TokenCode::SetFogClamp => {
+                self.parse_generic_args(TokenCode::SetFogClamp, |args| Stmt::SetFogClamp { args })
+            }
+            TokenCode::SetFogPalettePower => self
+                .parse_generic_args(TokenCode::SetFogPalettePower, |args| {
+                    Stmt::SetFogPalettePower { args }
+                }),
 
             // Shaders / Lights
-            TokenCode::SetShaderLocal => self.parse_generic_args(TokenCode::SetShaderLocal, |args| Stmt::SetShaderLocal { args }),
-            TokenCode::SetLightParameter => self.parse_generic_args(TokenCode::SetLightParameter, |args| Stmt::SetLightParameter { args }),
-            TokenCode::Intensity => self.parse_generic_args(TokenCode::Intensity, |args| Stmt::Intensity { args }),
+            TokenCode::SetShaderLocal => self
+                .parse_generic_args(TokenCode::SetShaderLocal, |args| Stmt::SetShaderLocal {
+                    args,
+                }),
+            TokenCode::SetLightParameter => self
+                .parse_generic_args(TokenCode::SetLightParameter, |args| {
+                    Stmt::SetLightParameter { args }
+                }),
+            TokenCode::Intensity => {
+                self.parse_generic_args(TokenCode::Intensity, |args| Stmt::Intensity { args })
+            }
 
             // Global
-            TokenCode::SetFullScreenColor => self.parse_generic_args(TokenCode::SetFullScreenColor, |args| Stmt::SetFullScreenColor { args }),
-            TokenCode::SetUpdateState => { 
-                self.advance(); 
+            TokenCode::SetFullScreenColor => self
+                .parse_generic_args(TokenCode::SetFullScreenColor, |args| {
+                    Stmt::SetFullScreenColor { args }
+                }),
+            TokenCode::SetUpdateState => {
+                self.advance();
                 let target = self.parse_expr();
                 let state = self.parse_expr();
                 Stmt::SetUpdateState { target, state }
@@ -404,14 +627,17 @@ impl Compiler {
 
             TokenCode::Find => self.parse_find(),
             TokenCode::TextureMovie => self.parse_texture_movie(),
-            TokenCode::At => { 
-                self.advance(); 
-                let x = self.parse_expr(); 
+            TokenCode::At => {
+                self.advance();
+                let x = self.parse_expr();
                 self.skip_if(TokenCode::Comma);
-                let y = self.parse_expr(); 
-                Stmt::At(x, y) 
+                let y = self.parse_expr();
+                Stmt::At(x, y)
             }
-            TokenCode::DrawText => { self.advance(); Stmt::DrawText(self.parse_expr()) }
+            TokenCode::DrawText => {
+                self.advance();
+                Stmt::DrawText(self.parse_expr())
+            }
 
             _ => {
                 // Unknown command — skip token and collect trailing exprs until next command
@@ -429,8 +655,9 @@ impl Compiler {
 
     // ---- Specific statement parsers ----
 
-    fn parse_generic_args<F>(&mut self, _code: TokenCode, constructor: F) -> Stmt 
-    where F: FnOnce(Vec<Expr>) -> Stmt
+    fn parse_generic_args<F>(&mut self, _code: TokenCode, constructor: F) -> Stmt
+    where
+        F: FnOnce(Vec<Expr>) -> Stmt,
     {
         self.advance();
         let mut args = Vec::new();
@@ -446,7 +673,7 @@ impl Compiler {
         let var = self.peek().text.clone().to_lowercase();
         self.advance(); // skip identifier
         self.skip_if(TokenCode::To); // skip 'to'
-        
+
         let first = self.parse_expr();
         let value = if self.code() == TokenCode::Comma {
             let mut list = vec![first];
@@ -457,7 +684,7 @@ impl Compiler {
         } else {
             first
         };
-        
+
         Stmt::Set { var, value }
     }
 
@@ -465,11 +692,11 @@ impl Compiler {
         self.advance(); // skip 'add'
         let expr = self.parse_expr();
         self.skip_if(TokenCode::To); // skip 'to'
-        
+
         // Target list can be an identifier or a keyword
         let list = self.peek().text.clone().to_lowercase();
         self.advance();
-        
+
         Stmt::AddToList { expr, list }
     }
 
@@ -477,11 +704,11 @@ impl Compiler {
         self.advance(); // skip 'remove'
         let expr = self.parse_expr();
         self.skip_if(TokenCode::From); // skip 'from'
-        
+
         // Target list can be an identifier or a keyword
         let list = self.peek().text.clone().to_lowercase();
         self.advance();
-        
+
         Stmt::RemoveFromList { expr, list }
     }
 
@@ -495,7 +722,11 @@ impl Compiler {
         } else {
             None
         };
-        Stmt::If { condition, then_branch, else_branch }
+        Stmt::If {
+            condition,
+            then_branch,
+            else_branch,
+        }
     }
 
     fn parse_do(&mut self) -> Stmt {
@@ -552,14 +783,22 @@ impl Compiler {
     fn parse_goto_curve_knot(&mut self) -> Stmt {
         self.advance();
         let knot = self.parse_expr();
-        let seconds = if self.skip_if(TokenCode::In) { self.parse_expr() } else { Expr::FloatLit(1.0) };
+        let seconds = if self.skip_if(TokenCode::In) {
+            self.parse_expr()
+        } else {
+            Expr::FloatLit(1.0)
+        };
         Stmt::GotoCurveKnot { knot, seconds }
     }
 
     fn parse_goto_curve_lerp(&mut self) -> Stmt {
         self.advance();
         let lerp = self.parse_expr();
-        let seconds = if self.skip_if(TokenCode::In) { self.parse_expr() } else { Expr::FloatLit(1.0) };
+        let seconds = if self.skip_if(TokenCode::In) {
+            self.parse_expr()
+        } else {
+            Expr::FloatLit(1.0)
+        };
         Stmt::GotoCurveLerp { lerp, seconds }
     }
 
@@ -595,8 +834,14 @@ impl Compiler {
                 break;
             }
         }
-        
-        Stmt::PlayAnimation { name, hold, loop_anim, rate, duration }
+
+        Stmt::PlayAnimation {
+            name,
+            hold,
+            loop_anim,
+            rate,
+            duration,
+        }
     }
 
     fn parse_play_action_animation(&mut self) -> Stmt {
@@ -617,24 +862,50 @@ impl Compiler {
                 break;
             }
         }
-        
-        Stmt::PlayActionAnimation { name, hold, loop_anim, duration }
+
+        Stmt::PlayActionAnimation {
+            name,
+            hold,
+            loop_anim,
+            duration,
+        }
     }
 
     fn parse_face(&mut self) -> Stmt {
         self.advance();
         let target = self.parse_expr();
-        let seconds = if self.skip_if(TokenCode::In) || self.skip_if(TokenCode::For) { Some(self.parse_expr()) } else { None };
+        let seconds = if self.skip_if(TokenCode::In) || self.skip_if(TokenCode::For) {
+            Some(self.parse_expr())
+        } else {
+            None
+        };
         Stmt::Face { target, seconds }
     }
 
     fn parse_goto(&mut self) -> Stmt {
         self.advance();
         let target = self.parse_expr();
-        let within = if self.skip_if(TokenCode::Within) { Some(self.parse_expr()) } else { None };
-        let speed = if self.skip_if(TokenCode::Speed) { Some(self.parse_expr()) } else { None };
-        let duration = if self.skip_if(TokenCode::For) { Some(self.parse_expr()) } else { None };
-        Stmt::GotoPoint { target, within, speed, duration }
+        let within = if self.skip_if(TokenCode::Within) {
+            Some(self.parse_expr())
+        } else {
+            None
+        };
+        let speed = if self.skip_if(TokenCode::Speed) {
+            Some(self.parse_expr())
+        } else {
+            None
+        };
+        let duration = if self.skip_if(TokenCode::For) {
+            Some(self.parse_expr())
+        } else {
+            None
+        };
+        Stmt::GotoPoint {
+            target,
+            within,
+            speed,
+            duration,
+        }
     }
 
     fn parse_spawn(&mut self) -> Stmt {
@@ -648,15 +919,32 @@ impl Compiler {
         } else {
             None
         };
-        let at = if self.skip_if(TokenCode::At) { Some(self.parse_expr()) } else { None };
-        let name = if self.skip_if(TokenCode::Name) { Some(self.parse_expr()) } else { None };
-        Stmt::Spawn { script, assign_to, at, name }
+        let at = if self.skip_if(TokenCode::At) {
+            Some(self.parse_expr())
+        } else {
+            None
+        };
+        let name = if self.skip_if(TokenCode::Name) {
+            Some(self.parse_expr())
+        } else {
+            None
+        };
+        Stmt::Spawn {
+            script,
+            assign_to,
+            at,
+            name,
+        }
     }
 
     fn parse_make_fx(&mut self) -> Stmt {
         self.advance(); // consume `makefx`
         let name = self.parse_expr();
-        let at = if self.skip_if(TokenCode::At) { Some(self.parse_expr()) } else { None };
+        let at = if self.skip_if(TokenCode::At) {
+            Some(self.parse_expr())
+        } else {
+            None
+        };
         Stmt::MakeFx { name, at }
     }
 
@@ -724,7 +1012,7 @@ impl Compiler {
     fn parse_send_action(&mut self) -> Stmt {
         self.advance(); // consume `sendaction`
         let action = self.parse_expr();
-        
+
         let target = if self.skip_if(TokenCode::To) {
             Some(self.parse_expr())
         } else if self.peek().code != TokenCode::Component {
@@ -739,7 +1027,11 @@ impl Compiler {
             None
         };
 
-        Stmt::SendAction { action, target, component }
+        Stmt::SendAction {
+            action,
+            target,
+            component,
+        }
     }
 
     fn parse_play_ambient_sound(&mut self) -> Stmt {
@@ -772,7 +1064,7 @@ impl Compiler {
         while self.code() != TokenCode::Range && !self.at_end() && !is_command_start(self.code()) {
             let key = self.peek().text.clone();
             self.advance(); // e.g. 'status' or 'name' or 'group'
-            
+
             // Sometimes there's an 'is' or '=' between key and value
             if self.code() == TokenCode::Is || self.code() == TokenCode::Equal {
                 self.advance();
@@ -783,9 +1075,9 @@ impl Compiler {
             } else {
                 Expr::IntLit(1) // Flag keywords like 'enemy' take no args
             };
-            
+
             conditions.push((key, val));
-            
+
             // Optional comma between conditions
             self.skip_if(TokenCode::Comma);
         }
@@ -794,7 +1086,11 @@ impl Compiler {
             range = Some(self.parse_expr());
         }
 
-        Stmt::Find { list_var, conditions, range }
+        Stmt::Find {
+            list_var,
+            conditions,
+            range,
+        }
     }
 
     fn parse_texture_movie(&mut self) -> Stmt {
@@ -819,7 +1115,12 @@ impl Compiler {
 
         let arg = self.parse_expr();
 
-        Stmt::TextureMovie { name, pass, action, arg }
+        Stmt::TextureMovie {
+            name,
+            pass,
+            action,
+            arg,
+        }
     }
 
     // ---- Expression parsing (Pratt-style precedence climbing) ----
@@ -833,7 +1134,11 @@ impl Compiler {
         while self.code() == TokenCode::Or {
             self.advance();
             let right = self.parse_and();
-            left = Expr::BinOp { op: BinOp::Or, left: Box::new(left), right: Box::new(right) };
+            left = Expr::BinOp {
+                op: BinOp::Or,
+                left: Box::new(left),
+                right: Box::new(right),
+            };
         }
         left
     }
@@ -843,7 +1148,11 @@ impl Compiler {
         while self.code() == TokenCode::And {
             self.advance();
             let right = self.parse_comparison();
-            left = Expr::BinOp { op: BinOp::And, left: Box::new(left), right: Box::new(right) };
+            left = Expr::BinOp {
+                op: BinOp::And,
+                left: Box::new(left),
+                right: Box::new(right),
+            };
         }
         left
     }
@@ -862,14 +1171,22 @@ impl Compiler {
                     // `status X is alive` pattern — treat "is" as equality
                     self.advance();
                     let right = self.parse_additive();
-                    left = Expr::BinOp { op: BinOp::Equal, left: Box::new(left), right: Box::new(right) };
+                    left = Expr::BinOp {
+                        op: BinOp::Equal,
+                        left: Box::new(left),
+                        right: Box::new(right),
+                    };
                     continue;
                 }
                 _ => break,
             };
             self.advance();
             let right = self.parse_additive();
-            left = Expr::BinOp { op, left: Box::new(left), right: Box::new(right) };
+            left = Expr::BinOp {
+                op,
+                left: Box::new(left),
+                right: Box::new(right),
+            };
         }
         left
     }
@@ -884,7 +1201,11 @@ impl Compiler {
             };
             self.advance();
             let right = self.parse_multiplicative();
-            left = Expr::BinOp { op, left: Box::new(left), right: Box::new(right) };
+            left = Expr::BinOp {
+                op,
+                left: Box::new(left),
+                right: Box::new(right),
+            };
         }
         left
     }
@@ -900,7 +1221,11 @@ impl Compiler {
             };
             self.advance();
             let right = self.parse_unary();
-            left = Expr::BinOp { op, left: Box::new(left), right: Box::new(right) };
+            left = Expr::BinOp {
+                op,
+                left: Box::new(left),
+                right: Box::new(right),
+            };
         }
         left
     }
@@ -921,11 +1246,42 @@ impl Compiler {
 
     fn parse_postfix(&mut self) -> Expr {
         let mut base = self.parse_primary();
-        
+
         // Handle field access like `loc.x`
         while self.code() == TokenCode::Period {
             self.advance();
-            if self.code() == TokenCode::Identifier || (!matches!(self.code(), TokenCode::IntegerConstant | TokenCode::FloatConstant | TokenCode::StringConstant | TokenCode::Eof | TokenCode::Begin | TokenCode::End | TokenCode::Whenever | TokenCode::Sequence | TokenCode::Comma | TokenCode::LeftParen | TokenCode::RightParen | TokenCode::LeftCurlyBracket | TokenCode::RightCurlyBracket | TokenCode::Colon | TokenCode::Period | TokenCode::Plus | TokenCode::Minus | TokenCode::Star | TokenCode::Slash | TokenCode::Percent | TokenCode::Equal | TokenCode::NotEqual | TokenCode::Greater | TokenCode::GreaterOrEqual | TokenCode::Less | TokenCode::LessOrEqual | TokenCode::Cross)) {
+            if self.code() == TokenCode::Identifier
+                || (!matches!(
+                    self.code(),
+                    TokenCode::IntegerConstant
+                        | TokenCode::FloatConstant
+                        | TokenCode::StringConstant
+                        | TokenCode::Eof
+                        | TokenCode::Begin
+                        | TokenCode::End
+                        | TokenCode::Whenever
+                        | TokenCode::Sequence
+                        | TokenCode::Comma
+                        | TokenCode::LeftParen
+                        | TokenCode::RightParen
+                        | TokenCode::LeftCurlyBracket
+                        | TokenCode::RightCurlyBracket
+                        | TokenCode::Colon
+                        | TokenCode::Period
+                        | TokenCode::Plus
+                        | TokenCode::Minus
+                        | TokenCode::Star
+                        | TokenCode::Slash
+                        | TokenCode::Percent
+                        | TokenCode::Equal
+                        | TokenCode::NotEqual
+                        | TokenCode::Greater
+                        | TokenCode::GreaterOrEqual
+                        | TokenCode::Less
+                        | TokenCode::LessOrEqual
+                        | TokenCode::Cross
+                ))
+            {
                 let field = self.peek().text.clone();
                 self.advance();
                 base = Expr::FieldAccess {
@@ -936,7 +1292,7 @@ impl Compiler {
                 self.error("expected field name after '.'".into());
             }
         }
-        
+
         base
     }
 
@@ -988,44 +1344,108 @@ impl Compiler {
                 Expr::VectorLit(Box::new(x), Box::new(y), Box::new(z))
             }
             // Query functions that look like function calls
-            TokenCode::Location | TokenCode::Direction | TokenCode::Distance
-            | TokenCode::Health | TokenCode::Guid | TokenCode::Status
-            | TokenCode::Random | TokenCode::RandomRange | TokenCode::RandomRangeFloat
-            | TokenCode::LineOfSight | TokenCode::Heard | TokenCode::OnCamera
-            | TokenCode::GetCurvePhase | TokenCode::GetCurveReachedEnd
-            | TokenCode::GetCurveReachedStart | TokenCode::GetCurveReachedGoto
-            | TokenCode::GetFaction | TokenCode::Exists
-            | TokenCode::Magnitude | TokenCode::Normalize
-            | TokenCode::Sin | TokenCode::Cos | TokenCode::Sqrt
-            | TokenCode::DeltaHeight | TokenCode::NavPoint
-            | TokenCode::IncomingAttack | TokenCode::IncomingAttackTime
+            TokenCode::Location
+            | TokenCode::Direction
+            | TokenCode::Distance
+            | TokenCode::Health
+            | TokenCode::Guid
+            | TokenCode::Status
+            | TokenCode::Random
+            | TokenCode::RandomRange
+            | TokenCode::RandomRangeFloat
+            | TokenCode::LineOfSight
+            | TokenCode::Heard
+            | TokenCode::OnCamera
+            | TokenCode::GetCurvePhase
+            | TokenCode::GetCurveReachedEnd
+            | TokenCode::GetCurveReachedStart
+            | TokenCode::GetCurveReachedGoto
+            | TokenCode::GetFaction
+            | TokenCode::Exists
+            | TokenCode::Magnitude
+            | TokenCode::Normalize
+            | TokenCode::Sin
+            | TokenCode::Cos
+            | TokenCode::Sqrt
+            | TokenCode::DeltaHeight
+            | TokenCode::NavPoint
+            | TokenCode::IncomingAttack
+            | TokenCode::IncomingAttackTime
             | TokenCode::SuccessiveAttacks
-            | TokenCode::GetActiveWeapon | TokenCode::GetWeaponAmmo | TokenCode::GetWeaponType
-            | TokenCode::GetScript | TokenCode::IsDone | TokenCode::IsHome
-            | TokenCode::ActorEnabled | TokenCode::GetNumKnockdowns
-            | TokenCode::ReceiveMessage | TokenCode::ReceiveAction
-            | TokenCode::GetCheckPointIndex | TokenCode::GetDetectedActor
-            | TokenCode::GetUIItemValue | TokenCode::GetLastHitType
-            | TokenCode::BlockingCommandFailed | TokenCode::IsRestricted
-            | TokenCode::First | TokenCode::Next | TokenCode::Size
+            | TokenCode::GetActiveWeapon
+            | TokenCode::GetWeaponAmmo
+            | TokenCode::GetWeaponType
+            | TokenCode::GetScript
+            | TokenCode::IsDone
+            | TokenCode::IsHome
+            | TokenCode::ActorEnabled
+            | TokenCode::GetNumKnockdowns
+            | TokenCode::ReceiveMessage
+            | TokenCode::ReceiveAction
+            | TokenCode::GetCheckPointIndex
+            | TokenCode::GetDetectedActor
+            | TokenCode::GetUIItemValue
+            | TokenCode::GetLastHitType
+            | TokenCode::BlockingCommandFailed
+            | TokenCode::IsRestricted
+            | TokenCode::First
+            | TokenCode::Next
+            | TokenCode::Size
             | TokenCode::MakeString
             | TokenCode::Damage
-            | TokenCode::Min | TokenCode::Max
-            | TokenCode::Alive | TokenCode::Fighting | TokenCode::Attacking
-            | TokenCode::Blocking | TokenCode::KnockedDown
-            | TokenCode::Armed | TokenCode::Asleep | TokenCode::Dormant
-            | TokenCode::Crouched | TokenCode::WeaponDrawn
-            | TokenCode::Grappled | TokenCode::Grappling | TokenCode::GrapplingMe
-            | TokenCode::TriggerInside | TokenCode::TriggerOutside
-            | TokenCode::TriggerEntered | TokenCode::TriggerExited
+            | TokenCode::Min
+            | TokenCode::Max
+            | TokenCode::Alive
+            | TokenCode::Fighting
+            | TokenCode::Attacking
+            | TokenCode::Blocking
+            | TokenCode::KnockedDown
+            | TokenCode::Armed
+            | TokenCode::Asleep
+            | TokenCode::Dormant
+            | TokenCode::Crouched
+            | TokenCode::WeaponDrawn
+            | TokenCode::Grappled
+            | TokenCode::Grappling
+            | TokenCode::GrapplingMe
+            | TokenCode::TriggerInside
+            | TokenCode::TriggerOutside
+            | TokenCode::TriggerEntered
+            | TokenCode::TriggerExited
             | TokenCode::TriggerGetActorsInside
             | TokenCode::PlayAmbientSound
-            | TokenCode::AmbientSoundStatus
-            => {
-                self.parse_call_expr()
-            }
+            | TokenCode::AmbientSoundStatus => self.parse_call_expr(),
             _ => {
-                if !matches!(self.code(), TokenCode::IntegerConstant | TokenCode::FloatConstant | TokenCode::StringConstant | TokenCode::Eof | TokenCode::Begin | TokenCode::End | TokenCode::Whenever | TokenCode::Sequence | TokenCode::Comma | TokenCode::LeftParen | TokenCode::RightParen | TokenCode::LeftCurlyBracket | TokenCode::RightCurlyBracket | TokenCode::Colon | TokenCode::Period | TokenCode::Plus | TokenCode::Minus | TokenCode::Star | TokenCode::Slash | TokenCode::Percent | TokenCode::Equal | TokenCode::NotEqual | TokenCode::Greater | TokenCode::GreaterOrEqual | TokenCode::Less | TokenCode::LessOrEqual | TokenCode::Cross) {
+                if !matches!(
+                    self.code(),
+                    TokenCode::IntegerConstant
+                        | TokenCode::FloatConstant
+                        | TokenCode::StringConstant
+                        | TokenCode::Eof
+                        | TokenCode::Begin
+                        | TokenCode::End
+                        | TokenCode::Whenever
+                        | TokenCode::Sequence
+                        | TokenCode::Comma
+                        | TokenCode::LeftParen
+                        | TokenCode::RightParen
+                        | TokenCode::LeftCurlyBracket
+                        | TokenCode::RightCurlyBracket
+                        | TokenCode::Colon
+                        | TokenCode::Period
+                        | TokenCode::Plus
+                        | TokenCode::Minus
+                        | TokenCode::Star
+                        | TokenCode::Slash
+                        | TokenCode::Percent
+                        | TokenCode::Equal
+                        | TokenCode::NotEqual
+                        | TokenCode::Greater
+                        | TokenCode::GreaterOrEqual
+                        | TokenCode::Less
+                        | TokenCode::LessOrEqual
+                        | TokenCode::Cross
+                ) {
                     let name = self.peek().text.clone().to_lowercase();
                     self.advance();
                     // Check for function call: name(...)
@@ -1050,7 +1470,11 @@ impl Compiler {
                         }
                     }
                 } else {
-                    self.error(format!("expected expression, found {:?} '{}'", self.code(), self.peek().text));
+                    self.error(format!(
+                        "expected expression, found {:?} '{}'",
+                        self.code(),
+                        self.peek().text
+                    ));
                     self.advance();
                     Expr::IntLit(0)
                 }
@@ -1083,7 +1507,8 @@ impl Compiler {
         }
 
         // Parse trailing 'with' kwargs for message query expressions
-        if name.eq_ignore_ascii_case("receivemessage") || name.eq_ignore_ascii_case("receiveaction") {
+        if name.eq_ignore_ascii_case("receivemessage") || name.eq_ignore_ascii_case("receiveaction")
+        {
             if self.skip_if(TokenCode::With) {
                 args.push(self.parse_expr());
                 while self.skip_if(TokenCode::Comma) {
@@ -1097,56 +1522,128 @@ impl Compiler {
 }
 
 fn is_var_type(code: TokenCode) -> bool {
-    matches!(code,
-        TokenCode::Integer | TokenCode::Float | TokenCode::Vector
-        | TokenCode::StringKw | TokenCode::Timer | TokenCode::Label
-        | TokenCode::ActorList | TokenCode::Child
+    matches!(
+        code,
+        TokenCode::Integer
+            | TokenCode::Float
+            | TokenCode::Vector
+            | TokenCode::StringKw
+            | TokenCode::Timer
+            | TokenCode::Label
+            | TokenCode::ActorList
+            | TokenCode::Child
     )
 }
 
 fn is_expr_start(code: TokenCode) -> bool {
-    matches!(code,
-        TokenCode::IntegerConstant | TokenCode::FloatConstant
-        | TokenCode::StringConstant | TokenCode::Identifier
-        | TokenCode::LeftParen | TokenCode::LeftCurlyBracket | TokenCode::Me | TokenCode::Player
-        | TokenCode::Not | TokenCode::Minus
-        | TokenCode::Location | TokenCode::Direction | TokenCode::Distance
-        | TokenCode::Health | TokenCode::Guid | TokenCode::Status
-        | TokenCode::Random | TokenCode::RandomRange | TokenCode::RandomRangeFloat
-        | TokenCode::Exists | TokenCode::Magnitude | TokenCode::Normalize
-        | TokenCode::GetCurvePhase | TokenCode::GetCurveReachedEnd
-        | TokenCode::GetCurveReachedStart | TokenCode::GetCurveReachedGoto
-        | TokenCode::LineOfSight | TokenCode::Heard | TokenCode::OnCamera
-        | TokenCode::Sin | TokenCode::Cos | TokenCode::Sqrt
-        | TokenCode::IsDone | TokenCode::IsHome
-        | TokenCode::First | TokenCode::Next | TokenCode::Size
-        | TokenCode::Damage | TokenCode::Min | TokenCode::Max
-        | TokenCode::Alive | TokenCode::Fighting | TokenCode::Attacking
-        | TokenCode::Blocking | TokenCode::KnockedDown
-        | TokenCode::ReceiveMessage | TokenCode::ReceiveAction
-        | TokenCode::MakeString
+    matches!(
+        code,
+        TokenCode::IntegerConstant
+            | TokenCode::FloatConstant
+            | TokenCode::StringConstant
+            | TokenCode::Identifier
+            | TokenCode::LeftParen
+            | TokenCode::LeftCurlyBracket
+            | TokenCode::Me
+            | TokenCode::Player
+            | TokenCode::Not
+            | TokenCode::Minus
+            | TokenCode::Location
+            | TokenCode::Direction
+            | TokenCode::Distance
+            | TokenCode::Health
+            | TokenCode::Guid
+            | TokenCode::Status
+            | TokenCode::Random
+            | TokenCode::RandomRange
+            | TokenCode::RandomRangeFloat
+            | TokenCode::Exists
+            | TokenCode::Magnitude
+            | TokenCode::Normalize
+            | TokenCode::GetCurvePhase
+            | TokenCode::GetCurveReachedEnd
+            | TokenCode::GetCurveReachedStart
+            | TokenCode::GetCurveReachedGoto
+            | TokenCode::LineOfSight
+            | TokenCode::Heard
+            | TokenCode::OnCamera
+            | TokenCode::Sin
+            | TokenCode::Cos
+            | TokenCode::Sqrt
+            | TokenCode::IsDone
+            | TokenCode::IsHome
+            | TokenCode::First
+            | TokenCode::Next
+            | TokenCode::Size
+            | TokenCode::Damage
+            | TokenCode::Min
+            | TokenCode::Max
+            | TokenCode::Alive
+            | TokenCode::Fighting
+            | TokenCode::Attacking
+            | TokenCode::Blocking
+            | TokenCode::KnockedDown
+            | TokenCode::ReceiveMessage
+            | TokenCode::ReceiveAction
+            | TokenCode::MakeString
     )
 }
 
 fn is_command_start(code: TokenCode) -> bool {
-    matches!(code,
-        TokenCode::Set | TokenCode::If | TokenCode::Begin | TokenCode::Do
-        | TokenCode::Exit | TokenCode::Done | TokenCode::Home | TokenCode::Log
-        | TokenCode::GotoCurvePhase | TokenCode::SetCurvePhase | TokenCode::SetCurveSpeed
-        | TokenCode::SetCurvePingPong | TokenCode::SetCurve
-        | TokenCode::PlayAnimation | TokenCode::PlayActionAnimation
-        | TokenCode::Idle | TokenCode::For | TokenCode::Face | TokenCode::Goto
-        | TokenCode::Fight | TokenCode::Shoot | TokenCode::Patrol | TokenCode::Follow
-        | TokenCode::Stack | TokenCode::Switch | TokenCode::ChildStack | TokenCode::ChildSwitch
-        | TokenCode::SendMessage | TokenCode::Spawn | TokenCode::Destroy
-        | TokenCode::End | TokenCode::Eof
-        | TokenCode::DrawText | TokenCode::At
-        | TokenCode::CameraFollowActor | TokenCode::CameraTrackActor | TokenCode::CameraTrackPoint
-        | TokenCode::CameraMoveToActor | TokenCode::CameraMoveToPoint
-        | TokenCode::CameraCutToActor | TokenCode::CameraCutToPoint | TokenCode::CameraSetFOV
-        | TokenCode::CameraShake | TokenCode::Sound | TokenCode::AmbientSound
-        | TokenCode::SetFogColor | TokenCode::SetFogClamp | TokenCode::SetFogPalettePower | TokenCode::SetFogType
-        | TokenCode::SetShaderLocal | TokenCode::SetLightParameter | TokenCode::Intensity
+    matches!(
+        code,
+        TokenCode::Set
+            | TokenCode::If
+            | TokenCode::Begin
+            | TokenCode::Do
+            | TokenCode::Exit
+            | TokenCode::Done
+            | TokenCode::Home
+            | TokenCode::Log
+            | TokenCode::GotoCurvePhase
+            | TokenCode::SetCurvePhase
+            | TokenCode::SetCurveSpeed
+            | TokenCode::SetCurvePingPong
+            | TokenCode::SetCurve
+            | TokenCode::PlayAnimation
+            | TokenCode::PlayActionAnimation
+            | TokenCode::Idle
+            | TokenCode::For
+            | TokenCode::Face
+            | TokenCode::Goto
+            | TokenCode::Fight
+            | TokenCode::Shoot
+            | TokenCode::Patrol
+            | TokenCode::Follow
+            | TokenCode::Stack
+            | TokenCode::Switch
+            | TokenCode::ChildStack
+            | TokenCode::ChildSwitch
+            | TokenCode::SendMessage
+            | TokenCode::Spawn
+            | TokenCode::Destroy
+            | TokenCode::End
+            | TokenCode::Eof
+            | TokenCode::DrawText
+            | TokenCode::At
+            | TokenCode::CameraFollowActor
+            | TokenCode::CameraTrackActor
+            | TokenCode::CameraTrackPoint
+            | TokenCode::CameraMoveToActor
+            | TokenCode::CameraMoveToPoint
+            | TokenCode::CameraCutToActor
+            | TokenCode::CameraCutToPoint
+            | TokenCode::CameraSetFOV
+            | TokenCode::CameraShake
+            | TokenCode::Sound
+            | TokenCode::AmbientSound
+            | TokenCode::SetFogColor
+            | TokenCode::SetFogClamp
+            | TokenCode::SetFogPalettePower
+            | TokenCode::SetFogType
+            | TokenCode::SetShaderLocal
+            | TokenCode::SetLightParameter
+            | TokenCode::Intensity
     )
 }
 

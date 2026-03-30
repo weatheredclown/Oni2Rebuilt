@@ -36,7 +36,10 @@ pub fn combat_events_to_record_batch(
     let schema = Arc::new(combat_event_schema());
 
     let event_ids: Vec<String> = events.iter().map(|e| e.event_id.to_string()).collect();
-    let timestamps: Vec<i64> = events.iter().map(|e| e.timestamp.timestamp_millis()).collect();
+    let timestamps: Vec<i64> = events
+        .iter()
+        .map(|e| e.timestamp.timestamp_millis())
+        .collect();
     let event_types: Vec<String> = events
         .iter()
         .map(|e| format!("{:?}", e.event_type))
@@ -55,9 +58,7 @@ pub fn combat_events_to_record_batch(
         schema,
         vec![
             Arc::new(StringArray::from(event_ids)),
-            Arc::new(
-                TimestampMillisecondArray::from(timestamps).with_timezone("UTC"),
-            ),
+            Arc::new(TimestampMillisecondArray::from(timestamps).with_timezone("UTC")),
             Arc::new(StringArray::from(event_types)),
             Arc::new(StringArray::from(attacker_ids)),
             Arc::new(StringArray::from(target_ids)),

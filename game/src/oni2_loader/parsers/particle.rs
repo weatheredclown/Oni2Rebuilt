@@ -30,7 +30,12 @@ pub struct ParticleSystemDef {
 //   Key Value
 //   Key Value Value Value
 // }
-pub fn parse_ptx(content: &str, name: String, asset_server: &AssetServer, images: &mut Assets<Image>) -> Option<ParticleSystemDef> {
+pub fn parse_ptx(
+    content: &str,
+    name: String,
+    asset_server: &AssetServer,
+    images: &mut Assets<Image>,
+) -> Option<ParticleSystemDef> {
     let mut texture = asset_server.add(Image::default()); // Placeholder
     let mut position_var = Vec3::ZERO;
     let mut radius_birth = Vec2::ZERO;
@@ -52,44 +57,137 @@ pub fn parse_ptx(content: &str, name: String, asset_server: &AssetServer, images
 
     for line in content.lines() {
         let tokens: Vec<&str> = line.split_whitespace().collect();
-        if tokens.is_empty() { continue; }
+        if tokens.is_empty() {
+            continue;
+        }
 
         match tokens[0] {
             "TextureName" => {
                 if tokens.len() > 1 {
                     let tex_name = tokens[1];
-                    if let Some((h, _)) = crate::oni2_loader::parsers::texture::load_tga_texture("texture", tex_name, images) {
+                    if let Some((h, _)) = crate::oni2_loader::parsers::texture::load_tga_texture(
+                        "texture", tex_name, images,
+                    ) {
                         texture = h;
                     } else {
                         texture = asset_server.load(format!("texture/{}.tga", tex_name));
                     }
                 }
             }
-            "PositionVar" => if tokens.len() > 3 { position_var = Vec3::new(tokens[1].parse().unwrap_or(0.0), tokens[2].parse().unwrap_or(0.0), tokens[3].parse().unwrap_or(0.0)); },
-            "RadiusBirth" => if tokens.len() > 2 { radius_birth = Vec2::new(tokens[1].parse().unwrap_or(0.0), tokens[2].parse().unwrap_or(0.0)); },
-            "Life" => if tokens.len() > 1 { life = tokens[1].parse().unwrap_or(1.0); },
-            "LifeVar" => if tokens.len() > 1 { life_var = tokens[1].parse().unwrap_or(0.0); },
-            "Velocity" => if tokens.len() > 3 { velocity = Vec3::new(tokens[1].parse().unwrap_or(0.0), tokens[2].parse().unwrap_or(0.0), tokens[3].parse().unwrap_or(0.0)); },
-            "VelocityVar" => if tokens.len() > 3 { velocity_var = Vec3::new(tokens[1].parse().unwrap_or(0.0), tokens[2].parse().unwrap_or(0.0), tokens[3].parse().unwrap_or(0.0)); },
-            "VelocityDamping" => if tokens.len() > 3 { velocity_damping = Vec3::new(tokens[1].parse().unwrap_or(0.0), tokens[2].parse().unwrap_or(0.0), tokens[3].parse().unwrap_or(0.0)); },
-            "Gravity" => if tokens.len() > 1 { gravity = tokens[1].parse().unwrap_or(0.0); },
+            "PositionVar" => {
+                if tokens.len() > 3 {
+                    position_var = Vec3::new(
+                        tokens[1].parse().unwrap_or(0.0),
+                        tokens[2].parse().unwrap_or(0.0),
+                        tokens[3].parse().unwrap_or(0.0),
+                    );
+                }
+            }
+            "RadiusBirth" => {
+                if tokens.len() > 2 {
+                    radius_birth = Vec2::new(
+                        tokens[1].parse().unwrap_or(0.0),
+                        tokens[2].parse().unwrap_or(0.0),
+                    );
+                }
+            }
+            "Life" => {
+                if tokens.len() > 1 {
+                    life = tokens[1].parse().unwrap_or(1.0);
+                }
+            }
+            "LifeVar" => {
+                if tokens.len() > 1 {
+                    life_var = tokens[1].parse().unwrap_or(0.0);
+                }
+            }
+            "Velocity" => {
+                if tokens.len() > 3 {
+                    velocity = Vec3::new(
+                        tokens[1].parse().unwrap_or(0.0),
+                        tokens[2].parse().unwrap_or(0.0),
+                        tokens[3].parse().unwrap_or(0.0),
+                    );
+                }
+            }
+            "VelocityVar" => {
+                if tokens.len() > 3 {
+                    velocity_var = Vec3::new(
+                        tokens[1].parse().unwrap_or(0.0),
+                        tokens[2].parse().unwrap_or(0.0),
+                        tokens[3].parse().unwrap_or(0.0),
+                    );
+                }
+            }
+            "VelocityDamping" => {
+                if tokens.len() > 3 {
+                    velocity_damping = Vec3::new(
+                        tokens[1].parse().unwrap_or(0.0),
+                        tokens[2].parse().unwrap_or(0.0),
+                        tokens[3].parse().unwrap_or(0.0),
+                    );
+                }
+            }
+            "Gravity" => {
+                if tokens.len() > 1 {
+                    gravity = tokens[1].parse().unwrap_or(0.0);
+                }
+            }
             "ColorBirth" => {
-                if tokens.len() > 4 { 
-                    color_birth = Color::srgba(tokens[1].parse().unwrap_or(1.0), tokens[2].parse().unwrap_or(1.0), tokens[3].parse().unwrap_or(1.0), tokens[4].parse().unwrap_or(1.0)); 
+                if tokens.len() > 4 {
+                    color_birth = Color::srgba(
+                        tokens[1].parse().unwrap_or(1.0),
+                        tokens[2].parse().unwrap_or(1.0),
+                        tokens[3].parse().unwrap_or(1.0),
+                        tokens[4].parse().unwrap_or(1.0),
+                    );
                 }
             }
             "ColorDeath" => {
-                if tokens.len() > 4 { 
-                    color_death = Color::srgba(tokens[1].parse().unwrap_or(1.0), tokens[2].parse().unwrap_or(1.0), tokens[3].parse().unwrap_or(1.0), tokens[4].parse().unwrap_or(1.0)); 
+                if tokens.len() > 4 {
+                    color_death = Color::srgba(
+                        tokens[1].parse().unwrap_or(1.0),
+                        tokens[2].parse().unwrap_or(1.0),
+                        tokens[3].parse().unwrap_or(1.0),
+                        tokens[4].parse().unwrap_or(1.0),
+                    );
                 }
             }
-            "Rate" => if tokens.len() > 1 { rate = tokens[1].parse().unwrap_or(1.0); },
-            "BlendSet" => if tokens.len() > 1 { blend_set = tokens[1].parse().unwrap_or(0); },
-            "FrameRate" => if tokens.len() > 1 { frame_rate = tokens[1].parse().unwrap_or(0.0); },
-            "NumTextureTilesX" => if tokens.len() > 1 { grid_x = tokens[1].parse().unwrap_or(1); },
-            "NumTextureTilesY" => if tokens.len() > 1 { grid_y = tokens[1].parse().unwrap_or(1); },
-            "StartTextureTile" => if tokens.len() > 1 { start_tile = tokens[1].parse().unwrap_or(0); },
-            "EndTextureTile" => if tokens.len() > 1 { end_tile = tokens[1].parse().unwrap_or(0); },
+            "Rate" => {
+                if tokens.len() > 1 {
+                    rate = tokens[1].parse().unwrap_or(1.0);
+                }
+            }
+            "BlendSet" => {
+                if tokens.len() > 1 {
+                    blend_set = tokens[1].parse().unwrap_or(0);
+                }
+            }
+            "FrameRate" => {
+                if tokens.len() > 1 {
+                    frame_rate = tokens[1].parse().unwrap_or(0.0);
+                }
+            }
+            "NumTextureTilesX" => {
+                if tokens.len() > 1 {
+                    grid_x = tokens[1].parse().unwrap_or(1);
+                }
+            }
+            "NumTextureTilesY" => {
+                if tokens.len() > 1 {
+                    grid_y = tokens[1].parse().unwrap_or(1);
+                }
+            }
+            "StartTextureTile" => {
+                if tokens.len() > 1 {
+                    start_tile = tokens[1].parse().unwrap_or(0);
+                }
+            }
+            "EndTextureTile" => {
+                if tokens.len() > 1 {
+                    end_tile = tokens[1].parse().unwrap_or(0);
+                }
+            }
             _ => {}
         }
     }

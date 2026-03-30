@@ -59,5 +59,11 @@ pub fn parse_bound(content: &str) -> Oni2Bound {
     centroid[0] = -centroid[0];
     centroid[2] = -centroid[2];
 
-    Oni2Bound { vertices, centroid, edges, quads, tris }
+    Oni2Bound {
+        vertices,
+        centroid,
+        edges,
+        quads,
+        tris,
+    }
 }

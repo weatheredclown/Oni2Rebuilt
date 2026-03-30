@@ -4,8 +4,8 @@ use bevy::math::Vec3;
 /// Control points from layout.paths, knot vector generated with multiple end knots.
 pub struct NurbsCurve {
     points: Vec<Vec3>,
-    kt: Vec<f32>,    // knot vector t-values
-    nkv: usize,      // length of knot vector
+    kt: Vec<f32>, // knot vector t-values
+    nkv: usize,   // length of knot vector
 }
 
 impl NurbsCurve {
@@ -73,10 +73,26 @@ impl NurbsCurve {
         let kt = &self.kt;
 
         // Order 1 (degree 0) basis functions
-        let b01 = if kt[i] <= t && t < kt[i + 1] { 1.0 } else { 0.0 };
-        let b11 = if kt[i + 1] <= t && t < kt[i + 2] { 1.0 } else { 0.0 };
-        let b21 = if kt[i + 2] <= t && t < kt[i + 3] { 1.0 } else { 0.0 };
-        let b31 = if kt[i + 3] <= t && t < kt[i + 4] { 1.0 } else { 0.0 };
+        let b01 = if kt[i] <= t && t < kt[i + 1] {
+            1.0
+        } else {
+            0.0
+        };
+        let b11 = if kt[i + 1] <= t && t < kt[i + 2] {
+            1.0
+        } else {
+            0.0
+        };
+        let b21 = if kt[i + 2] <= t && t < kt[i + 3] {
+            1.0
+        } else {
+            0.0
+        };
+        let b31 = if kt[i + 3] <= t && t < kt[i + 4] {
+            1.0
+        } else {
+            0.0
+        };
 
         // Order 2
         let b22 = {
@@ -143,4 +159,3 @@ impl NurbsCurve {
         }
     }
 }
-

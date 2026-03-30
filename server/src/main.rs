@@ -59,11 +59,7 @@ impl TelemetryService for TelemetryServiceImpl {
         {
             let mut buffer = self.state.buffer.lock().await;
             buffer.extend(events);
-            tracing::info!(
-                "gRPC: ingested {} events (buffer: {})",
-                count,
-                buffer.len()
-            );
+            tracing::info!("gRPC: ingested {} events (buffer: {})", count, buffer.len());
             should_flush = buffer.len() >= 64;
         }
 
@@ -154,9 +150,7 @@ async fn main() {
     // Spawn gRPC server on port 50051
     let grpc_state = Arc::clone(&state);
     tokio::spawn(async move {
-        let service = TelemetryServiceImpl {
-            state: grpc_state,
-        };
+        let service = TelemetryServiceImpl { state: grpc_state };
         tracing::info!("gRPC server listening on port 50051");
         tonic::transport::Server::builder()
             .add_service(TelemetryServiceServer::new(service))
@@ -173,9 +167,7 @@ async fn main() {
         .layer(CorsLayer::permissive())
         .with_state(state);
 
-    let listener = tokio::net::TcpListener::bind("0.0.0.0:3001")
-        .await
-        .unwrap();
+    let listener = tokio::net::TcpListener::bind("0.0.0.0:3001").await.unwrap();
     tracing::info!("REST server listening on port 3001");
     axum::serve(listener, app).await.unwrap();
 }

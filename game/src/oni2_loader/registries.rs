@@ -1,15 +1,15 @@
 use bevy::prelude::*;
 use std::collections::HashMap;
 
-use crate::oni2_loader::parsers::effect::{parse_effect, EffectDef};
-use crate::oni2_loader::parsers::particle::{parse_ptx, ParticleSystemDef};
-use crate::oni2_loader::parsers::projectile::{parse_projectile, ProjectileDef};
-use crate::oni2_loader::parsers::settings::parse_settings;
-use crate::oni2_loader::Oni2Skeleton;
 use crate::oni2_loader::Oni2AnimLibrary;
 use crate::oni2_loader::Oni2DebugBounds;
-use bevy::mesh::skinning::SkinnedMeshInverseBindposes;
+use crate::oni2_loader::Oni2Skeleton;
+use crate::oni2_loader::parsers::effect::{EffectDef, parse_effect};
+use crate::oni2_loader::parsers::particle::{ParticleSystemDef, parse_ptx};
+use crate::oni2_loader::parsers::projectile::{ProjectileDef, parse_projectile};
+use crate::oni2_loader::parsers::settings::parse_settings;
 use crate::vfs;
+use bevy::mesh::skinning::SkinnedMeshInverseBindposes;
 
 #[derive(Component, Clone, Default, Debug)]
 pub struct TextureUVAnimator {
@@ -26,7 +26,14 @@ pub struct EntityLibrary {
 
 #[derive(Resource, Default)]
 pub struct AnimRegistry {
-    pub libraries: HashMap<String, (Oni2AnimLibrary, Option<crate::oni2_loader::parsers::loco::LocomotionController>, Option<crate::oni2_loader::parsers::jump::JumpController>)>,
+    pub libraries: HashMap<
+        String,
+        (
+            Oni2AnimLibrary,
+            Option<crate::oni2_loader::parsers::loco::LocomotionController>,
+            Option<crate::oni2_loader::parsers::jump::JumpController>,
+        ),
+    >,
 }
 
 #[derive(Clone)]
@@ -72,7 +79,9 @@ pub fn load_global_registries(
     if let Ok(content) = vfs::read_to_string("Settings", "rb.proj") {
         let blocks = parse_settings(&content);
         for def in &blocks {
-            if let Some(parsed) = parse_projectile(&def.def_type, &def.name, &def.block, &asset_server) {
+            if let Some(parsed) =
+                parse_projectile(&def.def_type, &def.name, &def.block, &asset_server)
+            {
                 proj_lib.projectiles.insert(def.name.to_lowercase(), parsed);
             }
         }
@@ -84,14 +93,37 @@ pub fn load_global_registries(
     if let Ok(content) = vfs::read_to_string("Settings", "rb.fx") {
         let blocks = parse_settings(&content);
         for def in &blocks {
-            if let Some(parsed) = parse_effect(&def.def_type, &def.name, &def.block, &asset_server, &mut images) {
-                fx_lib.effects.insert(def.name.to_lowercase(), parsed.clone());
+            if let Some(parsed) = parse_effect(
+                &def.def_type,
+                &def.name,
+                &def.block,
+                &asset_server,
+                &mut images,
+            ) {
+                fx_lib
+                    .effects
+                    .insert(def.name.to_lowercase(), parsed.clone());
 
                 // Eagerly load .ptx files if this effect references one
                 match &parsed {
-                    EffectDef::Particle(p) => try_load_ptx(&p.system.system_name, &asset_server, &mut ptx_lib, &mut images),
-                    EffectDef::DelayedParticle(d) => try_load_ptx(&d.system.system_name, &asset_server, &mut ptx_lib, &mut images),
-                    EffectDef::HealthIndicator(h) => try_load_ptx(&h.system.system_name, &asset_server, &mut ptx_lib, &mut images),
+                    EffectDef::Particle(p) => try_load_ptx(
+                        &p.system.system_name,
+                        &asset_server,
+                        &mut ptx_lib,
+                        &mut images,
+                    ),
+                    EffectDef::DelayedParticle(d) => try_load_ptx(
+                        &d.system.system_name,
+                        &asset_server,
+                        &mut ptx_lib,
+                        &mut images,
+                    ),
+                    EffectDef::HealthIndicator(h) => try_load_ptx(
+                        &h.system.system_name,
+                        &asset_server,
+                        &mut ptx_lib,
+                        &mut images,
+                    ),
                     _ => {}
                 }
             }
@@ -101,7 +133,12 @@ pub fn load_global_registries(
     }
 }
 
-pub fn try_load_ptx(name: &str, asset_server: &AssetServer, ptx_lib: &mut ParticleLibrary, images: &mut Assets<Image>) {
+pub fn try_load_ptx(
+    name: &str,
+    asset_server: &AssetServer,
+    ptx_lib: &mut ParticleLibrary,
+    images: &mut Assets<Image>,
+) {
     let lower_name = name.to_lowercase();
     if ptx_lib.systems.contains_key(&lower_name) {
         return; // Already loaded
@@ -118,7 +155,12 @@ pub fn try_load_ptx(name: &str, asset_server: &AssetServer, ptx_lib: &mut Partic
     // Case-insensitive search inside Settings/ folder as fallback
     if let Ok(entries) = vfs::read_dir("Settings") {
         for entry in entries {
-            if !entry.is_dir && entry.path.to_lowercase().ends_with(&format!("/{}.ptx", lower_name)) {
+            if !entry.is_dir
+                && entry
+                    .path
+                    .to_lowercase()
+                    .ends_with(&format!("/{}.ptx", lower_name))
+            {
                 // vfs read_dir returns full paths, but read_to_string requires (dir, filename)
                 // We'll extract the filename component safely.
                 let fallback_filename = entry.path.split('/').last().unwrap_or("");
@@ -131,5 +173,8 @@ pub fn try_load_ptx(name: &str, asset_server: &AssetServer, ptx_lib: &mut Partic
             }
         }
     }
-    warn!("Expected to find {}.ptx for particle system but it was not found in Settings/.", name);
+    warn!(
+        "Expected to find {}.ptx for particle system but it was not found in Settings/.",
+        name
+    );
 }

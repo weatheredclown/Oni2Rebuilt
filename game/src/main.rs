@@ -2,22 +2,22 @@ mod ai;
 mod camera;
 mod combat;
 mod filesystem;
+mod fx_system;
 mod hud;
 mod menu;
 mod oni2_loader;
 mod player;
+mod projectile_system;
 mod scroni;
 mod telemetry;
-mod fx_system;
-mod projectile_system;
 pub use filesystem::dave_vfs;
 pub use filesystem::vfs;
 
 use avian3d::prelude::*;
-use bevy::diagnostic::{FrameTimeDiagnosticsPlugin, DiagnosticsStore};
+use bevy::diagnostic::{DiagnosticsStore, FrameTimeDiagnosticsPlugin};
+use bevy::ecs::relationship::Relationship;
 use bevy::gizmos::config::GizmoConfigStore;
 use bevy::prelude::*;
-use bevy::ecs::relationship::Relationship;
 use uuid::Uuid;
 
 use camera::components::{CameraRig, PrototypeElement};
@@ -27,12 +27,14 @@ use oni2_loader::TestAnimMode;
 use player::components::*;
 use std::sync::OnceLock;
 
-
 pub static ASSETS_PATH: OnceLock<String> = OnceLock::new();
 pub static ASSETS_DAT: OnceLock<String> = OnceLock::new();
 
 pub fn get_assets_path() -> &'static str {
-    ASSETS_PATH.get().map(|s| s.as_str()).unwrap_or("oni2/zips/assets")
+    ASSETS_PATH
+        .get()
+        .map(|s| s.as_str())
+        .unwrap_or("oni2/zips/assets")
 }
 
 pub fn get_assets_dat() -> &'static str {
@@ -49,29 +51,35 @@ struct FormationMode;
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
-    
-    let cli_path = args.windows(2).find_map(|w| {
-        if w[0] == "--path" {
-            Some(w[1].clone())
-        } else {
-            None
-        }
-    });
 
-    if let Some(ref p) = cli_path {
-        ASSETS_PATH.set(p.clone()).ok();
+    let mut cli_paths: Vec<String> = args
+        .windows(2)
+        .filter(|w| w[0] == "--path")
+        .map(|w| w[1].clone())
+        .collect();
+
+    if cli_paths.is_empty() {
+        cli_paths.push("oni2/zips/assets".to_string());
+        cli_paths.push("oni2/zips/streams".to_string());
     }
-    
-    let cli_dat = args.windows(2).find_map(|w| {
-        if w[0] == "--dat" {
-            Some(w[1].clone())
-        } else {
-            None
-        }
-    });
 
-    if let Some(ref p) = cli_dat {
-        ASSETS_DAT.set(p.clone()).ok();
+    let mut cli_dats: Vec<String> = args
+        .windows(2)
+        .filter(|w| w[0] == "--dat")
+        .map(|w| w[1].clone())
+        .collect();
+
+    if cli_dats.is_empty() {
+        cli_dats.push("RB.DAT".to_string());
+        cli_dats.push("STREAMS.DAT".to_string());
+    }
+
+    // Set fallback singletons for logic needing a primary path/dat if they still use it
+    if !cli_paths.is_empty() {
+        ASSETS_PATH.set(cli_paths[0].clone()).ok();
+    }
+    if !cli_dats.is_empty() {
+        ASSETS_DAT.set(cli_dats[0].clone()).ok();
     }
 
     let cli_layout = args.windows(2).find_map(|w| {
@@ -89,13 +97,16 @@ fn main() {
         }
     });
 
-    let cli_testentity = args.iter().position(|a| a == "--testentity" || a == "--entitytest").map(|i| {
-        if i + 1 < args.len() && !args[i + 1].starts_with("--") {
-            args[i + 1].clone()
-        } else {
-            String::new()
-        }
-    });
+    let cli_testentity = args
+        .iter()
+        .position(|a| a == "--testentity" || a == "--entitytest")
+        .map(|i| {
+            if i + 1 < args.len() && !args[i + 1].starts_with("--") {
+                args[i + 1].clone()
+            } else {
+                String::new()
+            }
+        });
     let sandbox_mode = args.iter().any(|a| a == "--sandbox");
     let formation_mode = args.iter().any(|a| a == "--formation");
     let diagnostics_mode = args.iter().any(|a| a == "--diagnostics");
@@ -103,34 +114,31 @@ fn main() {
 
     let mut app = App::new();
 
-    let disk_vfs = Box::new(vfs::DiskVfs::new(get_assets_path().to_string()));
-    
-    let dave_path_str = get_assets_dat();
-    let dave_path = std::path::Path::new(dave_path_str);
-        
-    if dave_path.exists() {
-        println!("Found Dave archive at {:?}, enabling DaveVfs", dave_path);
-        match dave_vfs::DaveVfs::new(dave_path_str) {
-            Ok(dave_vfs) => {
-                if cli_path.is_some() {
-                    println!("--path provided. Using FallbackVfs (Disk primary, Dave fallback).");
-                    let fallback = Box::new(vfs::FallbackVfs::new(disk_vfs, Box::new(dave_vfs)));
-                    vfs::set_vfs(fallback);
-                } else {
-                    println!("No --path provided. Using DaveVfs exclusively.");
-                    vfs::set_vfs(Box::new(dave_vfs));
+    let mut multi_vfs = vfs::MultiVfs::new();
+
+    for disk_path in &cli_paths {
+        if std::path::Path::new(disk_path).exists() {
+            println!("Mounting DiskVfs at: {}", disk_path);
+            multi_vfs.push(Box::new(vfs::DiskVfs::new(disk_path.to_string())));
+        }
+    }
+
+    for dat_path_str in &cli_dats {
+        let dat_path = std::path::Path::new(dat_path_str);
+        if dat_path.exists() || (dat_path.is_dir() && dat_path.join("RB.DAT").exists()) {
+            match dave_vfs::DaveVfs::new(dat_path_str) {
+                Ok(dave_vfs) => {
+                    println!("Mounting DaveVfs archive at: {}", dat_path_str);
+                    multi_vfs.push(Box::new(dave_vfs));
+                }
+                Err(e) => {
+                    println!("Failed to initialize DaveVfs for {}: {}", dat_path_str, e);
                 }
             }
-            Err(e) => {
-                println!("Failed to initialize DaveVfs: {}", e);
-                println!("Falling back to DiskVfs only.");
-                vfs::set_vfs(disk_vfs);
-            }
         }
-    } else {
-        println!("Using DiskVfs only at {}", get_assets_path());
-        vfs::set_vfs(disk_vfs);
     }
+
+    vfs::set_vfs(Box::new(multi_vfs));
 
     app.add_plugins(DefaultPlugins.set(WindowPlugin {
         primary_window: Some(Window {
@@ -162,17 +170,16 @@ fn main() {
     }
 
     app.init_resource::<scroni::vm::ScroniTextState>()
-       .init_resource::<oni2_loader::DebugLightGridState>()
-       .init_resource::<oni2_loader::registries::EntityLibrary>()
-       .init_resource::<oni2_loader::registries::AnimRegistry>()
-       .init_resource::<oni2_loader::registries::ProjLibrary>()
-       .init_resource::<oni2_loader::registries::FxLibrary>()
-       .init_resource::<oni2_loader::registries::ParticleLibrary>()
-       .init_resource::<crate::oni2_loader::components::CurrentCheckpointIndex>()
-       .add_observer(scroni::vm::scroni_sys_event_observer);
+        .init_resource::<oni2_loader::DebugLightGridState>()
+        .init_resource::<oni2_loader::registries::EntityLibrary>()
+        .init_resource::<oni2_loader::registries::AnimRegistry>()
+        .init_resource::<oni2_loader::registries::ProjLibrary>()
+        .init_resource::<oni2_loader::registries::FxLibrary>()
+        .init_resource::<oni2_loader::registries::ParticleLibrary>()
+        .init_resource::<crate::oni2_loader::components::CurrentCheckpointIndex>()
+        .add_observer(scroni::vm::scroni_sys_event_observer);
 
-    app
-    .add_systems(
+    app.add_systems(
         OnEnter(AppState::InGame),
         setup_scene.run_if(
             not(resource_exists::<TestAnimMode>)
@@ -207,8 +214,7 @@ fn main() {
             oni2_loader::update_oni2_animation,
             oni2_loader::creature_movement_anim_system,
             oni2_loader::ground_snap_system,
-            oni2_loader::apply_fog_to_camera
-                .run_if(resource_exists::<oni2_loader::FogEnabled>),
+            oni2_loader::apply_fog_to_camera.run_if(resource_exists::<oni2_loader::FogEnabled>),
             oni2_loader::update_skyhat,
             scroni::vm::update_broadcast_triggers.before(scroni::vm::scroni_tick_system),
             scroni::vm::checkpoint_trigger_system.before(scroni::vm::scroni_tick_system),
@@ -239,16 +245,38 @@ fn main() {
         (
             oni2_loader::testanim_input_system,
             oni2_loader::update_testanim_hud,
-        ).run_if(in_state(AppState::InGame).and(resource_exists::<TestAnimMode>)),
+        )
+            .run_if(in_state(AppState::InGame).and(resource_exists::<TestAnimMode>)),
     )
     .add_systems(
         Update,
-        oni2_loader::orbit_camera_system.run_if(
-            in_state(AppState::InGame).and(|t1: Option<Res<TestAnimMode>>, t2: Option<Res<oni2_loader::TestEntityMode>>| t1.is_some() || t2.is_some())
+        oni2_loader::orbit_camera_system.run_if(in_state(AppState::InGame).and(
+            |t1: Option<Res<TestAnimMode>>, t2: Option<Res<oni2_loader::TestEntityMode>>| {
+                t1.is_some() || t2.is_some()
+            },
+        )),
+    )
+    .add_systems(
+        Startup,
+        (
+            setup_fps_counter,
+            disable_physics_debug,
+            oni2_loader::load_global_registries,
         ),
     )
-    .add_systems(Startup, (setup_fps_counter, disable_physics_debug, oni2_loader::load_global_registries))
-    .add_systems(Update, (update_fps_counter, toggle_physics_debug, toggle_debug_light, debug_kill_creatures, oni2_loader::toggle_debug_fog, oni2_loader::toggle_debug_light_grid, oni2_loader::update_debug_light_grid, debug_scan_player_geometry));
+    .add_systems(
+        Update,
+        (
+            update_fps_counter,
+            toggle_physics_debug,
+            toggle_debug_light,
+            debug_kill_creatures,
+            oni2_loader::toggle_debug_fog,
+            oni2_loader::toggle_debug_light_grid,
+            oni2_loader::update_debug_light_grid,
+            debug_scan_player_geometry,
+        ),
+    );
 
     if diagnostics_mode {
         app.add_plugins(bevy::diagnostic::LogDiagnosticsPlugin::default());
@@ -281,7 +309,6 @@ fn main() {
     } else {
         app.init_state::<AppState>();
     }
-
 
     app.run();
 }
@@ -323,7 +350,6 @@ fn setup_scene(
 
     let fist_mesh = meshes.add(Sphere::new(0.15));
     let shield_mesh = meshes.add(Circle::new(0.5));
-
 
     commands.insert_resource(CombatMaterials {
         fist_startup: fist_startup.clone(),
@@ -588,7 +614,11 @@ fn setup_formation_scene(
         for entry in entries {
             if entry.is_dir {
                 let dir_path_str = &entry.path;
-                let dir_name = dir_path_str.split('/').last().unwrap_or_default().to_string();
+                let dir_name = dir_path_str
+                    .split('/')
+                    .last()
+                    .unwrap_or_default()
+                    .to_string();
 
                 // 3-letter character directories with Entity.type
                 if dir_name.len() == 3 && crate::vfs::exists(dir_path_str, "Entity.type") {
@@ -672,7 +702,9 @@ fn free_camera_system(
     accumulated_motion: Res<bevy::input::mouse::AccumulatedMouseMotion>,
     mut query: Query<(&mut Transform, &mut FreeCamera)>,
 ) {
-    let Ok((mut transform, mut cam)) = query.single_mut() else { return };
+    let Ok((mut transform, mut cam)) = query.single_mut() else {
+        return;
+    };
 
     // Mouse look (hold right mouse button)
     if mouse_button.pressed(MouseButton::Right) {
@@ -694,12 +726,24 @@ fn free_camera_system(
     let right = Vec3::new(-cam.yaw.cos(), 0.0, cam.yaw.sin()).normalize();
     let mut velocity = Vec3::ZERO;
 
-    if keyboard.pressed(KeyCode::KeyS) { velocity += forward; }
-    if keyboard.pressed(KeyCode::KeyW) { velocity -= forward; }
-    if keyboard.pressed(KeyCode::KeyA) { velocity += right; }
-    if keyboard.pressed(KeyCode::KeyD) { velocity -= right; }
-    if keyboard.pressed(KeyCode::Space) { velocity += Vec3::Y; }
-    if keyboard.pressed(KeyCode::ControlLeft) { velocity -= Vec3::Y; }
+    if keyboard.pressed(KeyCode::KeyS) {
+        velocity += forward;
+    }
+    if keyboard.pressed(KeyCode::KeyW) {
+        velocity -= forward;
+    }
+    if keyboard.pressed(KeyCode::KeyA) {
+        velocity += right;
+    }
+    if keyboard.pressed(KeyCode::KeyD) {
+        velocity -= right;
+    }
+    if keyboard.pressed(KeyCode::Space) {
+        velocity += Vec3::Y;
+    }
+    if keyboard.pressed(KeyCode::ControlLeft) {
+        velocity -= Vec3::Y;
+    }
 
     if velocity.length_squared() > 0.0 {
         velocity = velocity.normalize() * speed * time.delta_secs();
@@ -753,18 +797,21 @@ fn update_fps_counter(
 
 /// Start with avian3d physics debug gizmos disabled.
 fn disable_physics_debug(mut store: ResMut<GizmoConfigStore>) {
-    store.config_mut::<avian3d::debug_render::PhysicsGizmos>().0.enabled = false;
+    store
+        .config_mut::<avian3d::debug_render::PhysicsGizmos>()
+        .0
+        .enabled = false;
 }
 
 /// F7 toggles avian3d's native physics debug rendering (collider wireframes, contacts, etc).
-fn toggle_physics_debug(
-    keyboard: Res<ButtonInput<KeyCode>>,
-    mut store: ResMut<GizmoConfigStore>,
-) {
+fn toggle_physics_debug(keyboard: Res<ButtonInput<KeyCode>>, mut store: ResMut<GizmoConfigStore>) {
     if keyboard.just_pressed(KeyCode::F7) {
         let config = store.config_mut::<avian3d::debug_render::PhysicsGizmos>().0;
         config.enabled = !config.enabled;
-        info!("Physics debug rendering: {}", if config.enabled { "ON" } else { "OFF" });
+        info!(
+            "Physics debug rendering: {}",
+            if config.enabled { "ON" } else { "OFF" }
+        );
     }
 }
 
@@ -805,7 +852,13 @@ fn toggle_debug_light(
 fn debug_kill_creatures(
     mut commands: Commands,
     keyboard: Res<ButtonInput<KeyCode>>,
-    creature_query: Query<Entity, (With<crate::ai::components::AiFighter>, Without<player::components::Player>)>,
+    creature_query: Query<
+        Entity,
+        (
+            With<crate::ai::components::AiFighter>,
+            Without<player::components::Player>,
+        ),
+    >,
 ) {
     if keyboard.just_pressed(KeyCode::KeyK) {
         let mut count = 0;
@@ -833,23 +886,32 @@ fn debug_scan_player_geometry(
             Vec3::ZERO
         };
 
-        info!("--- SCANNING PLAYER GEOMETRY (< 5m from {:.2}, {:.2}, {:.2}) ---", origin.x, origin.y, origin.z);
+        info!(
+            "--- SCANNING PLAYER GEOMETRY (< 5m from {:.2}, {:.2}, {:.2}) ---",
+            origin.x, origin.y, origin.z
+        );
         let mut count = 0;
         for (entity, global_transform, name_opt, parent_opt) in &query {
             let dist = global_transform.translation().distance(origin);
             if dist <= 5.0 {
                 count += 1;
                 let name = name_opt.map(|n: &Name| n.as_str()).unwrap_or("<unnamed>");
-                
+
                 let mut path = String::new();
                 let mut curr_parent: Option<&ChildOf> = parent_opt;
                 while let Some(p) = curr_parent {
-                    let p_name = names.get(p.get()).map(|n| n.as_str()).unwrap_or("<unnamed_parent>");
+                    let p_name = names
+                        .get(p.get())
+                        .map(|n| n.as_str())
+                        .unwrap_or("<unnamed_parent>");
                     path = format!("{} -> {}", p_name, path);
                     curr_parent = parents.get(p.get()).ok();
                 }
-                
-                info!("Entity: {:?} | Name: '{}' | Dist: {:.2} | Path: {}", entity, name, dist, path);
+
+                info!(
+                    "Entity: {:?} | Name: '{}' | Dist: {:.2} | Path: {}",
+                    entity, name, dist, path
+                );
             }
         }
         info!("--- END SCAN (Total: {}) ---", count);

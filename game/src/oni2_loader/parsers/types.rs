@@ -98,16 +98,28 @@ impl Oni2Skeleton {
     pub fn expected_anim_channels(&self) -> usize {
         self.channel_is_rot.len()
     }
-    
+
     pub fn build_channel_map(&mut self) {
         self.channel_is_rot.clear();
         for c in &self.channels {
-            if c.has_trans_x { self.channel_is_rot.push(false); }
-            if c.has_trans_y { self.channel_is_rot.push(false); }
-            if c.has_trans_z { self.channel_is_rot.push(false); }
-            if c.has_rot_x { self.channel_is_rot.push(true); }
-            if c.has_rot_y { self.channel_is_rot.push(true); }
-            if c.has_rot_z { self.channel_is_rot.push(true); }
+            if c.has_trans_x {
+                self.channel_is_rot.push(false);
+            }
+            if c.has_trans_y {
+                self.channel_is_rot.push(false);
+            }
+            if c.has_trans_z {
+                self.channel_is_rot.push(false);
+            }
+            if c.has_rot_x {
+                self.channel_is_rot.push(true);
+            }
+            if c.has_rot_y {
+                self.channel_is_rot.push(true);
+            }
+            if c.has_rot_z {
+                self.channel_is_rot.push(true);
+            }
         }
     }
 }
@@ -131,5 +143,5 @@ pub struct Oni2Animation {
     pub num_channels: u32,
     pub stride_z: f32,
     pub is_loop: bool,
-    pub frames: Vec<Vec<f32>>,  // frames[frame_idx][channel_idx]
+    pub frames: Vec<Vec<f32>>, // frames[frame_idx][channel_idx]
 }

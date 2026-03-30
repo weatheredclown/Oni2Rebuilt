@@ -1,6 +1,5 @@
 use bevy::prelude::*;
 
-
 pub fn parse_anims_content(
     content: &str,
     alias_map: &mut std::collections::HashMap<String, String>,

@@ -23,6 +23,8 @@ pub fn load_layout(
     layout_dir: &str,
     entity_base_dir: &str,
 ) -> Option<LayoutPlayerInfo> {
+    crate::oni2_loader::parsers::actor_xml::clear_xml_cache();
+
     let layout_path = layout_dir;
     let entity_base = entity_base_dir;
 
@@ -48,7 +50,7 @@ pub fn load_layout(
     if !layout_paths.curves.is_empty() {
         info!("Layout: loaded {} path curves", layout_paths.curves.len());
     }
-    
+
     // Insert LayoutPaths globally for dynamic spawned actors
     commands.insert_resource(layout_paths.clone());
 
@@ -154,25 +156,37 @@ pub fn load_layout(
         packages: crate::oni2_loader::parsers::camera::parse_campacknew(layout_dir),
     };
     let mut camera_sets = CameraParameterSets::default();
-    
+
     // We only need to load the xml files referenced in the packages
     let mut files_to_load = std::collections::HashSet::new();
     for pkg in camera_packages.packages.values() {
-        if !pkg.navigation.is_empty() { files_to_load.insert(pkg.navigation.clone()); }
-        if !pkg.targeting.is_empty() { files_to_load.insert(pkg.targeting.clone()); }
-        if !pkg.fighting.is_empty() { files_to_load.insert(pkg.fighting.clone()); }
+        if !pkg.navigation.is_empty() {
+            files_to_load.insert(pkg.navigation.clone());
+        }
+        if !pkg.targeting.is_empty() {
+            files_to_load.insert(pkg.targeting.clone());
+        }
+        if !pkg.fighting.is_empty() {
+            files_to_load.insert(pkg.fighting.clone());
+        }
     }
 
     for file_base in files_to_load {
         let xml_name = format!("{}.xml", file_base);
-        if let Some(params) = crate::oni2_loader::parsers::camera::parse_camera_xml(layout_dir, &xml_name) {
+        if let Some(params) =
+            crate::oni2_loader::parsers::camera::parse_camera_xml(layout_dir, &xml_name)
+        {
             camera_sets.sets.insert(file_base, params);
         } else {
             warn!("Failed to load camera xml: {}", xml_name);
         }
     }
 
-    info!("Layout: loaded {} camera packages, {} parameter sets", camera_packages.packages.len(), camera_sets.sets.len());
+    info!(
+        "Layout: loaded {} camera packages, {} parameter sets",
+        camera_packages.packages.len(),
+        camera_sets.sets.len()
+    );
 
     commands.insert_resource(camera_packages);
     commands.insert_resource(camera_sets);
@@ -216,7 +230,10 @@ pub fn spawn_layout_actor(
     let entity_dir = format!("{}/{}", layout_ctx.entity_base, actor.entity_type);
 
     let mut is_basic = layout_ctx.basic_types.contains(&actor.entity_type)
-        || layout_ctx.basic_types.iter().any(|t| t.eq_ignore_ascii_case(&actor.entity_type));
+        || layout_ctx
+            .basic_types
+            .iter()
+            .any(|t| t.eq_ignore_ascii_case(&actor.entity_type));
 
     let is_trigger = actor.broadcast_radius.is_some() || actor.checkpoint_radius.is_some();
     if !is_basic && !is_trigger && !actor.is_creature {
@@ -226,17 +243,18 @@ pub fn spawn_layout_actor(
     let has_geometry = actor.is_creature || is_basic;
 
     // Try parsing .sha to find .tc (Texture Collection) and preload textures
-    if has_geometry && !assets
-        .texture_collections
-        .collections
-        .contains_key(&actor.entity_type)
+    if has_geometry
+        && !assets
+            .texture_collections
+            .collections
+            .contains_key(&actor.entity_type)
     {
         let sha_filenames = vec![
             format!("{}.sha", actor.entity_type),
             format!("{}_LODs0.sha", actor.entity_type),
             format!("{}_lods0.sha", actor.entity_type),
         ];
-        
+
         let mut frames = Vec::new();
 
         let mut sha_content = None;
@@ -360,14 +378,16 @@ pub fn spawn_layout_actor(
             }
             // Attach FXType component if present
             if actor.fx_type.is_some() || actor.ptx_name.is_some() {
-                assets.commands.entity(entity).insert(crate::oni2_loader::components::ActorFxType {
-                    fx_name: actor.fx_type.clone(),
-                    start_active: actor.fx_start_active,
-                    ptx_name: actor.ptx_name.clone(),
-                    ptx_birth_rate: actor.ptx_birth_rate,
-                    ptx_num_particles: actor.ptx_num_particles,
-                    ptx_offset: actor.ptx_offset,
-                });
+                assets.commands.entity(entity).insert(
+                    crate::oni2_loader::components::ActorFxType {
+                        fx_name: actor.fx_type.clone(),
+                        start_active: actor.fx_start_active,
+                        ptx_name: actor.ptx_name.clone(),
+                        ptx_birth_rate: actor.ptx_birth_rate,
+                        ptx_num_particles: actor.ptx_num_particles,
+                        ptx_offset: actor.ptx_offset,
+                    },
+                );
                 info!("Attached FX component to creature {}", actor.entity_type);
             }
 
@@ -419,140 +439,148 @@ pub fn spawn_layout_actor(
 
     if let Some(entity) = spawned_entity {
         // Attach CurveFollower if actor references a named curve
-            if let Some(ref cname) = actor.curve_name {
-                if let Some((_, pts)) = layout_paths
-                    .curves
-                    .iter()
-                    .find(|(name, _)| name.eq_ignore_ascii_case(cname))
-                {
-                    if pts.len() >= 4 {
-                        let curve = NurbsCurve::new(pts.clone());
-                        let has_script = actor.script_filename.is_some();
-                        let speed = if has_script {
-                            0.0 // script will set speed via GotoCurvePhase
-                        } else if actor.curve_speed > 0.0 {
-                            actor.curve_speed
-                        } else {
-                            0.2 // 1.0 / 5.0 seconds
-                        };
-                        assets.commands.entity(entity).insert((
-                            CurveFollower {
-                                curve,
-                                phase: 0.0,
-                                speed,
-                                target_phase: if has_script { 0.0 } else { 1.0 },
-                                wrap_around: if has_script {
-                                    false
-                                } else {
-                                    !actor.curve_ping_pong
-                                },
-                                ping_pong: actor.curve_ping_pong,
-                                look_along_xz: actor.curve_look_xz,
-                                fixed_orientation: actor.curve_fixed_orientation,
-                                reached_target: has_script,
+        if let Some(ref cname) = actor.curve_name {
+            if let Some((_, pts)) = layout_paths
+                .curves
+                .iter()
+                .find(|(name, _)| name.eq_ignore_ascii_case(cname))
+            {
+                if pts.len() >= 4 {
+                    let curve = NurbsCurve::new(pts.clone());
+                    let has_script = actor.script_filename.is_some();
+                    let speed = if has_script {
+                        0.0 // script will set speed via GotoCurvePhase
+                    } else if actor.curve_speed > 0.0 {
+                        actor.curve_speed
+                    } else {
+                        0.2 // 1.0 / 5.0 seconds
+                    };
+                    assets.commands.entity(entity).insert((
+                        CurveFollower {
+                            curve,
+                            phase: 0.0,
+                            speed,
+                            target_phase: if has_script { 0.0 } else { 1.0 },
+                            wrap_around: if has_script {
+                                false
+                            } else {
+                                !actor.curve_ping_pong
                             },
-                            avian3d::prelude::RigidBody::Kinematic,
-                        ));
+                            ping_pong: actor.curve_ping_pong,
+                            look_along_xz: actor.curve_look_xz,
+                            fixed_orientation: actor.curve_fixed_orientation,
+                            reached_target: has_script,
+                        },
+                        avian3d::prelude::RigidBody::Kinematic,
+                    ));
+                    info!(
+                        "Attached CurveFollower '{}' to {} ({} control points)",
+                        cname,
+                        actor.entity_type,
+                        pts.len()
+                    );
+                } else {
+                    warn!(
+                        "Curve '{}' has {} points (need >= 4), skipping",
+                        cname,
+                        pts.len()
+                    );
+                }
+            } else {
+                warn!(
+                    "Curve '{}' not found in layout.paths for {}",
+                    cname, actor.entity_type
+                );
+            }
+        }
+
+        // Attach ScrOni script if actor has a <ScrOni> component
+        if let Some(ref filename) = actor.script_filename {
+            let default_main = std::path::Path::new(filename)
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("")
+                .trim_start_matches('$')
+                .to_string();
+            let main_script = actor
+                .script_main
+                .as_ref()
+                .unwrap_or(&default_main)
+                .trim_start_matches('$');
+
+            let (script_dir, script_fname) = resolve_script_path(&layout_ctx.layout_dir, filename);
+            match scroni::vm::load_script_file(&script_dir, &script_fname) {
+                Ok(file) => {
+                    if let Some(script_def) = file
+                        .scripts
+                        .iter()
+                        .find(|s| s.name.eq_ignore_ascii_case(main_script))
+                    {
+                        let mut exec = scroni::vm::ScriptExec::new(script_def.clone(), entity, 0.0);
+                        for s in &file.scripts {
+                            exec.available_scripts.insert(s.name.clone(), s.clone());
+                        }
+                        if let Some(ref update) = actor.updatestate {
+                            if update.eq_ignore_ascii_case("Asleep") {
+                                // TODO: Tease out asleep/awake lifecycle. For now, do not respect updatestate="Asleep".
+                                // exec.active = false;
+                                // assets.commands.entity(entity).insert(crate::oni2_loader::components::ActorAsleep);
+                            }
+                        }
+                        assets
+                            .commands
+                            .entity(entity)
+                            .insert(scroni::vm::ScrOniScript { exec });
                         info!(
-                            "Attached CurveFollower '{}' to {} ({} control points)",
-                            cname,
-                            actor.entity_type,
-                            pts.len()
+                            "Attached ScrOni script '{}:{}' to {}",
+                            filename, main_script, actor.entity_type
                         );
                     } else {
                         warn!(
-                            "Curve '{}' has {} points (need >= 4), skipping",
-                            cname,
-                            pts.len()
+                            "Script '{}' not found in {}/{} (available: {})",
+                            main_script,
+                            script_dir,
+                            script_fname,
+                            file.scripts
+                                .iter()
+                                .map(|s| s.name.as_str())
+                                .collect::<Vec<_>>()
+                                .join(", ")
                         );
                     }
-                } else {
+                }
+                Err(e) => {
                     warn!(
-                        "Curve '{}' not found in layout.paths for {}",
-                        cname, actor.entity_type
+                        "Failed to compile script {}/{}: {}",
+                        script_dir, script_fname, e
                     );
                 }
             }
+        }
 
-            // Attach ScrOni script if actor has a <ScrOni> component
-            if let Some(ref filename) = actor.script_filename {
-                let default_main = std::path::Path::new(filename)
-                    .file_stem()
-                    .and_then(|s| s.to_str())
-                    .unwrap_or("")
-                    .trim_start_matches('$')
-                    .to_string();
-                let main_script = actor.script_main.as_ref().unwrap_or(&default_main).trim_start_matches('$');
+        // Attach BroadcastTrigger if present
+        if let Some(radius) = actor.broadcast_radius {
+            assets
+                .commands
+                .entity(entity)
+                .insert(crate::scroni::vm::BroadcastTrigger {
+                    radius,
+                    ..Default::default()
+                });
+            info!(
+                "Attached BroadcastTrigger (radius {}) to {} at position {:?}",
+                radius,
+                actor.entity_type,
+                pos_override.unwrap_or(actor.position)
+            );
+        }
 
-                let (script_dir, script_fname) =
-                    resolve_script_path(&layout_ctx.layout_dir, filename);
-                match scroni::vm::load_script_file(&script_dir, &script_fname) {
-                    Ok(file) => {
-                        if let Some(script_def) = file
-                            .scripts
-                            .iter()
-                            .find(|s| s.name.eq_ignore_ascii_case(main_script))
-                        {
-                            let mut exec = scroni::vm::ScriptExec::new(script_def.clone(), entity, 0.0);
-                            for s in &file.scripts {
-                                exec.available_scripts.insert(s.name.clone(), s.clone());
-                            }
-                            if let Some(ref update) = actor.updatestate {
-                                if update.eq_ignore_ascii_case("Asleep") {
-                                    // TODO: Tease out asleep/awake lifecycle. For now, do not respect updatestate="Asleep".
-                                    // exec.active = false;
-                                    // assets.commands.entity(entity).insert(crate::oni2_loader::components::ActorAsleep);
-                                }
-                            }
-                            assets
-                                .commands
-                                .entity(entity)
-                                .insert(scroni::vm::ScrOniScript { exec });
-                            info!(
-                                "Attached ScrOni script '{}:{}' to {}",
-                                filename, main_script, actor.entity_type
-                            );
-                        } else {
-                            warn!(
-                                "Script '{}' not found in {}/{} (available: {})",
-                                main_script,
-                                script_dir,
-                                script_fname,
-                                file.scripts
-                                    .iter()
-                                    .map(|s| s.name.as_str())
-                                    .collect::<Vec<_>>()
-                                    .join(", ")
-                            );
-                        }
-                    }
-                    Err(e) => {
-                        warn!(
-                            "Failed to compile script {}/{}: {}",
-                            script_dir, script_fname, e
-                        );
-                    }
-                }
-            }
-
-            // Attach BroadcastTrigger if present
-            if let Some(radius) = actor.broadcast_radius {
-                assets
-                    .commands
-                    .entity(entity)
-                    .insert(crate::scroni::vm::BroadcastTrigger {
-                        radius,
-                        ..Default::default()
-                    });
-                info!(
-                    "Attached BroadcastTrigger (radius {}) to {} at position {:?}",
-                    radius, actor.entity_type, pos_override.unwrap_or(actor.position)
-                );
-            }
-
-            // Attach FXType component if present
-            if !actor.is_creature && (actor.fx_type.is_some() || actor.ptx_name.is_some()) {
-                assets.commands.entity(entity).insert(crate::oni2_loader::components::ActorFxType {
+        // Attach FXType component if present
+        if !actor.is_creature && (actor.fx_type.is_some() || actor.ptx_name.is_some()) {
+            assets
+                .commands
+                .entity(entity)
+                .insert(crate::oni2_loader::components::ActorFxType {
                     fx_name: actor.fx_type.clone(),
                     start_active: actor.fx_start_active,
                     ptx_name: actor.ptx_name.clone(),
@@ -560,22 +588,25 @@ pub fn spawn_layout_actor(
                     ptx_num_particles: actor.ptx_num_particles,
                     ptx_offset: actor.ptx_offset,
                 });
-                info!("Attached FX component to {}", actor.entity_type);
-            }
-
-            // Attach CheckpointTrigger if present
-            if let Some(index) = actor.checkpoint_index {
-                let radius = actor.checkpoint_radius.unwrap_or(2.0); // Fallback radius
-                assets.commands.entity(entity).insert((
-                    crate::oni2_loader::components::CheckpointTrigger { index, radius },
-                    avian3d::prelude::Collider::sphere(radius),
-                    avian3d::prelude::Sensor, // Triggers don't physically block the player
-                ));
-                info!("Attached CheckpointTrigger (index {}, radius {}) to {}", index, radius, actor.entity_type);
-            }
-
-            return Some((entity, actor));
+            info!("Attached FX component to {}", actor.entity_type);
         }
+
+        // Attach CheckpointTrigger if present
+        if let Some(index) = actor.checkpoint_index {
+            let radius = actor.checkpoint_radius.unwrap_or(2.0); // Fallback radius
+            assets.commands.entity(entity).insert((
+                crate::oni2_loader::components::CheckpointTrigger { index, radius },
+                avian3d::prelude::Collider::sphere(radius),
+                avian3d::prelude::Sensor, // Triggers don't physically block the player
+            ));
+            info!(
+                "Attached CheckpointTrigger (index {}, radius {}) to {}",
+                index, radius, actor.entity_type
+            );
+        }
+
+        return Some((entity, actor));
+    }
 
     None
 }
@@ -909,7 +940,11 @@ pub(crate) fn load_mod_file(path: &str) -> Option<Oni2Model> {
     }
 
     // Check for binary v2.10 header: "version: 2.10\0"
-    let entity_dir = std::path::Path::new(path).parent().unwrap_or(std::path::Path::new("")).to_str().unwrap_or("");
+    let entity_dir = std::path::Path::new(path)
+        .parent()
+        .unwrap_or(std::path::Path::new(""))
+        .to_str()
+        .unwrap_or("");
 
     if data.starts_with(b"version: 2.10\0") {
         info!("Loading binary v2.10 model: {}", path);

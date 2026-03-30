@@ -157,7 +157,7 @@ impl ProjectileDef {
             Self::Actor(d) => d.gravity_factor,
             Self::Model(d) => d.gravity_factor,
             Self::Shard(d) => d.gravity_factor,
-            Self::Rocket(_) => 1.0, 
+            Self::Rocket(_) => 1.0,
             Self::BulletCasing(_) => 1.0,
         }
     }
@@ -168,11 +168,12 @@ impl ProjectileDef {
             Self::Model(d) => &d.damage,
             // Fallback to static static default for types without direct damage
             _ => {
-                static DEFAULT_DAMAGE: super::projectile::DamageDef = super::projectile::DamageDef {
-                    hit_points: 0.0,
-                    impulse: 0.0,
-                    hit_type: super::projectile::HitType::Unknown,
-                };
+                static DEFAULT_DAMAGE: super::projectile::DamageDef =
+                    super::projectile::DamageDef {
+                        hit_points: 0.0,
+                        impulse: 0.0,
+                        hit_type: super::projectile::HitType::Unknown,
+                    };
                 &DEFAULT_DAMAGE
             }
         }
@@ -252,7 +253,11 @@ impl SettingsExt for SettingsBlock {
     fn get_color(&self, key: &str, default: Color) -> Color {
         match self.properties.get(key) {
             Some(SettingsValue::FloatArray(arr)) if arr.len() >= 3 => {
-                let a = if arr.len() >= 4 && arr[3] > 0.0 { arr[3] } else { 1.0 }; // Assume opacity entirely driven by fx if alpha=0
+                let a = if arr.len() >= 4 && arr[3] > 0.0 {
+                    arr[3]
+                } else {
+                    1.0
+                }; // Assume opacity entirely driven by fx if alpha=0
                 Color::srgba(arr[0], arr[1], arr[2], a)
             }
             _ => default,
@@ -276,7 +281,12 @@ impl SettingsExt for SettingsBlock {
     }
 }
 
-pub fn parse_projectile(def_type: &str, name: &str, block: &SettingsBlock, asset_server: &AssetServer) -> Option<ProjectileDef> {
+pub fn parse_projectile(
+    def_type: &str,
+    name: &str,
+    block: &SettingsBlock,
+    asset_server: &AssetServer,
+) -> Option<ProjectileDef> {
     let damage_block = block.get_block("Damage");
     let damage = if let Some(db) = damage_block {
         DamageDef {
@@ -285,7 +295,11 @@ pub fn parse_projectile(def_type: &str, name: &str, block: &SettingsBlock, asset
             hit_type: HitType::from(db.get_i32("HitType", 0)),
         }
     } else {
-        DamageDef { hit_points: 0.0, impulse: 0.0, hit_type: HitType::Unknown }
+        DamageDef {
+            hit_points: 0.0,
+            impulse: 0.0,
+            hit_type: HitType::Unknown,
+        }
     };
 
     match def_type {
@@ -296,10 +310,17 @@ pub fn parse_projectile(def_type: &str, name: &str, block: &SettingsBlock, asset
                 gravity_factor: block.get_f32("GravityFactor", 1.0),
                 color: block.get_color("Color", Color::WHITE),
                 flight_fx: block.get_string("FlightFX"),
-                explosion_fx: block.get_string("Explosion").or_else(|| block.get_string("ImpactEvent")),
+                explosion_fx: block
+                    .get_string("Explosion")
+                    .or_else(|| block.get_string("ImpactEvent")),
                 explode_on_impact: block.get_bool("ExplodeOnImpact", true), // default to true if missing usually
                 explode_on_time_out: block.get_bool("ExplodeOnTimeOut", true),
-                explosion_matrix: ExplosionMatrix::from(block.get_string("ExplosionMatrix").unwrap_or_default().as_str()),
+                explosion_matrix: ExplosionMatrix::from(
+                    block
+                        .get_string("ExplosionMatrix")
+                        .unwrap_or_default()
+                        .as_str(),
+                ),
                 damage,
             }))
         }
@@ -307,14 +328,14 @@ pub fn parse_projectile(def_type: &str, name: &str, block: &SettingsBlock, asset
             let model_name = block.get_string("ModelName").unwrap_or_default();
             // Oni2 model names refer to Entity folders. Store the name to spawn later.
             // TODO: make sure the Oni2EntityType is loaded for this model_name immediately right here
-            
+
             // Model configs actually nest the basic projectile params inside an anonymous block `{...}`
             // We'll search for it if we see one.
             let mut params_block = block;
             if let Some(child) = block.children.first() {
                 params_block = child; // Inner block holds LifeTime, GravityFactor, Color, Damage, etc.
             }
-            
+
             let nested_damage_block = params_block.get_block("Damage");
             let nested_damage = if let Some(db) = nested_damage_block {
                 DamageDef {
@@ -335,25 +356,30 @@ pub fn parse_projectile(def_type: &str, name: &str, block: &SettingsBlock, asset
                 gravity_factor: params_block.get_f32("GravityFactor", 1.0),
                 color: params_block.get_color("Color", Color::WHITE),
                 flight_fx: params_block.get_string("FlightFX"),
-                explosion_fx: params_block.get_string("Explosion").or_else(|| params_block.get_string("ImpactEvent")),
-                explode_on_impact: params_block.get_bool("ExplodeOnImpact", false), 
+                explosion_fx: params_block
+                    .get_string("Explosion")
+                    .or_else(|| params_block.get_string("ImpactEvent")),
+                explode_on_impact: params_block.get_bool("ExplodeOnImpact", false),
                 explode_on_time_out: params_block.get_bool("ExplodeOnTimeOut", false),
-                explosion_matrix: ExplosionMatrix::from(params_block.get_string("ExplosionMatrix").unwrap_or_default().as_str()),
+                explosion_matrix: ExplosionMatrix::from(
+                    params_block
+                        .get_string("ExplosionMatrix")
+                        .unwrap_or_default()
+                        .as_str(),
+                ),
                 damage: nested_damage,
             }))
         }
-        "SHARD" => {
-            Some(ProjectileDef::Shard(ShardDef {
-                name: name.to_string(),
-                life_time: block.get_f32("LifeTime", 1.0),
-                life_time_var: block.get_f32("LifeTimeVar", 0.0),
-                gravity_factor: block.get_f32("GravityFactor", 1.0),
-                angular_velocity: block.get_f32("AngularVelocity", 0.0),
-                size: block.get_f32("Size", 1.0),
-                color1: block.get_color("Color1", Color::WHITE),
-                color2: block.get_color("Color2", Color::WHITE),
-            }))
-        }
+        "SHARD" => Some(ProjectileDef::Shard(ShardDef {
+            name: name.to_string(),
+            life_time: block.get_f32("LifeTime", 1.0),
+            life_time_var: block.get_f32("LifeTimeVar", 0.0),
+            gravity_factor: block.get_f32("GravityFactor", 1.0),
+            angular_velocity: block.get_f32("AngularVelocity", 0.0),
+            size: block.get_f32("Size", 1.0),
+            color1: block.get_color("Color1", Color::WHITE),
+            color2: block.get_color("Color2", Color::WHITE),
+        })),
         "ROCKET" => {
             // Nested project config inside anonymous block again
             let mut params_block = block;
@@ -363,7 +389,7 @@ pub fn parse_projectile(def_type: &str, name: &str, block: &SettingsBlock, asset
             // And its nested basic config:
             let mut base_block = params_block;
             if let Some(child) = params_block.children.first() {
-                base_block = child; 
+                base_block = child;
             }
 
             let nested_damage_block = base_block.get_block("Damage");
@@ -383,10 +409,17 @@ pub fn parse_projectile(def_type: &str, name: &str, block: &SettingsBlock, asset
                 gravity_factor: base_block.get_f32("GravityFactor", 1.0),
                 color: base_block.get_color("Color", Color::WHITE),
                 flight_fx: None,
-                explosion_fx: base_block.get_string("Explosion").or_else(|| base_block.get_string("ImpactEvent")),
+                explosion_fx: base_block
+                    .get_string("Explosion")
+                    .or_else(|| base_block.get_string("ImpactEvent")),
                 explode_on_impact: base_block.get_bool("ExplodeOnImpact", true),
                 explode_on_time_out: base_block.get_bool("ExplodeOnTimeOut", true),
-                explosion_matrix: ExplosionMatrix::from(base_block.get_string("ExplosionMatrix").unwrap_or_default().as_str()),
+                explosion_matrix: ExplosionMatrix::from(
+                    base_block
+                        .get_string("ExplosionMatrix")
+                        .unwrap_or_default()
+                        .as_str(),
+                ),
                 damage: nested_damage,
             }));
 
@@ -418,13 +451,11 @@ pub fn parse_projectile(def_type: &str, name: &str, block: &SettingsBlock, asset
                 gravity_factor: base_block.get_f32("GravityFactor", 1.0),
             }))
         }
-        "BULLETCASING" => {
-            Some(ProjectileDef::BulletCasing(BulletCasingDef {
-                name: name.to_string(),
-                projectile_type: block.get_string("ProjectileType").unwrap_or_default(),
-                initial_velocity: block.get_vec3("InitialVelocity", Vec3::ZERO),
-            }))
-        }
-        _ => None
+        "BULLETCASING" => Some(ProjectileDef::BulletCasing(BulletCasingDef {
+            name: name.to_string(),
+            projectile_type: block.get_string("ProjectileType").unwrap_or_default(),
+            initial_velocity: block.get_vec3("InitialVelocity", Vec3::ZERO),
+        })),
+        _ => None,
     }
 }

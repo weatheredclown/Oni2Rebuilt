@@ -44,13 +44,14 @@ pub fn extract_xml_attr(content: &str, tag: &str) -> Option<String> {
         }
         current = &current[idx + pattern.len()..];
     }
-    
+
     last_valid
 }
 
 /// Parse "x y z" string into Vec3.
 pub fn parse_vec3(s: &str) -> Option<Vec3> {
-    let parts: Vec<f32> = s.split_whitespace()
+    let parts: Vec<f32> = s
+        .split_whitespace()
         .filter_map(|p| p.parse().ok())
         .collect();
     if parts.len() >= 3 {

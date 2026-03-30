@@ -1,6 +1,6 @@
+use crate::oni2_loader::AnimId;
 use bevy::prelude::*;
 use std::collections::HashMap;
-use crate::oni2_loader::AnimId;
 
 #[derive(Component, Clone, Default, Debug)]
 pub struct LocomotionController {
@@ -33,7 +33,7 @@ pub fn parse_loco_content(content: &str) -> LocomotionController {
     let mut locodata_depth = 0;
     let mut gait_depth = 0;
     let mut current_gait: Option<LocoBlendGait> = None;
-    
+
     let mut current_transition_event: Option<AnimId> = None;
     let mut current_transition: Option<LocoTransition> = None;
     let mut pending_name: Option<String> = None;
@@ -85,7 +85,11 @@ pub fn parse_loco_content(content: &str) -> LocomotionController {
                 }
             } else if let Some(trans) = current_transition.take() {
                 if let Some(event_id) = current_transition_event.take() {
-                    controller.transitions.entry(event_id).or_default().push(trans);
+                    controller
+                        .transitions
+                        .entry(event_id)
+                        .or_default()
+                        .push(trans);
                 }
             } else if locodata_depth > 0 {
                 locodata_depth -= 1;
@@ -94,16 +98,16 @@ pub fn parse_loco_content(content: &str) -> LocomotionController {
         }
 
         let parts: Vec<&str> = trimmed.split_whitespace().collect();
-        
+
         if parts.len() == 1 {
             pending_name = Some(parts[0].to_string());
             continue;
         }
-        
+
         if parts.len() < 2 {
             continue;
         }
-        
+
         let key = parts[0];
         let val = parts[1];
 

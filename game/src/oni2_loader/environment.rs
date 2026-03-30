@@ -22,12 +22,14 @@ pub struct TextureCollections {
 
 #[derive(Resource, Default)]
 pub struct CameraPackages {
-    pub packages: std::collections::HashMap<String, crate::oni2_loader::parsers::camera::CameraPackageDef>,
+    pub packages:
+        std::collections::HashMap<String, crate::oni2_loader::parsers::camera::CameraPackageDef>,
 }
 
 #[derive(Resource, Default)]
 pub struct CameraParameterSets {
-    pub sets: std::collections::HashMap<String, crate::oni2_loader::parsers::camera::CameraParameterSet>,
+    pub sets:
+        std::collections::HashMap<String, crate::oni2_loader::parsers::camera::CameraParameterSet>,
 }
 
 #[derive(Resource)]
@@ -220,23 +222,27 @@ pub fn update_debug_light_grid(
 
             // Ignore player collision
             let filter = avian3d::prelude::SpatialQueryFilter::from_excluded_entities([]);
-            
-            let height = if let Some(hit) = spatial_query.cast_ray(ray_origin, Dir3::Y, 100.0, true, &filter) {
+
+            let height = if let Some(hit) =
+                spatial_query.cast_ray(ray_origin, Dir3::Y, 100.0, true, &filter)
+            {
                 ray_origin.y + hit.distance - 2.0
             } else {
                 py + 5.0
             };
 
-            let light_entity = commands.spawn((
-                PointLight {
-                    color: Color::WHITE,
-                    intensity: 500_000.0,
-                    range: grid_size * 2.5,
-                    shadows_enabled: true,
-                    ..default()
-                },
-                Transform::from_xyz(world_x, height, world_z),
-            )).id();
+            let light_entity = commands
+                .spawn((
+                    PointLight {
+                        color: Color::WHITE,
+                        intensity: 500_000.0,
+                        range: grid_size * 2.5,
+                        shadows_enabled: true,
+                        ..default()
+                    },
+                    Transform::from_xyz(world_x, height, world_z),
+                ))
+                .id();
 
             state.lights.insert(cell, light_entity);
         }

@@ -99,6 +99,15 @@ pub fn setup_testanim_scene(
     let cam_pos = orbit_camera_position(&orbit);
     commands.spawn((
         Camera3d::default(),
+        Camera {
+            ..default()
+        },
+        Projection::Perspective(PerspectiveProjection {
+            fov: std::f32::consts::PI / 4.0,
+            ..default()
+        }),
+        Msaa::Sample4,
+        bevy::core_pipeline::tonemapping::Tonemapping::TonyMcMapface,
         Transform::from_translation(cam_pos).looking_at(orbit.target, Vec3::Y),
         orbit,
         scoped.clone(),
@@ -286,6 +295,15 @@ pub fn setup_testentity_scene(
     let cam_pos = orbit_camera_position(&orbit);
     commands.spawn((
         Camera3d::default(),
+        Camera {
+            ..default()
+        },
+        Projection::Perspective(PerspectiveProjection {
+            fov: std::f32::consts::PI / 4.0,
+            ..default()
+        }),
+        Msaa::Sample4,
+        bevy::core_pipeline::tonemapping::Tonemapping::TonyMcMapface,
         Transform::from_translation(cam_pos).looking_at(orbit.target, Vec3::Y),
         orbit,
         scoped.clone(),

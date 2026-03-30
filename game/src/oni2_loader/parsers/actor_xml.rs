@@ -1,8 +1,9 @@
 use bevy::prelude::*;
-use std::sync::{LazyLock, RwLock};
 use std::collections::HashMap;
+use std::sync::{LazyLock, RwLock};
 
-static XML_CACHE: LazyLock<RwLock<HashMap<String, String>>> = LazyLock::new(|| RwLock::new(HashMap::new()));
+static XML_CACHE: LazyLock<RwLock<HashMap<String, String>>> =
+    LazyLock::new(|| RwLock::new(HashMap::new()));
 
 fn cached_read_to_string(dir: &str, filename: &str) -> std::io::Result<String> {
     let key = format!("{}/{}", dir, filename);
@@ -14,7 +15,13 @@ fn cached_read_to_string(dir: &str, filename: &str) -> std::io::Result<String> {
     Ok(content)
 }
 
-use crate::oni2_loader::utils::parse::{extract_xml_base_attr, extract_root_xml_attr, extract_xml_attr, parse_vec3, extract_xml_block};
+pub fn clear_xml_cache() {
+    XML_CACHE.write().unwrap().clear();
+}
+
+use crate::oni2_loader::utils::parse::{
+    extract_root_xml_attr, extract_xml_attr, extract_xml_base_attr, extract_xml_block, parse_vec3,
+};
 
 /// Parsed actor from a layout XML file.
 pub struct LayoutActor {
@@ -153,23 +160,30 @@ pub fn parse_actor_xml(dir: &str, filename: &str, template_dir: &str) -> Option<
     let mut updatestate: Option<String> = None;
     let mut spawn_later = false;
 
-    
     // Core property extraction is done via block extraction from 'Prop' and 'Entity' first if they exist,
     // but the old code grabbed attributes globally. We will use a safe global grab for position/orientation
     // since they are heavily nested and commonly exist in 'Prop' or the root.
     for content in &chain {
         // Fallback or override values
-        if let Some(v) = extract_xml_attr(content, "EntityType") { 
+        if let Some(v) = extract_xml_attr(content, "EntityType") {
             if !v.eq_ignore_ascii_case("none") {
-                entity_type = Some(v); 
+                entity_type = Some(v);
             } else {
                 info!("EntityType is none in actor xml {}", filename);
             }
         }
-        if let Some(v) = extract_root_xml_attr(content, "updatestate") { updatestate = Some(v); }
-        if let Some(v) = extract_root_xml_attr(content, "spawnlater") { spawn_later = v == "1" || v.eq_ignore_ascii_case("true"); }
-        if let Some(v) = extract_xml_attr(content, "Position").and_then(|s| parse_vec3(&s)) { position = v; }
-        if let Some(v) = extract_xml_attr(content, "Orientation").and_then(|s| parse_vec3(&s)) { orientation = v; }
+        if let Some(v) = extract_root_xml_attr(content, "updatestate") {
+            updatestate = Some(v);
+        }
+        if let Some(v) = extract_root_xml_attr(content, "spawnlater") {
+            spawn_later = v == "1" || v.eq_ignore_ascii_case("true");
+        }
+        if let Some(v) = extract_xml_attr(content, "Position").and_then(|s| parse_vec3(&s)) {
+            position = v;
+        }
+        if let Some(v) = extract_xml_attr(content, "Orientation").and_then(|s| parse_vec3(&s)) {
+            orientation = v;
+        }
     }
 
     // Now extract specific Component Blocks
@@ -179,7 +193,7 @@ pub fn parse_actor_xml(dir: &str, filename: &str, template_dir: &str) -> Option<
     let curve_block = extract_component(&chain, has_components_xml, "Curve");
     let scroni_block = extract_component(&chain, has_components_xml, "ScrOni");
     let broadcast_block = extract_component(&chain, has_components_xml, "BroadcastTrigger");
-        
+
     // Extract Animator props
     let mut animator_type: Option<String> = None;
     if let Some(block) = animator_block {
@@ -196,7 +210,7 @@ pub fn parse_actor_xml(dir: &str, filename: &str, template_dir: &str) -> Option<
             is_player = v == "1";
         }
     }
-    
+
     // Extract Curve props
     let mut curve_name: Option<String> = None;
     let mut curve_fixed_orientation = false;
@@ -204,19 +218,33 @@ pub fn parse_actor_xml(dir: &str, filename: &str, template_dir: &str) -> Option<
     let mut curve_ping_pong = false;
     let mut curve_speed = 0.0f32;
     if let Some(block) = curve_block {
-        if let Some(v) = extract_xml_attr(&block, "CurveName") { curve_name = Some(v); }
-        if let Some(v) = extract_xml_attr(&block, "FixedOrientation") { curve_fixed_orientation = v == "1"; }
-        if let Some(v) = extract_xml_attr(&block, "LookAlongXZPlane") { curve_look_xz = v == "1"; }
-        if let Some(v) = extract_xml_attr(&block, "PingPong") { curve_ping_pong = v == "1"; }
-        if let Some(v) = extract_xml_attr(&block, "Speed") { curve_speed = v.parse().unwrap_or(0.0); }
+        if let Some(v) = extract_xml_attr(&block, "CurveName") {
+            curve_name = Some(v);
+        }
+        if let Some(v) = extract_xml_attr(&block, "FixedOrientation") {
+            curve_fixed_orientation = v == "1";
+        }
+        if let Some(v) = extract_xml_attr(&block, "LookAlongXZPlane") {
+            curve_look_xz = v == "1";
+        }
+        if let Some(v) = extract_xml_attr(&block, "PingPong") {
+            curve_ping_pong = v == "1";
+        }
+        if let Some(v) = extract_xml_attr(&block, "Speed") {
+            curve_speed = v.parse().unwrap_or(0.0);
+        }
     }
-    
+
     // Extract ScrOni props
     let mut script_filename: Option<String> = None;
     let mut script_main: Option<String> = None;
     if let Some(block) = scroni_block {
-        if let Some(v) = extract_xml_attr(&block, "Filename") { script_filename = Some(v); }
-        if let Some(v) = extract_xml_attr(&block, "MainScript") { script_main = Some(v); }
+        if let Some(v) = extract_xml_attr(&block, "Filename") {
+            script_filename = Some(v);
+        }
+        if let Some(v) = extract_xml_attr(&block, "MainScript") {
+            script_main = Some(v);
+        }
     }
 
     // Extract BroadcastTrigger props
