@@ -1,0 +1,9 @@
+[package]
+name = "stm_player"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow = "1.0"
+hound = "3.5"
+rodio = "0.20"
