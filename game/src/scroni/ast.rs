@@ -312,6 +312,9 @@ pub enum Stmt {
     PlayAmbientSound {
         name: Expr,
         volume: Option<Expr>,
+        pitch: Option<Expr>,
+        volume_ramp: Option<(Expr, Expr, Expr)>,
+        pitch_ramp: Option<(Expr, Expr, Expr)>,
     },
     AmbientSound {
         args: Vec<Expr>,

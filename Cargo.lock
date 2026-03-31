@@ -6917,12 +6917,14 @@ dependencies = [
 name = "rb-game"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "avian3d",
  "bevy",
  "bevy_hanabi",
  "chrono",
  "crossbeam-channel",
  "flate2",
+ "hound",
  "image",
  "prost",
  "rand 0.9.2",

@@ -152,6 +152,10 @@ pub enum BlockingAction {
 
 #[derive(Debug, Clone)]
 pub enum SysRequest {
+    ControlHead {
+        actor: Entity,
+        task: crate::oni2_loader::components::ControlHeadTask,
+    },
     TextureMovie {
         target_name: String,
         action: super::ast::TextureMovieAction,
@@ -194,10 +198,47 @@ pub enum SysRequest {
         state: String,
     },
     UsePad(Entity),
+    PlayAmbientSound(
+        i32,
+        String,
+        Option<f32>,
+        Option<f32>,
+        Option<(f32, f32, f32)>,
+        Option<(f32, f32, f32)>,
+    ),
+    AmbientSoundStop(i32),
+    AmbientSoundVolumeRamp(i32, f32, f32),
+    AmbientSoundPitchRamp(i32, f32, f32),
+    PlaySound(Option<String>, String),
+}
+
+#[derive(Component)]
+pub struct ActiveAmbientSound {
+    pub handle: i32,
+}
+
+#[derive(Component)]
+pub struct AudioVolumeRamp {
+    pub start_vol: f32,
+    pub end_vol: f32,
+    pub duration: f32,
+    pub elapsed: f32,
+}
+
+#[derive(Component)]
+pub struct AudioPitchRamp {
+    pub start_pitch: f32,
+    pub end_pitch: f32,
+    pub duration: f32,
+    pub elapsed: f32,
 }
 
 #[derive(Event, Debug, Clone)]
 pub enum ScrOniSysEvent {
+    ControlHead {
+        actor: Entity,
+        task: crate::oni2_loader::components::ControlHeadTask,
+    },
     TextureMovie {
         script_entity: Entity,
         target_name: String,
@@ -210,6 +251,11 @@ pub enum ScrOniSysEvent {
         assign_to: Option<String>,
         at: Option<Vec3>,
         name: Option<String>,
+    },
+    PlaySound {
+        script_entity: Entity,
+        actor: Option<String>,
+        name: String,
     },
     Teleport {
         script_entity: Entity,
@@ -246,6 +292,31 @@ pub enum ScrOniSysEvent {
     },
     UsePad {
         script_entity: Entity,
+    },
+    PlayAmbientSound {
+        script_entity: Entity,
+        handle: i32,
+        name: String,
+        volume: Option<f32>,
+        pitch: Option<f32>,
+        volume_ramp: Option<(f32, f32, f32)>,
+        pitch_ramp: Option<(f32, f32, f32)>,
+    },
+    AmbientSoundStop {
+        script_entity: Entity,
+        handle: i32,
+    },
+    AmbientSoundVolumeRamp {
+        script_entity: Entity,
+        handle: i32,
+        target_vol: f32,
+        duration: f32,
+    },
+    AmbientSoundPitchRamp {
+        script_entity: Entity,
+        handle: i32,
+        target_pitch: f32,
+        duration: f32,
     },
 }
 
@@ -919,7 +990,7 @@ impl ScriptExec {
             ExecState::AbortSequence => Some((true, false)),
             ExecState::Done => Some((false, false)),
             ExecState::Yielded => {
-                self.get_thread_mut(tid).state = ExecState::Running;
+                // Return active=true to bubble out of step_loop, push_back=true to keep the loop on stack
                 Some((true, true))
             }
             _ => None,
@@ -1467,7 +1538,7 @@ impl ScriptExec {
                 let targets = ctx.resolve_targets(&target);
                 if targets.is_empty() {
                     warn!(
-                        "[ScrOni][{}] VM: SendMessage '{}' failed, target {:?} unresolved",
+                        "[ScrOni][{}] VM: SendMessage mailbox '{}' failed, target {:?} unresolved",
                         self.get_thread(tid).script.name,
                         msg_str,
                         target
@@ -1475,12 +1546,22 @@ impl ScriptExec {
                 }
 
                 for entity in targets {
+                    let mut target_name = format!("{:?}", entity);
+                    if let Ok((_, _, Some(n))) = ctx.all_entities.get(entity) {
+                        target_name = format!("{} ({:?})", n.as_str(), entity);
+                    }
+
+                    let mut sender_name = format!("{:?}", self.owner);
+                    if let Ok((_, _, Some(n))) = ctx.all_entities.get(self.owner) {
+                        sender_name = format!("{} ({:?})", n.as_str(), self.owner);
+                    }
+
                     info!(
-                        "[ScrOni][{}] VM: SendMessage '{}' from {:?} to {:?}",
+                        "[ScrOni][{}] VM: SendMessage mailbox '{}' from {} to {}",
                         self.get_thread(tid).script.name,
                         msg_str,
-                        self.owner,
-                        entity
+                        sender_name,
+                        target_name
                     );
                     self.outgoing_messages.push(ScriptMessage {
                         msg: msg_str.clone(),
@@ -1721,17 +1802,96 @@ impl ScriptExec {
                 self.sys_requests.push(SysRequest::DrawText(text));
             }
             Stmt::Sound { args } => {
-                info!("VM: Sound {:?} (unimplemented)", args);
+                if args.len() >= 3 {
+                    // sound [actor] play [name]
+                    let actor_val = self.eval_expr(tid, &args[0], now, ctx);
+                    let action = self.eval_expr(tid, &args[1], now, ctx).as_string();
+                    let name = self.eval_expr(tid, &args[2], now, ctx).as_string();
+                    if action.eq_ignore_ascii_case("play") {
+                        let actor_str = if let Value::Int(0) = actor_val {
+                            None
+                        } else {
+                            Some(actor_val.as_string())
+                        };
+                        self.sys_requests.push(SysRequest::PlaySound(actor_str, name));
+                    } else {
+                        info!("VM: Sound unsupported action {}", action);
+                    }
+                } else if args.len() >= 2 {
+                     // sound play [name]
+                     let action = self.eval_expr(tid, &args[0], now, ctx).as_string();
+                     let name = self.eval_expr(tid, &args[1], now, ctx).as_string();
+                     if action.eq_ignore_ascii_case("play") {
+                         self.sys_requests.push(SysRequest::PlaySound(None, name));
+                     }
+                } else {
+                    info!("VM: Sound {:?} (invalid args)", args);
+                }
             }
             Stmt::AmbientSound { args } => {
-                info!("VM: AmbientSound {:?} (unimplemented)", args);
+                if args.len() == 2 {
+                    let handle = self.eval_expr(tid, &args[0], now, ctx).as_int();
+                    let action = self.eval_expr(tid, &args[1], now, ctx).as_string();
+                    if action.eq_ignore_ascii_case("stop") {
+                        self.sys_requests.push(SysRequest::AmbientSoundStop(handle));
+                        info!("VM: AmbientSound Stop {}", handle);
+                    } else {
+                        info!("VM: AmbientSound {:?} (unsupported action: {})", args, action);
+                    }
+                } else if args.len() == 4 {
+                    let handle = self.eval_expr(tid, &args[0], now, ctx).as_int();
+                    let action = self.eval_expr(tid, &args[1], now, ctx).as_string();
+                    if action.eq_ignore_ascii_case("volumeramp") {
+                        let target_vol = self.eval_expr(tid, &args[2], now, ctx).as_float();
+                        let duration = self.eval_expr(tid, &args[3], now, ctx).as_float();
+                        self.sys_requests.push(SysRequest::AmbientSoundVolumeRamp(handle, target_vol, duration));
+                        info!("VM: AmbientSound VolumeRamp {} -> {} in {}", handle, target_vol, duration);
+                    } else if action.eq_ignore_ascii_case("pitchramp") {
+                        let target_pitch = self.eval_expr(tid, &args[2], now, ctx).as_float();
+                        let duration = self.eval_expr(tid, &args[3], now, ctx).as_float();
+                        self.sys_requests.push(SysRequest::AmbientSoundPitchRamp(handle, target_pitch, duration));
+                        info!("VM: AmbientSound PitchRamp {} -> {} in {}", handle, target_pitch, duration);
+                    } else {
+                        info!("VM: AmbientSound {:?} (unsupported action: {})", args, action);
+                    }
+                } else if args.len() == 3 {
+                    let handle = self.eval_expr(tid, &args[0], now, ctx).as_int();
+                    let action = self.eval_expr(tid, &args[1], now, ctx).as_string();
+                    if action.eq_ignore_ascii_case("pitch") {
+                        let target_pitch = self.eval_expr(tid, &args[2], now, ctx).as_float();
+                        self.sys_requests.push(SysRequest::AmbientSoundPitchRamp(handle, target_pitch, 0.0));
+                        info!("VM: AmbientSound Pitch {} -> {}", handle, target_pitch);
+                    } else if action.eq_ignore_ascii_case("volume") {
+                        let target_vol = self.eval_expr(tid, &args[2], now, ctx).as_float();
+                        self.sys_requests.push(SysRequest::AmbientSoundVolumeRamp(handle, target_vol, 0.0));
+                        info!("VM: AmbientSound Volume {} -> {}", handle, target_vol);
+                    } else {
+                        info!("VM: AmbientSound {:?} (unsupported action: {})", args, action);
+                    }
+                } else {
+                    info!("VM: AmbientSound {:?} (unimplemented format)", args);
+                }
             }
-            Stmt::PlayAmbientSound { name, volume } => {
+            Stmt::PlayAmbientSound { name, volume, pitch, volume_ramp, pitch_ramp } => {
                 let n = self.eval_expr(tid, name, now, ctx).as_string();
-                let v = volume
-                    .as_ref()
-                    .map(|e| self.eval_expr(tid, e, now, ctx).as_float());
-                info!("VM: PlayAmbientSound {} {:?} (unimplemented)", n, v);
+                let v = volume.as_ref().map(|e| self.eval_expr(tid, e, now, ctx).as_float());
+                let p = pitch.as_ref().map(|e| self.eval_expr(tid, e, now, ctx).as_float());
+                let vr = volume_ramp.as_ref().map(|(s, e, d)| {
+                    (
+                        self.eval_expr(tid, s, now, ctx).as_float(),
+                        self.eval_expr(tid, e, now, ctx).as_float(),
+                        self.eval_expr(tid, d, now, ctx).as_float(),
+                    )
+                });
+                let pr = pitch_ramp.as_ref().map(|(s, e, d)| {
+                    (
+                        self.eval_expr(tid, s, now, ctx).as_float(),
+                        self.eval_expr(tid, e, now, ctx).as_float(),
+                        self.eval_expr(tid, d, now, ctx).as_float(),
+                    )
+                });
+                info!("VM: PlayAmbientSound {} v:{:?} p:{:?} vr:{:?} pr:{:?}", n, v, p, vr, pr);
+                self.sys_requests.push(SysRequest::PlayAmbientSound(0, n, v, p, vr, pr));
             }
             Stmt::MusicPlay(expr) => {
                 let m = self.eval_expr(tid, expr, now, ctx).as_string();
@@ -1828,6 +1988,66 @@ impl ScriptExec {
 
             // TODO: store a map of warned about commands and warn about each once!
             // Stubs for commands we don't execute yet
+            Stmt::ControlHead { args } => {
+                let caller_actor = self.owner;
+                let Some(first) = args.first() else { return; };
+                let keyword = self.eval_expr(tid, first, now, ctx).as_string().to_lowercase();
+                
+                use crate::oni2_loader::components::ControlHeadTask;
+                let task = match keyword.as_str() {
+                    "disable" => Some(ControlHeadTask::Disable),
+                    "trackclosest" => Some(ControlHeadTask::TrackClosest),
+                    "trackactor" => {
+                        if args.len() > 1 {
+                             if let Value::Actor(ent) = self.eval_expr(tid, &args[1], now, ctx) {
+                                 Some(ControlHeadTask::TrackActor(ent))
+                             } else { None }
+                        } else { None }
+                    },
+                    "trackpos" => {
+                        if args.len() > 1 {
+                             if let Value::Vector(v) = self.eval_expr(tid, &args[1], now, ctx) {
+                                Some(ControlHeadTask::TrackPos(v))
+                             } else { None }
+                        } else { None }
+                    },
+                    "set" => {
+                         if args.len() > 1 {
+                             let val = self.eval_expr(tid, &args[1], now, ctx);
+                             Some(ControlHeadTask::Set { azimuth: val.as_float(), incline: 0.0 })
+                         } else { None }
+                    },
+                    "scan" => {
+                        let mut range = 80.0;
+                        let mut period = 2.0;
+                        let mut i = 1;
+                        while i < args.len() {
+                            let arg_str = self.eval_expr(tid, &args[i], now, ctx).as_string().to_lowercase();
+                            if arg_str == "range" && i + 1 < args.len() {
+                                range = self.eval_expr(tid, &args[i+1], now, ctx).as_float();
+                                i += 2;
+                            } else if arg_str == "in" && i + 1 < args.len() {
+                                period = self.eval_expr(tid, &args[i+1], now, ctx).as_float();
+                                i += 2;
+                            } else {
+                                i += 1;
+                            }
+                        }
+                        Some(ControlHeadTask::Scan { range, period })
+                    },
+                    _ => None,
+                };
+                
+                if let Some(task) = task {
+                    self.sys_requests.push(SysRequest::ControlHead {
+                        actor: caller_actor,
+                        task,
+                    });
+                } else {
+                    debug!("controlhead could not parse correctly or invalid args: {:?}", args);
+                }
+            }
+
             Stmt::Unimplemented { command, args } => {
                 let lower = command.to_lowercase();
                 if lower == "retreat" {
@@ -2105,8 +2325,8 @@ impl ScriptExec {
                                 .position(|m| !m.is_action && m.msg == target_msg)
                             {
                                 info!(
-                                    "VM: Received message '{}' (from {:?})",
-                                    target_msg, self.message_queue[idx].from
+                                    "[ScrOni][{}] Received message '{}' (from {:?})",
+                                    self.get_thread(tid).script.name, target_msg, self.message_queue[idx].from
                                 );
                                 self.message_queue.remove(idx);
                                 return Value::Int(1);
@@ -2154,6 +2374,49 @@ impl ScriptExec {
                             }
                         }
                         Value::None
+                    }
+                    "playambientsound" => {
+                        let n = args.get(0).map_or(String::new(), |e| self.eval_expr(tid, e, now, ctx).as_string());
+                        let mut v = None;
+                        let mut p = None;
+                        let mut vr = None;
+                        let mut pr = None;
+                        let mut i = 1;
+                        while i < args.len() {
+                            if let Expr::StringLit(m) = &args[i] {
+                                if m == "volumeramp" && i + 3 < args.len() {
+                                    vr = Some((
+                                        self.eval_expr(tid, &args[i+1], now, ctx).as_float(),
+                                        self.eval_expr(tid, &args[i+2], now, ctx).as_float(),
+                                        self.eval_expr(tid, &args[i+3], now, ctx).as_float(),
+                                    ));
+                                    i += 4;
+                                    continue;
+                                } else if m == "pitchramp" && i + 3 < args.len() {
+                                    pr = Some((
+                                        self.eval_expr(tid, &args[i+1], now, ctx).as_float(),
+                                        self.eval_expr(tid, &args[i+2], now, ctx).as_float(),
+                                        self.eval_expr(tid, &args[i+3], now, ctx).as_float(),
+                                    ));
+                                    i += 4;
+                                    continue;
+                                }
+                            }
+                            if i == 1 {
+                                v = Some(self.eval_expr(tid, &args[i], now, ctx).as_float());
+                                i += 1;
+                            } else if i == 2 {
+                                p = Some(self.eval_expr(tid, &args[i], now, ctx).as_float());
+                                i += 1;
+                            } else {
+                                i += 1;
+                            }
+                        }
+
+                        let handle = rand::random::<i32>().abs();
+                        info!("VM: Expr PlayAmbientSound {} v:{:?} p:{:?} vr:{:?} pr:{:?} (Handle: {})", n, v, p, vr, pr, handle);
+                        self.sys_requests.push(SysRequest::PlayAmbientSound(handle, n, v, p, vr, pr));
+                        Value::Int(handle)
                     }
                     "size" => {
                         if let Some(Expr::Var(list_name)) = args.get(0) {
@@ -2386,9 +2649,16 @@ pub fn scroni_tick_system(
             // Tick again to resume immediately
             script.exec.tick_thread(tid, now, &mut ctx);
         }
-
+        let script_name = script.exec.main_thread.script.name.clone();
         for req in script.exec.sys_requests.drain(..) {
             match req {
+                SysRequest::PlaySound(actor, name) => {
+                    commands.trigger(ScrOniSysEvent::PlaySound {
+                        script_entity: entity,
+                        actor,
+                        name,
+                    });
+                }
                 SysRequest::TextureMovie {
                     target_name,
                     action,
@@ -2432,6 +2702,9 @@ pub fn scroni_tick_system(
                 }
                 SysRequest::At(x, y) => {
                     commands.trigger(ScrOniSysEvent::At(x, y));
+                }
+                SysRequest::ControlHead { actor, task } => {
+                    commands.trigger(ScrOniSysEvent::ControlHead { actor, task });
                 }
                 SysRequest::DrawText(text) => {
                     commands.trigger(ScrOniSysEvent::DrawText(text));
@@ -2477,6 +2750,39 @@ pub fn scroni_tick_system(
                 }
                 SysRequest::UsePad(ent) => {
                     commands.trigger(ScrOniSysEvent::UsePad { script_entity: ent });
+                }
+                SysRequest::PlayAmbientSound(handle, name, volume, pitch, volume_ramp, pitch_ramp) => {
+                    commands.trigger(ScrOniSysEvent::PlayAmbientSound {
+                        script_entity: entity,
+                        handle,
+                        name,
+                        volume,
+                        pitch,
+                        volume_ramp,
+                        pitch_ramp,
+                    });
+                }
+                SysRequest::AmbientSoundVolumeRamp(handle, target_vol, duration) => {
+                    commands.trigger(ScrOniSysEvent::AmbientSoundVolumeRamp {
+                        script_entity: entity,
+                        handle,
+                        target_vol,
+                        duration,
+                    });
+                }
+                SysRequest::AmbientSoundPitchRamp(handle, target_pitch, duration) => {
+                    commands.trigger(ScrOniSysEvent::AmbientSoundPitchRamp {
+                        script_entity: entity,
+                        handle,
+                        target_pitch,
+                        duration,
+                    });
+                }
+                SysRequest::AmbientSoundStop(handle) => {
+                    commands.trigger(ScrOniSysEvent::AmbientSoundStop {
+                        script_entity: entity,
+                        handle,
+                    });
                 }
             }
         }
@@ -2552,6 +2858,8 @@ pub fn scroni_sys_event_observer(
         ResMut<Assets<Mesh>>,
         ResMut<Assets<Image>>,
         ResMut<Assets<bevy::mesh::skinning::SkinnedMeshInverseBindposes>>,
+        Res<AssetServer>,
+        ResMut<Assets<bevy::audio::AudioSource>>,
     ),
     mut texture_collections: ResMut<crate::oni2_loader::TextureCollections>,
     layout_data: (
@@ -2563,14 +2871,139 @@ pub fn scroni_sys_event_observer(
     time: Res<Time>,
     mut entity_lib: ResMut<crate::oni2_loader::registries::EntityLibrary>,
     mut anim_registry: ResMut<crate::oni2_loader::registries::AnimRegistry>,
-    mut camera_query: Query<&mut crate::camera::components::CameraRig>,
-    mut lights_query: Query<(&Name, Option<&mut PointLight>, Option<&mut SpotLight>)>,
-    mut script_query: Query<(Entity, &mut ScrOniScript, Option<&Name>)>,
-    player_query: Query<(), With<crate::player::components::Player>>,
+    misc_queries: (
+        Query<&mut crate::camera::components::CameraRig>,
+        Query<(&Name, Option<&mut PointLight>, Option<&mut SpotLight>)>,
+        Query<(Entity, &mut ScrOniScript, Option<&Name>)>,
+        Query<(), With<crate::player::components::Player>>,
+        Query<(Entity, &ActiveAmbientSound)>,
+        Local<Option<crate::oni2_loader::parsers::td::SoundBankDirectory>>,
+        Local<Option<crate::oni2_loader::parsers::audiopackages::AudioPackagesDirectory>>,
+    ),
 ) {
     let ev = (*trigger).clone();
-    let (mut materials, mut meshes, mut images, mut skinned_mesh_ibp) = assets;
+    let (mut camera_query, mut lights_query, mut script_query, player_query, ambient_sound_query, mut td_directory, mut audio_packages) = misc_queries;
+    let (mut materials, mut meshes, mut images, mut skinned_mesh_ibp, asset_server, mut audio_sources) = assets;
+    
+    if td_directory.is_none() {
+        let assets_path = crate::get_assets_path();
+        let path = std::path::Path::new(assets_path).join("Audio").join("banks");
+        *td_directory = Some(crate::oni2_loader::parsers::td::load_all_tds(&path));
+    }
+
+    if audio_packages.is_none() {
+        let assets_path = crate::get_assets_path();
+        let pkgs_path = std::path::Path::new(assets_path).join("Audio").join("rb.audiopackages");
+        if let Ok(content) = std::fs::read_to_string(&pkgs_path) {
+            *audio_packages = Some(crate::oni2_loader::parsers::audiopackages::parse_audiopackages(&content));
+        } else {
+            *audio_packages = Some(std::collections::HashMap::new());
+        }
+    }
+
     match ev {
+        ScrOniSysEvent::PlaySound { script_entity, actor, name } => {
+            let mut resolved_name = name.clone();
+            let mut final_volume = 1.0;
+            let mut final_pitch = 1.0;
+
+            if let Some(pkgs) = audio_packages.as_ref() {
+                if let Some(pkg) = pkgs.get(&name) {
+                    if !pkg.nuggets.is_empty() {
+                        use rand::Rng;
+                        let mut rng = rand::thread_rng();
+                        let idx = rng.gen_range(0..pkg.nuggets.len());
+                        let nugget = &pkg.nuggets[idx];
+                        
+                        resolved_name = nugget.sound.clone();
+                        final_volume = nugget.volume * rng.gen_range(nugget.random_min_volume..=nugget.random_max_volume);
+                        final_pitch = nugget.pitch * rng.gen_range(nugget.random_min_pitch..=nugget.random_max_pitch);
+                    }
+                }
+            }
+
+            if let Some(dir) = td_directory.as_ref() {
+                if let Some((bank_name, vag_index)) = dir.sounds.get(&resolved_name) {
+                    let hd_name = format!("{}.hd", bank_name);
+                    let bd_name = format!("{}.bd", bank_name);
+                    
+                    let hd_paths = [
+                        hd_name.clone(),
+                    ];
+                    
+                    let mut hd_bytes_opt = None;
+                    for p in &hd_paths {
+                        if let Ok(b) = crate::vfs::read("", p) {
+                            hd_bytes_opt = Some(b);
+                            break;
+                        }
+                    }
+                    
+                    if let Some(hd_bytes) = hd_bytes_opt {
+                        if let Ok(header) = crate::oni2_loader::parsers::hd_bd::parse_hd(&hd_bytes) {
+                            // Find the target subsong (1-indexed but vag_index is 0-indexed)
+                            // Wait, the user said NUMVAGS 13, and the split has vag_index 12.
+                            // The HD subsongs are usually accessed 1..=total_subsongs.
+                            // So we need vag_index + 1
+                            let target_index = vag_index + 1;
+                            if let Some(subsong) = header.subsongs.iter().find(|s| s.index == target_index) {
+                                let bd_paths = [
+                                    bd_name.clone(),
+                                    format!("Audio/banks/{}", bd_name),
+                                ];
+                                
+                                let mut bd_bytes_opt = None;
+                                for p in &bd_paths {
+                                    if let Ok(b) = crate::vfs::read("", p) {
+                                        bd_bytes_opt = Some(b);
+                                        break;
+                                    }
+                                }
+                                
+                                if let Some(bd_bytes) = bd_bytes_opt {
+                                    let start = subsong.stream_offset as usize;
+                                    let end = start + subsong.stream_size as usize;
+                                    if end <= bd_bytes.len() {
+                                        let payload = &bd_bytes[start..end];
+                                        if let Ok(pcm) = crate::oni2_loader::parsers::hd_bd::decode_psx_adpcm(payload, subsong.num_samples) {
+                                            if let Ok(wav) = crate::oni2_loader::parsers::hd_bd::create_wav_bytes(&pcm, subsong.sample_rate, subsong.channels) {
+                                                let source_handle = audio_sources.add(bevy::audio::AudioSource {
+                                                    bytes: std::sync::Arc::from(wav),
+                                                });
+                                                
+                                                // 2D Ambient Playback Requested
+                                                commands.spawn((
+                                                    bevy::audio::AudioPlayer(source_handle),
+                                                    bevy::audio::PlaybackSettings {
+                                                        mode: if subsong.loop_flag { bevy::audio::PlaybackMode::Loop } else { bevy::audio::PlaybackMode::Despawn },
+                                                        volume: bevy::audio::Volume::Linear(final_volume),
+                                                        speed: final_pitch,
+                                                        ..Default::default()
+                                                    },
+                                                ));
+                                                info!("Playing sound `{}` (bank: {}, subsong: {}, loop: {}) vol: {} pitch: {}", resolved_name, bank_name, target_index, subsong.loop_flag, final_volume, final_pitch);
+                                            }
+                                        }
+                                    } else {
+                                        warn!("Subsong payload overflows BD file.");
+                                    }
+                                } else {
+                                    warn!("BD file not found in VFS: {}", bd_name);
+                                }
+                            } else {
+                                warn!("Subsong {} not found in HD header.", target_index);
+                            }
+                        } else {
+                            warn!("Failed to parse HD header for {}", hd_name);
+                        }
+                    } else {
+                        warn!("HD file not found in VFS: {}", hd_name);
+                    }
+                } else {
+                    warn!("Sound `{}` not found in .td manifest directory.", name);
+                }
+            }
+        }
         ScrOniSysEvent::At(x, y) => {
             scroni_text_state.current_x = x;
             scroni_text_state.current_y = y;
@@ -2807,6 +3240,13 @@ pub fn scroni_sys_event_observer(
                 warn!("SendAction: Unrecognized component '{}'", component);
             }
         }
+        ScrOniSysEvent::ControlHead { actor, task } => {
+            use crate::oni2_loader::components::ActiveHeadIK;
+            if let Ok(mut entity_cmds) = commands.get_entity(actor.clone()) {
+                entity_cmds.insert(ActiveHeadIK { task: task.clone() });
+                debug!("VM: Observed ControlHead {:?} onto actor {:?}", task, actor);
+            }
+        }
         ScrOniSysEvent::SetLightIntensity {
             script_entity: _,
             light,
@@ -2884,6 +3324,171 @@ pub fn scroni_sys_event_observer(
                 rig.target = script_entity;
             }
             info!("VM: Actor {:?} took player pad controls", script_entity);
+        }
+        ScrOniSysEvent::PlayAmbientSound {
+            script_entity: _,
+            handle,
+            name,
+            volume,
+            pitch,
+            volume_ramp,
+            pitch_ramp,
+        } => {
+            let mut source_handle = None;
+            let mut file_name = name.clone();
+            if file_name.starts_with("Stream:") {
+                let mut stream_name = file_name.replace("Stream:", "");
+                stream_name.push_str(".stm");
+                
+                if let Ok(bytes) = crate::vfs::read("", &stream_name) {
+                    if let Ok(decoded) = crate::oni2_loader::parsers::stm::decode_stm(&bytes) {
+                        if let Ok(wav) = crate::oni2_loader::parsers::stm::create_wav_bytes(&decoded) {
+                            source_handle = Some(audio_sources.add(bevy::audio::AudioSource {
+                                bytes: std::sync::Arc::from(wav),
+                            }));
+                        } else {
+                            warn!("Failed to create wav for stream: {}", stream_name);
+                        }
+                    } else {
+                        warn!("Failed to decode stream: {}", stream_name);
+                    }
+                } else {
+                    warn!("Stream file not found in VFS: {}", stream_name);
+                }
+            } else if file_name.starts_with("SFX_Blast_Chamber:") || file_name.starts_with("SFX_") {
+                info!("Skipping non-stream SFX audio implementation for: {}", file_name);
+                return;
+            } else {
+                info!("Unknown audio prefix for playambientsound: {}", file_name);
+                return;
+            }
+
+            let Some(source_handle) = source_handle else {
+                return;
+            };
+            let mut settings = bevy::audio::PlaybackSettings::DESPAWN;
+            if let Some(vol) = volume {
+                settings = settings.with_volume(bevy::audio::Volume::Linear(vol));
+            } else if let Some((start_vol, _, _)) = volume_ramp {
+                settings = settings.with_volume(bevy::audio::Volume::Linear(start_vol));
+            }
+            if let Some(p) = pitch {
+                settings = settings.with_speed(p);
+            }
+            else if let Some((start_pitch, _, _)) = pitch_ramp {
+                settings = settings.with_speed(start_pitch);
+            }
+
+            let mut ent = commands.spawn((
+                bevy::audio::AudioPlayer(source_handle),
+                settings,
+                ActiveAmbientSound { handle },
+            ));
+
+            if let Some((start_vol, end_vol, duration)) = volume_ramp {
+                ent.insert(AudioVolumeRamp {
+                    start_vol,
+                    end_vol,
+                    duration,
+                    elapsed: 0.0,
+                });
+            }
+
+            if let Some((start_pitch, end_pitch, duration)) = pitch_ramp {
+                ent.insert(AudioPitchRamp {
+                    start_pitch,
+                    end_pitch,
+                    duration,
+                    elapsed: 0.0,
+                });
+            }
+        }
+        ScrOniSysEvent::AmbientSoundVolumeRamp {
+            script_entity: _,
+            handle,
+            target_vol,
+            duration,
+        } => {
+            for (entity, active_sound) in &ambient_sound_query {
+                if active_sound.handle == handle {
+                    info!("VM: Applying AmbientSoundVolumeRamp to handle {}", handle);
+                    commands.entity(entity).insert(AudioVolumeRamp {
+                        start_vol: -1.0, // Marker to initialize from current sink volume
+                        end_vol: target_vol,
+                        duration,
+                        elapsed: 0.0,
+                    });
+                }
+            }
+        }
+        ScrOniSysEvent::AmbientSoundPitchRamp {
+            script_entity: _,
+            handle,
+            target_pitch,
+            duration,
+        } => {
+            for (entity, active_sound) in &ambient_sound_query {
+                if active_sound.handle == handle {
+                    info!("VM: Applying AmbientSoundPitchRamp to handle {}", handle);
+                    commands.entity(entity).insert(AudioPitchRamp {
+                        start_pitch: -1.0,
+                        end_pitch: target_pitch,
+                        duration,
+                        elapsed: 0.0,
+                    });
+                }
+            }
+        }
+        ScrOniSysEvent::AmbientSoundStop { script_entity: _, handle } => {
+            for (entity, active_sound) in &ambient_sound_query {
+                if active_sound.handle == handle {
+                    info!("VM: Despawning AmbientSound handle {}", handle);
+                    commands.entity(entity).despawn();
+                }
+            }
+        }
+    }
+}
+
+pub fn audio_ramp_system(
+    time: Res<Time>,
+    mut commands: Commands,
+    mut audio_query: Query<(
+        Entity,
+        &mut bevy::audio::AudioSink,
+        Option<&mut AudioVolumeRamp>,
+        Option<&mut AudioPitchRamp>,
+    )>,
+) {
+    let dt = time.delta_secs();
+    for (entity, mut sink, mut vol_ramp_opt, mut pitch_ramp_opt) in &mut audio_query {
+        if let Some(mut vr) = vol_ramp_opt {
+            if vr.start_vol < 0.0 {
+                vr.start_vol = match sink.volume() {
+                    bevy::audio::Volume::Linear(v) => v,
+                    bevy::audio::Volume::Decibels(v) => 10.0_f32.powf(v / 20.0),
+                };
+            }
+            vr.elapsed += dt;
+            let t = if vr.duration > 0.0 { (vr.elapsed / vr.duration).clamp(0.0, 1.0) } else { 1.0 };
+            let current = vr.start_vol + (vr.end_vol - vr.start_vol) * t;
+            sink.set_volume(bevy::audio::Volume::Linear(current));
+            if t >= 1.0 {
+                commands.entity(entity).remove::<AudioVolumeRamp>();
+            }
+        }
+        
+        if let Some(mut pr) = pitch_ramp_opt {
+            if pr.start_pitch < 0.0 {
+                pr.start_pitch = sink.speed(); // Initialize dynamically
+            }
+            pr.elapsed += dt;
+            let t = if pr.duration > 0.0 { (pr.elapsed / pr.duration).clamp(0.0, 1.0) } else { 1.0 };
+            let current = pr.start_pitch + (pr.end_pitch - pr.start_pitch) * t;
+            sink.set_speed(current);
+            if t >= 1.0 {
+                commands.entity(entity).remove::<AudioPitchRamp>();
+            }
         }
     }
 }

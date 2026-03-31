@@ -568,13 +568,9 @@ impl Compiler {
             }
 
             // Sound
-            TokenCode::Sound => {
-                self.parse_generic_args(TokenCode::Sound, |args| Stmt::Sound { args })
-            }
+            TokenCode::Sound => self.parse_sound(),
             TokenCode::PlayAmbientSound => self.parse_play_ambient_sound(),
-            TokenCode::AmbientSound => {
-                self.parse_generic_args(TokenCode::AmbientSound, |args| Stmt::AmbientSound { args })
-            }
+            TokenCode::AmbientSound => self.parse_ambient_sound(),
             TokenCode::MusicPlay => {
                 self.advance();
                 Stmt::MusicPlay(self.parse_expr())
@@ -624,6 +620,7 @@ impl Compiler {
                 let state = self.parse_expr();
                 Stmt::SetUpdateState { target, state }
             }
+            TokenCode::ControlHead => self.parse_control_head(),
 
             TokenCode::Find => self.parse_find(),
             TokenCode::TextureMovie => self.parse_texture_movie(),
@@ -1050,7 +1047,124 @@ impl Compiler {
         } else {
             None
         };
-        Stmt::PlayAmbientSound { name, volume }
+
+        let mut volume_ramp = None;
+        if self.skip_if(TokenCode::VolumeRamp) {
+            let has_paren = self.skip_if(TokenCode::LeftParen);
+            let start = self.parse_expr();
+            let end = self.parse_expr();
+            let time = self.parse_expr();
+            if has_paren {
+                self.skip_if(TokenCode::RightParen);
+            }
+            volume_ramp = Some((start, end, time));
+        }
+
+        let mut pitch = None;
+        if self.skip_if(TokenCode::Pitch) {
+            if self.skip_if(TokenCode::LeftParen) {
+                let v = self.parse_expr();
+                self.skip_if(TokenCode::RightParen);
+                pitch = Some(v);
+            } else {
+                pitch = Some(self.parse_expr());
+            }
+        }
+
+        let mut pitch_ramp = None;
+        if self.skip_if(TokenCode::PitchRamp) {
+            let has_paren = self.skip_if(TokenCode::LeftParen);
+            let start = self.parse_expr();
+            let end = self.parse_expr();
+            let time = self.parse_expr();
+            if has_paren {
+                self.skip_if(TokenCode::RightParen);
+            }
+            pitch_ramp = Some((start, end, time));
+        }
+
+        Stmt::PlayAmbientSound {
+            name,
+            volume,
+            pitch,
+            volume_ramp,
+            pitch_ramp,
+        }
+    }
+
+    fn parse_sound(&mut self) -> Stmt {
+        self.advance(); // skip 'sound'
+        let mut args = Vec::new();
+        while !self.at_end() && (is_expr_start(self.code()) || matches!(self.code(), TokenCode::Play | TokenCode::Stop)) {
+            if self.code() == TokenCode::Play {
+                self.advance();
+                args.push(Expr::StringLit("play".to_string()));
+            } else if self.code() == TokenCode::Stop {
+                self.advance();
+                args.push(Expr::StringLit("stop".to_string()));
+            } else {
+                args.push(self.parse_expr());
+            }
+            self.skip_if(TokenCode::Comma);
+        }
+        Stmt::Sound { args }
+    }
+
+    fn parse_ambient_sound(&mut self) -> Stmt {
+        self.advance(); // skip 'ambientsound'
+        let mut args = Vec::new();
+        while !self.at_end() {
+            let mut is_kw = true;
+            match self.code() {
+                TokenCode::All => args.push(Expr::StringLit("all".to_string())),
+                TokenCode::Volume => args.push(Expr::StringLit("volume".to_string())),
+                TokenCode::Pitch => args.push(Expr::StringLit("pitch".to_string())),
+                TokenCode::PitchRamp => args.push(Expr::StringLit("pitchramp".to_string())),
+                TokenCode::VolumeRamp => args.push(Expr::StringLit("volumeramp".to_string())),
+                _ => is_kw = false,
+            }
+
+            if is_kw {
+                self.advance();
+            } else {
+                if !is_expr_start(self.code()) {
+                    break;
+                }
+                args.push(self.parse_expr());
+            }
+            self.skip_if(TokenCode::Comma);
+        }
+        Stmt::AmbientSound { args }
+    }
+
+    fn parse_control_head(&mut self) -> Stmt {
+        self.advance(); // skip 'controlhead'
+        let mut args = Vec::new();
+        while !self.at_end() {
+            let mut is_keyword = true;
+            match self.code() {
+                TokenCode::TrackActor => args.push(Expr::StringLit("trackactor".to_string())),
+                TokenCode::TrackPos => args.push(Expr::StringLit("trackpos".to_string())),
+                TokenCode::TrackClosest => args.push(Expr::StringLit("trackclosest".to_string())),
+                TokenCode::Scan => args.push(Expr::StringLit("scan".to_string())),
+                TokenCode::Set => args.push(Expr::StringLit("set".to_string())),
+                TokenCode::Disable => args.push(Expr::StringLit("disable".to_string())),
+                TokenCode::In => args.push(Expr::StringLit("in".to_string())),
+                TokenCode::Range => args.push(Expr::StringLit("range".to_string())),
+                _ => is_keyword = false,
+            }
+
+            if is_keyword {
+                self.advance();
+            } else {
+                if !is_expr_start(self.code()) {
+                    break;
+                }
+                args.push(self.parse_expr());
+            }
+            self.skip_if(TokenCode::Comma);
+        }
+        Stmt::ControlHead { args }
     }
 
     fn parse_find(&mut self) -> Stmt {
@@ -1502,7 +1616,7 @@ impl Compiler {
         if args.is_empty() && is_expr_start(self.code()) {
             // Only consume if it looks like a value, not a command keyword
             if !is_command_start(self.code()) {
-                args.push(self.parse_expr());
+                args.push(self.parse_unary());
             }
         }
 
@@ -1513,6 +1627,37 @@ impl Compiler {
                 args.push(self.parse_expr());
                 while self.skip_if(TokenCode::Comma) {
                     args.push(self.parse_expr());
+                }
+            }
+        }
+
+        if name.eq_ignore_ascii_case("playambientsound") {
+            if self.skip_if(TokenCode::Volume) {
+                if self.skip_if(TokenCode::LeftParen) {
+                    args.push(self.parse_expr());
+                    self.skip_if(TokenCode::RightParen);
+                } else {
+                    args.push(self.parse_expr());
+                }
+            }
+            if self.skip_if(TokenCode::VolumeRamp) {
+                args.push(Expr::StringLit("volumeramp".to_string()));
+                let has_paren = self.skip_if(TokenCode::LeftParen);
+                args.push(self.parse_expr());
+                args.push(self.parse_expr());
+                args.push(self.parse_expr());
+                if has_paren {
+                    self.skip_if(TokenCode::RightParen);
+                }
+            }
+            if self.skip_if(TokenCode::PitchRamp) {
+                args.push(Expr::StringLit("pitchramp".to_string()));
+                let has_paren = self.skip_if(TokenCode::LeftParen);
+                args.push(self.parse_expr());
+                args.push(self.parse_expr());
+                args.push(self.parse_expr());
+                if has_paren {
+                    self.skip_if(TokenCode::RightParen);
                 }
             }
         }
@@ -1748,4 +1893,42 @@ end
             }
         }
     }
+    #[test]
+    fn test_compiler_multiline_comment_user_snippet() {
+        let src = r#"
+Script test_comment
+begin
+log "[a]"
+##
+log "[b]"
+		if exists(blastInnerCog) then sendmessage "STPP" to blastInnerCog
+		if exists(blastOuterCog) then sendmessage "STPP" to blastOuterCog
+		if exists(BlastDoor) then sendmessage "CLSE" to BlastDoor
+		if exists(blastGuard1) then sendmessage "OUCH" to blastGuard1
+		if exists(blastGuard2) then sendmessage "OUCH" to blastGuard2
+		if exists(blastGuard3) then sendmessage "OUCH" to blastGuard3
+		set closedDoor to true
+##		
+log "[b2]"
+end
+"#;
+        match Compiler::compile(src) {
+            Ok(file) => {
+                let script = &file.scripts[0];
+                let has_log_b2 = script.sequence.iter().any(|stmt| {
+                    if let super::ast::Stmt::Log(exprs) = stmt {
+                        if let Some(super::ast::Expr::StringLit(s)) = exprs.get(0) {
+                            return s == "[b2]";
+                        }
+                    }
+                    false
+                });
+                assert!(has_log_b2, "Log [b2] not found in AST. Sequence length: {}", script.sequence.len());
+            }
+            Err(e) => {
+                panic!("Compile errors: {:?}", e);
+            }
+        }
+    }
 }
+

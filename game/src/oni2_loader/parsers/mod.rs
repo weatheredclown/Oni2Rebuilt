@@ -16,3 +16,7 @@ pub mod settings;
 pub mod skeleton;
 pub mod texture;
 pub mod types;
+pub mod audiopackages;
+pub mod hd_bd;
+pub mod stm;
+pub mod td;

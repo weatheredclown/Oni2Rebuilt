@@ -72,6 +72,7 @@ fn main() {
     if cli_dats.is_empty() {
         cli_dats.push("RB.DAT".to_string());
         cli_dats.push("STREAMS.DAT".to_string());
+        cli_dats.push("BANKS.DAT".to_string());
     }
 
     // Set fallback singletons for logic needing a primary path/dat if they still use it

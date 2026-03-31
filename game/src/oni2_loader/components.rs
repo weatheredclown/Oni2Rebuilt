@@ -46,3 +46,18 @@ pub struct CheckpointTrigger {
 /// Global resource tracking the player's current checkpoint progress.
 #[derive(Resource, Default, Debug, Clone, PartialEq, Eq)]
 pub struct CurrentCheckpointIndex(pub i32);
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum ControlHeadTask {
+    Disable,
+    TrackClosest,
+    TrackActor(Entity),
+    TrackPos(Vec3),
+    Set { azimuth: f32, incline: f32 },
+    Scan { range: f32, period: f32 },
+}
+
+#[derive(Component, Debug, Clone)]
+pub struct ActiveHeadIK {
+    pub task: ControlHeadTask,
+}

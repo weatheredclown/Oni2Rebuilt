@@ -20,7 +20,7 @@ use rb_shared::proto::telemetry::telemetry_service_server::{
     TelemetryService, TelemetryServiceServer,
 };
 use rb_shared::proto::telemetry::{
-    CombatEventProto, QueryRequest as GrpcQueryRequest, QueryResponse as GrpcQueryResponse,
+    QueryRequest as GrpcQueryRequest, QueryResponse as GrpcQueryResponse,
     SendEventsRequest, SendEventsResponse,
 };
 use serde::Deserialize;
