@@ -460,7 +460,7 @@ fn setup_scene(
             InputState::default(),
             Fighter::default(),
             FighterId(Uuid::new_v4()),
-            Health::new(100.0),
+            Health::new(pi.max_hitpoints.unwrap_or(100.0)),
         ));
         commands.entity(pi.entity).insert((
             AttackState::default(),

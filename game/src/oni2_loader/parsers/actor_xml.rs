@@ -64,6 +64,10 @@ pub struct LayoutActor {
     pub checkpoint_radius: Option<f32>,
     /// Whether this actor should be instantly skipped by layout_loader during load
     pub spawn_later: bool,
+    /// Max hitpoints from <Health><MaxHitPoints>
+    pub max_hitpoints: Option<f32>,
+    /// Destroy time from <Health><DestroyTime> -- how many seconds to wait until destroying the dead actor
+    pub destroy_time: Option<f32>,
 }
 
 /// Resolve the full template chain for an actor XML file.
@@ -286,6 +290,18 @@ pub fn parse_actor_xml(dir: &str, filename: &str, template_dir: &str) -> Option<
     let mut ptx_num_particles = 0;
     let mut ptx_offset = Vec3::ZERO;
 
+    let health_block = extract_component(&chain, has_components_xml, "Health");
+    let mut max_hitpoints: Option<f32> = None;
+    let mut destroy_time: Option<f32> = None;    
+    if let Some(block) = health_block {
+        if let Some(v) = extract_xml_attr(&block, "MaxHitPoints") {
+            max_hitpoints = v.parse().ok();
+        }
+        if let Some(v) = extract_xml_attr(&block, "DestroyTime") { // how many seconds to wait until destroying the dead actor
+            destroy_time = v.parse().ok();
+        }
+    }
+
     let fx_block = extract_component(&chain, has_components_xml, "FX");
     if let Some(block) = fx_block {
         if let Some(v) = extract_xml_attr(&block, "FXType") {
@@ -347,5 +363,7 @@ pub fn parse_actor_xml(dir: &str, filename: &str, template_dir: &str) -> Option<
         checkpoint_index,
         checkpoint_radius,
         spawn_later,
+        max_hitpoints,
+        destroy_time,
     })
 }

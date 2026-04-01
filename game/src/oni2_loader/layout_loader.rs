@@ -7,6 +7,7 @@ pub struct LayoutPlayerInfo {
     pub position: Vec3,
     pub entity_type: String,
     pub animator_type: String,
+    pub max_hitpoints: Option<f32>,
 }
 
 /// Load an ONI2 layout directory, spawning all entities and creatures.
@@ -122,6 +123,7 @@ pub fn load_layout(
                         position: actor.position,
                         entity_type: actor.entity_type.clone(),
                         animator_type: actor.animator_type.clone().unwrap_or_default(),
+                        max_hitpoints: actor.max_hitpoints,
                     });
                 }
             } else {
@@ -360,8 +362,11 @@ pub fn spawn_layout_actor(
                     crate::ai::components::AiFighter::default(),
                     crate::combat::components::Fighter::default(),
                     crate::combat::components::FighterId(uuid::Uuid::new_v4()),
-                    crate::combat::components::Health::new(100.0),
+                    crate::combat::components::Health::new(actor.max_hitpoints.unwrap_or(100.0)),
                 ));
+                if let Some(destroy_time) = actor.destroy_time {
+                    assets.commands.entity(entity).insert(crate::combat::components::DestroyOnDeath(destroy_time));
+                }
                 assets.commands.entity(entity).insert((
                     crate::combat::components::AttackState::default(),
                     crate::combat::components::BlockState::new(),
@@ -575,7 +580,7 @@ pub fn spawn_layout_actor(
             );
         }
 
-        // Attach FXType component if present
+        // Attach fx components if present
         if !actor.is_creature && (actor.fx_type.is_some() || actor.ptx_name.is_some()) {
             assets
                 .commands
@@ -589,6 +594,18 @@ pub fn spawn_layout_actor(
                     ptx_offset: actor.ptx_offset,
                 });
             info!("Attached FX component to {}", actor.entity_type);
+        }
+
+        // Attach BroadcastTrigger if present
+        if let Some(radius) = actor.broadcast_radius {
+            assets
+                .commands
+                .entity(entity)
+                .insert(crate::scroni::vm::BroadcastTrigger {
+                    radius,
+                    ..Default::default()
+                });
+            info!("Attached BroadcastTrigger (r={}) to {}", radius, actor.entity_type);
         }
 
         // Attach CheckpointTrigger if present

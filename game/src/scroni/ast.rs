@@ -158,6 +158,12 @@ pub enum Stmt {
     Fight,
     /// `shoot`
     Shoot,
+    /// `hit <expr> <expr> for <expr>`
+    Hit {
+        hit_type: Expr,
+        victim: Expr,
+        damage: Expr,
+    },
     /// `patrol <expr>`
     Patrol(Expr),
     /// `follow <expr>`

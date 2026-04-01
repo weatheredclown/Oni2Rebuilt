@@ -210,6 +210,11 @@ pub enum SysRequest {
     AmbientSoundVolumeRamp(i32, f32, f32),
     AmbientSoundPitchRamp(i32, f32, f32),
     PlaySound(Option<String>, String),
+    Hit {
+        target: Entity,
+        hit_type: String,
+        damage: f32,
+    },
 }
 
 #[derive(Component)]
@@ -448,7 +453,7 @@ pub struct ScriptExec {
 
 #[derive(Debug, Clone)]
 pub struct ScroniContext<'a, 'w_e, 's_e, 'w_t, 's_t> {
-    pub all_entities: &'a Query<'w_e, 's_e, (Entity, &'static Transform, Option<&'static Name>)>,
+    pub all_entities: &'a Query<'w_e, 's_e, (Entity, &'static GlobalTransform, Option<&'static Name>)>,
     pub triggers: &'a Query<'w_t, 's_t, &'static BroadcastTrigger>,
     pub player: Option<Entity>,
     pub current_checkpoint: i32,
@@ -503,11 +508,7 @@ pub fn update_broadcast_triggers(
         let center = trigger_tf.translation();
         trigger.world_center = center;
 
-        // Take the max scale axis to conservatively size the radius
-        let scale_vec = trigger_tf.compute_transform().scale;
-        let scale_max = scale_vec.x.max(scale_vec.y).max(scale_vec.z);
-        let actual_radius = trigger.radius * scale_max;
-        let r_sq = actual_radius * actual_radius;
+        let r_sq = trigger.radius * trigger.radius;
 
         let mut currently_inside = std::collections::HashSet::new();
 
@@ -515,11 +516,9 @@ pub fn update_broadcast_triggers(
             if target_ent == trigger_ent {
                 continue;
             }
-            let d_x = target_tf.translation().x - center.x;
-            let d_z = target_tf.translation().z - center.z;
-            let d_y = (target_tf.translation().y - center.y).abs();
-            // Convert to 2D cylinder volume since Oni triggers often ignore Y variance
-            if d_x * d_x + d_z * d_z <= r_sq && d_y < 50.0 {
+            
+            // Use rigorous spherical checks natively (this mathematically guarantees parity with `find range N` script logic natively mapping distance from center to center)
+            if target_tf.translation().distance_squared(center) <= r_sq {
                 currently_inside.insert(target_ent);
             }
         }
@@ -1226,42 +1225,82 @@ impl ScriptExec {
                 }
             }
             Stmt::DoForever(body) => {
-                let stmts = self.flatten_to_block(body);
-                self.get_thread_mut(tid)
-                    .loop_stack
-                    .push(LoopState::Forever { body: stmts, pc: 0 });
-                self.get_thread_mut(tid).state = ExecState::PushLoop;
+                if self.get_thread(tid).in_whenever {
+                    let mut count = 0;
+                    loop {
+                        self.exec_stmt(tid, body, now, ctx);
+                        count += 1;
+                        if count > 1000 {
+                            warn!("Whenever block DoForever loop exceeded 1000 iterations!");
+                            break;
+                        }
+                    }
+                } else {
+                    let stmts = self.flatten_to_block(body);
+                    self.get_thread_mut(tid)
+                        .loop_stack
+                        .push(LoopState::Forever { body: stmts, pc: 0 });
+                    self.get_thread_mut(tid).state = ExecState::PushLoop;
+                }
             }
             Stmt::DoWhile { condition, body } => {
-                let stmts = self.flatten_to_block(body);
-                self.get_thread_mut(tid).loop_stack.push(LoopState::While {
-                    condition: condition.clone(),
-                    body: stmts,
-                    pc: 0,
-                });
-                self.get_thread_mut(tid).state = ExecState::PushLoop;
-            }
-            Stmt::DoNTimes { count, body } => {
-                let n = self.eval_expr(tid, count, now, ctx).as_int();
-                let stmts = self.flatten_to_block(body);
-                self.get_thread_mut(tid).loop_stack.push(LoopState::NTimes {
-                    remaining: n,
-                    body: stmts,
-                    pc: 0,
-                });
-                self.get_thread_mut(tid).state = ExecState::PushLoop;
-            }
-            Stmt::DoForSeconds { seconds, body } => {
-                let secs = self.eval_expr(tid, seconds, now, ctx).as_float();
-                let stmts = self.flatten_to_block(body);
-                self.get_thread_mut(tid)
-                    .loop_stack
-                    .push(LoopState::ForSeconds {
-                        end_time: now + secs as f64,
+                if self.get_thread(tid).in_whenever {
+                    let mut count = 0;
+                    while self.eval_expr(tid, condition, now, ctx).as_bool() {
+                        self.exec_stmt(tid, body, now, ctx);
+                        count += 1;
+                        if count > 1000 {
+                            warn!("Whenever block DoWhile loop exceeded 1000 iterations!");
+                            break;
+                        }
+                    }
+                } else {
+                    let stmts = self.flatten_to_block(body);
+                    self.get_thread_mut(tid).loop_stack.push(LoopState::While {
+                        condition: condition.clone(),
                         body: stmts,
                         pc: 0,
                     });
-                self.get_thread_mut(tid).state = ExecState::PushLoop;
+                    self.get_thread_mut(tid).state = ExecState::PushLoop;
+                }
+            }
+            Stmt::DoNTimes { count, body } => {
+                let n = self.eval_expr(tid, count, now, ctx).as_int();
+                if self.get_thread(tid).in_whenever {
+                    let mut loop_count = 0;
+                    for _ in 0..n {
+                        self.exec_stmt(tid, body, now, ctx);
+                        loop_count += 1;
+                        if loop_count > 1000 {
+                            warn!("Whenever block DoNTimes loop exceeded 1000 iterations!");
+                            break;
+                        }
+                    }
+                } else {
+                    let stmts = self.flatten_to_block(body);
+                    self.get_thread_mut(tid).loop_stack.push(LoopState::NTimes {
+                        remaining: n,
+                        body: stmts,
+                        pc: 0,
+                    });
+                    self.get_thread_mut(tid).state = ExecState::PushLoop;
+                }
+            }
+            Stmt::DoForSeconds { seconds, body } => {
+                let secs = self.eval_expr(tid, seconds, now, ctx).as_float();
+                if self.get_thread(tid).in_whenever {
+                    warn!("DoForSeconds is not supported synchronously inside a whenever block!");
+                } else {
+                    let stmts = self.flatten_to_block(body);
+                    self.get_thread_mut(tid)
+                        .loop_stack
+                        .push(LoopState::ForSeconds {
+                            end_time: now + secs as f64,
+                            body: stmts,
+                            pc: 0,
+                        });
+                    self.get_thread_mut(tid).state = ExecState::PushLoop;
+                }
             }
             Stmt::Exit => {
                 self.get_thread_mut(tid).state = ExecState::Yielded;
@@ -1538,7 +1577,7 @@ impl ScriptExec {
                 let targets = ctx.resolve_targets(&target);
                 if targets.is_empty() {
                     warn!(
-                        "[ScrOni][{}] VM: SendMessage mailbox '{}' failed, target {:?} unresolved",
+                        "[ScrOni][{}] VM: SendMessage '{}' failed, target {:?} unresolved",
                         self.get_thread(tid).script.name,
                         msg_str,
                         target
@@ -1557,7 +1596,7 @@ impl ScriptExec {
                     }
 
                     info!(
-                        "[ScrOni][{}] VM: SendMessage mailbox '{}' from {} to {}",
+                        "[ScrOni][{}] VM: SendMessage '{}' from {} to {}",
                         self.get_thread(tid).script.name,
                         msg_str,
                         sender_name,
@@ -1672,7 +1711,7 @@ impl ScriptExec {
                     Value::Vector(v) => v,
                     Value::Actor(ent) => {
                         if let Ok((_, tf, _)) = ctx.all_entities.get(ent) {
-                            tf.translation
+                            tf.translation()
                         } else {
                             Vec3::ZERO
                         }
@@ -2048,6 +2087,22 @@ impl ScriptExec {
                 }
             }
 
+            Stmt::Hit { hit_type, victim, damage } => {
+                let hit_t = match &hit_type {
+                    Expr::Var(name) => name.clone(),
+                    _ => self.eval_expr(tid, hit_type, now, ctx).as_string(),
+                };
+                let target = self.eval_expr(tid, victim, now, ctx);
+                let dmg = self.eval_expr(tid, damage, now, ctx).as_float();
+                if let Value::Actor(ent) = target {
+                    self.sys_requests.push(SysRequest::Hit {
+                        target: ent,
+                        hit_type: hit_t,
+                        damage: dmg,
+                    });
+                }
+            }
+
             Stmt::Unimplemented { command, args } => {
                 let lower = command.to_lowercase();
                 if lower == "retreat" {
@@ -2154,7 +2209,7 @@ impl ScriptExec {
             Expr::BinOp { op, left, right } => {
                 let l = self.eval_expr(tid, left, now, ctx);
                 let r = self.eval_expr(tid, right, now, ctx);
-                eval_binop(*op, &l, &r)
+                eval_binop(*op, &l, &r, ctx)
             }
             Expr::Call { name, args } => {
                 let lower = name.to_lowercase();
@@ -2191,7 +2246,7 @@ impl ScriptExec {
                         let target = args.get(0).map(|e| self.eval_expr(tid, e, now, ctx));
                         if let Some(Value::Actor(act)) = target {
                             if let Ok((_, tf, _)) = ctx.all_entities.get(act) {
-                                let p = tf.translation;
+                                let p = tf.translation();
                                 return Value::Vector(Vec3::new(-p.x, p.y, -p.z));
                             }
                         }
@@ -2206,7 +2261,7 @@ impl ScriptExec {
                                 Value::Vector(v) => Some(v),
                                 Value::Actor(act) => {
                                     if let Ok((_, tf, _)) = ctx.all_entities.get(act) {
-                                        let p = tf.translation;
+                                        let p = tf.translation();
                                         Some(Vec3::new(-p.x, p.y, -p.z))
                                     } else {
                                         None
@@ -2222,7 +2277,7 @@ impl ScriptExec {
                         if p1.is_some() && p2.is_none() {
                             if let Ok((_, my_tf, _)) = ctx.all_entities.get(self.owner) {
                                 p2 = p1;
-                                let my_p = my_tf.translation;
+                                let my_p = my_tf.translation();
                                 p1 = Some(Vec3::new(-my_p.x, my_p.y, -my_p.z));
                             }
                         }
@@ -2497,7 +2552,7 @@ impl ScriptExec {
     }
 }
 
-fn eval_binop(op: BinOp, l: &Value, r: &Value) -> Value {
+fn eval_binop(op: BinOp, l: &Value, r: &Value, ctx: &ScroniContext) -> Value {
     match op {
         BinOp::Mod => match (l, r) {
             (Value::Int(a), Value::Int(b)) => {
@@ -2538,16 +2593,47 @@ fn eval_binop(op: BinOp, l: &Value, r: &Value) -> Value {
                 Value::Float(l.as_float() / rv)
             }
         }
-        BinOp::Equal => Value::Int(if (l.as_float() - r.as_float()).abs() < f32::EPSILON {
-            1
-        } else {
-            0
-        }),
-        BinOp::NotEqual => Value::Int(if (l.as_float() - r.as_float()).abs() >= f32::EPSILON {
-            1
-        } else {
-            0
-        }),
+        BinOp::Equal => {
+            if let (Value::Actor(e1), Value::Actor(e2)) = (l, r) {
+                return Value::Int(if e1 == e2 { 1 } else { 0 });
+            }
+            if let (Value::Int(guid), Value::Actor(ent)) | (Value::Actor(ent), Value::Int(guid)) = (l, r) {
+                if *guid == 0 {
+                    return Value::Int(0);
+                }
+                let mut matched = false;
+                if let Ok((_, _, Some(name))) = ctx.all_entities.get(*ent) {
+                    if hash_name(name.as_str()) == *guid {
+                        matched = true;
+                    }
+                }
+                return Value::Int(if matched { 1 } else { 0 });
+            }
+            if let (Value::Actor(_), Value::None) | (Value::None, Value::Actor(_)) = (l, r) {
+                return Value::Int(0);
+            }
+            if let (Value::String(s1), Value::String(s2)) = (l, r) {
+                return Value::Int(if s1.to_lowercase() == s2.to_lowercase() { 1 } else { 0 });
+            }
+            if let (Value::None, Value::Int(0)) | (Value::Int(0), Value::None) = (l, r) {
+                return Value::Int(1);
+            }
+            if matches!(l, Value::Actor(_)) && matches!(r, Value::Int(0)) {
+                return Value::Int(0);
+            }
+            if matches!(l, Value::Int(0)) && matches!(r, Value::Actor(_)) {
+                return Value::Int(0);
+            }
+            Value::Int(if (l.as_float() - r.as_float()).abs() < f32::EPSILON {
+                1
+            } else {
+                0
+            })
+        }
+        BinOp::NotEqual => {
+            let eq_val = eval_binop(BinOp::Equal, l, r, ctx);
+            Value::Int(if eq_val.as_bool() { 0 } else { 1 })
+        }
         BinOp::Less => Value::Int(if l.as_float() < r.as_float() { 1 } else { 0 }),
         BinOp::LessOrEqual => Value::Int(if l.as_float() <= r.as_float() { 1 } else { 0 }),
         BinOp::Greater => Value::Int(if l.as_float() > r.as_float() { 1 } else { 0 }),
@@ -2567,13 +2653,14 @@ pub struct ScrOniScript {
 /// Bevy system: tick all ScrOni scripts each frame.
 pub fn scroni_tick_system(
     mut commands: Commands,
-    mut query: Query<(Entity, &mut ScrOniScript, &Transform)>,
-    all_entities: Query<(Entity, &'static Transform, Option<&'static Name>)>,
+    mut query: Query<(Entity, &mut ScrOniScript, &GlobalTransform)>,
+    all_entities: Query<(Entity, &'static GlobalTransform, Option<&'static Name>)>,
     triggers: Query<&'static BroadcastTrigger>,
     time: Res<Time>,
     player_query: Query<Entity, With<crate::player::components::Player>>,
     current_checkpoint: Res<crate::oni2_loader::components::CurrentCheckpointIndex>,
     layout_context: Option<Res<crate::oni2_loader::environment::LayoutContext>>,
+    mut health_query: Query<&mut crate::combat::components::Health>,
 ) {
     let now = time.elapsed_secs_f64();
     let delta_time = time.delta_secs();
@@ -2599,6 +2686,15 @@ pub fn scroni_tick_system(
         };
         script.exec.tick(now, delta_time, &mut ctx);
 
+        if script.exec.main_thread.state == ExecState::Done {
+            if script.exec.owner == Entity::PLACEHOLDER {
+                commands.entity(entity).despawn();
+            } else {
+                commands.entity(entity).remove::<ScrOniScript>();
+            }
+            continue;
+        }
+
         let mut finds_to_resolve = Vec::new();
         for t in script.exec.all_threads_mut() {
             if let Some(BlockingAction::Find {
@@ -2614,15 +2710,25 @@ pub fn scroni_tick_system(
         // Handle Find request
         for (tid, list_var, conditions, range) in finds_to_resolve {
             let mut found = Vec::new();
-            let my_pos = transform.translation;
+            let mut my_pos = transform.translation(); // Fallback default to script entity center
             let max_dist = range.unwrap_or(9999.0);
+
+            for (k, v) in &conditions {
+                if k.to_lowercase() == "at" {
+                    if let Value::Vector(vec) = v {
+                        // The vector evaluated by the AST (e.g., location(me)) was generated in internal Oni coordinate space
+                        // We must convert it back to Bevy layout coordinates (-X, Y, -Z) for physics evaluation mathematically
+                        my_pos = Vec3::new(-vec[0] as f32, vec[1] as f32, -vec[2] as f32);
+                    }
+                }
+            }
 
             for (other_ent, other_tf, name_opt) in &all_entities {
                 if entity == other_ent {
                     continue;
                 }
 
-                let dist = my_pos.distance(other_tf.translation);
+                let dist = my_pos.distance(other_tf.translation());
                 if dist <= max_dist {
                     let mut matches_all = true;
                     for (k, v) in &conditions {
@@ -2778,6 +2884,16 @@ pub fn scroni_tick_system(
                         duration,
                     });
                 }
+                SysRequest::Hit { target, hit_type, damage } => {
+                    if let Ok(mut health) = health_query.get_mut(target) {
+                        let final_damage = if hit_type.eq_ignore_ascii_case("environmentalhazard") {
+                            damage * time.delta_secs()
+                        } else {
+                            damage
+                        };
+                        health.current = (health.current - final_damage).max(0.0);
+                    }
+                }
                 SysRequest::AmbientSoundStop(handle) => {
                     commands.trigger(ScrOniSysEvent::AmbientSoundStop {
                         script_entity: entity,
@@ -2847,12 +2963,6 @@ pub fn cleanup_scroni_text(
 pub fn scroni_sys_event_observer(
     trigger: On<ScrOniSysEvent>,
     mut commands: Commands,
-    mut transform_query: Query<(
-        &mut Transform,
-        Option<&mut avian3d::prelude::LinearVelocity>,
-    )>,
-    children_query: Query<&Children>,
-    mut materials_query: Query<&mut MeshMaterial3d<StandardMaterial>>,
     assets: (
         ResMut<Assets<StandardMaterial>>,
         ResMut<Assets<Mesh>>,
@@ -2860,8 +2970,12 @@ pub fn scroni_sys_event_observer(
         ResMut<Assets<bevy::mesh::skinning::SkinnedMeshInverseBindposes>>,
         Res<AssetServer>,
         ResMut<Assets<bevy::audio::AudioSource>>,
+        ResMut<crate::oni2_loader::TextureCollections>,
+        ResMut<crate::oni2_loader::registries::EntityLibrary>,
+        ResMut<crate::oni2_loader::registries::AnimRegistry>,
+        Local<Option<crate::oni2_loader::parsers::td::SoundBankDirectory>>,
+        Local<Option<crate::oni2_loader::parsers::audiopackages::AudioPackagesDirectory>>,
     ),
-    mut texture_collections: ResMut<crate::oni2_loader::TextureCollections>,
     layout_data: (
         Option<Res<crate::oni2_loader::LayoutContext>>,
         Option<Res<crate::oni2_loader::LayoutPaths>>,
@@ -2869,21 +2983,35 @@ pub fn scroni_sys_event_observer(
     active_camera_package: Option<ResMut<crate::oni2_loader::ActiveCameraPackage>>,
     mut scroni_text_state: ResMut<ScroniTextState>,
     time: Res<Time>,
-    mut entity_lib: ResMut<crate::oni2_loader::registries::EntityLibrary>,
-    mut anim_registry: ResMut<crate::oni2_loader::registries::AnimRegistry>,
     misc_queries: (
+        Query<(
+            &mut Transform,
+            Option<&mut avian3d::prelude::LinearVelocity>,
+        )>,
+        Query<&Children>,
+        Query<&mut MeshMaterial3d<StandardMaterial>>,
         Query<&mut crate::camera::components::CameraRig>,
         Query<(&Name, Option<&mut PointLight>, Option<&mut SpotLight>)>,
         Query<(Entity, &mut ScrOniScript, Option<&Name>)>,
         Query<(), With<crate::player::components::Player>>,
         Query<(Entity, &ActiveAmbientSound)>,
-        Local<Option<crate::oni2_loader::parsers::td::SoundBankDirectory>>,
-        Local<Option<crate::oni2_loader::parsers::audiopackages::AudioPackagesDirectory>>,
     ),
 ) {
     let ev = (*trigger).clone();
-    let (mut camera_query, mut lights_query, mut script_query, player_query, ambient_sound_query, mut td_directory, mut audio_packages) = misc_queries;
-    let (mut materials, mut meshes, mut images, mut skinned_mesh_ibp, asset_server, mut audio_sources) = assets;
+    let (mut transform_query, children_query, mut materials_query, mut camera_query, mut lights_query, mut script_query, player_query, ambient_sound_query) = misc_queries;
+    let (
+        mut materials,
+        mut meshes,
+        mut images,
+        mut skinned_mesh_ibp,
+        asset_server,
+        mut audio_sources,
+        mut texture_collections,
+        mut entity_lib,
+        mut anim_registry,
+        mut td_directory,
+        mut audio_packages,
+    ) = assets;
     
     if td_directory.is_none() {
         let assets_path = crate::get_assets_path();

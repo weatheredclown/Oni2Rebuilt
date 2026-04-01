@@ -664,6 +664,42 @@ pub fn death_system(
     }
 }
 
+/// Reads DeathMessages and triggers despawns or delayed death timers based on DestroyOnDeath.
+pub fn death_cleanup_system(
+    mut commands: Commands,
+    mut reader: MessageReader<DeathMessage>,
+    query: Query<Option<&DestroyOnDeath>>,
+) {
+    for msg in reader.read() {
+        if let Ok(dod) = query.get(msg.entity) {
+            if let Some(delay) = dod {
+                if delay.0 <= 0.0 {
+                    commands.entity(msg.entity).despawn();
+                } else {
+                    commands.entity(msg.entity).insert(DeathSequenceTimer(Timer::from_seconds(delay.0, TimerMode::Once)));
+                }
+            } else {
+                info!("Entity {} has no DestroyOnDeath component, despawning immediately", msg.entity);
+                commands.entity(msg.entity).despawn();
+            }
+        }
+    }
+}
+
+/// Ticks death sequence timers and despawns entities when they finish.
+pub fn death_timer_system(
+    mut commands: Commands,
+    time: Res<Time>,
+    mut query: Query<(Entity, &mut DeathSequenceTimer)>,
+) {
+    for (entity, mut timer) in &mut query {
+        if timer.0.tick(time.delta()).just_finished() {
+            info!("Entity {} death timer finished, despawning", entity);
+            commands.entity(entity).despawn();
+        }
+    }
+}
+
 /// Sends combat events to the telemetry channel.
 pub fn telemetry_combat_system(
     mut damage_reader: MessageReader<DamageMessage>,

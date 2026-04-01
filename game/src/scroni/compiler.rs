@@ -393,6 +393,7 @@ impl Compiler {
                 self.advance();
                 Stmt::Shoot
             }
+            TokenCode::Hit => self.parse_hit(),
             TokenCode::Patrol => {
                 self.advance();
                 Stmt::Patrol(self.parse_expr())
@@ -1110,6 +1111,18 @@ impl Compiler {
         Stmt::Sound { args }
     }
 
+    fn parse_hit(&mut self) -> Stmt {
+        self.advance(); // skip 'hit'
+        let hit_type = self.parse_expr();
+        let victim = self.parse_expr();
+        let damage = if self.skip_if(TokenCode::For) {
+            self.parse_expr()
+        } else {
+            Expr::FloatLit(1.0)
+        };
+        Stmt::Hit { hit_type, victim, damage }
+    }
+
     fn parse_ambient_sound(&mut self) -> Stmt {
         self.advance(); // skip 'ambientsound'
         let mut args = Vec::new();
@@ -1770,7 +1783,6 @@ fn is_command_start(code: TokenCode) -> bool {
             | TokenCode::End
             | TokenCode::Eof
             | TokenCode::DrawText
-            | TokenCode::At
             | TokenCode::CameraFollowActor
             | TokenCode::CameraTrackActor
             | TokenCode::CameraTrackPoint

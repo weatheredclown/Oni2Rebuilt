@@ -33,6 +33,8 @@ impl Plugin for CombatPlugin {
                     systems::super_meter_system,
                     systems::death_system,
                     systems::telemetry_combat_system,
+                    systems::death_cleanup_system,
+                    systems::death_timer_system,
                 )
                     .chain()
                     .run_if(in_state(AppState::InGame)),

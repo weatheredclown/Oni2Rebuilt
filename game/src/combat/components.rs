@@ -46,6 +46,12 @@ impl Health {
     }
 }
 
+#[derive(Component)]
+pub struct DestroyOnDeath(pub f32);
+
+#[derive(Component)]
+pub struct DeathSequenceTimer(pub Timer);
+
 // === Attack Enums (from rb's crAttackData) ===
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
