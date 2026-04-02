@@ -1180,3 +1180,47 @@ pub(crate) fn load_tga_file(
     });
     Some((images.add(image), has_alpha))
 }
+
+/// Dynamically resolves cross-actor parenting rules designated by layout props.
+/// Children spawn autonomously but will aggressively seek to snap their Transform to specific Bones on their target Parent.
+pub fn resolve_pending_parents_system(
+    mut commands: Commands,
+    pending_query: Query<(Entity, &crate::oni2_loader::components::PendingParent)>,
+    target_query: Query<(Entity, &Name, Option<&crate::oni2_loader::animation::Oni2AnimState>)>,
+) {
+    for (child_entity, pending) in &pending_query {
+        // Find matching parent by name
+        let mut resolved_parent = None;
+
+        for (target_entity, name, anim_state_opt) in &target_query {
+            if name.as_str() == pending.parent_name {
+                let mut parent_to_use = target_entity;
+
+                // Try assigning to a direct bone matrix if requested and available
+                if let (Some(bone_name), Some(anim_state)) = (&pending.bone_name, anim_state_opt) {
+                    // Search skeleton name mappings for index
+                    for (i, skeleton_bone_name) in anim_state.skeleton.names.iter().enumerate() {
+                        if skeleton_bone_name.eq_ignore_ascii_case(bone_name) {
+                            if let Some(joint_ent) = anim_state.joint_entities.get(i) {
+                                parent_to_use = *joint_ent;
+                            }
+                            break;
+                        }
+                    }
+                }
+
+                resolved_parent = Some(parent_to_use);
+                break;
+            }
+        }
+
+        if let Some(parent) = resolved_parent {
+            commands.entity(parent).add_child(child_entity);
+            commands.entity(child_entity).remove::<crate::oni2_loader::components::PendingParent>();
+            info!(
+                "Successfully reparented layout actor to {}",
+                pending.parent_name
+            );
+        }
+    }
+}

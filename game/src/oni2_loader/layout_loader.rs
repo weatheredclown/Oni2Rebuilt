@@ -622,6 +622,18 @@ pub fn spawn_layout_actor(
             );
         }
 
+        // Defer parent attachment if XML dictates
+        if let Some(parent_actor) = &actor.parent_actor {
+            assets
+                .commands
+                .entity(entity)
+                .insert(crate::oni2_loader::components::PendingParent {
+                    parent_name: parent_actor.clone(),
+                    bone_name: actor.parent_bone.clone(),
+                });
+            info!("Attached PendingParent deferral onto {}", actor.entity_type);
+        }
+
         return Some((entity, actor));
     }
 

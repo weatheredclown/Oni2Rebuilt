@@ -3314,8 +3314,8 @@ pub fn scroni_sys_event_observer(
             for (ent, mut controller, _) in &mut camera_query {
                 controller.active_mode = crate::camera::components::ActiveCameraMode::Script;
                 let mut seq = crate::camera::components::ScriptCameraSequence::default();
-                // Map the point with Z inverted if Oni is left-handed vs Bevy
-                let mapped_pt = Vec3::new(pt.x, pt.y, -pt.z); 
+                // Map the point with X and Z inverted (Oni right-handed mapping vs Bevy)
+                let mapped_pt = Vec3::new(-pt.x, pt.y, -pt.z); 
                 seq.tracked_target = Some(crate::camera::components::ScriptFocusTarget::Point(mapped_pt));
                 commands.entity(ent).insert(seq);
             }
@@ -3334,7 +3334,7 @@ pub fn scroni_sys_event_observer(
             for (ent, mut controller, _) in &mut camera_query {
                 controller.active_mode = crate::camera::components::ActiveCameraMode::Script;
                 let mut seq = crate::camera::components::ScriptCameraSequence::default();
-                let mapped_pt = Vec3::new(pt.x, pt.y, -pt.z); 
+                let mapped_pt = Vec3::new(-pt.x, pt.y, -pt.z); 
                 seq.move_target = Some(crate::camera::components::ScriptFocusTarget::Point(mapped_pt));
                 seq.move_duration = dur;
                 commands.entity(ent).insert(seq);

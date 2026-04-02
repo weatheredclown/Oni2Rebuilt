@@ -68,6 +68,10 @@ pub struct LayoutActor {
     pub max_hitpoints: Option<f32>,
     /// Destroy time from <Health><DestroyTime> -- how many seconds to wait until destroying the dead actor
     pub destroy_time: Option<f32>,
+    /// Actor name to dynamically parent this sub-actor onto
+    pub parent_actor: Option<String>,
+    /// Joint name to parent this onto if the parent is skeletonized
+    pub parent_bone: Option<String>,
 }
 
 /// Resolve the full template chain for an actor XML file.
@@ -163,6 +167,8 @@ pub fn parse_actor_xml(dir: &str, filename: &str, template_dir: &str) -> Option<
     let mut orientation = Vec3::ZERO;
     let mut updatestate: Option<String> = None;
     let mut spawn_later = false;
+    let mut parent_actor: Option<String> = None;
+    let mut parent_bone: Option<String> = None;
 
     // Core property extraction is done via block extraction from 'Prop' and 'Entity' first if they exist,
     // but the old code grabbed attributes globally. We will use a safe global grab for position/orientation
@@ -187,6 +193,12 @@ pub fn parse_actor_xml(dir: &str, filename: &str, template_dir: &str) -> Option<
         }
         if let Some(v) = extract_xml_attr(content, "Orientation").and_then(|s| parse_vec3(&s)) {
             orientation = v;
+        }
+        if let Some(v) = extract_xml_attr(content, "ParentActor") {
+            parent_actor = Some(v);
+        }
+        if let Some(v) = extract_xml_attr(content, "ParentBone") {
+            parent_bone = Some(v);
         }
     }
 
@@ -365,5 +377,7 @@ pub fn parse_actor_xml(dir: &str, filename: &str, template_dir: &str) -> Option<
         spawn_later,
         max_hitpoints,
         destroy_time,
+        parent_actor,
+        parent_bone,
     })
 }

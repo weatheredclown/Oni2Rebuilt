@@ -214,6 +214,7 @@ fn main() {
             oni2_loader::toggle_debug_skeleton,
             oni2_loader::toggle_point_cloud,
             oni2_loader::update_oni2_animation,
+            oni2_loader::resolve_pending_parents_system,
             oni2_loader::creature_movement_anim_system,
             oni2_loader::ground_snap_system,
             oni2_loader::apply_fog_to_camera.run_if(resource_exists::<oni2_loader::FogEnabled>),

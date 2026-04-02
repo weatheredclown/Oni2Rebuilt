@@ -59,5 +59,12 @@ pub enum ControlHeadTask {
 
 #[derive(Component, Debug, Clone)]
 pub struct ActiveHeadIK {
-    pub task: ControlHeadTask,
+        pub task: ControlHeadTask,
+}
+
+/// Component mapping an unattached entity to a dynamically spawned parent actor.
+#[derive(Component, Debug, Clone)]
+pub struct PendingParent {
+    pub parent_name: String,
+    pub bone_name: Option<String>,
 }
