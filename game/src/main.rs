@@ -20,7 +20,8 @@ use bevy::gizmos::config::GizmoConfigStore;
 use bevy::prelude::*;
 use uuid::Uuid;
 
-use camera::components::{CameraRig, PrototypeElement};
+use camera::components::{CameraController, PrototypeElement};
+use camera::channel::CameraChannel;
 use combat::components::*;
 use menu::{AppState, InGameEntity, SelectedLayout};
 use oni2_loader::TestAnimMode;
@@ -543,33 +544,10 @@ fn setup_scene(
         Transform::from_xyz(0.0, 8.0, -12.0).looking_at(Vec3::new(0.0, 1.0, 0.0), Vec3::Y),
         scoped,
         IsDefaultUiCamera,
-        CameraRig {
-            target: player_id,
-            mode: camera::components::CameraMode::MouseLook,
-            // Mouse-look fields
-            offset: Vec3::new(0.0, 7.0, -12.0),
-            mouse_lerp_speed: 5.0,
-            // Zone-based fields
-            current_azimuth: 0.0,
-            target_azimuth: 0.0,
-            zone_thresholds: [
-                20.0_f32.to_radians(),
-                90.0_f32.to_radians(),
-                120.0_f32.to_radians(),
-            ],
-            zone_lerp_rates: [2.0, 3.0, 3.0, 3.0],
-            spin_threshold: 63.0_f32.to_radians(),
-            dead_zone_inner: 1.5,
-            dead_zone_outer: 4.0,
-            incline_offset: 10.0_f32.to_radians(),
-            follow_distance: 12.0,
-            height: 7.0,
-            bump_angle: 0.0,
-            bump_lerp_rate: 4.0,
-            free_yaw: 0.0,
-            free_pitch: -0.1,
-            free_speed: 10.0,
-            pre_free_mode: None,
+        CameraController::default(),
+        CameraChannel {
+            focus_actor: player_id,
+            ..default()
         },
     ));
 }

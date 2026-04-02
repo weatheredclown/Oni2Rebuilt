@@ -33,14 +33,14 @@ pub fn parse_audiopackages(content: &str) -> AudioPackagesDirectory {
             continue;
         }
 
-        if line.starts_with("PACKAGE ") {
+        if line.starts_with("PACKAGE") {
             if let Some(name) = current_pkg_name.take() {
                 if let Some(n) = current_nugget.take() {
                     current_pkg_nuggets.push(n);
                 }
                 dir.insert(name, AudioPackage { nuggets: std::mem::take(&mut current_pkg_nuggets) });
             }
-            let name_str = line.trim_start_matches("PACKAGE \"").trim_end_matches('"');
+            let name_str = line.strip_prefix("PACKAGE").unwrap().trim().trim_matches('"');
             current_pkg_name = Some(name_str.to_string());
         } else if line == "NUGGET" {
             if let Some(n) = current_nugget.take() {
@@ -67,10 +67,10 @@ pub fn parse_audiopackages(content: &str) -> AudioPackagesDirectory {
         } else if let Some(nugget) = &mut current_nugget {
             let parts: Vec<&str> = line.split_whitespace().collect();
             if parts.len() >= 2 {
-                let key = parts[0];
+                let key = parts[0].to_uppercase();
                 let value_str = parts[1..].join(" ");
                 let clean_val = value_str.trim_matches('"');
-                match key {
+                match key.as_str() {
                     "SOUND" => nugget.sound = clean_val.to_string(),
                     "VOLUME" => if let Ok(v) = clean_val.parse() { nugget.volume = v },
                     "PITCH" => if let Ok(v) = clean_val.parse() { nugget.pitch = v },

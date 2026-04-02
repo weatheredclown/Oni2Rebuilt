@@ -1928,8 +1928,8 @@ end
             Ok(file) => {
                 let script = &file.scripts[0];
                 let has_log_b2 = script.sequence.iter().any(|stmt| {
-                    if let super::ast::Stmt::Log(exprs) = stmt {
-                        if let Some(super::ast::Expr::StringLit(s)) = exprs.get(0) {
+                    if let super::Stmt::Log(exprs) = stmt {
+                        if let Some(super::Expr::StringLit(s)) = exprs.get(0) {
                             return s == "[b2]";
                         }
                     }

@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use bevy::prelude::info;
 
 #[derive(Debug, Clone)]
 pub struct CameraPackageDef {
@@ -10,7 +11,7 @@ pub struct CameraPackageDef {
     pub fight_mode_running_away_time: f32,
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct CameraParameterSet {
     pub name: String,
     pub fov: f32,
@@ -30,9 +31,46 @@ pub struct CameraParameterSet {
     pub outer_radius: f32,
 }
 
+impl Default for CameraParameterSet {
+    fn default() -> Self {
+        Self {
+            name: String::new(),
+            fov: 50.0,
+            distance: 3.0,
+            // Base polar defaults
+            focus_offset: [0.0, 1.4, 0.0],
+            incline_offset: 0.0,
+            incline_offset_running: 0.0,
+            dead_zone_inner_radius: 0.0,
+            dead_zone_outer_radius: 0.0,
+            lerp_rate_azimuth_zone1: 0.0,
+            lerp_rate_azimuth_zone2: 0.0,
+            lerp_rate_azimuth_zone3: 0.0,
+            lerp_rate_azimuth_zone4: 0.0,
+            lock_heading_until_move: false,
+            spin_threshold: 0.0,
+            inner_radius: 0.0,
+            outer_radius: 0.0,
+        }
+    }
+}
+
 /// Parses layout.campacknew into a dictionary of CameraPackageDefs
 pub fn parse_campacknew(dir: &str) -> HashMap<String, CameraPackageDef> {
     let mut packages = HashMap::new();
+    // Default magic package based on defaults present in cpp files.
+    packages.insert(
+        "DEFAULT_PACKAGE".to_string(),
+        CameraPackageDef {
+            name: "DEFAULT_PACKAGE".to_string(),
+            navigation: "DEFAULT_FOLLOW".to_string(),
+            targeting: "DEFAULT_TARGETING".to_string(),
+            fighting: "DEFAULT_FOLLOW".to_string(),
+            fight_mode_radius: 5.0,
+            fight_mode_running_away_time: 2.0,
+        },
+    );
+
     let content = match crate::vfs::read_to_string(dir, "layout.campacknew") {
         Ok(c) => c,
         Err(_) => return packages,
@@ -89,12 +127,41 @@ pub fn parse_campacknew(dir: &str) -> HashMap<String, CameraPackageDef> {
 
 /// Parses a cam_*.xml file into a CameraParameterSet
 pub fn parse_camera_xml(dir: &str, filename: &str) -> Option<CameraParameterSet> {
-    let content = crate::vfs::read_to_string(dir, filename).ok()?;
-
     let mut params = CameraParameterSet::default();
-    // Default FOV and distance to sensible values in case missing
-    params.fov = 50.0;
-    params.distance = 3.0;
+
+    let content = match crate::vfs::read_to_string(dir, filename) {
+        Ok(c) => c,
+        Err(_) => {
+            // Apply magic defaults if the file is one of the hardcoded defaults
+            if filename == "DEFAULT_FOLLOW.xml" {
+                info!("File {} not found, using magic defaults.", filename);
+                params.name = "DEFAULT_FOLLOW".to_string();
+                params.incline_offset = 10.0_f32.to_radians(); 
+                params.incline_offset_running = -20.0_f32.to_radians(); 
+                params.dead_zone_inner_radius = -1.5;
+                params.dead_zone_outer_radius = -4.0;
+                params.lerp_rate_azimuth_zone1 = 2.0;
+                params.lerp_rate_azimuth_zone2 = 3.0;
+                params.lerp_rate_azimuth_zone3 = 3.0;
+                params.lerp_rate_azimuth_zone4 = 3.0;
+                params.spin_threshold = 2.4; 
+                return Some(params);
+            } else if filename == "DEFAULT_FIGHT.xml" {
+                info!("File {} not found, using magic defaults.", filename);
+                params.name = "DEFAULT_FIGHT".to_string();
+                params.incline_offset = -20.0_f32.to_radians();
+                params.inner_radius = 4.0;
+                params.outer_radius = 8.0;
+                return Some(params);
+            } else if filename == "DEFAULT_TARGETING.xml" {
+                info!("File {} not found, using magic defaults.", filename);
+                params.name = "DEFAULT_TARGETING".to_string();
+                params.distance = 2.5; // close up
+                return Some(params);
+            }
+            return None;
+        }
+    };
 
     for line in content.lines() {
         let trimmed = line.trim();
@@ -121,9 +188,9 @@ pub fn parse_camera_xml(dir: &str, filename: &str) -> Option<CameraParameterSet>
             "Name" => params.name = value_str.to_string(),
             "FOV" => params.fov = value_str.parse().unwrap_or(50.0),
             "Distance" => params.distance = value_str.parse().unwrap_or(3.0),
-            "InclineOffset" => params.incline_offset = value_str.parse().unwrap_or(0.0),
+            "InclineOffset" => params.incline_offset = -value_str.parse().unwrap_or(0.0),
             "InclineOffsetRunning" => {
-                params.incline_offset_running = value_str.parse().unwrap_or(0.0)
+                params.incline_offset_running = -value_str.parse().unwrap_or(0.0)
             }
             "DeadZoneInnerRadius" => {
                 params.dead_zone_inner_radius = value_str.parse().unwrap_or(0.0)
@@ -156,7 +223,7 @@ pub fn parse_camera_xml(dir: &str, filename: &str) -> Option<CameraParameterSet>
                     .filter_map(|s| s.parse().ok())
                     .collect();
                 if parts.len() >= 3 {
-                    params.focus_offset = [parts[0], parts[1], parts[2]];
+                    params.focus_offset = [parts[0], -parts[1], parts[2]];
                 }
             }
             _ => {}

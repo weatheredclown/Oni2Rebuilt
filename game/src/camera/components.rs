@@ -1,62 +1,101 @@
 use bevy::prelude::*;
 
-/// Marker for prototype gameplay elements (capsules, combat markers, HUD) that can be toggled with F6.
+/// Marker for prototype gameplay elements (capsules, combat markers, HUD) that can be toggled.
 #[derive(Component)]
 pub struct PrototypeElement;
 
 /// Resource tracking whether prototype overlay is visible.
-#[derive(Resource)]
+#[derive(Resource, Default)]
 pub struct PrototypeVisible(pub bool);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum CameraMode {
-    /// Classic mouse-look camera (rotates with player mouse movement)
-    MouseLook,
-    /// Console-friendly smart camera (zone-based auto-follow)
-    SmartFollow,
-    /// Free-fly camera (WASD + mouse, detached from player)
+pub enum CameraState {
+    Game,
+    Script,
+    Debug,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GameCameraMode {
+    Navigation,
+    Targeting,
+    Fighting,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DebugCameraMode {
+    Polar,
     FreeCam,
 }
 
-/// Camera rig supporting two modes: mouse-look and zone-based smart follow.
-/// Toggle with Tab key.
-#[derive(Component)]
-pub struct CameraRig {
-    pub target: Entity,
-    pub mode: CameraMode,
+/// The mode selector spanning all possible camera states natively.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ActiveCameraMode {
+    GameNavigation,
+    GameTargeting,
+    GameFighting,
+    Script,
+    DebugPolar,
+    DebugFreeCam,
+}
 
-    // === Mouse-look mode fields ===
-    pub offset: Vec3,
-    pub mouse_lerp_speed: f32,
+impl Default for ActiveCameraMode {
+    fn default() -> Self {
+        ActiveCameraMode::GameNavigation
+    }
+}
 
-    // === Smart-follow mode fields (4-zone system from rb's camnewFollow) ===
-    pub current_azimuth: f32,
-    pub target_azimuth: f32,
-    /// Zone boundaries in radians: [20deg, 90deg, 120deg]
-    pub zone_thresholds: [f32; 3],
-    /// Lerp rates per zone (degrees/sec equivalent)
-    pub zone_lerp_rates: [f32; 4],
-    /// Sharp turn threshold - reset dead zone on rapid spin
-    pub spin_threshold: f32,
-    /// Inner dead zone radius - camera doesn't move
-    pub dead_zone_inner: f32,
-    /// Outer dead zone radius - transition zone
-    pub dead_zone_outer: f32,
-    /// Incline pitch offset
-    pub incline_offset: f32,
-    /// Base distance behind target
-    pub follow_distance: f32,
-    /// Height above target
-    pub height: f32,
-    /// Accumulated bump rotation (right-stick flick equivalent)
-    pub bump_angle: f32,
-    /// Bump decay rate
-    pub bump_lerp_rate: f32,
-
-    // === Free-cam mode fields ===
+/// CameraController tracks the active state and handles mode switching, mirroring camnewManager.
+#[derive(Component, Default)]
+pub struct CameraController {
+    pub active_mode: ActiveCameraMode,
+    pub next_mode: Option<ActiveCameraMode>,
+    
+    // Smooth transition tracking between states
+    pub transition_time: f32,
+    pub transition_time_remaining: f32,
+    
+    // Sub-mode memory
+    pub pre_free_mode: Option<ActiveCameraMode>,
+    
+    // Global parameters tracked natively over the manager
+    pub fight_mode_radius: f32,
+    pub collision_detection_on: bool,
+    pub letterbox_mode: bool,
+    
+    // Manual camera offsets/flags 
     pub free_yaw: f32,
     pub free_pitch: f32,
     pub free_speed: f32,
-    /// The mode to return to when exiting free cam
-    pub pre_free_mode: Option<CameraMode>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum ScriptFocusTarget {
+    Actor(Entity),
+    Point(Vec3),
+}
+
+/// The active instructional timeline state for the camera overriding standard bounds.
+#[derive(Component, Default, Clone, Debug)]
+pub struct ScriptCameraSequence {
+    // Spatial Rail (from LayoutPaths via CameraMoveAlongRail)
+    pub active_rail: Option<Vec<Vec3>>,      // Extracted spline path
+    pub rail_start_pos: Option<Vec3>,        // Original camera position before spline start
+    pub active_rail_name: Option<String>,
+    pub rail_duration: f32,
+    pub rail_time_elapsed: f32,
+    
+    // Smooth Look-At Tracker (CameraTrackActor / CameraTrackPoint)
+    pub tracked_target: Option<ScriptFocusTarget>,
+    
+    // Explicit Camera Positions over time (CameraMoveToPoint / CameraMoveToActor)
+    pub move_start: Option<Vec3>,
+    pub move_target: Option<ScriptFocusTarget>,
+    pub move_duration: f32,
+    pub move_time_elapsed: f32,
+    
+    pub fov_start: Option<f32>,
+    pub fov_target: Option<f32>,
+    pub fov_duration: f32,
+    pub fov_time_elapsed: f32,
 }

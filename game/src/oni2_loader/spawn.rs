@@ -183,25 +183,53 @@ pub fn creature_movement_anim_system(
                 (loco.strafe_gaits.as_slice(), throttle_right)
             };
 
-            let best_gait = gaits
-                .iter()
-                .find(|g| {
-                    let lower = g.min_throttle.min(g.max_throttle);
-                    let upper = g.min_throttle.max(g.max_throttle);
-                    throttle >= lower && throttle <= upper
-                })
-                .or_else(|| {
-                    gaits.iter().min_by(|a, b| {
-                        (a.ideal_throttle - throttle)
-                            .abs()
-                            .total_cmp(&(b.ideal_throttle - throttle).abs())
+            let mut best_gait = None;
+
+            // Hysteresis: prevent physics micro-fluctuations from dropping states (bias against falling out below)
+            if let Some(cur_id) = anim_state.current_anim_id {
+                if let Some(cur_gait) = gaits.iter().find(|g| g.anim == cur_id) {
+                    let lower = cur_gait.min_throttle.min(cur_gait.max_throttle) - 0.15;
+                    let upper = cur_gait.min_throttle.max(cur_gait.max_throttle);
+                    if throttle >= lower && throttle <= upper {
+                        best_gait = Some(cur_gait);
+                    }
+                }
+            }
+
+            let best_gait = best_gait.or_else(|| {
+                gaits
+                    .iter()
+                    .find(|g| {
+                        let lower = g.min_throttle.min(g.max_throttle);
+                        let upper = g.min_throttle.max(g.max_throttle);
+                        throttle >= lower && throttle <= upper
                     })
-                });
+                    .or_else(|| {
+                        gaits.iter().min_by(|a, b| {
+                            (a.ideal_throttle - throttle)
+                                .abs()
+                                .total_cmp(&(b.ideal_throttle - throttle).abs())
+                        })
+                    })
+            });
 
             if let Some(gait) = best_gait {
                 if Some(gait.anim) != anim_state.current_anim_id {
+                    let prev_num_frames = anim_state.anim.frames.len().max(1) as f32;
+                    let prev_phase = if prev_num_frames > 1.0 {
+                        anim_state.current_time / (prev_num_frames - 1.0)
+                    } else {
+                        0.0
+                    };
+
                     if library.play_id(gait.anim, &mut anim_state) {
                         *move_anim = CreatureMovementAnim::Stand; // Prevent legacy code from desyncing state
+
+                        // Sync the new animation length directly to the previous phase percentage
+                        let new_num_frames = anim_state.anim.frames.len().max(1) as f32;
+                        if new_num_frames > 1.0 {
+                            anim_state.current_time = prev_phase * (new_num_frames - 1.0);
+                        }
                     } else {
                         warn!("Loco gait requested missing animation ID: {}", gait.anim);
                     }

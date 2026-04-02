@@ -67,6 +67,13 @@ impl Value {
             Value::None => "##UNLOGGABLE##".to_string(),
         }
     }
+
+    pub fn as_vec3(&self) -> Vec3 {
+        match self {
+            Value::Vector(v) => *v,
+            _ => Vec3::ZERO,
+        }
+    }
 }
 
 /// Execution state of a single script instance.
@@ -173,6 +180,14 @@ pub enum SysRequest {
         face: Option<f32>,
     },
     CameraSetPackage(String),
+    CameraReset,
+    CameraMode(String),
+    CameraSetFOV(f32, f32), // Target FOV, Duration
+    CameraTrackActor(Entity),
+    CameraTrackPoint(Vec3),
+    CameraMoveToActor(Entity, f32), // Target, Duration
+    CameraMoveToPoint(Vec3, f32), 
+    CameraMoveAlongRail(String, f32),
     DrawText(String),
     At(f32, f32),
     MakeFx {
@@ -269,6 +284,14 @@ pub enum ScrOniSysEvent {
         face: Option<f32>,
     },
     CameraSetPackage(String),
+    CameraReset,
+    CameraMode(String),
+    CameraSetFOV(f32, f32), // Target FOV, Duration
+    CameraTrackActor(Entity),
+    CameraTrackPoint(Vec3),
+    CameraMoveToActor(Entity, f32),
+    CameraMoveToPoint(Vec3, f32),
+    CameraMoveAlongRail(String, f32),
     DrawText(String),
     At(f32, f32),
     MakeFx {
@@ -1509,10 +1532,12 @@ impl ScriptExec {
             Stmt::Pickup(expr) => {
                 let ent = self.eval_expr(tid, expr, now, ctx);
                 info!("VM: Pickup {:?} (unimplemented)", ent);
+                self.get_thread_mut(tid).state = ExecState::Yielded;
             }
             Stmt::Dropoff { at } => {
                 let at_val = at.as_ref().map(|e| self.eval_expr(tid, e, now, ctx));
                 info!("VM: Dropoff at {:?} (unimplemented)", at_val);
+                self.get_thread_mut(tid).state = ExecState::Yielded;
             }
 
             Stmt::InlineVarDecl(decl) => {
@@ -1940,39 +1965,77 @@ impl ScriptExec {
                 info!("VM: MusicStop (unimplemented)");
             }
             Stmt::CameraReset => {
-                info!("VM: CameraReset (unimplemented)");
+                self.sys_requests.push(SysRequest::CameraReset);
             }
             Stmt::CameraMode(expr) => {
                 let mode = self.eval_expr(tid, expr, now, ctx).as_string();
-                info!("VM: CameraMode {} (unimplemented)", mode);
+                self.sys_requests.push(SysRequest::CameraMode(mode));
             }
             Stmt::CameraLetterbox(expr) => {
-                let b = self.eval_expr(tid, expr, now, ctx).as_int();
-                info!("VM: CameraLetterbox {} (unimplemented)", b);
+                let _b = self.eval_expr(tid, expr, now, ctx).as_int(); // Unsupported natively
             }
             Stmt::CameraFollowActor { args } => {
-                info!("VM: CameraFollowActor {:?} (unimplemented)", args);
+                if let Value::Actor(e) = self.eval_expr(tid, &args[0], now, ctx) {
+                    self.sys_requests.push(SysRequest::CameraSetPackage("".to_string())); // Reset to follow
+                    self.sys_requests.push(SysRequest::UsePad(e)); // Takes focus
+                }
             }
             Stmt::CameraTrackActor { args } => {
-                info!("VM: CameraTrackActor {:?} (unimplemented)", args);
+                if let Value::Actor(e) = self.eval_expr(tid, &args[0], now, ctx) {
+                    self.sys_requests.push(SysRequest::CameraTrackActor(e));
+                }
             }
             Stmt::CameraTrackPoint { args } => {
-                info!("VM: CameraTrackPoint {:?} (unimplemented)", args);
+                if args.len() >= 3 {
+                    let p0 = self.eval_expr(tid, &args[0], now, ctx).as_float();
+                    let p1 = self.eval_expr(tid, &args[1], now, ctx).as_float();
+                    let p2 = self.eval_expr(tid, &args[2], now, ctx).as_float();
+                    self.sys_requests.push(SysRequest::CameraTrackPoint(Vec3::new(p0, p1, p2)));
+                } else if args.len() == 1 {
+                    let vec = self.eval_expr(tid, &args[0], now, ctx).as_vec3();
+                    self.sys_requests.push(SysRequest::CameraTrackPoint(vec));
+                }
             }
             Stmt::CameraMoveToActor { args } => {
-                info!("VM: CameraMoveToActor {:?} (unimplemented)", args);
+                if let Value::Actor(e) = self.eval_expr(tid, &args[0], now, ctx) {
+                    let frames = if args.len() > 1 { self.eval_expr(tid, &args[1], now, ctx).as_float() } else { 0.0 };
+                    let duration = frames / 60.0;
+                    self.sys_requests.push(SysRequest::CameraMoveToActor(e, duration));
+                }
             }
             Stmt::CameraMoveToPoint { args } => {
-                info!("VM: CameraMoveToPoint {:?} (unimplemented)", args);
+                if args.len() >= 3 {
+                    let p0 = self.eval_expr(tid, &args[0], now, ctx).as_float();
+                    let p1 = self.eval_expr(tid, &args[1], now, ctx).as_float();
+                    let p2 = self.eval_expr(tid, &args[2], now, ctx).as_float();
+                    let frames = if args.len() > 3 { self.eval_expr(tid, &args[3], now, ctx).as_float() } else { 0.0 };
+                    self.sys_requests.push(SysRequest::CameraMoveToPoint(Vec3::new(p0, p1, p2), frames / 60.0));
+                } else if args.len() >= 1 {
+                    let vec = self.eval_expr(tid, &args[0], now, ctx).as_vec3();
+                    let frames = if args.len() > 1 { self.eval_expr(tid, &args[1], now, ctx).as_float() } else { 0.0 };
+                    self.sys_requests.push(SysRequest::CameraMoveToPoint(vec, frames / 60.0));
+                }
             }
             Stmt::CameraCutToActor { args } => {
-                info!("VM: CameraCutToActor {:?} (unimplemented)", args);
+                if let Value::Actor(e) = self.eval_expr(tid, &args[0], now, ctx) {
+                    self.sys_requests.push(SysRequest::CameraMoveToActor(e, 0.0));
+                }
             }
             Stmt::CameraCutToPoint { args } => {
-                info!("VM: CameraCutToPoint {:?} (unimplemented)", args);
+                if args.len() >= 3 {
+                    let p0 = self.eval_expr(tid, &args[0], now, ctx).as_float();
+                    let p1 = self.eval_expr(tid, &args[1], now, ctx).as_float();
+                    let p2 = self.eval_expr(tid, &args[2], now, ctx).as_float();
+                    self.sys_requests.push(SysRequest::CameraMoveToPoint(Vec3::new(p0, p1, p2), 0.0));
+                } else if args.len() >= 1 {
+                    let vec = self.eval_expr(tid, &args[0], now, ctx).as_vec3();
+                    self.sys_requests.push(SysRequest::CameraMoveToPoint(vec, 0.0));
+                }
             }
             Stmt::CameraSetFOV { args } => {
-                info!("VM: CameraSetFOV {:?} (unimplemented)", args);
+                let fov = self.eval_expr(tid, &args[0], now, ctx).as_float();
+                let frames = if args.len() > 1 { self.eval_expr(tid, &args[1], now, ctx).as_float() } else { 0.0 };
+                self.sys_requests.push(SysRequest::CameraSetFOV(fov, frames / 60.0));
             }
             Stmt::CameraShake => {
                 info!("VM: CameraShake (unimplemented)");
@@ -2806,6 +2869,30 @@ pub fn scroni_tick_system(
                 SysRequest::CameraSetPackage(pkg_name) => {
                     commands.trigger(ScrOniSysEvent::CameraSetPackage(pkg_name));
                 }
+                SysRequest::CameraReset => {
+                    commands.trigger(ScrOniSysEvent::CameraReset);
+                }
+                SysRequest::CameraMode(mode) => {
+                    commands.trigger(ScrOniSysEvent::CameraMode(mode));
+                }
+                SysRequest::CameraSetFOV(fov, dur) => {
+                    commands.trigger(ScrOniSysEvent::CameraSetFOV(fov, dur));
+                }
+                SysRequest::CameraTrackActor(e) => {
+                    commands.trigger(ScrOniSysEvent::CameraTrackActor(e));
+                }
+                SysRequest::CameraTrackPoint(p) => {
+                    commands.trigger(ScrOniSysEvent::CameraTrackPoint(p));
+                }
+                SysRequest::CameraMoveToActor(e, dur) => {
+                    commands.trigger(ScrOniSysEvent::CameraMoveToActor(e, dur));
+                }
+                SysRequest::CameraMoveToPoint(p, dur) => {
+                    commands.trigger(ScrOniSysEvent::CameraMoveToPoint(p, dur));
+                }
+                SysRequest::CameraMoveAlongRail(r, dur) => {
+                    commands.trigger(ScrOniSysEvent::CameraMoveAlongRail(r, dur));
+                }
                 SysRequest::At(x, y) => {
                     commands.trigger(ScrOniSysEvent::At(x, y));
                 }
@@ -2990,7 +3077,7 @@ pub fn scroni_sys_event_observer(
         )>,
         Query<&Children>,
         Query<&mut MeshMaterial3d<StandardMaterial>>,
-        Query<&mut crate::camera::components::CameraRig>,
+        Query<(Entity, &mut crate::camera::components::CameraController, &mut crate::camera::channel::CameraChannel)>,
         Query<(&Name, Option<&mut PointLight>, Option<&mut SpotLight>)>,
         Query<(Entity, &mut ScrOniScript, Option<&Name>)>,
         Query<(), With<crate::player::components::Player>>,
@@ -3014,18 +3101,21 @@ pub fn scroni_sys_event_observer(
     ) = assets;
     
     if td_directory.is_none() {
-        let assets_path = crate::get_assets_path();
-        let path = std::path::Path::new(assets_path).join("Audio").join("banks");
-        *td_directory = Some(crate::oni2_loader::parsers::td::load_all_tds(&path));
+        *td_directory = Some(crate::oni2_loader::parsers::td::load_all_tds());
     }
 
     if audio_packages.is_none() {
-        let assets_path = crate::get_assets_path();
-        let pkgs_path = std::path::Path::new(assets_path).join("Audio").join("rb.audiopackages");
-        if let Ok(content) = std::fs::read_to_string(&pkgs_path) {
+        if let Ok(content) = crate::vfs::read_to_string("Audio", "rb.audiopackages") {
             *audio_packages = Some(crate::oni2_loader::parsers::audiopackages::parse_audiopackages(&content));
         } else {
-            *audio_packages = Some(std::collections::HashMap::new());
+            let assets_path = crate::get_assets_path();
+            let pkgs_path = std::path::Path::new(assets_path).join("Audio").join("rb.audiopackages");
+            if let Ok(content) = std::fs::read_to_string(&pkgs_path) {
+                *audio_packages = Some(crate::oni2_loader::parsers::audiopackages::parse_audiopackages(&content));
+            } else {
+                warn!("Failed to load Audio/rb.audiopackages, audio package lookups will fail.");
+                *audio_packages = Some(std::collections::HashMap::new());
+            }
         }
     }
 
@@ -3036,7 +3126,7 @@ pub fn scroni_sys_event_observer(
             let mut final_pitch = 1.0;
 
             if let Some(pkgs) = audio_packages.as_ref() {
-                if let Some(pkg) = pkgs.get(&name) {
+                if let Some((_, pkg)) = pkgs.iter().find(|(k, _)| k.eq_ignore_ascii_case(&name)) {
                     if !pkg.nuggets.is_empty() {
                         use rand::Rng;
                         let mut rng = rand::thread_rng();
@@ -3046,12 +3136,18 @@ pub fn scroni_sys_event_observer(
                         resolved_name = nugget.sound.clone();
                         final_volume = nugget.volume * rng.gen_range(nugget.random_min_volume..=nugget.random_max_volume);
                         final_pitch = nugget.pitch * rng.gen_range(nugget.random_min_pitch..=nugget.random_max_pitch);
+                    } else {
+                        warn!("Audio package `{}` found, but it has no nuggets.", name);
                     }
+                } else {
+                    warn!("Audio package `{}` not found in rb.audiopackages (falling back to direct .td lookup)", name);
                 }
             }
 
             if let Some(dir) = td_directory.as_ref() {
-                if let Some((bank_name, vag_index)) = dir.sounds.get(&resolved_name) {
+                if let Some((_, v)) = dir.sounds.iter().find(|(k, _)| k.eq_ignore_ascii_case(&resolved_name)) {
+                    let bank_name = &v.0;
+                    let vag_index = v.1;
                     let hd_name = format!("{}.hd", bank_name);
                     let bd_name = format!("{}.bd", bank_name);
                     
@@ -3128,7 +3224,11 @@ pub fn scroni_sys_event_observer(
                         warn!("HD file not found in VFS: {}", hd_name);
                     }
                 } else {
-                    warn!("Sound `{}` not found in .td manifest directory.", name);
+                    if resolved_name != name {
+                        warn!("Sound `{}` (resolved from package `{}`) not found in .td manifest directory.", resolved_name, name);
+                    } else {
+                        warn!("Sound `{}` not found in .td manifest directory.", name);
+                    }
                 }
             }
         }
@@ -3164,18 +3264,89 @@ pub fn scroni_sys_event_observer(
         ScrOniSysEvent::CameraSetPackage(pkg_name) => {
             if let Some(mut active_pkg) = active_camera_package {
                 if active_pkg.name != pkg_name {
-                    info!(
-                        "Changing active camera package from {} to {}",
-                        active_pkg.name, pkg_name
-                    );
+                    info!("Changing active camera package from {} to {}", active_pkg.name, pkg_name);
                     active_pkg.name = pkg_name;
                 }
             } else {
                 warn!("CameraSetPackage called but no ActiveCameraPackage resource found.");
             }
-            // Transition camera script to SmartFollow mode
-            for mut rig in &mut camera_query {
-                rig.mode = crate::camera::components::CameraMode::SmartFollow;
+            for (_cam_ent, mut controller, _) in &mut camera_query {
+                controller.active_mode = crate::camera::components::ActiveCameraMode::GameNavigation;
+            }
+        }
+        ScrOniSysEvent::CameraReset => {
+            for (_, mut controller, mut channel) in &mut camera_query {
+                controller.active_mode = crate::camera::components::ActiveCameraMode::GameNavigation;
+                channel.script_override_transform = None;
+            }
+        }
+        ScrOniSysEvent::CameraMode(mode) => {
+            let active = match mode.as_str() {
+                "navigation" => crate::camera::components::ActiveCameraMode::GameNavigation,
+                "fight" => crate::camera::components::ActiveCameraMode::GameFighting,
+                "targeting" => crate::camera::components::ActiveCameraMode::GameTargeting,
+                _ => crate::camera::components::ActiveCameraMode::GameNavigation,
+            };
+            for (_, mut controller, _) in &mut camera_query {
+                controller.active_mode = active;
+            }
+        }
+        ScrOniSysEvent::CameraSetFOV(fov, dur) => {
+            for (ent, mut controller, _) in &mut camera_query {
+                controller.active_mode = crate::camera::components::ActiveCameraMode::Script;
+                let mut seq = crate::camera::components::ScriptCameraSequence::default();
+                seq.fov_start = Some(50.0); // Would read actual FOV if available, mapping 50.0 for brevity
+                seq.fov_target = Some(fov);
+                seq.fov_duration = dur;
+                commands.entity(ent).insert(seq);
+            }
+        }
+        ScrOniSysEvent::CameraTrackActor(actor_ent) => {
+            for (ent, mut controller, mut channel) in &mut camera_query {
+                controller.active_mode = crate::camera::components::ActiveCameraMode::Script;
+                channel.focus_actor = actor_ent;
+                let mut seq = crate::camera::components::ScriptCameraSequence::default();
+                seq.tracked_target = Some(crate::camera::components::ScriptFocusTarget::Actor(actor_ent));
+                commands.entity(ent).insert(seq);
+            }
+        }
+        ScrOniSysEvent::CameraTrackPoint(pt) => {
+            for (ent, mut controller, _) in &mut camera_query {
+                controller.active_mode = crate::camera::components::ActiveCameraMode::Script;
+                let mut seq = crate::camera::components::ScriptCameraSequence::default();
+                // Map the point with Z inverted if Oni is left-handed vs Bevy
+                let mapped_pt = Vec3::new(pt.x, pt.y, -pt.z); 
+                seq.tracked_target = Some(crate::camera::components::ScriptFocusTarget::Point(mapped_pt));
+                commands.entity(ent).insert(seq);
+            }
+        }
+        ScrOniSysEvent::CameraMoveToActor(actor_ent, dur) => {
+            for (ent, mut controller, mut channel) in &mut camera_query {
+                controller.active_mode = crate::camera::components::ActiveCameraMode::Script;
+                channel.focus_actor = actor_ent;
+                let mut seq = crate::camera::components::ScriptCameraSequence::default();
+                seq.move_target = Some(crate::camera::components::ScriptFocusTarget::Actor(actor_ent));
+                seq.move_duration = dur;
+                commands.entity(ent).insert(seq);
+            }
+        }
+        ScrOniSysEvent::CameraMoveToPoint(pt, dur) => {
+            for (ent, mut controller, _) in &mut camera_query {
+                controller.active_mode = crate::camera::components::ActiveCameraMode::Script;
+                let mut seq = crate::camera::components::ScriptCameraSequence::default();
+                let mapped_pt = Vec3::new(pt.x, pt.y, -pt.z); 
+                seq.move_target = Some(crate::camera::components::ScriptFocusTarget::Point(mapped_pt));
+                seq.move_duration = dur;
+                commands.entity(ent).insert(seq);
+            }
+        }
+        ScrOniSysEvent::CameraMoveAlongRail(rail, dur) => {
+            for (ent, mut controller, _) in &mut camera_query {
+                controller.active_mode = crate::camera::components::ActiveCameraMode::Script;
+                let mut seq = crate::camera::components::ScriptCameraSequence::default();
+                seq.active_rail_name = Some(rail.clone());
+                seq.rail_duration = dur;
+                commands.entity(ent).insert(seq);
             }
         }
         ScrOniSysEvent::TextureMovie {
@@ -3448,8 +3619,8 @@ pub fn scroni_sys_event_observer(
             commands
                 .entity(script_entity)
                 .remove::<crate::ai::components::AiFighter>();
-            for mut rig in &mut camera_query {
-                rig.target = script_entity;
+            for (_, _, mut channel) in &mut camera_query {
+                channel.focus_actor = script_entity;
             }
             info!("VM: Actor {:?} took player pad controls", script_entity);
         }
