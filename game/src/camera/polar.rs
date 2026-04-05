@@ -74,11 +74,6 @@ pub fn apply_camera_transform(
     
     for (controller, mut channel, mut cam_tf) in &mut camera_query {
         
-        if matches!(controller.active_mode, super::components::ActiveCameraMode::DebugFreeCam) {
-            // Free cam bypasses completely 
-            continue;
-        }
-
         if let Some(script_tf) = channel.script_override_transform {
             cam_tf.translation = script_tf.translation;
             cam_tf.rotation = script_tf.rotation;

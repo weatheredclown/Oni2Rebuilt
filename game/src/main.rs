@@ -164,8 +164,7 @@ fn main() {
     .add_plugins(fx_system::FxPlugin)
     .add_plugins(projectile_system::ProjectilePlugin)
     .insert_resource(oni2_loader::DebugBoundsVisible(false))
-    .insert_resource(oni2_loader::DebugSkeletonVisible(false))
-    .insert_resource(oni2_loader::PointCloudMode(false));
+    .insert_resource(oni2_loader::DebugSkeletonVisible(false));
 
     if fog_enabled {
         app.insert_resource(oni2_loader::FogEnabled);
@@ -212,7 +211,6 @@ fn main() {
         (
             oni2_loader::toggle_debug_bounds,
             oni2_loader::toggle_debug_skeleton,
-            oni2_loader::toggle_point_cloud,
             oni2_loader::update_oni2_animation,
             oni2_loader::resolve_pending_parents_system,
             oni2_loader::creature_movement_anim_system,
@@ -858,7 +856,7 @@ fn debug_scan_player_geometry(
     names: Query<&Name>,
     parents: Query<&ChildOf>,
 ) {
-    if keyboard.just_pressed(KeyCode::F9) {
+    if keyboard.just_pressed(KeyCode::F11) {
         let origin: Vec3 = if let Some(player_tf) = player_query.iter().next() {
             player_tf.translation()
         } else {

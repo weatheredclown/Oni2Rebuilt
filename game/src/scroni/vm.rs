@@ -3077,7 +3077,7 @@ pub fn scroni_sys_event_observer(
         )>,
         Query<&Children>,
         Query<&mut MeshMaterial3d<StandardMaterial>>,
-        Query<(Entity, &mut crate::camera::components::CameraController, &mut crate::camera::channel::CameraChannel)>,
+        Query<(Entity, &mut crate::camera::components::CameraController, &mut crate::camera::channel::CameraChannel, Option<&crate::camera::components::ScriptCameraSequence>)>,
         Query<(&Name, Option<&mut PointLight>, Option<&mut SpotLight>)>,
         Query<(Entity, &mut ScrOniScript, Option<&Name>)>,
         Query<(), With<crate::player::components::Player>>,
@@ -3270,12 +3270,12 @@ pub fn scroni_sys_event_observer(
             } else {
                 warn!("CameraSetPackage called but no ActiveCameraPackage resource found.");
             }
-            for (_cam_ent, mut controller, _) in &mut camera_query {
+            for (_cam_ent, mut controller, _, _) in &mut camera_query {
                 controller.active_mode = crate::camera::components::ActiveCameraMode::GameNavigation;
             }
         }
         ScrOniSysEvent::CameraReset => {
-            for (_, mut controller, mut channel) in &mut camera_query {
+            for (_, mut controller, mut channel, _) in &mut camera_query {
                 controller.active_mode = crate::camera::components::ActiveCameraMode::GameNavigation;
                 channel.script_override_transform = None;
             }
@@ -3287,14 +3287,14 @@ pub fn scroni_sys_event_observer(
                 "targeting" => crate::camera::components::ActiveCameraMode::GameTargeting,
                 _ => crate::camera::components::ActiveCameraMode::GameNavigation,
             };
-            for (_, mut controller, _) in &mut camera_query {
+            for (_, mut controller, _, _) in &mut camera_query {
                 controller.active_mode = active;
             }
         }
         ScrOniSysEvent::CameraSetFOV(fov, dur) => {
-            for (ent, mut controller, _) in &mut camera_query {
+            for (ent, mut controller, _, seq_opt) in &mut camera_query {
                 controller.active_mode = crate::camera::components::ActiveCameraMode::Script;
-                let mut seq = crate::camera::components::ScriptCameraSequence::default();
+                let mut seq = seq_opt.cloned().unwrap_or_default();
                 seq.fov_start = Some(50.0); // Would read actual FOV if available, mapping 50.0 for brevity
                 seq.fov_target = Some(fov);
                 seq.fov_duration = dur;
@@ -3302,48 +3302,53 @@ pub fn scroni_sys_event_observer(
             }
         }
         ScrOniSysEvent::CameraTrackActor(actor_ent) => {
-            for (ent, mut controller, mut channel) in &mut camera_query {
+            for (ent, mut controller, mut channel, seq_opt) in &mut camera_query {
                 controller.active_mode = crate::camera::components::ActiveCameraMode::Script;
                 channel.focus_actor = actor_ent;
-                let mut seq = crate::camera::components::ScriptCameraSequence::default();
+                info!("📽️ [Camera] Script commanding TRACK on Actor {:?}", actor_ent);
+                let mut seq = seq_opt.cloned().unwrap_or_default();
                 seq.tracked_target = Some(crate::camera::components::ScriptFocusTarget::Actor(actor_ent));
                 commands.entity(ent).insert(seq);
             }
         }
         ScrOniSysEvent::CameraTrackPoint(pt) => {
-            for (ent, mut controller, _) in &mut camera_query {
+            for (ent, mut controller, _, seq_opt) in &mut camera_query {
                 controller.active_mode = crate::camera::components::ActiveCameraMode::Script;
-                let mut seq = crate::camera::components::ScriptCameraSequence::default();
+                let mut seq = seq_opt.cloned().unwrap_or_default();
                 // Map the point with X and Z inverted (Oni right-handed mapping vs Bevy)
                 let mapped_pt = Vec3::new(-pt.x, pt.y, -pt.z); 
+                info!("📽️ [Camera] Script commanding TRACK on Point {}", mapped_pt);
                 seq.tracked_target = Some(crate::camera::components::ScriptFocusTarget::Point(mapped_pt));
                 commands.entity(ent).insert(seq);
             }
         }
         ScrOniSysEvent::CameraMoveToActor(actor_ent, dur) => {
-            for (ent, mut controller, mut channel) in &mut camera_query {
+            for (ent, mut controller, mut channel, seq_opt) in &mut camera_query {
                 controller.active_mode = crate::camera::components::ActiveCameraMode::Script;
                 channel.focus_actor = actor_ent;
-                let mut seq = crate::camera::components::ScriptCameraSequence::default();
+                info!("📽️ [Camera] Script commanding MOVE to Actor {:?} over {:.2}s", actor_ent, dur);
+                let mut seq = seq_opt.cloned().unwrap_or_default();
                 seq.move_target = Some(crate::camera::components::ScriptFocusTarget::Actor(actor_ent));
                 seq.move_duration = dur;
                 commands.entity(ent).insert(seq);
             }
         }
         ScrOniSysEvent::CameraMoveToPoint(pt, dur) => {
-            for (ent, mut controller, _) in &mut camera_query {
+            for (ent, mut controller, _, seq_opt) in &mut camera_query {
                 controller.active_mode = crate::camera::components::ActiveCameraMode::Script;
-                let mut seq = crate::camera::components::ScriptCameraSequence::default();
+                let mut seq = seq_opt.cloned().unwrap_or_default();
                 let mapped_pt = Vec3::new(-pt.x, pt.y, -pt.z); 
+                info!("📽️ [Camera] Script commanding MOVE to Point {} over {:.2}s", mapped_pt, dur);
                 seq.move_target = Some(crate::camera::components::ScriptFocusTarget::Point(mapped_pt));
                 seq.move_duration = dur;
                 commands.entity(ent).insert(seq);
             }
         }
         ScrOniSysEvent::CameraMoveAlongRail(rail, dur) => {
-            for (ent, mut controller, _) in &mut camera_query {
+            for (ent, mut controller, _, seq_opt) in &mut camera_query {
                 controller.active_mode = crate::camera::components::ActiveCameraMode::Script;
-                let mut seq = crate::camera::components::ScriptCameraSequence::default();
+                info!("📽️ [Camera] Script commanding MOVE along Rail '{}' over {:.2}s", rail, dur);
+                let mut seq = seq_opt.cloned().unwrap_or_default();
                 seq.active_rail_name = Some(rail.clone());
                 seq.rail_duration = dur;
                 commands.entity(ent).insert(seq);
@@ -3499,6 +3504,7 @@ pub fn scroni_sys_event_observer(
                         .insert(crate::oni2_loader::spawn::NeedsGroundSnap {
                             origin: bevy_pos,
                             wait_frames: 4,
+                            capsule_half_height: 1.0,
                         });
                 }
                 if let Some(angles_y) = face {
@@ -3619,7 +3625,7 @@ pub fn scroni_sys_event_observer(
             commands
                 .entity(script_entity)
                 .remove::<crate::ai::components::AiFighter>();
-            for (_, _, mut channel) in &mut camera_query {
+            for (_, _, mut channel, _) in &mut camera_query {
                 channel.focus_actor = script_entity;
             }
             info!("VM: Actor {:?} took player pad controls", script_entity);

@@ -17,6 +17,7 @@ pub struct NeedsGroundSnap {
     pub origin: Vec3,
     /// How many physics frames to wait before probing (colliders need 1 frame to register).
     pub wait_frames: u32,
+    pub capsule_half_height: f32,
 }
 
 /// System that probes for solid ground beneath newly spawned creatures and teleports them
@@ -34,7 +35,7 @@ pub fn ground_snap_system(
         }
 
         let origin = snap.origin;
-        let capsule_half_height = 1.0_f32; // capsule(0.4, 1.2) → total height ~2.0
+        let capsule_half_height = snap.capsule_half_height;
 
         // Probe positions: center first, then a spiral out to 5m
         let probe_offsets = [
@@ -1084,10 +1085,28 @@ pub fn spawn_oni2_creature(
         Some(anim_name),
     )?;
 
+    let mut min_y = 0.0;
+    let mut max_y = 2.0;
+
+    // Reverted bounding volume processing. Collision bounds naturally have differing "invisible padding"
+    // margins beneath the physical feet vertices per-character, causing variable floats when math'd dynamically.
+    // Instead, since all visual skeleton hips structurally pivot 1.0 meter above their feet relative origin,
+    // and ground_snap offsets by exactly 1.1m (1.0 half height + 0.1 buffer), we apply -2.1 offset exactly.
+    let capsule_radius = 0.4;
+    let capsule_length = 1.2;
+    let capsule_half_height = 1.0;
+
+    let y_offset = -2.1;
+
+    bevy::log::info!(
+        "Creature '{}': bounds Y [{:.2}, {:.2}], offset applied: {:.2}",
+        anim_name, min_y, max_y, y_offset
+    );
+
     // Every creature gets a physics capsule + render offset + ground snap
     commands.entity(entity).insert((
         RigidBody::Dynamic,
-        Collider::capsule(0.4, 1.2),
+        Collider::capsule(capsule_radius, capsule_length),
         LockedAxes::new()
             .lock_rotation_x()
             .lock_rotation_y()
@@ -1100,15 +1119,14 @@ pub fn spawn_oni2_creature(
             Dir3::NEG_Y,
         )
         .with_max_distance(0.3),
-        // Offset mesh down to align feet with capsule bottom
         CreatureRenderOffset {
-            y_offset: -2.0,
+            y_offset,
             facing: Quat::IDENTITY,
         },
-        // Deferred ground probe — wait for physics colliders to register
         NeedsGroundSnap {
             origin: position,
             wait_frames: 3,
+            capsule_half_height,
         },
     ));
 

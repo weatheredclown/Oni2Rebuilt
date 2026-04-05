@@ -529,9 +529,7 @@ pub struct DebugBoundsVisible(pub bool);
 #[derive(Resource)]
 pub struct DebugSkeletonVisible(pub bool);
 
-/// Controls point cloud rendering mode (F5 toggle).
-#[derive(Resource)]
-pub struct PointCloudMode(pub bool);
+
 
 /// Stores the parsed model for mesh rebuilding (point cloud toggle etc).
 #[derive(Component)]
@@ -651,58 +649,6 @@ pub fn debug_draw_capsules(
     }
 }
 
-/// Toggle point cloud mode with F5 — rebuilds all Oni2 meshes.
-pub fn toggle_point_cloud(
-    keyboard: Res<ButtonInput<KeyCode>>,
-    mut point_cloud: ResMut<PointCloudMode>,
-    mut commands: Commands,
-    mut meshes: ResMut<Assets<Mesh>>,
-    query: Query<(Entity, &Oni2ModelData, &Children)>,
-) {
-    if !keyboard.just_pressed(KeyCode::F5) {
-        return;
-    }
-    point_cloud.0 = !point_cloud.0;
-    let mode = if point_cloud.0 {
-        "POINT CLOUD"
-    } else {
-        "TRIANGLES"
-    };
-    info!("Render mode: {}", mode);
-
-    for (entity, model_data, children) in &query {
-        // Despawn old mesh children
-        let child_entities: Vec<Entity> = children.iter().collect();
-        for child in child_entities {
-            commands.entity(child).despawn();
-        }
-
-        // Rebuild meshes in the new mode
-        let sub_meshes = if point_cloud.0 {
-            build_point_clouds_by_material(&model_data.model)
-        } else {
-            build_meshes_by_material(&model_data.model)
-        };
-
-        commands.entity(entity).with_children(|parent| {
-            for (mat_idx, mesh) in sub_meshes {
-                let mesh_handle = meshes.add(mesh);
-                let pass_handles = model_data
-                    .material_handles
-                    .get(mat_idx)
-                    .cloned()
-                    .unwrap_or_else(|| vec![model_data.fallback_material.clone()]);
-                for mat_handle in pass_handles {
-                    parent.spawn((
-                        Mesh3d(mesh_handle.clone()),
-                        MeshMaterial3d(mat_handle),
-                        Transform::default(),
-                    ));
-                }
-            }
-        });
-    }
-}
 
 /// Toggle debug skeleton with F4.
 pub fn toggle_debug_skeleton(

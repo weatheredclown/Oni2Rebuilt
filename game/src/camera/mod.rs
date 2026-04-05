@@ -20,6 +20,7 @@ impl Plugin for CameraPlugin {
                 (
                     systems::camera_mode_toggle_system,
                     systems::prototype_toggle_system,
+                    systems::debug_render_camera_targets,
                     systems::update_camera_channel,
                     
                     // Mode-specific evaluators (all read from & write to channel)

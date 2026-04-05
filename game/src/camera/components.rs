@@ -25,7 +25,6 @@ pub enum GameCameraMode {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DebugCameraMode {
     Polar,
-    FreeCam,
 }
 
 /// The mode selector spanning all possible camera states natively.
@@ -36,7 +35,6 @@ pub enum ActiveCameraMode {
     GameFighting,
     Script,
     DebugPolar,
-    DebugFreeCam,
 }
 
 impl Default for ActiveCameraMode {
@@ -55,18 +53,21 @@ pub struct CameraController {
     pub transition_time: f32,
     pub transition_time_remaining: f32,
     
-    // Sub-mode memory
-    pub pre_free_mode: Option<ActiveCameraMode>,
     
+    // Sub-mode memory
+
     // Global parameters tracked natively over the manager
     pub fight_mode_radius: f32,
     pub collision_detection_on: bool,
     pub letterbox_mode: bool,
-    
-    // Manual camera offsets/flags 
-    pub free_yaw: f32,
-    pub free_pitch: f32,
-    pub free_speed: f32,
+}
+
+/// Unrelated free-flying debug camera component, separate from the main camera.
+#[derive(Component, Default)]
+pub struct DebugFreeCamera {
+    pub yaw: f32,
+    pub pitch: f32,
+    pub speed: f32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]

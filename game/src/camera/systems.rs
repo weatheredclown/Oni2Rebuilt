@@ -7,10 +7,12 @@ use super::channel::{CameraChannel, CameraBumpDirection};
 /// Toggle camera mode with Tab key or F5 (FreeCam).
 pub fn camera_mode_toggle_system(
     keyboard: Res<ButtonInput<KeyCode>>,
-    mut camera_query: Query<(&mut CameraController, &Transform)>,
+    mut commands: Commands,
+    mut main_cam_query: Query<(&mut Camera, &Transform, &mut CameraController)>,
+    mut debug_cam_query: Query<(Entity, &mut Camera, &mut crate::camera::components::DebugFreeCamera), Without<CameraController>>,
 ) {
     if keyboard.just_pressed(KeyCode::Tab) {
-        for (mut controller, _) in &mut camera_query {
+        for (_, _, mut controller) in &mut main_cam_query {
             controller.active_mode = match controller.active_mode {
                 ActiveCameraMode::GameTargeting => ActiveCameraMode::GameNavigation,
                 ActiveCameraMode::GameNavigation => ActiveCameraMode::GameFighting, 
@@ -20,18 +22,47 @@ pub fn camera_mode_toggle_system(
         }
     }
     if keyboard.just_pressed(KeyCode::F5) {
-        for (mut controller, cam_tf) in &mut camera_query {
-            if controller.active_mode == ActiveCameraMode::DebugFreeCam {
-                controller.active_mode = controller.pre_free_mode.unwrap_or(ActiveCameraMode::GameNavigation);
-                controller.pre_free_mode = None;
+        if let Ok((mut main_cam, main_tf, _)) = main_cam_query.single_mut() {
+            if let Ok((debug_ent, _, _)) = debug_cam_query.single_mut() {
+                // Return to main camera
+                commands.entity(debug_ent).despawn();
+                main_cam.is_active = true;
             } else {
-                let (yaw, pitch, _) = cam_tf.rotation.to_euler(EulerRot::YXZ);
-                controller.free_yaw = yaw;
-                controller.free_pitch = pitch;
-                controller.pre_free_mode = Some(controller.active_mode);
-                controller.active_mode = ActiveCameraMode::DebugFreeCam;
+                // Switch to debug camera
+                main_cam.is_active = false;
+                let (yaw, pitch, _) = main_tf.rotation.to_euler(EulerRot::YXZ);
+                commands.spawn((
+                    Camera3d::default(),
+                    Transform::from_translation(main_tf.translation).with_rotation(main_tf.rotation),
+                    crate::camera::components::DebugFreeCamera {
+                        yaw,
+                        pitch,
+                        speed: 10.0,
+                    },
+                ));
+                main_cam.is_active = false;
             }
         }
+    }
+}
+
+/// Debug render the main camera's target and position using gizmos
+pub fn debug_render_camera_targets(
+    camera_query: Query<(&CameraChannel, &Transform), With<CameraController>>,
+    debug_cam_query: Query<(), With<crate::camera::components::DebugFreeCamera>>,
+    mut gizmos: Gizmos,
+) {
+    if debug_cam_query.is_empty() {
+        return;
+    }
+
+    for (channel, transform) in &camera_query {
+        // Render where the camera is looking (yellow sphere)
+        gizmos.sphere(channel.current_focus_pos, 0.2, Color::srgb(1.0, 1.0, 0.0));
+        
+        // Render where the game thinks the camera's actual lens is (cyan sphere with axis)
+        gizmos.sphere(transform.translation, 0.2, Color::srgb(0.0, 1.0, 1.0));
+        gizmos.ray(transform.translation, transform.forward() * 1.0, Color::srgb(0.0, 1.0, 1.0));
     }
 }
 
@@ -145,7 +176,7 @@ pub fn prototype_toggle_system(
         ),
     >,
 ) {
-    if keyboard.just_pressed(KeyCode::F6) {
+    if keyboard.just_pressed(KeyCode::F2) {
         visible.0 = !visible.0;
         let vis = if visible.0 {
             Visibility::Inherited
