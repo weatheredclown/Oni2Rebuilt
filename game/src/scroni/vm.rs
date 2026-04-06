@@ -2749,14 +2749,7 @@ pub fn scroni_tick_system(
         };
         script.exec.tick(now, delta_time, &mut ctx);
 
-        if script.exec.main_thread.state == ExecState::Done {
-            if script.exec.owner == Entity::PLACEHOLDER {
-                commands.entity(entity).despawn();
-            } else {
-                commands.entity(entity).remove::<ScrOniScript>();
-            }
-            continue;
-        }
+        let is_done = script.exec.main_thread.state == ExecState::Done;
 
         let mut finds_to_resolve = Vec::new();
         for t in script.exec.all_threads_mut() {
@@ -2991,6 +2984,14 @@ pub fn scroni_tick_system(
         }
 
         all_messages.append(&mut script.exec.outgoing_messages);
+
+        if is_done {
+            if script.exec.owner == Entity::PLACEHOLDER {
+                commands.entity(entity).despawn();
+            } else {
+                commands.entity(entity).remove::<ScrOniScript>();
+            }
+        }
     }
 
     // Deliver messages
