@@ -45,6 +45,7 @@ pub fn convert_world_to_bone_local(model: &mut Oni2Model, skel: &Oni2Skeleton) {
 pub fn compute_animated_bone_transforms(
     skel: &Oni2Skeleton,
     frame_channels: &[f32],
+    strip_root_xz: bool,
 ) -> Vec<(Quat, Vec3)> {
     let num_bones = skel.positions.len();
     let mut result = vec![(Quat::IDENTITY, Vec3::ZERO); num_bones];
@@ -56,9 +57,13 @@ pub fn compute_animated_bone_transforms(
         if !has_flags {
             // Legacy struct fallback mapping
             if i == 0 {
-                let tx = *frame_channels.get(0).unwrap_or(&0.0);
+                let mut tx = *frame_channels.get(0).unwrap_or(&0.0);
                 let ty = *frame_channels.get(1).unwrap_or(&0.0);
-                let tz = *frame_channels.get(2).unwrap_or(&0.0);
+                let mut tz = *frame_channels.get(2).unwrap_or(&0.0);
+                if strip_root_xz {
+                    tx = 0.0;
+                    tz = 0.0;
+                }
                 let euler_x = *frame_channels.get(3).unwrap_or(&0.0);
                 let euler_y = *frame_channels.get(4).unwrap_or(&0.0);
                 let euler_z = *frame_channels.get(5).unwrap_or(&0.0);
@@ -130,7 +135,14 @@ pub fn compute_animated_bone_transforms(
 
             let local_rot = Quat::from_euler(EulerRot::YZX, euler_y, euler_z, euler_x);
             let local_offset = Vec3::from(skel.local_offsets[i]);
-            let local_pos = Vec3::new(tx, ty, tz) + local_offset;
+            
+            let mut final_tx = tx;
+            let mut final_tz = tz;
+            if i == 0 && strip_root_xz {
+                final_tx = 0.0;
+                final_tz = 0.0;
+            }
+            let local_pos = Vec3::new(final_tx, ty, final_tz) + local_offset;
 
             if i == 0 {
                 result[0] = (local_rot, local_pos);

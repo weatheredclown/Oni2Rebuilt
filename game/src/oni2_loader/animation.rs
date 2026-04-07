@@ -849,19 +849,12 @@ pub fn update_oni2_animation(
             continue;
         }
 
+        let strip_root = render_offset.is_some() && anim_state.looping;
         let mut bone_transforms = crate::oni2_loader::utils::bone::compute_animated_bone_transforms(
             &anim_state.skeleton,
             frame,
+            strip_root,
         );
-
-        // Strip root motion for characters: zero out root bone XZ translation so the model
-        // stays pinned to its entity origin. Keep Y for vertical anim motion.
-        if render_offset.is_some() {
-            if let Some(root) = bone_transforms.get_mut(0) {
-                root.1.x = 0.0;
-                root.1.z = 0.0;
-            }
-        }
 
         // Creature render offset (capsule Y compensation + facing)
         let y_offset = render_offset.map(|o| o.y_offset).unwrap_or(0.0);
