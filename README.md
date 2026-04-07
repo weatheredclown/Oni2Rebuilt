@@ -21,11 +21,11 @@ Bevy/Linux dependencies installed locally.
 
 ## Visuals
 
-![Gameplay Screenshot 1](docs/screenshot_1.png)
-![Gameplay Screenshot 2](docs/screenshot_2.png)
-![Gameplay Screenshot 3](docs/screenshot_3.png)
-![Gameplay Screenshot 4](docs/screenshot_4.png)
-![Gameplay Screenshot 5](docs/screenshot_5.png)
+![Gameplay Screenshot 1](docs/ss1.png)
+![Gameplay Screenshot 2](docs/ss2.png)
+![Gameplay Screenshot 3](docs/ss3.png)
+![Gameplay Screenshot 4](docs/ss4.png)
+![Gameplay Screenshot 5](docs/ss5.png)
 
 ![Video 1](docs/kno_run.gif)
 
