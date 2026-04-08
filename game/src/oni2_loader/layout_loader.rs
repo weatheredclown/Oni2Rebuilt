@@ -51,6 +51,12 @@ pub fn load_layout(
     if !layout_paths.curves.is_empty() {
         info!("Layout: loaded {} path curves", layout_paths.curves.len());
     }
+    
+    // Parse layout.graphs to construct the NavGraph
+    let nav_graphs = crate::oni2_loader::parsers::graph::parse_layout_graphs(layout_path);
+    let nav_graph = crate::ai::navigation::NavGraph::new(nav_graphs);
+    info!("Layout: generated NavGraph with {} points", nav_graph.points.len());
+    commands.insert_resource(nav_graph);
 
     // Insert LayoutPaths globally for dynamic spawned actors
     commands.insert_resource(layout_paths.clone());
@@ -465,6 +471,7 @@ pub fn spawn_layout_actor(
                             curve,
                             phase: 0.0,
                             speed,
+                            speed_is_physical: true,
                             target_phase: if has_script { 0.0 } else { 1.0 },
                             wrap_around: if has_script {
                                 false

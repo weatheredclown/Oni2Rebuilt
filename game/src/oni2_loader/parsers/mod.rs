@@ -7,6 +7,7 @@ pub mod effect;
 pub mod entity_type;
 pub mod jump;
 pub mod layout;
+pub mod graph;
 pub mod loco;
 pub mod mesh;
 pub mod model;

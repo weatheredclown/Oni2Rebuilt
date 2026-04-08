@@ -12,7 +12,8 @@ pub struct Oni2Entity {
 pub struct CurveFollower {
     pub curve: NurbsCurve,
     pub phase: f32,              // current t ∈ [0, 1]
-    pub speed: f32,              // knots/sec (parametric speed)
+    pub speed: f32,              // parametric speed or physical speed based on 'speed_is_physical'
+    pub speed_is_physical: bool, // true = meters/sec, false = phase/sec
     pub target_phase: f32,       // target t value
     pub wrap_around: bool,       // loop when reaching end
     pub ping_pong: bool,         // reverse direction at ends

@@ -13,37 +13,27 @@ pub fn curve_follower_system(
 
         let prev_phase = follower.phase;
 
-        // Advance phase mapped by metric length evaluated via finite-difference derivative.
-        // `follower.speed` represents real-world speed (meters per second).
-        let current_pos = follower.curve.get_curve_point(follower.phase);
-        let epsilon = 0.001;
-
-        let delta_phase = if follower.speed > 0.0 {
-            epsilon
+        let phase_advance = if follower.speed_is_physical {
+            let current_pos = follower.curve.get_curve_point(follower.phase);
+            let epsilon = 0.001;
+            let delta_phase = if follower.speed > 0.0 { epsilon } else { -epsilon };
+            
+            let mut lookahead_phase = (follower.phase + delta_phase).clamp(0.0, 1.0);
+            let lookahead_pos = follower.curve.get_curve_point(lookahead_phase);
+            
+            let dist = current_pos.distance(lookahead_pos);
+            let phase_per_meter = if dist > 0.00001 {
+                (lookahead_phase - follower.phase).abs() / dist
+            } else {
+                1.0
+            };
+            follower.speed * phase_per_meter
         } else {
-            -epsilon
-        };
-        let mut lookahead_phase = follower.phase + delta_phase;
-
-        // Handle boundaries to evaluate interior derivatives
-        if lookahead_phase > 1.0 {
-            lookahead_phase = 1.0;
-        }
-        if lookahead_phase < 0.0 {
-            lookahead_phase = 0.0;
-        }
-
-        let lookahead_pos = follower.curve.get_curve_point(lookahead_phase);
-        let dist = current_pos.distance(lookahead_pos);
-
-        let phase_per_meter = if dist > 0.00001 {
-            (lookahead_phase - follower.phase).abs() / dist
-        } else {
-            1.0
+            // Parametric speed from VM scripts
+            follower.speed
         };
 
-        // Advance phase maintaining absolute velocity constraints across spline density
-        follower.phase += follower.speed * dt * phase_per_meter;
+        follower.phase += phase_advance * dt;
 
         // Check if we've reached/passed the target
         if !follower.reached_target {
@@ -154,6 +144,7 @@ pub fn scroni_curve_bridge_system(
                                     } else {
                                         0.0
                                     };
+                                    follower.speed_is_physical = false; // Script commands evaluate parametrically 
                                     follower.target_phase = target_val;
                                     follower.reached_target = false;
                                     follower.wrap_around = false;
@@ -645,6 +636,51 @@ pub fn debug_draw_capsules(
                 bot_center + Vec3::new(dx, 0.0, dz),
                 color,
             );
+        }
+    }
+}
+
+/// Draw wireframe layouts representing active tracking `CurveFollower` states, 
+/// as well as the overarching static `LayoutPaths` for unactivated curves.
+pub fn debug_draw_curves(
+    query: Query<&CurveFollower>,
+    layout_paths: Option<Res<crate::oni2_loader::environment::LayoutPaths>>,
+    mut gizmos: Gizmos,
+    visible: Res<DebugBoundsVisible>,
+) {
+    if !visible.0 {
+        return;
+    }
+    
+    let active_color = Color::srgb(1.0, 0.0, 1.0); // magenta
+    
+    for follower in &query {
+        let segments = 50;
+        let mut prev_pos = follower.curve.get_curve_point(0.0);
+        for i in 1..=segments {
+            let t = i as f32 / segments as f32;
+            let current_pos = follower.curve.get_curve_point(t);
+            gizmos.line(prev_pos, current_pos, active_color);
+            prev_pos = current_pos;
+        }
+        
+        // Draw the current phase position as a sphere
+        let current_pos = follower.curve.get_curve_point(follower.phase);
+        gizmos.sphere(Isometry3d::from_translation(current_pos), 1.0, Color::WHITE);
+    }
+    
+    // Draw all layout curves (unactivated or active in the base pool)
+    let inactive_color = Color::srgb(1.0, 0.5, 0.0); // orange
+    if let Some(paths) = layout_paths {
+        for (_name, pts) in &paths.curves {
+            if pts.len() < 2 { continue; }
+            let mut prev_pos = pts[0];
+            for i in 1..pts.len() {
+                let current_pos = pts[i];
+                gizmos.line(prev_pos, current_pos, inactive_color);
+                prev_pos = current_pos;
+            }
+            gizmos.sphere(Isometry3d::from_translation(pts[0]), 0.5, Color::srgb(1.0, 1.0, 0.0));
         }
     }
 }

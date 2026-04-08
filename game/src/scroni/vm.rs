@@ -165,6 +165,7 @@ pub enum BlockingAction {
         conditions: Vec<(String, Value)>,
         range: Option<f32>,
     },
+    WaitingForPath,
 }
 
 #[derive(Debug, Clone)]
@@ -2745,7 +2746,7 @@ pub struct ScrOniScript {
 /// Bevy system: tick all ScrOni scripts each frame.
 pub fn scroni_tick_system(
     mut commands: Commands,
-    mut query: Query<(Entity, &mut ScrOniScript, &GlobalTransform)>,
+    mut query: Query<(Entity, &mut ScrOniScript, &GlobalTransform, Option<&crate::ai::navigation::ActorPathfollower>)>,
     all_entities: Query<(Entity, &'static GlobalTransform, Option<&'static Name>)>,
     triggers: Query<&'static BroadcastTrigger>,
     time: Res<Time>,
@@ -2753,13 +2754,14 @@ pub fn scroni_tick_system(
     current_checkpoint: Res<crate::oni2_loader::components::CurrentCheckpointIndex>,
     layout_context: Option<Res<crate::oni2_loader::environment::LayoutContext>>,
     mut health_query: Query<&mut crate::combat::components::Health>,
+    nav_graph_opt: Option<Res<crate::ai::navigation::NavGraph>>,
 ) {
     let now = time.elapsed_secs_f64();
     let delta_time = time.delta_secs();
     let mut all_messages = Vec::new();
     let player_ent = player_query.iter().next();
 
-    for (entity, mut script, transform) in &mut query {
+    for (entity, mut script, transform, pathfollower_opt) in &mut query {
         if script.exec.ticks_alive == 0 {
             script.exec.ticks_alive += 1;
             continue;
@@ -2781,15 +2783,59 @@ pub fn scroni_tick_system(
         let is_done = script.exec.main_thread.state == ExecState::Done;
 
         let mut finds_to_resolve = Vec::new();
+        let mut gotos_to_resolve = Vec::new();
+        let mut waiting_for_path = Vec::new();
         for t in script.exec.all_threads_mut() {
-            if let Some(BlockingAction::Find {
-                list_var,
-                conditions,
-                range,
-            }) = t.blocking.clone()
-            {
+            if let Some(BlockingAction::Find { list_var, conditions, range }) = t.blocking.clone() {
                 finds_to_resolve.push((t.thread_id, list_var, conditions, range));
+            } else if let Some(BlockingAction::GotoPoint { target, within, speed, duration }) = t.blocking.clone() {
+                gotos_to_resolve.push((t.thread_id, target, within, speed, duration));
+            } else if let Some(BlockingAction::WaitingForPath) = t.blocking.clone() {
+                waiting_for_path.push(t.thread_id);
             }
+        }
+        
+        for tid in waiting_for_path {
+            if pathfollower_opt.is_none() {
+                script.exec.clear_blocking(tid);
+                script.exec.tick_thread(tid, now, &mut ctx);
+            }
+        }
+        
+        for (tid, target, within, speed, duration) in gotos_to_resolve {
+            let mut resolved_pos = None;
+            if let Value::Vector(v) = target {
+                resolved_pos = Some(Vec3::new(-v.x, v.y, -v.z)); // Convert to Bevy coords
+            } else if let Value::String(s) = target {
+                if let Some(nav) = &nav_graph_opt {
+                    if let Some(idx) = nav.names.get(&s) {
+                        resolved_pos = Some(nav.points[*idx]);
+                    }
+                }
+            } else if let Value::Actor(act) = target {
+                if let Ok((_, tf, _)) = all_entities.get(act) {
+                    resolved_pos = Some(tf.translation());
+                }
+            }
+            
+            if let Some(pos) = resolved_pos {
+                if let Some(nav) = &nav_graph_opt {
+                    if let Some(path) = nav.find_path_to_point(transform.translation(), pos) {
+                        let throttle = speed.unwrap_or(1.0);
+                        commands.entity(entity).insert(crate::ai::navigation::ActorPathfollower {
+                            path,
+                            current_wp: 0,
+                            speed_throttle: throttle,
+                        });
+                        script.exec.get_thread_mut(tid).blocking = Some(BlockingAction::WaitingForPath);
+                        continue;
+                    }
+                }
+            }
+            
+            // If we get here, pathfinding failed or target resolved to None. Just skip.
+            script.exec.clear_blocking(tid);
+            script.exec.tick_thread(tid, now, &mut ctx);
         }
 
         // Handle Find request
@@ -3028,7 +3074,7 @@ pub fn scroni_tick_system(
 
     // Deliver messages
     for msg in all_messages {
-        if let Ok((_, mut target_script, _)) = query.get_mut(msg.to) {
+        if let Ok((_, mut target_script, _, _)) = query.get_mut(msg.to) {
             target_script.exec.message_queue.push(msg);
         } else {
             warn!(

@@ -1,5 +1,6 @@
 pub mod components;
 pub mod systems;
+pub mod navigation;
 
 use bevy::prelude::*;
 
@@ -15,6 +16,7 @@ impl Plugin for AiPlugin {
                 systems::ai_target_system,
                 systems::ai_decision_system,
                 systems::ai_movement_system,
+                navigation::path_following_system,
             )
                 .chain()
                 .before(crate::combat::systems::ground_detection_system)

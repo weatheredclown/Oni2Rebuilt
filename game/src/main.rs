@@ -233,6 +233,7 @@ fn main() {
         (
             oni2_loader::debug_draw_bounds,
             oni2_loader::debug_draw_capsules,
+            oni2_loader::debug_draw_curves,
         )
             .run_if(in_state(AppState::InGame))
             .run_if(|v: Res<oni2_loader::DebugBoundsVisible>| v.0),

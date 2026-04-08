@@ -42,6 +42,7 @@ pub fn ai_decision_system(
         &HitReaction,
         &AboutToBeHit,
         &GrabState,
+        Option<&crate::ai::navigation::ActorPathfollower>,
     )>,
     targets: Query<&Transform>,
     time: Res<Time>,
@@ -50,9 +51,13 @@ pub fn ai_decision_system(
     let now = time.elapsed_secs_f64();
     let mut rng = rand::rng();
 
-    for (mut ai, ai_tf, mut attack_state, mut block_state, reaction, about_to_be_hit, grab) in
+    for (mut ai, ai_tf, mut attack_state, mut block_state, reaction, about_to_be_hit, grab, follower_opt) in
         &mut ai_query
     {
+        if follower_opt.is_some() {
+            // Let the path following system handle its state.
+            continue;
+        }
         // Priority 1: If in a hit reaction, go to Recovering
         if reaction.active.is_some() {
             ai.state = AiState::Recovering;
@@ -203,10 +208,14 @@ pub fn ai_movement_system(
         &mut Transform,
         &mut LinearVelocity,
         &mut Fighter,
+        Option<&crate::ai::navigation::ActorPathfollower>,
     )>,
     targets: Query<&Transform, Without<AiFighter>>,
 ) {
-    for (ai, mut ai_tf, mut velocity, mut fighter) in &mut ai_query {
+    for (ai, mut ai_tf, mut velocity, mut fighter, follower_opt) in &mut ai_query {
+        if follower_opt.is_some() {
+            continue;
+        }
         let Some(target_entity) = ai.target else {
             // No target: stop moving
             velocity.x = 0.0;
