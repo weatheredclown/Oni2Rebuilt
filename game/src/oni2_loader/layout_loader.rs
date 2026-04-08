@@ -790,6 +790,7 @@ fn load_layout_lights(
                     },
                     Transform::from_translation(pos),
                     InGameEntity,
+                    Name::new(light.name.clone()),
                 ));
                 point_count += 1;
             }
@@ -803,6 +804,7 @@ fn load_layout_lights(
                             ..default()
                         },
                         InGameEntity,
+                        Name::new(light.name.clone()),
                     ));
                 }
                 ambient_count += 1;

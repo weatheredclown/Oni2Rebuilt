@@ -5,6 +5,16 @@ use bevy::prelude::*;
 use super::ast::*;
 use super::compiler::Compiler;
 
+/// Component representing local dynamic script-driven parameters bound to materials.
+#[derive(Component, Default, Debug, Clone)]
+pub struct ShaderLocals {
+    pub locals: HashMap<String, f32>,
+}
+
+/// Marker component ensuring we only unique-clone a material handle once per actor.
+#[derive(Component)]
+pub struct ClonedShaderLocalMaterial;
+
 /// Runtime value on the VM stack / in variables.
 #[derive(Debug, Clone)]
 pub enum Value {
@@ -159,6 +169,10 @@ pub enum BlockingAction {
 
 #[derive(Debug, Clone)]
 pub enum SysRequest {
+    SetFullScreenColor {
+        color: Vec3,
+        duration: f32,
+    },
     ControlHead {
         actor: Entity,
         task: crate::oni2_loader::components::ControlHeadTask,
@@ -255,6 +269,10 @@ pub struct AudioPitchRamp {
 
 #[derive(Event, Debug, Clone)]
 pub enum ScrOniSysEvent {
+    SetFullScreenColor {
+        color: Vec3,
+        duration: f32,
+    },
     ControlHead {
         actor: Entity,
         task: crate::oni2_loader::components::ControlHeadTask,
@@ -2077,7 +2095,10 @@ impl ScriptExec {
                 }
             }
             Stmt::SetFullScreenColor { args } => {
-                info!("VM: SetFullScreenColor {:?} (unimplemented)", args);
+                let color = if args.len() > 0 { self.eval_expr(tid, &args[0], now, ctx).as_vec3() } else { Vec3::ONE };
+                let duration = if args.len() > 1 { self.eval_expr(tid, &args[1], now, ctx).as_float() } else { 0.0 };
+                self.sys_requests.push(SysRequest::SetFullScreenColor { color, duration });
+                info!("VM: SetFullScreenColor {:?} {}", color, duration);
             }
             Stmt::SetUpdateState { target, state } => {
                 let target_val = self.eval_expr(tid, target, now, ctx).as_string();
@@ -2278,6 +2299,14 @@ impl ScriptExec {
                 let lower = name.to_lowercase();
                 match lower.as_str() {
                     "clock" => Value::Float(now as f32),
+                    "sin" => {
+                        let val = args.get(0).map_or(0.0, |e| self.eval_expr(tid, e, now, ctx).as_float());
+                        Value::Float(val.to_radians().sin())
+                    }
+                    "cos" => {
+                        let val = args.get(0).map_or(0.0, |e| self.eval_expr(tid, e, now, ctx).as_float());
+                        Value::Float(val.to_radians().cos())
+                    }
                     "makestring" => {
                         let mut s = String::new();
                         for arg in args {
@@ -2934,6 +2963,9 @@ pub fn scroni_tick_system(
                 SysRequest::SetUpdateState { target, state } => {
                     commands.trigger(ScrOniSysEvent::SetUpdateState { target, state });
                 }
+                SysRequest::SetFullScreenColor { color, duration } => {
+                    commands.trigger(ScrOniSysEvent::SetFullScreenColor { color, duration });
+                }
                 SysRequest::UsePad(ent) => {
                     commands.trigger(ScrOniSysEvent::UsePad { script_entity: ent });
                 }
@@ -3022,6 +3054,85 @@ pub fn load_script_file(dir: &str, filename: &str) -> Result<ScriptFile, String>
     })
 }
 
+#[derive(Resource, Clone, Debug)]
+pub struct ScreenFadeState {
+    pub current_color: Vec3,
+    pub start_color: Vec3,
+    pub target_color: Vec3,
+    pub timer: f32,
+    pub duration: f32,
+}
+impl Default for ScreenFadeState {
+    fn default() -> Self {
+        Self {
+            current_color: Vec3::ONE,
+            start_color: Vec3::ONE,
+            target_color: Vec3::ONE,
+            timer: 0.0,
+            duration: 0.0,
+        }
+    }
+}
+
+#[derive(Component)]
+pub struct ScreenFadeUi;
+
+pub fn update_screen_fade_system(
+    mut commands: Commands,
+    time: Res<Time>,
+    mut state_res: Option<ResMut<ScreenFadeState>>,
+    mut query: Query<&mut BackgroundColor, With<ScreenFadeUi>>,
+) {
+    let Some(mut state) = state_res else { return; };
+    if state.timer < state.duration {
+        state.timer += time.delta_secs();
+        if state.timer > state.duration {
+            state.timer = state.duration;
+        }
+        let t = if state.duration > 0.0 { state.timer / state.duration } else { 1.0 };
+        state.current_color = state.start_color.lerp(state.target_color, t);
+    } else {
+        if state.duration == 0.0 {
+            state.current_color = state.target_color;
+        }
+    }
+
+    let r = state.current_color.x.clamp(0.0, 1.0);
+    let g = state.current_color.y.clamp(0.0, 1.0);
+    let b = state.current_color.z.clamp(0.0, 1.0);
+    let mean = (r + g + b) / 3.0;
+    let opacity = 1.0 - mean;
+
+    let bevy_color = Color::srgba(0.0, 0.0, 0.0, opacity);
+
+    if let Some(mut bg_color) = query.iter_mut().next() {
+        if opacity <= 0.001 {
+            bg_color.0 = Color::NONE;
+        } else {
+            bg_color.0 = bevy_color;
+        }
+    } else {
+        if opacity > 0.001 {
+            commands.spawn((
+                Node {
+                    position_type: PositionType::Absolute,
+                    left: Val::Px(0.0),
+                    top: Val::Px(0.0),
+                    width: Val::Vw(100.0),
+                    height: Val::Vh(100.0),
+                    ..default()
+                },
+                BackgroundColor(bevy_color),
+                GlobalZIndex(9999),
+                ScreenFadeUi,
+                crate::menu::InGameEntity,
+            ));
+        }
+    }
+}
+
+
+
 #[derive(Resource, Default)]
 pub struct ScroniTextState {
     pub current_x: f32,
@@ -3071,6 +3182,7 @@ pub fn scroni_sys_event_observer(
     active_camera_package: Option<ResMut<crate::oni2_loader::ActiveCameraPackage>>,
     mut scroni_text_state: ResMut<ScroniTextState>,
     time: Res<Time>,
+    screen_fade: Option<Res<ScreenFadeState>>,
     misc_queries: (
         Query<(
             &mut Transform,
@@ -3080,7 +3192,7 @@ pub fn scroni_sys_event_observer(
         Query<&mut MeshMaterial3d<StandardMaterial>>,
         Query<(Entity, &mut crate::camera::components::CameraController, &mut crate::camera::channel::CameraChannel, Option<&crate::camera::components::ScriptCameraSequence>)>,
         Query<(&Name, Option<&mut PointLight>, Option<&mut SpotLight>)>,
-        Query<(Entity, &mut ScrOniScript, Option<&Name>)>,
+        Query<(Entity, &mut ScrOniScript, Option<&Name>, Option<&mut ShaderLocals>)>,
         Query<(), With<crate::player::components::Player>>,
         Query<(Entity, &ActiveAmbientSound)>,
     ),
@@ -3121,6 +3233,16 @@ pub fn scroni_sys_event_observer(
     }
 
     match ev {
+        ScrOniSysEvent::SetFullScreenColor { color, duration } => {
+            let start_color = screen_fade.as_ref().map(|s| s.current_color).unwrap_or(Vec3::ONE);
+            commands.insert_resource(ScreenFadeState {
+                current_color: start_color,
+                start_color,
+                target_color: color,
+                timer: 0.0,
+                duration,
+            });
+        }
         ScrOniSysEvent::PlaySound { script_entity, actor, name } => {
             let mut resolved_name = name.clone();
             let mut final_volume = 1.0;
@@ -3490,7 +3612,7 @@ pub fn scroni_sys_event_observer(
             face,
         } => {
             if player_query.get(target).is_ok() {
-                let caller_name = if let Ok((_, script, _)) = script_query.get(script_entity) {
+                let caller_name = if let Ok((_, script, _, _)) = script_query.get(script_entity) {
                     script.exec.main_thread.script.name.clone()
                 } else {
                     "UnknownScript".to_string()
@@ -3571,20 +3693,29 @@ pub fn scroni_sys_event_observer(
             }
         }
         ScrOniSysEvent::SetShaderLocal {
-            script_entity: _,
+            script_entity,
             name,
             val,
         } => {
-            debug!(
-                "VM: Observed SetShaderLocal {} = {} (Unimplemented Material Target)",
-                name, val
-            );
+            if let Ok((_, _, _, mut locals_opt)) = script_query.get_mut(script_entity) {
+                if let Some(mut locals) = locals_opt.as_deref_mut() {
+                    locals.locals.insert(name.clone(), val);
+                } else {
+                    let mut locals = ShaderLocals::default();
+                    locals.locals.insert(name.clone(), val);
+                    commands.entity(script_entity).insert(locals);
+                }
+            } else {
+                let mut locals = ShaderLocals::default();
+                locals.locals.insert(name.clone(), val);
+                commands.entity(script_entity).insert(locals);
+            }
         }
         ScrOniSysEvent::SetUpdateState { target, state } => {
             let active = state.eq_ignore_ascii_case("Active");
             let target_hash = target.parse::<i32>().ok();
 
-            for (entity, mut script, name_opt) in &mut script_query {
+            for (entity, mut script, name_opt, _) in &mut script_query {
                 if let Some(n) = name_opt {
                     let mut is_match = n.as_str() == target;
 
@@ -3821,6 +3952,64 @@ pub fn checkpoint_trigger_system(
                     "Player entered CheckpointTrigger: updated checkpoint_index to {}",
                     trigger.index
                 );
+            }
+        }
+    }
+}
+
+pub fn apply_shader_locals_system(
+    mut commands: Commands,
+    query: Query<(Entity, &ShaderLocals), Changed<ShaderLocals>>,
+    children_query: Query<&Children>,
+    mut child_materials: Query<(Entity, &mut MeshMaterial3d<StandardMaterial>, Option<&ClonedShaderLocalMaterial>)>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+) {
+    for (entity, shader_locals) in query.iter() {
+        // Evaluate supported parameters mapped functionally
+        let mut target_uv_offset = None;
+        if let Some(val) = shader_locals.locals.get("occulation") {
+            // "occulation" mathematically translates UVs in our shader definition logic
+            target_uv_offset = Some(*val);
+        }
+
+        if target_uv_offset.is_none() {
+            continue;
+        }
+
+        let mut queue = vec![entity];
+        while let Some(current) = queue.pop() {
+            if let Ok(children) = children_query.get(current) {
+                for child in children.iter() {
+                    queue.push(child);
+                }
+            }
+
+            if let Ok((child_entity, mut mesh_mat, cloned)) = child_materials.get_mut(current) {
+                // Lazily isolate instance material Handle exactly once per mesh utilizing COW
+                if cloned.is_none() {
+                    if let Some(mat_asset) = materials.get(mesh_mat.id()) {
+                        let mut cloned_mat_val = mat_asset.clone();
+                        
+                        if let Some(offset) = target_uv_offset {
+                            // maybe invert?
+                            cloned_mat_val.uv_transform = bevy::math::Affine2::from_translation(
+                                Vec2::new(offset, offset));
+                        }
+                        
+                        let new_handle = materials.add(cloned_mat_val);
+                        mesh_mat.0 = new_handle;
+                        commands.entity(child_entity).insert(ClonedShaderLocalMaterial);
+                    }
+                } else {
+                    // Already cloned, mutating in-place is instance-safe
+                    if let Some(target_mat) = materials.get_mut(mesh_mat.id()) {
+                        if let Some(offset) = target_uv_offset {
+                            // maybe invert?
+                            target_mat.uv_transform = bevy::math::Affine2::from_translation(
+                                Vec2::new(offset, offset));
+                        }
+                    }
+                }
             }
         }
     }

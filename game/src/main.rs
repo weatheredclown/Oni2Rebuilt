@@ -221,6 +221,8 @@ fn main() {
             scroni::vm::checkpoint_trigger_system.before(scroni::vm::scroni_tick_system),
             scroni::vm::scroni_tick_system,
             scroni::vm::cleanup_scroni_text,
+            scroni::vm::update_screen_fade_system,
+            scroni::vm::apply_shader_locals_system,
             oni2_loader::scroni_curve_bridge_system,
             oni2_loader::curve_follower_system,
         )
