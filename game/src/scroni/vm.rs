@@ -2618,19 +2618,22 @@ impl ScriptExec {
                     "getcheckpointindex" => Value::Int(ctx.current_checkpoint),
                     "first" => {
                         if let Some(Expr::Var(list_name)) = args.get(0) {
-                            if let Some(Value::ActorList(entities, _)) =
-                                self.get_thread(tid).variables.get(list_name)
+                            if let Value::ActorList(entities, _) = self.get_var(tid, list_name)
                             {
                                 let updated = entities.clone();
                                 if let Some(&first_ent) = updated.first() {
-                                    self.get_thread_mut(tid)
-                                        .variables
-                                        .insert(list_name.clone(), Value::ActorList(updated, 1));
+                                    self.set_var(
+                                        tid,
+                                        list_name.clone(),
+                                        Value::ActorList(updated, 1),
+                                    );
                                     return Value::Actor(first_ent);
                                 } else {
-                                    self.get_thread_mut(tid)
-                                        .variables
-                                        .insert(list_name.clone(), Value::ActorList(updated, 0));
+                                    self.set_var(
+                                        tid,
+                                        list_name.clone(),
+                                        Value::ActorList(updated, 0),
+                                    );
                                     return Value::None;
                                 }
                             }
@@ -2682,8 +2685,7 @@ impl ScriptExec {
                     }
                     "size" => {
                         if let Some(Expr::Var(list_name)) = args.get(0) {
-                            if let Some(Value::ActorList(entities, _)) =
-                                self.get_thread(tid).variables.get(list_name)
+                            if let Value::ActorList(entities, _) = self.get_var(tid, list_name)
                             {
                                 return Value::Int(entities.len() as i32);
                             }
@@ -2692,20 +2694,21 @@ impl ScriptExec {
                     }
                     "next" => {
                         if let Some(Expr::Var(list_name)) = args.get(0) {
-                            if let Some(Value::ActorList(entities, idx)) =
-                                self.get_thread(tid).variables.get(list_name)
+                            if let Value::ActorList(entities, idx) = self.get_var(tid, list_name)
                             {
                                 let updated = entities.clone();
-                                let current_idx = *idx;
+                                let current_idx = idx;
                                 if current_idx < updated.len() {
                                     let ent = updated[current_idx];
-                                    self.get_thread_mut(tid).variables.insert(
+                                    self.set_var(
+                                        tid,
                                         list_name.clone(),
                                         Value::ActorList(updated, current_idx + 1),
                                     );
                                     return Value::Actor(ent);
                                 } else {
-                                    self.get_thread_mut(tid).variables.insert(
+                                    self.set_var(
+                                        tid,
                                         list_name.clone(),
                                         Value::ActorList(updated, current_idx),
                                     );
@@ -3973,8 +3976,8 @@ pub fn scroni_sys_event_observer(
             script_entity: _,
             handle,
             name,
-            volume,
-            pitch,
+            mut volume,
+            mut pitch,
             volume_ramp,
             pitch_ramp,
         } => {
@@ -4000,8 +4003,81 @@ pub fn scroni_sys_event_observer(
                     warn!("Stream file not found in VFS: {}", stream_name);
                 }
             } else if file_name.starts_with("SFX_Blast_Chamber:") || file_name.starts_with("SFX_") {
-                info!("Skipping non-stream SFX audio implementation for: {}", file_name);
-                return;
+                let mut resolved_name = file_name.clone();
+                let mut p_vol = 1.0;
+                let mut p_pitch = 1.0;
+                
+                if let Some(pkgs) = audio_packages.as_ref() {
+                    if let Some((_, pkg)) = pkgs.iter().find(|(k, _)| k.eq_ignore_ascii_case(&resolved_name)) {
+                        if !pkg.nuggets.is_empty() {
+                            use rand::Rng;
+                            let mut rng = rand::thread_rng();
+                            let idx = rng.gen_range(0..pkg.nuggets.len());
+                            let nugget = &pkg.nuggets[idx];
+                            resolved_name = nugget.sound.clone();
+                            p_vol = nugget.volume * rng.gen_range(nugget.random_min_volume..=nugget.random_max_volume);
+                            p_pitch = nugget.pitch * rng.gen_range(nugget.random_min_pitch..=nugget.random_max_pitch);
+                        }
+                    }
+                }
+                
+                if let Some(dir) = td_directory.as_ref() {
+                    if let Some((_, v)) = dir.sounds.iter().find(|(k, _)| k.eq_ignore_ascii_case(&resolved_name)) {
+                        let bank_name = &v.0;
+                        let vag_index = v.1;
+                        let hd_name = format!("{}.hd", bank_name);
+                        let bd_name = format!("{}.bd", bank_name);
+                        let hd_paths = [hd_name.clone()];
+                        let mut hd_bytes_opt = None;
+                        for p in &hd_paths {
+                            if let Ok(b) = crate::vfs::read("", p) {
+                                hd_bytes_opt = Some(b);
+                                break;
+                            }
+                        }
+                        if let Some(hd_bytes) = hd_bytes_opt {
+                            if let Ok(header) = crate::oni2_loader::parsers::hd_bd::parse_hd(&hd_bytes) {
+                                let target_index = vag_index + 1;
+                                if let Some(subsong) = header.subsongs.iter().find(|s| s.index == target_index) {
+                                    let bd_paths = [bd_name.clone(), format!("Audio/banks/{}", bd_name)];
+                                    let mut bd_bytes_opt = None;
+                                    for p in &bd_paths {
+                                        if let Ok(b) = crate::vfs::read("", p) {
+                                            bd_bytes_opt = Some(b);
+                                            break;
+                                        }
+                                    }
+                                    if let Some(bd_bytes) = bd_bytes_opt {
+                                        let start = subsong.stream_offset as usize;
+                                        let end = start + subsong.stream_size as usize;
+                                        if end <= bd_bytes.len() {
+                                            let payload = &bd_bytes[start..end];
+                                            if let Ok(pcm) = crate::oni2_loader::parsers::hd_bd::decode_psx_adpcm(payload, subsong.num_samples) {
+                                                if let Ok(wav) = crate::oni2_loader::parsers::hd_bd::create_wav_bytes(&pcm, subsong.sample_rate, subsong.channels) {
+                                                    source_handle = Some(audio_sources.add(bevy::audio::AudioSource {
+                                                        bytes: std::sync::Arc::from(wav),
+                                                    }));
+                                                    
+                                                    // Apply package multipliers to our volume arguments
+                                                    if let Some(target) = volume.as_mut() {
+                                                        *target *= p_vol;
+                                                    } else {
+                                                        volume = Some(p_vol);
+                                                    }
+                                                    if let Some(target) = pitch.as_mut() {
+                                                        *target *= p_pitch;
+                                                    } else {
+                                                        pitch = Some(p_pitch);
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
             } else {
                 info!("Unknown audio prefix for playambientsound: {}", file_name);
                 return;
