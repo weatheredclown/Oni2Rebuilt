@@ -245,6 +245,7 @@ pub enum SysRequest {
         hit_type: String,
         damage: f32,
     },
+    Destroy(Entity),
 }
 
 #[derive(Component)]
@@ -365,6 +366,7 @@ pub enum ScrOniSysEvent {
         target_pitch: f32,
         duration: f32,
     },
+    Destroy(Entity),
 }
 
 #[derive(Debug, Clone)]
@@ -388,6 +390,7 @@ pub struct ScrOniThread {
     pub blocking: Option<BlockingAction>,
     pub start_time: f64,
     pub in_whenever: bool,
+    pub whenever_timers: HashMap<String, f64>,
 }
 
 impl ScrOniThread {
@@ -412,6 +415,7 @@ impl ScrOniThread {
             blocking: None,
             start_time,
             in_whenever: false,
+            whenever_timers: HashMap::new(),
         }
     }
 
@@ -871,12 +875,17 @@ impl ScriptExec {
             for stmt in whenever_stmts {
                 self.exec_stmt(tid, stmt, now, ctx);
                 let current_state = self.get_thread(tid).state;
-                if current_state == ExecState::Yielded || current_state == ExecState::Blocked {
+                if current_state == ExecState::Yielded {
+                    // ScrOni 'exit' effectively breaks out of the current tick's whenever loop silently.
+                    self.get_thread_mut(tid).state = ExecState::Running;
+                    break;
+                } else if current_state == ExecState::Blocked {
                     warn!(
-                        "[ScrOni] Whenever block attempted to block or yield (state: {:?})",
+                        "[ScrOni] Whenever block attempted to block (state: {:?})",
                         current_state
                     );
                     self.get_thread_mut(tid).state = ExecState::Running;
+                    break;
                 } else if current_state == ExecState::PushLoop {
                     warn!(
                         "[ScrOni][{}] Whenever block pushed a loop, this is not fully supported and drops to sequence.",
@@ -997,12 +1006,6 @@ impl ScriptExec {
                     if self.get_thread(tid).loop_stack.is_empty() {
                         let frame = self.get_thread_mut(tid).call_stack.pop();
                         if let Some(frame) = frame {
-                            info!(
-                                "[ScrOni][{}] Sequence ended, returning to caller '{}' at pc {}",
-                                self.get_thread(tid).script.name,
-                                frame.script.name,
-                                frame.seq_pc,
-                            );
                             let t = self.get_thread_mut(tid);
                             t.script = frame.script;
                             t.variables = frame.variables;
@@ -1014,10 +1017,6 @@ impl ScriptExec {
                             broke_for_loop = true;
                             break;
                         } else {
-                            info!(
-                                "[ScrOni][{}] Sequence ended with empty call stack -> Done",
-                                self.get_thread(tid).script.name,
-                            );
                             self.get_thread_mut(tid).state = ExecState::Done;
                             return;
                         }
@@ -1384,7 +1383,28 @@ impl ScriptExec {
             Stmt::DoForSeconds { seconds, body } => {
                 let secs = self.eval_expr(tid, seconds, now, ctx).as_float();
                 if self.get_thread(tid).in_whenever {
-                    warn!("DoForSeconds is not supported synchronously inside a whenever block!");
+                    let key = format!("{:?}", body);
+                    let mut is_active = false;
+                    {
+                        let timers = &mut self.get_thread_mut(tid).whenever_timers;
+                        if !timers.contains_key(&key) {
+                            timers.insert(key.clone(), now + secs as f64);
+                        }
+                        let end_time = timers.get(&key).unwrap();
+                        if now < *end_time {
+                            is_active = true;
+                        }
+                    }
+
+                    if is_active {
+                        let stmts = self.flatten_to_block(body);
+                        for s in stmts {
+                            self.exec_stmt(tid, &s, now, ctx);
+                            if self.get_thread(tid).state == ExecState::Yielded {
+                                break;
+                            }
+                        }
+                    }
                 } else {
                     let stmts = self.flatten_to_block(body);
                     self.get_thread_mut(tid)
@@ -1399,6 +1419,11 @@ impl ScriptExec {
             }
             Stmt::Exit => {
                 self.get_thread_mut(tid).state = ExecState::Yielded;
+            }
+            Stmt::Destroy(target) => {
+                if let Value::Actor(ent) = self.eval_expr(tid, target, now, ctx) {
+                    self.sys_requests.push(SysRequest::Destroy(ent));
+                }
             }
             Stmt::Done => {
                 let frame = self.get_thread_mut(tid).call_stack.pop();
@@ -3222,6 +3247,9 @@ pub fn scroni_tick_system(
                         handle,
                     });
                 }
+                SysRequest::Destroy(ent) => {
+                    commands.trigger(ScrOniSysEvent::Destroy(ent));
+                }
             }
         }
 
@@ -3238,13 +3266,25 @@ pub fn scroni_tick_system(
 
     // Deliver messages
     for msg in all_messages {
-        if let Ok((_, mut target_script, _, _)) = query.get_mut(msg.to) {
+        let is_action = msg.is_action;
+        let msg_text = msg.msg.clone();
+        let target_entity = msg.to;
+        if let Ok((_, mut target_script, _, _)) = query.get_mut(target_entity) {
             target_script.exec.message_queue.push(msg);
         } else {
-            warn!(
-                "VM: Failed to deliver message '{}' to {:?}: target not found or has no ScrOniScript",
-                msg.msg, msg.to
-            );
+            // "sendaction activate" and "sendaction deactivate" target raw props without script components
+            // regularly in Oni level scripts. So silence the warning if the message was sent as an action.
+            if is_action {
+                // "sendaction activate" targets static props, we specifically want to silence the target missing warning here.
+                // We should NOT actually remove ActorAsleep natively via script actions for raw props because it forces continuous physics simulation on things like gears and drops the FPS massively.
+                // TODO: ensure we actually send activate and deactivate messages to static props in the engine *somewhere*
+                // this will control particles/sounds/scroni/animations/etc on that actor
+            } else {
+                warn!(
+                    "VM: Failed to deliver message '{}' to {:?}: target not found or has no ScrOniScript",
+                    msg_text, target_entity
+                );
+            }
         }
     }
 }
@@ -3538,7 +3578,6 @@ pub fn scroni_sys_event_observer(
                                                         ..Default::default()
                                                     },
                                                 ));
-                                                info!("Playing sound `{}` (bank: {}, subsong: {}, loop: {}) vol: {} pitch: {}", resolved_name, bank_name, target_index, subsong.loop_flag, final_volume, final_pitch);
                                             }
                                         }
                                     } else {
@@ -4165,6 +4204,13 @@ pub fn scroni_sys_event_observer(
                     info!("VM: Despawning AmbientSound handle {}", handle);
                     commands.entity(entity).despawn();
                 }
+            }
+        }
+        ScrOniSysEvent::Destroy(target) => {
+            info!("VM: Received native script request to permanently despawn {:?}", target);
+            if let Ok(mut cmds) = commands.get_entity(target) {
+                // Warning note: If this fires multiple times in a single frame for the same entity, Bevy will warn.
+                cmds.despawn();
             }
         }
     }

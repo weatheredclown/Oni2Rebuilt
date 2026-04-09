@@ -420,6 +420,18 @@ impl Compiler {
                 self.advance();
                 Stmt::Retreat
             }
+            TokenCode::Destroy => {
+                self.advance();
+                // Check if it's called like a function `destroy(expr)` or as a command `destroy expr`
+                if self.code() == TokenCode::LeftParen {
+                    self.advance();
+                    let target = self.parse_expr();
+                    self.skip_if(TokenCode::RightParen);
+                    Stmt::Destroy(target)
+                } else {
+                    Stmt::Destroy(self.parse_expr())
+                }
+            }
 
             // Script flow
             TokenCode::Stack => {
@@ -463,10 +475,7 @@ impl Compiler {
 
             // Actor management
             TokenCode::Spawn => self.parse_spawn(),
-            TokenCode::Destroy => {
-                self.advance();
-                Stmt::Destroy
-            }
+
             TokenCode::Teleport => self.parse_teleport(),
             TokenCode::MakeFX => self.parse_make_fx(),
             TokenCode::UsePad => {

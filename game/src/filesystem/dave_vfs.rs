@@ -183,30 +183,15 @@ impl Vfs for DaveVfs {
                     let mut decoder = DeflateDecoder::new(&raw[4..]);
                     let mut out = Vec::with_capacity(entry.uncompressed_size as usize);
                     decoder.read_to_end(&mut out)?;
-                    info!(
-                        "DaveVfs Read (HIT): {} -> {} bytes (decompressed)",
-                        path_key,
-                        out.len()
-                    );
                     Ok(out)
                 } else {
                     // Raw deflate without 4-byte header? Python script showed this didn't exist, but just in case
                     let mut decoder = DeflateDecoder::new(&raw[..]);
                     let mut out = Vec::with_capacity(entry.uncompressed_size as usize);
                     decoder.read_to_end(&mut out)?;
-                    info!(
-                        "DaveVfs Read (HIT): {} -> {} bytes (decompressed)",
-                        path_key,
-                        out.len()
-                    );
                     Ok(out)
                 }
             } else {
-                info!(
-                    "DaveVfs Read (HIT): {} -> {} bytes (uncompressed)",
-                    path_key,
-                    raw.len()
-                );
                 Ok(raw)
             }
         } else {
@@ -259,7 +244,6 @@ impl Vfs for DaveVfs {
                         is_file: e.is_file,
                     });
                 }
-                info!("DaveVfs ReadDir (HIT): {} -> {} items", search, list.len());
                 return Ok(list);
             }
         }

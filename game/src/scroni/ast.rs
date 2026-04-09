@@ -172,6 +172,8 @@ pub enum Stmt {
     Attack(Expr),
     /// `retreat`
     Retreat,
+    /// `destroy <expr>`
+    Destroy(Expr),
 
     /// `stack <string>`
     Stack(Expr),
@@ -201,8 +203,6 @@ pub enum Stmt {
         at: Option<Expr>,
         name: Option<Expr>,
     },
-    /// `destroy`
-    Destroy,
     /// `teleport <expr> [to <vector>] [face <expr>]`
     Teleport {
         target: Expr,
