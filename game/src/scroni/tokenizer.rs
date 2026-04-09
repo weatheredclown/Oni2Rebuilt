@@ -10,6 +10,7 @@ pub struct Tokenizer {
     line: usize,
     col: usize,
     keywords: HashMap<String, TokenCode>,
+    last_token_code: TokenCode,
 }
 
 impl Tokenizer {
@@ -20,6 +21,7 @@ impl Tokenizer {
             line: 1,
             col: 1,
             keywords: keyword_table(),
+            last_token_code: TokenCode::Eof, // sentinel: "nothing before"
         }
     }
 
@@ -28,6 +30,7 @@ impl Tokenizer {
         loop {
             let tok = self.next_token();
             let is_eof = tok.code == TokenCode::Eof;
+            self.last_token_code = tok.code;
             tokens.push(tok);
             if is_eof {
                 break;
@@ -119,13 +122,25 @@ impl Tokenizer {
             return self.read_number(line, col);
         }
 
-        // Negative number: minus followed by digit or dot-digit
+        // Negative number: minus followed by digit or dot-digit, but ONLY when
+        // the previous token could not have produced a value (i.e. not after an
+        // identifier, number literal, or closing paren — in those cases `-` is
+        // the binary subtraction operator, not a sign prefix).
         if ch == '-' {
-            let next = self.peek_at(1);
-            if next.is_some_and(|c| c.is_ascii_digit())
-                || (next == Some('.') && self.peek_at(2).is_some_and(|c| c.is_ascii_digit()))
-            {
-                return self.read_number(line, col);
+            let prev_is_value = matches!(
+                self.last_token_code,
+                TokenCode::Identifier
+                    | TokenCode::IntegerConstant
+                    | TokenCode::FloatConstant
+                    | TokenCode::RightParen
+            );
+            if !prev_is_value {
+                let next = self.peek_at(1);
+                if next.is_some_and(|c| c.is_ascii_digit())
+                    || (next == Some('.') && self.peek_at(2).is_some_and(|c| c.is_ascii_digit()))
+                {
+                    return self.read_number(line, col);
+                }
             }
         }
 

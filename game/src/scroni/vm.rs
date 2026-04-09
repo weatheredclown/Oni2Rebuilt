@@ -939,23 +939,16 @@ impl ScriptExec {
                     return;
                 }
 
-                let mut ls = self.get_thread_mut(tid).loop_stack.pop().unwrap();
-                let pre_len = self.get_thread(tid).loop_stack.len();
-
-                let (active, push_back) = self.step_loop(
+                let (active, should_pop) = self.step_top_loop(
                     tid,
-                    &mut ls,
                     &mut instruction_count,
                     max_instructions,
                     now,
                     ctx,
                 );
 
-                if push_back {
-                    let cur_len = self.get_thread(tid).loop_stack.len();
-                    if cur_len >= pre_len {
-                        self.get_thread_mut(tid).loop_stack.insert(pre_len, ls);
-                    }
+                if should_pop {
+                    self.get_thread_mut(tid).loop_stack.pop();
                 }
 
                 if self.get_thread(tid).state == ExecState::PushLoop {
@@ -1004,12 +997,27 @@ impl ScriptExec {
                     if self.get_thread(tid).loop_stack.is_empty() {
                         let frame = self.get_thread_mut(tid).call_stack.pop();
                         if let Some(frame) = frame {
+                            info!(
+                                "[ScrOni][{}] Sequence ended, returning to caller '{}' at pc {}",
+                                self.get_thread(tid).script.name,
+                                frame.script.name,
+                                frame.seq_pc,
+                            );
                             let t = self.get_thread_mut(tid);
                             t.script = frame.script;
                             t.variables = frame.variables;
                             t.seq_pc = frame.seq_pc;
                             t.loop_stack = frame.loop_stack;
+
+                            // Break out of the native sequence loop to correctly
+                            // re-evaluate the restored loop_stack from the top!
+                            broke_for_loop = true;
+                            break;
                         } else {
+                            info!(
+                                "[ScrOni][{}] Sequence ended with empty call stack -> Done",
+                                self.get_thread(tid).script.name,
+                            );
                             self.get_thread_mut(tid).state = ExecState::Done;
                             return;
                         }
@@ -1040,17 +1048,19 @@ impl ScriptExec {
         }
     }
 
-    /// Step a loop. Returns (still_active, should_push_back).
-    fn step_loop(
+    /// Step the top loop on the loop stack. Returns (still_active, should_pop).
+    fn step_top_loop(
         &mut self,
         tid: u32,
-        ls: &mut LoopState,
         ins_count: &mut usize,
         max_ins: usize,
         now: f64,
         ctx: &mut ScroniContext,
     ) -> (bool, bool) {
-        match ls {
+        let top_idx = self.get_thread(tid).loop_stack.len() - 1;
+        let mut ls = self.get_thread(tid).loop_stack[top_idx].clone();
+
+        match &mut ls {
             LoopState::Forever { body, pc } => {
                 while *pc < body.len() && self.get_thread(tid).state == ExecState::Running {
                     if *ins_count >= max_ins {
@@ -1060,22 +1070,29 @@ impl ScriptExec {
                             max_ins
                         );
                         self.get_thread_mut(tid).state = ExecState::Yielded;
-                        return (true, true);
+                        return (true, false);
                     }
                     *ins_count += 1;
 
                     let stmt = body[*pc].clone();
                     *pc += 1;
+                    self.get_thread_mut(tid).loop_stack[top_idx] = LoopState::Forever { body: body.clone(), pc: *pc };
                     self.exec_stmt(tid, &stmt, now, ctx);
+                    
+                    if self.get_thread(tid).loop_stack.len() > top_idx + 1 {
+                        return (false, false);
+                    }
                 }
                 if let Some(res) = self.check_loop_state(tid) {
-                    return res;
+                    let (active, push_back) = res;
+                    return (active, !push_back);
                 }
                 if self.get_thread(tid).state == ExecState::Running {
                     *pc = 0; // restart loop
-                    return (false, true); // active=false, push_back=true -> instantly loops without yielding a frame
+                    self.get_thread_mut(tid).loop_stack[top_idx] = LoopState::Forever { body: body.clone(), pc: *pc };
+                    return (false, false); 
                 }
-                (true, true) // blocked — keep loop
+                (true, false) // blocked — keep loop
             }
             LoopState::While {
                 condition,
@@ -1085,7 +1102,7 @@ impl ScriptExec {
                 let cond = condition.clone();
                 let cond_val = self.eval_expr(tid, &cond, now, ctx);
                 if !cond_val.as_bool() {
-                    return (false, false); // loop done
+                    return (false, true); // loop done
                 }
                 while *pc < body.len() && self.get_thread(tid).state == ExecState::Running {
                     if *ins_count >= max_ins {
@@ -1095,22 +1112,29 @@ impl ScriptExec {
                             max_ins
                         );
                         self.get_thread_mut(tid).state = ExecState::Yielded;
-                        return (true, true);
+                        return (true, false);
                     }
                     *ins_count += 1;
 
                     let stmt = body[*pc].clone();
                     *pc += 1;
+                    self.get_thread_mut(tid).loop_stack[top_idx] = LoopState::While { condition: condition.clone(), body: body.clone(), pc: *pc };
                     self.exec_stmt(tid, &stmt, now, ctx);
+                    
+                    if self.get_thread(tid).loop_stack.len() > top_idx + 1 {
+                        return (false, false);
+                    }
                 }
                 if let Some(res) = self.check_loop_state(tid) {
-                    return res;
+                    let (active, push_back) = res;
+                    return (active, !push_back);
                 }
                 if self.get_thread(tid).state == ExecState::Running {
                     *pc = 0;
-                    return (false, true); // loop instantly to condition evaluater without yielding
+                    self.get_thread_mut(tid).loop_stack[top_idx] = LoopState::While { condition: condition.clone(), body: body.clone(), pc: *pc };
+                    return (false, false);
                 }
-                (true, true)
+                (true, false)
             }
             LoopState::NTimes {
                 remaining,
@@ -1118,7 +1142,7 @@ impl ScriptExec {
                 pc,
             } => {
                 if *remaining <= 0 {
-                    return (false, false);
+                    return (false, true);
                 }
                 while *pc < body.len() && self.get_thread(tid).state == ExecState::Running {
                     if *ins_count >= max_ins {
@@ -1128,28 +1152,35 @@ impl ScriptExec {
                             max_ins
                         );
                         self.get_thread_mut(tid).state = ExecState::Yielded;
-                        return (true, true);
+                        return (true, false);
                     }
                     *ins_count += 1;
 
                     let stmt = body[*pc].clone();
                     *pc += 1;
+                    self.get_thread_mut(tid).loop_stack[top_idx] = LoopState::NTimes { remaining: *remaining, body: body.clone(), pc: *pc };
                     self.exec_stmt(tid, &stmt, now, ctx);
+                    
+                    if self.get_thread(tid).loop_stack.len() > top_idx + 1 {
+                        return (false, false);
+                    }
                 }
                 if let Some(res) = self.check_loop_state(tid) {
-                    return res;
+                    let (active, push_back) = res;
+                    return (active, !push_back);
                 }
                 if self.get_thread(tid).state == ExecState::Running {
                     *remaining -= 1;
                     *pc = 0;
+                    self.get_thread_mut(tid).loop_stack[top_idx] = LoopState::NTimes { remaining: *remaining, body: body.clone(), pc: *pc };
                     let still_active = *remaining > 0;
-                    return (false, still_active);
+                    return (false, !still_active);
                 }
-                (true, true)
+                (true, false)
             }
             LoopState::ForSeconds { end_time, body, pc } => {
                 if now >= *end_time {
-                    return (false, false);
+                    return (false, true);
                 }
                 while *pc < body.len() && self.get_thread(tid).state == ExecState::Running {
                     if *ins_count >= max_ins {
@@ -1159,36 +1190,56 @@ impl ScriptExec {
                             max_ins
                         );
                         self.get_thread_mut(tid).state = ExecState::Yielded;
-                        return (true, true);
+                        return (true, false);
                     }
                     *ins_count += 1;
 
                     let stmt = body[*pc].clone();
                     *pc += 1;
+                    self.get_thread_mut(tid).loop_stack[top_idx] = LoopState::ForSeconds { end_time: *end_time, body: body.clone(), pc: *pc };
                     self.exec_stmt(tid, &stmt, now, ctx);
+                    
+                    if self.get_thread(tid).loop_stack.len() > top_idx + 1 {
+                        return (false, false);
+                    }
                 }
                 if let Some(res) = self.check_loop_state(tid) {
-                    return res;
+                    let (active, push_back) = res;
+                    return (active, !push_back);
                 }
                 if self.get_thread(tid).state == ExecState::Running {
                     *pc = 0;
-                    return (true, true);
+                    self.get_thread_mut(tid).loop_stack[top_idx] = LoopState::ForSeconds { end_time: *end_time, body: body.clone(), pc: *pc };
+                    let keep = true;
+                    return (keep, false);
                 }
-                (true, true)
+                (true, false)
             }
             LoopState::Block { stmts, pc } => {
                 while *pc < stmts.len() && self.get_thread(tid).state == ExecState::Running {
+                    if *ins_count >= max_ins {
+                        self.get_thread_mut(tid).state = ExecState::Yielded;
+                        return (true, false);
+                    }
+                    *ins_count += 1;
+
                     let stmt = stmts[*pc].clone();
                     *pc += 1;
+                    self.get_thread_mut(tid).loop_stack[top_idx] = LoopState::Block { stmts: stmts.clone(), pc: *pc };
                     self.exec_stmt(tid, &stmt, now, ctx);
+                    
+                    if self.get_thread(tid).loop_stack.len() > top_idx + 1 {
+                        return (false, false);
+                    }
                 }
                 if let Some(res) = self.check_loop_state(tid) {
-                    return res;
+                    let (active, push_back) = res;
+                    return (active, !push_back);
                 }
                 if *pc >= stmts.len() {
-                    return (false, false); // block done
+                    return (false, true); // block done
                 }
-                (true, true)
+                (true, false)
             }
         }
     }
@@ -2204,6 +2255,35 @@ impl ScriptExec {
                         .insert(format!("retreat_{}", target_str))
                     {
                         info!("VM: Retreat {} (unimplemented)", target_str);
+                    }
+                } else if lower == "look" {
+                    if let Some(target_expr) = args.first() {
+                        let target_val = self.eval_expr(tid, target_expr, now, ctx);
+                        let caller = self.owner;
+
+                        match target_val {
+                            Value::Actor(ent) => {
+                                self.sys_requests.push(SysRequest::ControlHead {
+                                    actor: caller,
+                                    task: crate::oni2_loader::components::ControlHeadTask::TrackActor(ent),
+                                });
+                            }
+                            Value::ActorList(list, _) => {
+                                if let Some(&first) = list.first() {
+                                    self.sys_requests.push(SysRequest::ControlHead {
+                                        actor: caller,
+                                        task: crate::oni2_loader::components::ControlHeadTask::TrackActor(first),
+                                    });
+                                }
+                            }
+                            Value::Vector(v) => {
+                                self.sys_requests.push(SysRequest::ControlHead {
+                                    actor: caller,
+                                    task: crate::oni2_loader::components::ControlHeadTask::TrackPos(v),
+                                });
+                            }
+                            _ => {}
+                        }
                     }
                 } else {
                     if self.warned_unimplemented.insert(lower.clone()) {

@@ -87,6 +87,10 @@ impl NavGraph {
     }
     
     pub fn find_path_to_point(&self, start: Vec3, end: Vec3) -> Option<Vec<Vec3>> {
+        if self.points.is_empty() {
+            return Some(vec![end]);
+        }
+        
         let mut start_idx = 0;
         let mut min_dist_s = f32::MAX;
         
@@ -111,6 +115,10 @@ impl NavGraph {
     }
     
     fn a_star(&self, start_idx: usize, target_idx: usize) -> Option<Vec<Vec3>> {
+        if start_idx >= self.points.len() || target_idx >= self.points.len() {
+            return None;
+        }
+
         let mut dists = vec![f32::MAX; self.points.len()];
         let mut parents = vec![usize::MAX; self.points.len()];
         let mut pq = BinaryHeap::new();

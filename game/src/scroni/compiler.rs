@@ -262,7 +262,12 @@ impl Compiler {
     fn parse_section_until(&mut self, end_tokens: &[TokenCode]) -> Block {
         let mut stmts = Vec::new();
         while !end_tokens.contains(&self.code()) && !self.at_end() {
-            stmts.push(self.parse_stmt());
+            let stmt = self.parse_stmt();
+            if let Stmt::Block(mut inner) = stmt {
+                stmts.append(&mut inner);
+            } else {
+                stmts.push(stmt);
+            }
         }
         stmts
     }
@@ -273,7 +278,12 @@ impl Compiler {
         }
         let mut stmts = Vec::new();
         while self.code() != TokenCode::End && !self.at_end() {
-            stmts.push(self.parse_stmt());
+            let stmt = self.parse_stmt();
+            if let Stmt::Block(mut inner) = stmt {
+                stmts.append(&mut inner);
+            } else {
+                stmts.push(stmt);
+            }
         }
         self.skip_if(TokenCode::End);
         stmts
