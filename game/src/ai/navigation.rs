@@ -157,11 +157,13 @@ pub struct ActorPathfollower {
 
 pub fn path_following_system(
     mut commands: Commands,
-    mut query: Query<(Entity, &mut ActorPathfollower, &mut crate::ai::components::AiFighter, &Transform, &mut avian3d::prelude::LinearVelocity, &mut crate::combat::components::Fighter)>,
+    time: Res<Time>,
+    mut query: Query<(Entity, &mut ActorPathfollower, &mut crate::ai::components::AiFighter, &mut Transform, &mut avian3d::prelude::LinearVelocity, &mut crate::combat::components::Fighter)>,
 ) {
     let speed_multiplier = 4.5;
-    
-    for (entity, mut follower, mut ai, tf, mut vel, mut fighter) in &mut query {
+    let dt = time.delta_secs();
+
+    for (entity, mut follower, mut ai, mut tf, mut vel, mut fighter) in &mut query {
         if follower.current_wp >= follower.path.len() {
             commands.entity(entity).remove::<ActorPathfollower>();
             ai.state = crate::ai::components::AiState::Idle;
@@ -169,23 +171,31 @@ pub fn path_following_system(
             vel.z = 0.0;
             continue;
         }
-        
+
         let target = follower.path[follower.current_wp];
         let mut to_target = target - tf.translation;
         to_target.y = 0.0;
-        
+
         let dist = to_target.length();
         if dist < 1.0 {
             follower.current_wp += 1;
             continue;
         }
-        
+
         let dir = to_target / dist;
-        
+
         let desired = dir * speed_multiplier * follower.speed_throttle;
         vel.x = desired.x;
         vel.z = desired.z;
-        
+
         fighter.facing = dir;
+
+        // Rotate to face movement direction. Oni2 models face +Z in local space;
+        // look_at makes -Z face the target, so rotate 180° Y afterward.
+        let look_target = tf.translation + dir;
+        let mut target_tf = *tf;
+        target_tf.look_at(look_target, Vec3::Y);
+        target_tf.rotate_y(std::f32::consts::PI);
+        tf.rotation = tf.rotation.slerp(target_tf.rotation, (10.0 * dt).min(1.0));
     }
 }

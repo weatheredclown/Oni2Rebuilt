@@ -212,6 +212,8 @@ fn main() {
             oni2_loader::toggle_debug_bounds,
             oni2_loader::toggle_debug_skeleton,
             oni2_loader::update_oni2_animation,
+            oni2_loader::head_ik_setup_system,
+            oni2_loader::head_ik_system.after(oni2_loader::update_oni2_animation),
             oni2_loader::resolve_pending_parents_system,
             oni2_loader::creature_movement_anim_system,
             oni2_loader::ground_snap_system,

@@ -500,6 +500,8 @@ pub struct ScroniContext<'a, 'w_e, 's_e, 'w_t, 's_t> {
     pub player: Option<Entity>,
     pub current_checkpoint: i32,
     pub layout_dir: String,
+    /// Per-entity status string: "alive", "dead", "fighting". Built each frame.
+    pub actor_statuses: &'a std::collections::HashMap<Entity, String>,
 }
 
 impl<'a, 'w_e, 's_e, 'w_t, 's_t> ScroniContext<'a, 'w_e, 's_e, 'w_t, 's_t> {
@@ -2316,8 +2318,21 @@ impl ScriptExec {
                         Value::String(s)
                     }
                     "random" => Value::Int(rand::random::<i32>().abs() % 100),
-                    "randomrange" => Value::Int(0),          // stub
-                    "randomrangefloat" => Value::Float(0.0), // stub
+                    "randomrange" => {
+                        let min = args.get(0).map(|e| self.eval_expr(tid, e, now, ctx).as_int()).unwrap_or(0);
+                        let max = args.get(1).map(|e| self.eval_expr(tid, e, now, ctx).as_int()).unwrap_or(100);
+                        if max > min {
+                            Value::Int(min + (rand::random::<i32>().unsigned_abs() as i32 % (max - min + 1)))
+                        } else {
+                            Value::Int(min)
+                        }
+                    }
+                    "randomrangefloat" => {
+                        let min = args.get(0).map(|e| self.eval_expr(tid, e, now, ctx).as_float()).unwrap_or(0.0);
+                        let max = args.get(1).map(|e| self.eval_expr(tid, e, now, ctx).as_float()).unwrap_or(1.0);
+                        let r: f32 = rand::random();
+                        Value::Float(min + r * (max - min))
+                    }
                     "guid" => {
                         if let Some(e) = args.get(0) {
                             let val = self.eval_expr(tid, e, now, ctx);
@@ -2329,12 +2344,31 @@ impl ScriptExec {
                         let target = args.get(0).map(|e| self.eval_expr(tid, e, now, ctx));
                         if let Some(t) = target {
                             let ents = ctx.resolve_targets(&t);
-                            if !ents.is_empty() {
-                                return Value::Int(1);
+                            for ent in ents {
+                                if ctx.actor_statuses.get(&ent).map(|s| s.as_str()) != Some("dead") {
+                                    return Value::Int(1);
+                                }
                             }
                         }
                         Value::Int(0)
                     }
+                    "status" => {
+                        let target = args.get(0).map(|e| self.eval_expr(tid, e, now, ctx));
+                        if let Some(t) = target {
+                            let ents = ctx.resolve_targets(&t);
+                            if let Some(&ent) = ents.first() {
+                                let s = ctx.actor_statuses.get(&ent).map(|s| s.as_str()).unwrap_or("dead");
+                                return Value::String(s.to_string());
+                            }
+                        }
+                        Value::String("dead".to_string())
+                    }
+                    "alive" => Value::String("alive".to_string()),
+                    "dead" => Value::String("dead".to_string()),
+                    "fighting" => Value::String("fighting".to_string()),
+                    "notdying" => Value::String("notdying".to_string()),
+                    "knockeddown" => Value::String("knockeddown".to_string()),
+                    "attacking" => Value::String("attacking".to_string()),
                     "location" => {
                         let target = args.get(0).map(|e| self.eval_expr(tid, e, now, ctx));
                         if let Some(Value::Actor(act)) = target {
@@ -2616,10 +2650,30 @@ impl ScriptExec {
                         }
                         Value::Int(1)
                     }
+                    "navpoint" => {
+                        // navpoint("Name") — return the name as a string so that
+                        // the goto resolver can look it up in nav.names.
+                        if let Some(e) = args.get(0) {
+                            Value::String(self.eval_expr(tid, e, now, ctx).as_string())
+                        } else {
+                            Value::None
+                        }
+                    }
                     _ => Value::None,
                 }
             }
-            Expr::Exists(_) => Value::Int(1), // stub: assume exists
+            Expr::Exists(expr_opt) => {
+                let val = if let Some(expr) = expr_opt {
+                    self.eval_expr(tid, expr, now, ctx)
+                } else {
+                    Value::None
+                };
+                let ents = ctx.resolve_targets(&val);
+                let alive = ents.iter().any(|ent| {
+                    ctx.actor_statuses.get(ent).map(|s| s.as_str()) != Some("dead")
+                });
+                Value::Int(if alive { 1 } else { 0 })
+            }
         }
     }
 
@@ -2733,7 +2787,14 @@ fn eval_binop(op: BinOp, l: &Value, r: &Value, ctx: &ScroniContext) -> Value {
         BinOp::GreaterOrEqual => Value::Int(if l.as_float() >= r.as_float() { 1 } else { 0 }),
         BinOp::And => Value::Int(if l.as_bool() && r.as_bool() { 1 } else { 0 }),
         BinOp::Or => Value::Int(if l.as_bool() || r.as_bool() { 1 } else { 0 }),
-        BinOp::Dot | BinOp::Cross => Value::Float(0.0), // stub
+        BinOp::Dot => match (l, r) {
+            (Value::Vector(a), Value::Vector(b)) => Value::Float(a.dot(*b)),
+            _ => Value::Float(0.0),
+        },
+        BinOp::Cross => match (l, r) {
+            (Value::Vector(a), Value::Vector(b)) => Value::Vector(a.cross(*b)),
+            _ => Value::Vector(Vec3::ZERO),
+        },
     }
 }
 
@@ -2753,13 +2814,32 @@ pub fn scroni_tick_system(
     player_query: Query<Entity, With<crate::player::components::Player>>,
     current_checkpoint: Res<crate::oni2_loader::components::CurrentCheckpointIndex>,
     layout_context: Option<Res<crate::oni2_loader::environment::LayoutContext>>,
-    mut health_query: Query<&mut crate::combat::components::Health>,
+    mut health_query: Query<(Entity, &mut crate::combat::components::Health, Option<&crate::ai::components::AiFighter>)>,
     nav_graph_opt: Option<Res<crate::ai::navigation::NavGraph>>,
 ) {
     let now = time.elapsed_secs_f64();
     let delta_time = time.delta_secs();
     let mut all_messages = Vec::new();
     let player_ent = player_query.iter().next();
+
+    let mut actor_statuses = std::collections::HashMap::new();
+    for (ent, health, ai_opt) in health_query.iter() {
+        let status = if health.current <= 0.0 {
+            "dead"
+        } else if let Some(ai) = ai_opt {
+            match ai.state {
+                crate::ai::components::AiState::Pursuing
+                | crate::ai::components::AiState::Circling
+                | crate::ai::components::AiState::Attacking
+                | crate::ai::components::AiState::Blocking
+                | crate::ai::components::AiState::Recovering => "fighting",
+                _ => "alive",
+            }
+        } else {
+            "alive"
+        };
+        actor_statuses.insert(ent, status.to_string());
+    }
 
     for (entity, mut script, transform, pathfollower_opt) in &mut query {
         if script.exec.ticks_alive == 0 {
@@ -2777,6 +2857,7 @@ pub fn scroni_tick_system(
                 .as_ref()
                 .map(|c| c.layout_dir.clone())
                 .unwrap_or_default(),
+            actor_statuses: &actor_statuses,
         };
         script.exec.tick(now, delta_time, &mut ctx);
 
@@ -3043,7 +3124,7 @@ pub fn scroni_tick_system(
                     });
                 }
                 SysRequest::Hit { target, hit_type, damage } => {
-                    if let Ok(mut health) = health_query.get_mut(target) {
+                    if let Ok((_, mut health, _)) = health_query.get_mut(target) {
                         let final_damage = if hit_type.eq_ignore_ascii_case("environmentalhazard") {
                             damage * time.delta_secs()
                         } else {

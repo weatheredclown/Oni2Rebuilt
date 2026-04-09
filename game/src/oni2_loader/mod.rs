@@ -2,6 +2,7 @@ pub mod animation;
 pub mod components;
 pub mod curve;
 pub mod environment;
+pub mod headik;
 pub mod layout_loader;
 pub mod parsers;
 pub mod registries;
@@ -11,6 +12,7 @@ pub mod utils;
 
 pub use animation::*;
 pub use components::*;
+pub use headik::{head_ik_setup_system, head_ik_system};
 pub use environment::*;
 pub use layout_loader::*;
 pub use registries::*;
