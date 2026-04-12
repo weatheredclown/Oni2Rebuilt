@@ -30,17 +30,23 @@ pub struct AtdtStrike {
 
     // --- Combo-linking timing windows (crAtkAnimCtrlBlock) ---
     // C++ field mapping (from attackdata.cpp FileIO / Save):
-    //   AtkNoQueueThreshold     = Opp2QStart   (before this phase: ignore input)
-    //   AtkEndRedirectThreshold = Opp2DoStart  (branch window open / CRITICAL_FRAME start)
-    //   AtkEndRedirectLimit     = Opp2DoEnd    (branch window close)
-    //   Opp3QStart              = Opp3QStart   (queue window for 3rd opportunity)
-    //   Opp3DoStart             = Opp3DoStart  (execute window for 3rd opportunity)
-    pub opp2_q_start: f32,    // AtkNoQueueThreshold: before this, ignore input
-    pub opp2_do_start: f32,   // AtkEndRedirectThreshold: CRITICAL_FRAME window opens here
-    pub opp2_do_end: f32,     // AtkEndRedirectLimit: CRITICAL_FRAME window closes here
-    pub opp3_q_start: f32,    // Opp3QStart
-    pub opp3_do_start: f32,   // Opp3DoStart
-    pub queue_next_attack: bool, // if false, don't queue input at all
+    //   AtkNoQueueThreshold      = before this phase: input is ignored entirely
+    //   AtkBeginRedirectThreshold= redirect-window open (earliest branch point)
+    //   AtkEndRedirectThreshold  = CRITICAL_FRAME queue window opens
+    //   Opp2CritStart            = CRITICAL_FRAME condition becomes true (branch fires)
+    //   Opp2DoCritStart          = critical "do" threshold (fires queued input immediately)
+    //   AtkEndRedirectLimit      = CRITICAL_FRAME window closes
+    //   Opp3QStart               = queue window for 3rd opportunity
+    //   Opp3DoStart              = execute window for 3rd opportunity
+    pub opp2_q_start: f32,           // AtkNoQueueThreshold
+    pub opp2_begin_redirect: f32,    // AtkBeginRedirectThreshold
+    pub opp2_do_start: f32,          // AtkEndRedirectThreshold: CRITICAL_FRAME queue opens
+    pub opp2_crit_start: f32,        // Opp2CritStart: CRITICAL_FRAME fires
+    pub opp2_do_crit_start: f32,     // Opp2DoCritStart
+    pub opp2_do_end: f32,            // AtkEndRedirectLimit: CRITICAL_FRAME window closes
+    pub opp3_q_start: f32,           // Opp3QStart
+    pub opp3_do_start: f32,          // Opp3DoStart
+    pub queue_next_attack: bool,     // if false, don't queue input at all
 }
 
 impl Default for AtdtStrike {
@@ -73,7 +79,10 @@ impl Default for AtdtStrike {
             react_speed: [[0.0; 4]; 4],
             // C++ crAtkAnimCtrlBlock defaults
             opp2_q_start: 0.0,
+            opp2_begin_redirect: 0.0,
             opp2_do_start: 0.75,
+            opp2_crit_start: 0.75,
+            opp2_do_crit_start: 0.75,
             opp2_do_end: 0.95,
             opp3_q_start: 0.975,
             opp3_do_start: 1.0,
@@ -87,6 +96,8 @@ pub struct AtdtData {
     pub strike: Option<AtdtStrike>,
     pub damage: f32,
     pub block_reaction: i32,
+    /// guardtype from the AttackData-level field (0=normal, 2=unblockable, etc.)
+    pub guardtype: u8,
 }
 
 pub fn parse_atdt_content(content: &str) -> AtdtData {
@@ -156,18 +167,23 @@ pub fn parse_atdt_content(content: &str) -> AtdtData {
                 "reactanim2" => current_strike.reactanim[2] = val.parse().unwrap_or(0),
                 "reactanim3" => current_strike.reactanim[3] = val.parse().unwrap_or(0),
                 // Combo timing windows
-                "AtkNoQueueThreshold"     => current_strike.opp2_q_start   = val.parse().unwrap_or(0.0),
-                "AtkEndRedirectThreshold" => current_strike.opp2_do_start   = val.parse().unwrap_or(0.75),
-                "AtkEndRedirectLimit"     => current_strike.opp2_do_end     = val.parse().unwrap_or(0.95),
-                "Opp3QStart"              => current_strike.opp3_q_start    = val.parse().unwrap_or(0.975),
-                "Opp3DoStart"             => current_strike.opp3_do_start   = val.parse().unwrap_or(1.0),
-                "queuenextattack"         => current_strike.queue_next_attack = val.parse::<i32>().unwrap_or(1) != 0,
+                "AtkNoQueueThreshold"      => current_strike.opp2_q_start        = val.parse().unwrap_or(0.0),
+                "AtkBeginRedirectThreshold"=> current_strike.opp2_begin_redirect  = val.parse().unwrap_or(0.0),
+                "AtkEndRedirectThreshold"  => current_strike.opp2_do_start        = val.parse().unwrap_or(0.75),
+                "Opp2CritStart"            => current_strike.opp2_crit_start      = val.parse().unwrap_or(0.75),
+                "Opp2DoCritStart"          => current_strike.opp2_do_crit_start   = val.parse().unwrap_or(0.75),
+                "AtkEndRedirectLimit"      => current_strike.opp2_do_end          = val.parse().unwrap_or(0.95),
+                "Opp3QStart"               => current_strike.opp3_q_start         = val.parse().unwrap_or(0.975),
+                "Opp3DoStart"              => current_strike.opp3_do_start         = val.parse().unwrap_or(1.0),
+                "queuenextattack"          => current_strike.queue_next_attack     = val.parse::<i32>().unwrap_or(1) != 0,
+                "BlockReaction"            => data.block_reaction                 = val.parse().unwrap_or(0),
                 _ => {}
             }
         } else {
             match key {
-                "damage" => data.damage = val.parse().unwrap_or(0.0),
+                "damage"        => data.damage         = val.parse().unwrap_or(0.0),
                 "BlockReaction" => data.block_reaction = val.parse().unwrap_or(0),
+                "guardtype"     => data.guardtype       = val.parse().unwrap_or(0),
                 _ => {}
             }
         }

@@ -462,18 +462,29 @@ pub fn load_anim_library(
             }
         };
 
-        let atdt_file = format!("{}/{}.atdt", entity_dir, anim_name);
-        if let Ok(atdt_data) = crate::vfs::read_to_string("", &atdt_file) {
+        let tune_atdt = format!("entity.tune/{}/{}.atdt", entity_name, anim_name);
+        let base_atdt = format!("{}/{}.atdt", entity_dir, anim_name);
+        
+        // Priority 1: entity.tune/kno/..
+        // Priority 2: Entity/kno/..
+        // Priority 3: fallback to prefix folder (e.g. if the mesh name differs from anim prefix)
+        let mut atdt_content = crate::vfs::read_to_string("", &tune_atdt);
+        if atdt_content.is_err() {
+            atdt_content = crate::vfs::read_to_string("", &base_atdt);
+        }
+        if atdt_content.is_err() {
+            if let Some(prefix) = anim_name.split('_').next() {
+                let fallback_tune = format!("entity.tune/{}/{}.atdt", prefix, anim_name);
+                atdt_content = crate::vfs::read_to_string("", &fallback_tune);
+                if atdt_content.is_err() {
+                    let fallback_base = format!("Entity/{}/{}.atdt", prefix, anim_name);
+                    atdt_content = crate::vfs::read_to_string("", &fallback_base);
+                }
+            }
+        }
+
+        if let Ok(atdt_data) = atdt_content {
             anim.attack_data = Some(crate::oni2_loader::parsers::atdt::parse_atdt_content(&atdt_data));
-        } else if let Some(prefix) = anim_name.split('_').next() {
-            let mut parts: Vec<&str> = entity_dir.split('/').collect();
-            if let Some(last) = parts.last_mut() {
-                *last = prefix;
-            }
-            let fallback_atdt = format!("{}/{}.atdt", parts.join("/"), anim_name);
-            if let Ok(atdt_data) = crate::vfs::read_to_string("", &fallback_atdt) {
-                anim.attack_data = Some(crate::oni2_loader::parsers::atdt::parse_atdt_content(&atdt_data));
-            }
         }
 
         if alias.starts_with("ANIMREACT_") {
@@ -806,6 +817,106 @@ pub fn debug_draw_skeleton(
             trigger.radius,
             trigger_color,
         );
+    }
+}
+
+/// Draw wireframe attack wedges (hit volumes) during the active frames of attacks.
+pub fn debug_draw_attack_wedges(
+    query: Query<(
+        &Transform,
+        &Oni2AnimState,
+        &crate::combat::components::Fighter,
+    )>,
+    mut gizmos: Gizmos,
+    visible: Res<DebugBoundsVisible>,
+) {
+    if !visible.0 {
+        return;
+    }
+
+    let color = Color::srgba(1.0, 0.0, 0.0, 0.8);
+
+    for (transform, anim_state, _fighter) in &query {
+        let Some(data) = &anim_state.anim.attack_data else {
+            // ATDT not loaded for this animation — check VFS path if wedge is expected
+            debug!("debug_draw_attack_wedges: no attack_data for anim id={:?}", anim_state.current_anim_id);
+            continue;
+        };
+        let Some(strike) = &data.strike else { continue; };
+
+        let frame = anim_state.current_time;
+        let num_frames = anim_state.anim.num_frames as f32;
+
+        // Determine hit-active window. ATDT may omit framenum/frameduration (defaulting to 0);
+        // fall back to minradiusframe/maxradiusframe (also raw frames), then the whole animation.
+        let (win_start, win_end) = if strike.frameduration > 0.0 {
+            (strike.framenum, strike.framenum + strike.frameduration)
+        } else if strike.maxradiusframe > strike.minradiusframe {
+            (strike.minradiusframe, strike.maxradiusframe)
+        } else {
+            (0.0, (num_frames - 1.0).max(0.0))
+        };
+
+        let in_window = frame >= win_start && frame <= win_end;
+        // Red = active hit window, yellow = outside (whole-animation dim view)
+        let draw_color = if in_window {
+            Color::srgba(1.0, 0.0, 0.0, 0.9)
+        } else {
+            Color::srgba(1.0, 0.8, 0.0, 0.35)
+        };
+
+        let center = transform.translation + Vec3::Y * strike.reactdiskheight;
+        let radius = strike.reactdiskradius;
+        if radius <= 0.01 {
+            continue;
+        }
+
+        let start_rad = strike.slicestartradians;
+        let end_rad = strike.sliceendradians;
+
+        // If the slice covers a full circle (or has degenerate equal angles), draw a full ring.
+        let sweep = end_rad - start_rad;
+        let full_circle = sweep.abs() < 1e-4 || sweep.abs() >= std::f32::consts::TAU * 0.99;
+
+        // Draw inner and outer ring limits
+        let draw_wedge_arc = |gizmos: &mut Gizmos, r: f32, color: Color| {
+            if r <= 0.01 { return; }
+            let segments = 24;
+            if full_circle {
+                // Draw a full horizontal ring
+                let step = std::f32::consts::TAU / segments as f32;
+                let mut prev_pt = center + Vec3::new(r, 0.0, 0.0);
+                for i in 1..=segments {
+                    let a = i as f32 * step;
+                    let next_pt = center + Vec3::new(a.cos() * r, 0.0, a.sin() * r);
+                    gizmos.line(prev_pt, next_pt, color);
+                    prev_pt = next_pt;
+                }
+            } else {
+                let angle_step = sweep / segments as f32;
+                let get_point = |angle: f32| -> Vec3 {
+                    // Oni2 angles rotate around +Z (not Bevy's -Z forward); negate to match.
+                    let local_dir = Quat::from_rotation_y(-angle) * Vec3::Z;
+                    center + (transform.rotation * local_dir) * r
+                };
+                let pt_start = get_point(start_rad);
+                let pt_end = get_point(end_rad);
+                gizmos.line(center, pt_start, color);
+                gizmos.line(center, pt_end, color);
+                let mut prev_pt = pt_start;
+                for i in 1..=segments {
+                    let angle = start_rad + angle_step * i as f32;
+                    let next_pt = get_point(angle);
+                    gizmos.line(prev_pt, next_pt, color);
+                    prev_pt = next_pt;
+                }
+            }
+        };
+
+        draw_wedge_arc(&mut gizmos, radius, draw_color);
+        if strike.minreactdiskradius > 0.01 {
+            draw_wedge_arc(&mut gizmos, strike.minreactdiskradius, draw_color);
+        }
     }
 }
 
