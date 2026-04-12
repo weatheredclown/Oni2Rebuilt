@@ -97,9 +97,12 @@ pub fn hit_detection_system(
                 continue;
             }
 
-            // Height check: target must be between attacker origin and reactdiskheight above it.
-            if diff.y < -strike.reactdiskheight || diff.y > strike.reactdiskheight {
-                debug!("hit miss: height diff {:.2} outside ±{:.2}", diff.y, strike.reactdiskheight);
+            // Height check: target must be vertically contained within the cylinder slice.
+            let min_height = strike.reactdiskheight - strike.reactdiskheighttolerance;
+            let max_height = strike.reactdiskheight + strike.reactdiskheighttolerance;
+
+            if diff.y < min_height || diff.y > max_height {
+                debug!("hit miss: height diff {:.2} outside [{:.2}, {:.2}]", diff.y, min_height, max_height);
                 continue;
             }
 

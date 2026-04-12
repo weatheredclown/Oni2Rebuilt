@@ -615,7 +615,7 @@ pub fn toggle_debug_bounds(
 
 /// Draw wireframe bounds using the actual bound edge geometry.
 pub fn debug_draw_bounds(
-    query: Query<(&Transform, &Oni2DebugBounds)>,
+    query: Query<(&Transform, &Oni2DebugBounds, Option<&crate::oni2_loader::spawn::CreatureRenderOffset>)>,
     mut gizmos: Gizmos,
     visible: Res<DebugBoundsVisible>,
 ) {
@@ -623,14 +623,18 @@ pub fn debug_draw_bounds(
         return;
     }
     let color = Color::srgb(0.0, 1.0, 0.0);
-    for (transform, bounds) in &query {
+    for (transform, bounds, creature_offset) in &query {
+        // Character physics centers are above ground by physics_center_height; their Oni bounds
+        // are ground-relative, so subtract that to re-align. Level geometry has no correction.
+        let y_correction = creature_offset.map(|o| o.physics_center_height).unwrap_or(0.0);
+        let base_translation = transform.translation - Vec3::new(0.0, y_correction, 0.0);
         for edge in &bounds.edges {
             if let (Some(&va), Some(&vb)) = (
                 bounds.vertices.get(edge[0] as usize),
                 bounds.vertices.get(edge[1] as usize),
             ) {
-                let wa = transform.transform_point(va);
-                let wb = transform.transform_point(vb);
+                let wa = base_translation + transform.rotation * va;
+                let wb = base_translation + transform.rotation * vb;
                 gizmos.line(wa, wb, color);
             }
         }
@@ -826,6 +830,7 @@ pub fn debug_draw_attack_wedges(
         &Transform,
         &Oni2AnimState,
         &crate::combat::components::Fighter,
+        Option<&crate::oni2_loader::spawn::CreatureRenderOffset>,
     )>,
     mut gizmos: Gizmos,
     visible: Res<DebugBoundsVisible>,
@@ -836,7 +841,7 @@ pub fn debug_draw_attack_wedges(
 
     let color = Color::srgba(1.0, 0.0, 0.0, 0.8);
 
-    for (transform, anim_state, _fighter) in &query {
+    for (transform, anim_state, _fighter, offset_opt) in &query {
         let Some(data) = &anim_state.anim.attack_data else {
             // ATDT not loaded for this animation — check VFS path if wedge is expected
             debug!("debug_draw_attack_wedges: no attack_data for anim id={:?}", anim_state.current_anim_id);
@@ -865,7 +870,10 @@ pub fn debug_draw_attack_wedges(
             Color::srgba(1.0, 0.8, 0.0, 0.35)
         };
 
-        let center = transform.translation + Vec3::Y * strike.reactdiskheight;
+        // Character physics capsule centers are hardcoded to ground + 1.1m.
+        // Oni combat definitions evaluate height (reactdiskheight) originating from the ground floor.
+        let base_translation = transform.translation - Vec3::new(0.0, 1.1, 0.0);
+        let center = base_translation + Vec3::Y * strike.reactdiskheight;
         let radius = strike.reactdiskradius;
         if radius <= 0.01 {
             continue;

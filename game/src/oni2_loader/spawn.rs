@@ -8,6 +8,9 @@ pub struct CreatureRenderOffset {
     pub y_offset: f32,
     /// Rotation applied to mesh children (e.g. 180° Y to fix facing)
     pub facing: Quat,
+    /// Height of the physics capsule center above ground (capsule_half_height + snap buffer).
+    /// Used by debug drawing to re-align Oni ground-relative bounds to world space.
+    pub physics_center_height: f32,
 }
 
 /// Marker for creatures that need to be snapped to the ground after physics initializes.
@@ -1197,6 +1200,7 @@ pub fn spawn_oni2_creature(
     let capsule_radius = 0.4;
     let capsule_length = 1.2;
     let capsule_half_height = 1.0;
+    let snap_buffer = 0.1;
 
     let y_offset = -2.1;
 
@@ -1224,6 +1228,7 @@ pub fn spawn_oni2_creature(
         CreatureRenderOffset {
             y_offset,
             facing: Quat::IDENTITY,
+            physics_center_height: capsule_half_height + snap_buffer,
         },
         PlatformRider::default(),
         NeedsGroundSnap {

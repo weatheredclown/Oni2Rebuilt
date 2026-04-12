@@ -10,6 +10,7 @@ pub struct AtdtStrike {
     pub minradiusframe: f32,
     pub maxradiusframe: f32,
     pub reactdiskheight: f32,
+    pub reactdiskheighttolerance: f32,
     pub slicestartradians: f32,
     pub sliceendradians: f32,
     pub sliceheadingradiansb: f32,
@@ -60,6 +61,7 @@ impl Default for AtdtStrike {
             minradiusframe: 0.0,
             maxradiusframe: 0.0,
             reactdiskheight: 1.0,
+            reactdiskheighttolerance: 0.1,
             slicestartradians: 0.0,
             sliceendradians: 0.0,
             sliceheadingradiansb: 0.0,
@@ -123,7 +125,7 @@ pub fn parse_atdt_content(content: &str) -> AtdtData {
             continue;
         }
 
-        let key = parts[0];
+        let key = parts[0].to_lowercase();
         let val = if parts.len() > 1 { parts[1] } else { "" };
 
         if in_strike {
@@ -133,11 +135,13 @@ pub fn parse_atdt_content(content: &str) -> AtdtData {
                 continue;
             }
 
-            match key {
+            match key.as_str() {
                 "framenum" => current_strike.framenum = val.parse().unwrap_or(0.0),
                 "frameduration" => current_strike.frameduration = val.parse().unwrap_or(0.0),
-                "reactdiskradius" => current_strike.reactdiskradius = val.parse().unwrap_or(0.0),
-                "minreactdiskradius" => current_strike.minreactdiskradius = val.parse().unwrap_or(0.0),
+                "reactdiskradius" => current_strike.reactdiskradius = val.parse::<f32>().unwrap_or(0.0),
+                "minreactdiskradius" => current_strike.minreactdiskradius = val.parse::<f32>().unwrap_or(0.0),
+                "reactdiskheight" => current_strike.reactdiskheight = val.parse::<f32>().unwrap_or(1.0),
+                "reactdiskheighttolerance" => current_strike.reactdiskheighttolerance = val.parse::<f32>().unwrap_or(0.1),
                 "minradiusframe" => current_strike.minradiusframe = val.parse().unwrap_or(0.0),
                 "maxradiusframe" => current_strike.maxradiusframe = val.parse().unwrap_or(0.0),
                 "slicestartradians" => current_strike.slicestartradians = val.parse().unwrap_or(0.0),
@@ -158,31 +162,31 @@ pub fn parse_atdt_content(content: &str) -> AtdtData {
                 "reactphase2" => current_strike.reactphase[2] = val.parse().unwrap_or(0.0),
                 "reactphase3" => current_strike.reactphase[3] = val.parse().unwrap_or(0.0),
                 // React distance
-                "reactdistance0" => current_strike.reactdistance[0] = val.parse().unwrap_or(0.0),
-                "reactdistance1" => current_strike.reactdistance[1] = val.parse().unwrap_or(0.0),
-                "reactdistance2" => current_strike.reactdistance[2] = val.parse().unwrap_or(0.0),
-                "reactdistance3" => current_strike.reactdistance[3] = val.parse().unwrap_or(0.0),
+                "reactdistance0" => current_strike.reactdistance[0] = val.parse::<f32>().unwrap_or(0.0),
+                "reactdistance1" => current_strike.reactdistance[1] = val.parse::<f32>().unwrap_or(0.0),
+                "reactdistance2" => current_strike.reactdistance[2] = val.parse::<f32>().unwrap_or(0.0),
+                "reactdistance3" => current_strike.reactdistance[3] = val.parse::<f32>().unwrap_or(0.0),
                 "reactanim0" => current_strike.reactanim[0] = val.parse().unwrap_or(0),
                 "reactanim1" => current_strike.reactanim[1] = val.parse().unwrap_or(0),
                 "reactanim2" => current_strike.reactanim[2] = val.parse().unwrap_or(0),
                 "reactanim3" => current_strike.reactanim[3] = val.parse().unwrap_or(0),
                 // Combo timing windows
-                "AtkNoQueueThreshold"      => current_strike.opp2_q_start        = val.parse().unwrap_or(0.0),
-                "AtkBeginRedirectThreshold"=> current_strike.opp2_begin_redirect  = val.parse().unwrap_or(0.0),
-                "AtkEndRedirectThreshold"  => current_strike.opp2_do_start        = val.parse().unwrap_or(0.75),
-                "Opp2CritStart"            => current_strike.opp2_crit_start      = val.parse().unwrap_or(0.75),
-                "Opp2DoCritStart"          => current_strike.opp2_do_crit_start   = val.parse().unwrap_or(0.75),
-                "AtkEndRedirectLimit"      => current_strike.opp2_do_end          = val.parse().unwrap_or(0.95),
-                "Opp3QStart"               => current_strike.opp3_q_start         = val.parse().unwrap_or(0.975),
-                "Opp3DoStart"              => current_strike.opp3_do_start         = val.parse().unwrap_or(1.0),
+                "atknoqueuethreshold"      => current_strike.opp2_q_start        = val.parse().unwrap_or(0.0),
+                "atkbeginredirectthreshold"=> current_strike.opp2_begin_redirect  = val.parse().unwrap_or(0.0),
+                "atkendredirectthreshold"  => current_strike.opp2_do_start        = val.parse().unwrap_or(0.75),
+                "opp2critstart"            => current_strike.opp2_crit_start      = val.parse().unwrap_or(0.75),
+                "opp2docritstart"          => current_strike.opp2_do_crit_start   = val.parse().unwrap_or(0.75),
+                "atkendredirectlimit"      => current_strike.opp2_do_end          = val.parse().unwrap_or(0.95),
+                "opp3qstart"               => current_strike.opp3_q_start         = val.parse().unwrap_or(0.975),
+                "opp3dostart"              => current_strike.opp3_do_start         = val.parse().unwrap_or(1.0),
                 "queuenextattack"          => current_strike.queue_next_attack     = val.parse::<i32>().unwrap_or(1) != 0,
-                "BlockReaction"            => data.block_reaction                 = val.parse().unwrap_or(0),
+                "blockreaction"            => data.block_reaction                 = val.parse().unwrap_or(0),
                 _ => {}
             }
         } else {
-            match key {
+            match key.as_str() {
                 "damage"        => data.damage         = val.parse().unwrap_or(0.0),
-                "BlockReaction" => data.block_reaction = val.parse().unwrap_or(0),
+                "blockreaction" => data.block_reaction = val.parse().unwrap_or(0),
                 "guardtype"     => data.guardtype       = val.parse().unwrap_or(0),
                 _ => {}
             }

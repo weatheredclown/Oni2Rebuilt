@@ -4065,11 +4065,11 @@ pub fn scroni_sys_event_observer(
                         if !pkg.nuggets.is_empty() {
                             use rand::Rng;
                             let mut rng = rand::thread_rng();
-                            let idx = rng.gen_range(0..pkg.nuggets.len());
+                            let idx = rng.random_range(0..pkg.nuggets.len());
                             let nugget = &pkg.nuggets[idx];
                             resolved_name = nugget.sound.clone();
-                            p_vol = nugget.volume * rng.gen_range(nugget.random_min_volume..=nugget.random_max_volume);
-                            p_pitch = nugget.pitch * rng.gen_range(nugget.random_min_pitch..=nugget.random_max_pitch);
+                            p_vol = nugget.volume * rng.random_range(nugget.random_min_volume..=nugget.random_max_volume);
+                            p_pitch = nugget.pitch * rng.random_range(nugget.random_min_pitch..=nugget.random_max_pitch);
                         }
                     }
                 }
