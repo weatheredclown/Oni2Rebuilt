@@ -9,6 +9,8 @@ mod oni2_loader;
 mod player;
 mod projectile_system;
 mod scroni;
+mod fight_vector;
+mod statemachine;
 mod telemetry;
 pub use filesystem::dave_vfs;
 pub use filesystem::vfs;
@@ -157,6 +159,8 @@ fn main() {
     .add_plugins(telemetry::TelemetryPlugin)
     .add_plugins(menu::MenuPlugin)
     .add_plugins(combat::CombatPlugin)
+    .add_plugins(fight_vector::FightVectorPlugin)
+    .add_plugins(statemachine::StateMachinePlugin)
     .add_plugins(player::PlayerPlugin)
     .add_plugins(ai::AiPlugin)
     .add_plugins(camera::CameraPlugin)

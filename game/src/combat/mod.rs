@@ -22,9 +22,8 @@ impl Plugin for CombatPlugin {
                 FixedUpdate,
                 (
                     systems::ground_detection_system,
-                    systems::attack_input_system,
+                    systems::attack_sync_system,
                     systems::grab_input_system,
-                    systems::attack_advance_system,
                     systems::hit_detection_system,
                     systems::about_to_be_hit_system,
                     systems::grab_system,
@@ -41,7 +40,7 @@ impl Plugin for CombatPlugin {
             )
             .add_systems(
                 Update,
-                (systems::fist_visual_system, systems::shield_visual_system)
+                (systems::shield_visual_system,)
                     .run_if(in_state(AppState::InGame))
                     .run_if(resource_exists::<components::CombatMaterials>),
             );

@@ -127,6 +127,85 @@ pub fn ground_snap_system(
     }
 }
 
+// ---------------------------------------------------------------------------
+// Moving platform / local frame of reference
+// ---------------------------------------------------------------------------
+
+/// Tracks which kinematic platform this entity is riding so we can apply
+/// the platform's per-frame delta transform before the physics step.
+///
+/// This implements the "delta buffer" pattern: the pre-physics system reads
+/// the platform's current Transform, diffs it against last frame, and injects
+/// that displacement (both linear and rotational about the platform origin)
+/// directly into the rider's `Position`.  The player then effectively lives
+/// in the platform's local frame for the duration of the frame.
+#[derive(Component, Default)]
+pub struct PlatformRider {
+    /// The kinematic entity currently being ridden, if any.
+    pub platform: Option<Entity>,
+    /// The platform's Transform as recorded at the end of last FixedUpdate.
+    pub last_transform: Transform,
+}
+
+/// Pre-physics system: apply the kinematic platform's delta transform to any
+/// riding entity.  Must run in `FixedUpdate` BEFORE Avian's physics step and
+/// BEFORE `player_movement_system` so that movement input is applied on top
+/// of the already-moved position.
+pub fn moving_platform_system(
+    mut riders: Query<(
+        &mut avian3d::prelude::Position,
+        &mut avian3d::prelude::Rotation,
+        &mut PlatformRider,
+        &avian3d::prelude::ShapeHits,
+    )>,
+    platforms: Query<(&Transform, &avian3d::prelude::RigidBody)>,
+) {
+    for (mut pos, mut rider_rot, mut rider, hits) in &mut riders {
+        // Find first ground contact that is on a kinematic or static body (important for ScrOni mutated static props).
+        let new_platform: Option<Entity> = hits.iter().find_map(|hit| {
+            if let Ok((_, rb)) = platforms.get(hit.entity) {
+                if matches!(rb, avian3d::prelude::RigidBody::Kinematic | avian3d::prelude::RigidBody::Static) {
+                    return Some(hit.entity);
+                }
+            }
+            None
+        });
+
+        // Apply delta only when we're on the same platform as last tick.
+        if let Some(platform_entity) = new_platform {
+            if rider.platform == Some(platform_entity) {
+                if let Ok((platform_tf, _)) = platforms.get(platform_entity) {
+                    let prev = rider.last_transform;
+
+                    // Rotation delta between frames.
+                    let rot_delta = platform_tf.rotation * prev.rotation.inverse();
+
+                    // Rotate the rider's world offset around the platform's
+                    // *previous* origin, then re-anchor to its *new* origin.
+                    let offset: Vec3 = pos.0 - prev.translation;
+                    let new_world_pos = platform_tf.translation + rot_delta * offset;
+                    pos.0 = new_world_pos;
+
+                    // Apply yaw-only rotation to the rider's facing so they
+                    // turn with the platform (e.g. a spinning disk).
+                    let (yaw, _, _) = rot_delta.to_euler(EulerRot::YXZ);
+                    if yaw.abs() > 1e-6 {
+                        rider_rot.0 = Quat::from_rotation_y(yaw) * rider_rot.0;
+                    }
+                }
+            }
+        }
+
+        // Record state for next tick.
+        rider.platform = new_platform;
+        if let Some(entity) = new_platform {
+            if let Ok((tf, _)) = platforms.get(entity) {
+                rider.last_transform = *tf;
+            }
+        }
+    }
+}
+
 /// Tracks which movement animation is currently playing to avoid re-triggering.
 #[derive(Component, Default, PartialEq, Eq)]
 pub enum CreatureMovementAnim {
@@ -149,13 +228,23 @@ pub fn creature_movement_anim_system(
         &LinearVelocity,
         &GlobalTransform,
         Option<&crate::oni2_loader::parsers::loco::LocomotionController>,
+        Option<&crate::statemachine::runtime::FsmRuntime>,
     )>,
 ) {
     const WALK_THRESHOLD: f32 = 0.5;
     const RUN_THRESHOLD: f32 = 3.0;
     const MAX_RUN_SPEED: f32 = 6.0;
 
-    for (library, mut anim_state, mut move_anim, vel, transform, loco_opt) in &mut creatures {
+    for (library, mut anim_state, mut move_anim, vel, transform, loco_opt, fsm_opt) in &mut creatures {
+        // Skip locomotion only while the FSM is actively playing a non-looping animation
+        // (e.g. an attack). Once it finishes (timed_out) or there is no active anim,
+        // locomotion takes back over.
+        if let Some(fsm) = fsm_opt {
+            if fsm.active_anim.is_some() && !fsm.timed_out {
+                continue;
+            }
+        }
+
         let horiz_speed = Vec2::new(vel.x, vel.z).length();
 
         // Get character forward and right directions
@@ -983,8 +1072,9 @@ pub fn spawn_oni2_entity_with_rotation(
                 last_rendered_time: -1.0,
                 joint_entities: joint_entities.clone(),
                 base_rotation: rotation,
-                current_frame: Vec::new(),
+                current_frame: vec![0.0; ent_type.anim_library.as_ref().and_then(|lib| lib.anims.values().next()).map_or(0, |a| a.num_channels) as usize],
                 current_anim_id: None,
+                previous_anim_id: None,
             });
     }
 
@@ -1123,6 +1213,7 @@ pub fn spawn_oni2_creature(
             y_offset,
             facing: Quat::IDENTITY,
         },
+        PlatformRider::default(),
         NeedsGroundSnap {
             origin: position,
             wait_frames: 3,
@@ -1156,6 +1247,21 @@ pub fn spawn_oni2_creature(
                 commands.entity(entity).insert(jump);
             }
             commands.entity(entity).insert(CreatureMovementAnim::Run);
+
+            // Load attack combo sequence from .attacks file (data-driven DoTriggerAtk)
+            let attack_data = crate::oni2_loader::parsers::anims::load_attack_data(
+                &anim_entity_dir,
+                anim_name,
+            );
+            if !attack_data.forward_combo.is_empty() {
+                commands.entity(entity).insert(attack_data);
+            }
+
+            // Load react library (ANIMREACT_*.rct files, indexed by animReactEnum)
+            let react_lib = crate::oni2_loader::parsers::rct::load_react_library(anim_name);
+            if !react_lib.entries.is_empty() {
+                commands.entity(entity).insert(react_lib);
+            }
         }
     }
 

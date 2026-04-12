@@ -58,6 +58,48 @@ pub fn parse_anims_content(
     }
 }
 
+/// Parse an entity's .attacks file and return the standing forward combo chain.
+/// Entries are kept only when the anim filename contains `_comb_fwd_`, preserving
+/// file order — this matches how ONI2's crAttackData drives DoTriggerAtk.
+pub fn load_attack_data(entity_dir: &str, entity_name: &str) -> crate::combat::components::AttackData {
+    let tune_path = format!("entity.tune/{}/{}.attacks", entity_name, entity_name);
+    let entity_path = format!("{}/{}.attacks", entity_dir, entity_name);
+
+    let attacks_path = if crate::vfs::exists("", &tune_path) {
+        tune_path
+    } else if crate::vfs::exists("", &entity_path) {
+        entity_path
+    } else {
+        return crate::combat::components::AttackData::default();
+    };
+
+    let content = match crate::vfs::read_to_string("", &attacks_path) {
+        Ok(c) => c,
+        Err(_) => return crate::combat::components::AttackData::default(),
+    };
+
+    let mut forward_combo = Vec::new();
+    let mut in_anims = false;
+
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed.starts_with(';') || trimmed.starts_with('#') {
+            continue;
+        }
+        if trimmed == "Anims {" { in_anims = true; continue; }
+        if trimmed == "}" { in_anims = false; continue; }
+        if in_anims {
+            let parts: Vec<&str> = trimmed.split_whitespace().collect();
+            if parts.len() >= 2 && parts[0].contains("_comb_fwd_") {
+                forward_combo.push(parts[1].to_string());
+            }
+        }
+    }
+
+    info!("AttackData for {}: {} forward combo entries", entity_name, forward_combo.len());
+    crate::combat::components::AttackData { forward_combo }
+}
+
 /// Load aliases from a .apkg file referenced by dotted path (e.g. "animpkg.nav.kno").
 pub fn load_apkg_aliases(
     dotted_path: &str,

@@ -144,4 +144,6 @@ pub struct Oni2Animation {
     pub stride_z: f32,
     pub is_loop: bool,
     pub frames: Vec<Vec<f32>>, // frames[frame_idx][channel_idx]
+    pub attack_data: Option<crate::oni2_loader::parsers::atdt::AtdtData>,
+    pub react_data: Option<crate::oni2_loader::parsers::rct::ReactData>,
 }

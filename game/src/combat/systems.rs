@@ -15,345 +15,169 @@ const FIST_EXTENDED: Vec3 = Vec3::new(0.3, 0.3, -2.0);
 const GRAB_DAMAGE: f32 = 15.0;
 const GRAB_HOLD_MAX: f32 = 2.0;
 
-/// Reads player InputState and starts attacks on AttackState.
-pub fn attack_input_system(
-    mut query: Query<(&InputState, &mut AttackState, &HitReaction, &GrabState), With<Player>>,
-    time: Res<Time>,
+/// Syncs the AttackState with the current running animation. Clears collision lists when a new animation plays.
+pub fn attack_sync_system(
+    mut query: Query<(&mut AttackState, &crate::oni2_loader::animation::Oni2AnimState)>,
 ) {
-    for (input, mut attack_state, reaction, grab) in &mut query {
-        if reaction.active.is_some() || grab.phase.is_some() {
-            continue;
-        }
-        if attack_state.active_attack.is_some() {
-            continue;
-        }
-        if time.elapsed_secs_f64() < attack_state.cooldown_until {
-            continue;
-        }
-
-        let attack = if input.light_attack {
-            Some(ActiveAttack::new_with_modifiers(
-                AttackClass::Punch,
-                AttackStrength::Low,
-                AttackTarget::Body,
-                1.0, // dmg
-                1.0, // spd
-                input.attack_direction,
-            ))
-        } else if input.heavy_attack {
-            Some(ActiveAttack::new_with_modifiers(
-                AttackClass::Kick,
-                AttackStrength::High,
-                AttackTarget::Head,
-                1.0, // dmg
-                1.0, // spd
-                input.attack_direction,
-            ))
-        } else {
-            None
-        };
-
-        if let Some(attack) = attack {
-            attack_state.active_attack = Some(attack);
+    for (mut attack_state, anim_state) in &mut query {
+        if anim_state.current_anim_id != anim_state.previous_anim_id {
+            // New animation started! Clear the hit list.
+            if let Some(ref mut active) = attack_state.active_attack {
+                active.hit_entities.clear();
+            } else {
+                attack_state.active_attack = Some(ActiveAttack::default());
+            }
         }
     }
 }
 
-/// Advances active attack elapsed time. Clears finished attacks.
-pub fn attack_advance_system(mut query: Query<&mut AttackState>, time: Res<Time>) {
-    let dt = time.delta_secs();
-    for mut attack_state in &mut query {
-        let done = if let Some(ref mut attack) = attack_state.active_attack {
-            attack.elapsed += dt;
-            attack.phase() == AttackPhase::Done
-        } else {
-            false
-        };
-
-        if done {
-            attack_state.active_attack = None;
-        }
-    }
-}
-
-/// Sphere-overlap hit detection replacing cone test.
-/// Computes fist world position during Active phase and checks distance to targets.
-/// Emits AboutToBeHitMessage during Startup phase.
-/// Supports directional attacks via direction_offset rotation.
+/// Cylinder-slice overlap hit detection reading from `.atdt` files embedded in Oni2AnimState.
 pub fn hit_detection_system(
-    mut attackers: Query<(Entity, &Transform, &Fighter, &mut AttackState)>,
-    mut targets: Query<(Entity, &Transform, &mut Health, &mut BlockState, &Fighter)>,
+    mut attackers: Query<(Entity, &Transform, &Fighter, &mut AttackState, &crate::oni2_loader::animation::Oni2AnimState)>,
+    mut targets: Query<(Entity, &Transform, &mut Health, &mut BlockState, &Fighter, Option<&ReactLibrary>)>,
     time: Res<Time>,
     mut damage_writer: MessageWriter<DamageMessage>,
-    mut about_writer: MessageWriter<AboutToBeHitMessage>,
     mut reaction_writer: MessageWriter<HitReactionMessage>,
-    mut block_writer: MessageWriter<BlockSuccessMessage>,
 ) {
     let now = time.elapsed_secs_f64();
 
-    // Collect attacker data to avoid borrow conflicts
-    let attacker_data: Vec<_> = attackers
-        .iter()
-        .map(|(e, tf, f, atk)| {
-            let info = atk.active_attack.as_ref().map(|a| {
-                (
-                    a.phase(),
-                    a.phase_f32(),
-                    a.damage,
-                    a.class,
-                    a.strength,
-                    a.hit_type,
-                    a.hit_entities.clone(),
-                    a.attack_start_phase,
-                    a.damage_end_phase,
-                    a.total_duration,
-                    a.super_power_up,
-                    a.direction_offset,
-                )
-            });
-            (e, *tf, f.facing, info, 0, 0)
-        })
-        .collect();
-
-    for (attacker_entity, attacker_tf, _facing, attack_info, _, _) in &attacker_data {
-        let Some((
-            phase,
-            phase_f32,
-            base_damage,
-            class,
-            strength,
-            hit_type,
-            hit_entities,
-            attack_start_phase,
-            _damage_end_phase,
-            total_duration,
-            _super_power_up,
-            direction_offset,
-        )) = attack_info
-        else {
+    for (attacker_entity, attacker_tf, attacker_fighter, mut attack_state, anim_state) in &mut attackers {
+        let Some(attack_data) = &anim_state.anim.attack_data else {
+            continue;
+        };
+        let Some(strike) = &attack_data.strike else {
             continue;
         };
 
-        let effective_hit_radius = HIT_RADIUS;
+        if anim_state.anim.num_frames <= 1 {
+            continue;
+        }
 
-        // Compute fist local position based on phase, with range extension
-        let fist_extended = FIST_EXTENDED + Vec3::new(0.0, 0.0, 0.0);
+        let phase = anim_state.current_time / (anim_state.anim.num_frames as f32 - 1.0);
 
-        let fist_local = match phase {
-            AttackPhase::Startup => {
-                let t = if *attack_start_phase > 0.0 {
-                    phase_f32 / attack_start_phase
-                } else {
-                    1.0
-                };
-                FIST_REST.lerp(fist_extended, t)
-            }
-            AttackPhase::Active => fist_extended,
-            AttackPhase::Recovery | AttackPhase::Done => continue,
-        };
+        let is_active = phase >= strike.minradiusframe && phase <= strike.maxradiusframe;
+        if !is_active {
+            continue;
+        }
 
-        // Apply direction_offset rotation around Y axis
-        let rotated_fist = if *direction_offset != 0.0 {
-            Quat::from_rotation_y(*direction_offset) * fist_local
-        } else {
-            fist_local
-        };
+        let attacker_forward = attacker_tf.forward().as_vec3();
 
-        let fist_world = attacker_tf.translation + attacker_tf.rotation * rotated_fist;
+        // Get or insert active attack (cleared by attack_sync_system on new anims)
+        let active_attack = attack_state.active_attack.get_or_insert_with(ActiveAttack::default);
 
-        for (target_entity, target_tf, mut health, mut block_state, target_fighter) in &mut targets
-        {
-            if target_entity == *attacker_entity {
+        for (target_entity, target_tf, mut health, mut block_state, target_fighter, react_lib) in &mut targets {
+            if target_entity == attacker_entity {
                 continue;
             }
 
-            let distance = fist_world.distance(target_tf.translation);
-
-            // During Startup: emit about-to-be-hit warning for nearby targets
-            if *phase == AttackPhase::Startup {
-                if distance < effective_hit_radius + 2.5 {
-                    let eta = (attack_start_phase - phase_f32) * total_duration;
-                    about_writer.write(AboutToBeHitMessage {
-                        target: target_entity,
-                        eta,
-                        hit_type: *hit_type,
-                        from: attacker_tf.translation,
-                        attacker: *attacker_entity,
-                    });
-                }
+            if active_attack.hit_entities.contains(&target_entity) {
                 continue;
             }
 
-            // During Active: check sphere overlap
-            if *phase != AttackPhase::Active {
-                continue;
-            }
-            if hit_entities.contains(&target_entity) {
-                continue;
-            }
             if now < health.invulnerable_until {
                 continue;
             }
-            if distance > effective_hit_radius {
+
+            // Cylinder check
+            let diff = target_tf.translation - attacker_tf.translation;
+            let dist_sq = diff.x * diff.x + diff.z * diff.z;
+            if dist_sq > strike.reactdiskradius * strike.reactdiskradius {
                 continue;
             }
 
-            // Enhanced block check
-            let mut damage = *base_damage;
+            // Height check - placeholder boundaries, Oni 2 uses exact skeletal offsets or explicit disk height.
+            if diff.y < -0.5 || diff.y > strike.reactdiskheight {
+                continue;
+            }
+
+            // Slice angular check
+            let dir_to_target = Vec3::new(diff.x, 0.0, diff.z).normalize_or_zero();
+            
+            // Oni2's sliceheadingradiansb is offset relative to facing.
+            let slice_heading = Quat::from_rotation_y(strike.sliceheadingradiansb) * attacker_forward;
+            let slice_heading_xz = Vec3::new(slice_heading.x, 0.0, slice_heading.z).normalize_or_zero();
+
+            let dot = slice_heading_xz.dot(dir_to_target);
+            let angle = dot.clamp(-1.0, 1.0).acos(); // 0 to PI
+
+            // Use cross product Y to get signed angle.
+            let cross_y = slice_heading_xz.cross(dir_to_target).y;
+            let signed_angle = if cross_y < 0.0 { -angle } else { angle };
+
+            if signed_angle < strike.slicestartradians || signed_angle > strike.sliceendradians {
+                continue;
+            }
+
+            // Hit confirmed!
+            active_attack.hit_entities.push(target_entity);
+
+            let damage = attack_data.damage;
             let mut was_blocked = false;
 
-            if block_state.is_blocking {
-                let attack_dir = (attacker_tf.translation - target_tf.translation).normalize();
-                let target_facing = target_fighter.facing.normalize();
-                let dot = (-target_facing).dot(attack_dir);
-                let angle = dot.clamp(-1.0, 1.0).acos();
-                let within_arc = angle <= block_state.width_radians / 2.0;
-                let can_block_type = block_state.can_block_hit_type(*hit_type);
-
-                if within_arc && can_block_type {
-                    damage *= block_state.damage_multiplier;
-                    was_blocked = true;
-                    block_state.hits_absorbed += 1;
-
-                    if block_state.hits_absorbed >= block_state.combo_count_before_react {
-                        reaction_writer.write(HitReactionMessage {
-                            entity: target_entity,
-                            kind: ReactionKind::GuardBreak,
-                            direction: attack_dir,
-                        });
-                        block_state.hits_absorbed = 0;
-                    }
-
-                    if block_state.auto_counter {
-                        block_writer.write(BlockSuccessMessage {
-                            blocker: target_entity,
-                            attacker: *attacker_entity,
-                        });
-                    }
-                }
+            if block_state.is_blocking && block_state.can_block_hit_type(strike.hittype) {
+                was_blocked = true;
             }
 
-            // Apply damage
-            health.current = (health.current - damage).max(0.0);
-            health.invulnerable_until = now + INVULN_DURATION;
+            // Resolve react data from the target's ReactLibrary using reactanim0
+            // (reactanim[0] is the primary reaction; higher indices are alternatives for different states)
+            let react_enum = strike.reactanim[0];
+            let react = react_lib.and_then(|lib| lib.get(react_enum));
 
-            // Record hit on attacker's state
-            if let Ok((_, _, _, mut atk_state)) = attackers.get_mut(*attacker_entity) {
-                if let Some(ref mut attack) = atk_state.active_attack {
-                    attack.hit_entities.push(target_entity);
-                }
-            }
-
-            // Emit damage message
-            damage_writer.write(DamageMessage {
-                attacker: *attacker_entity,
-                target: target_entity,
-                damage,
-                was_blocked,
-                attack_class: *class,
-                attack_strength: *strength,
-            });
-
-            // Emit hit reaction if not blocked
             if !was_blocked {
-                let reaction_kind = match strength {
-                    AttackStrength::Low => ReactionKind::Flinch,
-                    AttackStrength::High => ReactionKind::Knockback,
-                    AttackStrength::Super => ReactionKind::Knockdown,
+                health.current = (health.current - damage).max(0.0);
+
+                // Invulnerability: use react's InvulnerabilityStartPhase if available,
+                // scaled to a time estimate (react anim duration unknown here — use INVULN_DURATION as floor).
+                // TODO: once react anims are played via Oni2AnimState, derive duration from num_frames.
+                let invuln_secs = if let Some(rct) = react {
+                    // invulnerability_start_phase is 0..1 of the react anim; use flat minimum for now
+                    INVULN_DURATION.max(rct.invulnerability_start_phase as f64 * 0.5)
+                } else {
+                    INVULN_DURATION
                 };
-                let dir = (target_tf.translation - attacker_tf.translation).normalize();
+                health.invulnerable_until = now + invuln_secs;
+
+                let knockback_dir = (target_tf.translation - attacker_tf.translation).normalize_or_zero();
+
+                // Classify reaction kind from react enum (knockdown vs flinch vs standard)
+                let kind = match react_enum {
+                    4 => ReactionKind::Knockdown,   // ANIMREACT_KNOCKDOWN
+                    46 | 47 => ReactionKind::Knockback, // ANIMREACT_WALL / WALL_GETUP
+                    _ => ReactionKind::Flinch,
+                };
+
                 reaction_writer.write(HitReactionMessage {
                     entity: target_entity,
-                    kind: reaction_kind,
-                    direction: dir,
+                    kind,
+                    direction: knockback_dir,
                 });
+
+                info!(
+                    "Hit: damage={:.1} react_enum={} ({})",
+                    damage,
+                    react_enum,
+                    crate::oni2_loader::parsers::rct::ANIMREACT_NAMES
+                        .get(react_enum.max(0) as usize)
+                        .unwrap_or(&"?")
+                );
             }
-        }
-    }
-}
 
-/// Fist visual system - updates fist mesh visibility, position, material, and scale pulse.
-/// Supports directional attacks via direction_offset rotation and range extension.
-pub fn fist_visual_system(
-    fighters: Query<(&AttackState, &Children)>,
-    mut fist_query: Query<
-        (
-            &mut Transform,
-            &mut Visibility,
-            &mut MeshMaterial3d<StandardMaterial>,
-        ),
-        With<FistVisual>,
-    >,
-    combat_materials: Res<CombatMaterials>,
-) {
-    for (attack_state, children) in &fighters {
-        for child in children.iter() {
-            let Ok((mut tf, mut vis, mut mat)) = fist_query.get_mut(child) else {
-                continue;
+            // Map hittype to AttackClass for the event
+            let attack_class = match strike.hittype {
+                0 | 1 | 2 => AttackClass::Punch,
+                3 | 4 | 5 => AttackClass::Kick,
+                6 | 7 | 8 => AttackClass::Grab,
+                _ => AttackClass::Punch,
             };
 
-            let Some(ref attack) = attack_state.active_attack else {
-                *vis = Visibility::Hidden;
-                continue;
-            };
-
-            *vis = Visibility::Visible;
-            let phase = attack.phase();
-            let p = attack.phase_f32();
-
-            // Weapon-adjusted extended position
-            let fist_extended = FIST_EXTENDED + Vec3::new(0.0, 0.0, 0.0);
-
-            let base_pos = match phase {
-                AttackPhase::Startup => {
-                    let t = if attack.attack_start_phase > 0.0 {
-                        p / attack.attack_start_phase
-                    } else {
-                        1.0
-                    };
-                    tf.scale = Vec3::splat(1.0);
-                    mat.0 = combat_materials.fist_startup.clone();
-                    FIST_REST.lerp(fist_extended, t)
-                }
-                AttackPhase::Active => {
-                    let active_range = attack.damage_end_phase - attack.attack_start_phase;
-                    let active_progress = if active_range > 0.0 {
-                        (p - attack.attack_start_phase) / active_range
-                    } else {
-                        0.0
-                    };
-                    let scale = if active_progress < 0.5 {
-                        1.0 + 0.3 * (active_progress / 0.5)
-                    } else {
-                        1.3 - 0.3 * ((active_progress - 0.5) / 0.5)
-                    };
-                    tf.scale = Vec3::splat(scale);
-                    mat.0 = combat_materials.fist_active.clone();
-                    fist_extended
-                }
-                AttackPhase::Recovery => {
-                    let recovery_range = 1.0 - attack.damage_end_phase;
-                    let t = if recovery_range > 0.0 {
-                        (p - attack.damage_end_phase) / recovery_range
-                    } else {
-                        1.0
-                    };
-                    tf.scale = Vec3::splat(1.0 - 0.2 * t);
-                    mat.0 = combat_materials.fist_recovery.clone();
-                    fist_extended.lerp(FIST_REST, t)
-                }
-                AttackPhase::Done => {
-                    *vis = Visibility::Hidden;
-                    continue;
-                }
-            };
-
-            // Apply direction_offset rotation around Y
-            if attack.direction_offset != 0.0 {
-                tf.translation = Quat::from_rotation_y(attack.direction_offset) * base_pos;
-            } else {
-                tf.translation = base_pos;
-            }
+            damage_writer.write(DamageMessage {
+                attacker: attacker_entity,
+                target: target_entity,
+                damage: if was_blocked { 0.0 } else { damage },
+                was_blocked,
+                attack_class,
+                attack_strength: AttackStrength::High,
+            });
         }
     }
 }

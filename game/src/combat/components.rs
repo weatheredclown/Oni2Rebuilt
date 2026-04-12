@@ -100,107 +100,14 @@ pub enum AttackPhase {
 #[derive(Component, Default)]
 pub struct AttackState {
     pub active_attack: Option<ActiveAttack>,
-    pub cooldown_until: f64,
 }
 
+#[derive(Default)]
 pub struct ActiveAttack {
-    pub class: AttackClass,
-    pub strength: AttackStrength,
-    pub target: AttackTarget,
-    pub attack_start_phase: f32,
-    pub damage_end_phase: f32,
-    pub total_duration: f32,
-    pub elapsed: f32,
-    pub damage: f32,
     pub hit_entities: Vec<Entity>,
-    pub super_power_up: f32,
-    pub hit_type: u8,
-    pub direction_offset: f32,
 }
 
-impl ActiveAttack {
-    pub fn new(class: AttackClass, strength: AttackStrength, target: AttackTarget) -> Self {
-        let (total_duration, attack_start_phase, damage_end_phase, damage, super_power_up) =
-            match (class, strength) {
-                (AttackClass::Punch, AttackStrength::Low) => (0.5, 0.25, 0.5, 10.0, 5.0),
-                (AttackClass::Punch, AttackStrength::High) => (0.8, 0.3, 0.55, 25.0, 10.0),
-                (AttackClass::Kick, AttackStrength::Low) => (0.6, 0.25, 0.5, 12.0, 6.0),
-                (AttackClass::Kick, AttackStrength::High) => (0.9, 0.3, 0.55, 30.0, 12.0),
-                (_, AttackStrength::Super) => (1.2, 0.2, 0.6, 50.0, 0.0),
-                (AttackClass::Grab, _) => (0.4, 0.2, 0.5, 0.0, 0.0),
-                (AttackClass::RangedShot, _) => (0.3, 0.1, 0.4, 8.0, 3.0),
-            };
 
-        let hit_type = Self::compute_hit_type(class, target);
-
-        Self {
-            class,
-            strength,
-            target,
-            attack_start_phase,
-            damage_end_phase,
-            total_duration,
-            elapsed: 0.0,
-            damage,
-            hit_entities: Vec::new(),
-            super_power_up,
-            hit_type,
-            direction_offset: 0.0,
-        }
-    }
-
-    /// Creates an attack modified by scalar combat modifiers.
-    pub fn new_with_modifiers(
-        class: AttackClass,
-        strength: AttackStrength,
-        target: AttackTarget,
-        damage_multiplier: f32,
-        speed_multiplier: f32,
-        direction_offset: f32,
-    ) -> Self {
-        let mut attack = Self::new(class, strength, target);
-        attack.damage *= damage_multiplier;
-        attack.total_duration *= speed_multiplier;
-        attack.direction_offset = direction_offset;
-        attack
-    }
-
-    pub fn phase(&self) -> AttackPhase {
-        let p = self.phase_f32();
-        if p >= 1.0 {
-            AttackPhase::Done
-        } else if p >= self.damage_end_phase {
-            AttackPhase::Recovery
-        } else if p >= self.attack_start_phase {
-            AttackPhase::Active
-        } else {
-            AttackPhase::Startup
-        }
-    }
-
-    pub fn phase_f32(&self) -> f32 {
-        if self.total_duration <= 0.0 {
-            1.0
-        } else {
-            self.elapsed / self.total_duration
-        }
-    }
-
-    fn compute_hit_type(class: AttackClass, target: AttackTarget) -> u8 {
-        let class_offset: u8 = match class {
-            AttackClass::Punch => 0,
-            AttackClass::Kick => 3,
-            AttackClass::Grab => 6,
-            AttackClass::RangedShot => return 9,
-        };
-        let target_offset: u8 = match target {
-            AttackTarget::Head => 0,
-            AttackTarget::Body => 1,
-            AttackTarget::Legs => 2,
-        };
-        class_offset + target_offset
-    }
-}
 
 // === Enhanced Block State (from rb's crBlockData) ===
 
@@ -379,6 +286,38 @@ pub struct CombatMaterials {
     pub shield: Handle<StandardMaterial>,
     pub fist_mesh: Handle<Mesh>,
     pub shield_mesh: Handle<Mesh>,
+}
+
+// === React library (from entity's ANIMREACT_*.rct files) ===
+
+/// All react animations for an entity, indexed by animReactEnum integer.
+/// Loaded at spawn time from entity.tune/<name>/ANIMREACT_*.rct files.
+/// Mirrors C++ ftFighterData::ReactData[NUMOF_ANIMREACT_ENUMS].
+#[derive(Component, Default, Clone)]
+pub struct ReactLibrary {
+    /// Indexed by animReactEnum value (0 = ANIMREACT_REGULAR, etc.).
+    pub entries: Vec<Option<crate::oni2_loader::parsers::rct::ReactData>>,
+}
+
+impl ReactLibrary {
+    /// Look up react data by animReactEnum integer from a .atdt reactanim field.
+    pub fn get(&self, react_enum: i32) -> Option<&crate::oni2_loader::parsers::rct::ReactData> {
+        if react_enum < 0 {
+            return None;
+        }
+        self.entries.get(react_enum as usize)?.as_ref()
+    }
+}
+
+// === Data-driven attack sequence (from entity's .attacks file) ===
+
+/// Ordered list of ANIMATTACK_* alias names for DoTriggerAtk combo cycling.
+/// Loaded at spawn time from the entity's .attacks file; the sequence is the
+/// standing forward combo chain (filenames containing `_comb_fwd_`), in file order.
+/// Mirrors the C++ crAttackData / ftFighterComponent attack sequence.
+#[derive(Component, Default, Clone)]
+pub struct AttackData {
+    pub forward_combo: Vec<String>,
 }
 
 // === Enemy Marker ===

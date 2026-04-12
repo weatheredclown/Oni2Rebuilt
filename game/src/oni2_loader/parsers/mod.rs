@@ -21,3 +21,5 @@ pub mod audiopackages;
 pub mod hd_bd;
 pub mod stm;
 pub mod td;
+pub mod atdt;
+pub mod rct;

@@ -256,6 +256,8 @@ pub struct Oni2AnimState {
     pub current_frame: Vec<f32>,
     /// Currently playing animation ID for efficient comparison
     pub current_anim_id: Option<AnimId>,
+    /// Previously playing animation ID to detect changes at runtime
+    pub previous_anim_id: Option<AnimId>,
 }
 
 /// Deterministic string hash used as animation identifier.
@@ -316,6 +318,7 @@ impl Oni2AnimLibrary {
             state.current_time = 0.0;
             state.looping = anim.is_loop;
             state.last_rendered_time = -1.0; // force rebuild
+            state.previous_anim_id = state.current_anim_id;
             state.current_anim_id = Some(id);
 
             // Resize current_frame to match animation channel count
@@ -390,6 +393,35 @@ pub fn load_anim_library(
         info!("No .anims file found for {}", entity_name);
     }
 
+    // Load attack animations from .attacks file (same Anims { } format as .apkg)
+    let tune_attacks = format!("entity.tune/{}/{}.attacks", entity_name, entity_name);
+    let entity_attacks = format!("{}/{}.attacks", entity_dir, entity_name);
+    let attacks_path = if crate::vfs::exists("", &tune_attacks) {
+        tune_attacks
+    } else if crate::vfs::exists("", &entity_attacks) {
+        entity_attacks
+    } else {
+        String::new()
+    };
+    if !attacks_path.is_empty() {
+        if let Ok(content) = crate::vfs::read_to_string("", &attacks_path) {
+            let before = alias_map.len();
+            crate::oni2_loader::parsers::anims::parse_anims_content(
+                &content,
+                &mut alias_map,
+                &mut loco_pkg,
+                &mut jump_pkg,
+            );
+            info!(
+                "FSM: loaded {} attack aliases from {}",
+                alias_map.len() - before,
+                attacks_path
+            );
+        }
+    } else {
+        info!("No .attacks file found for {}", entity_name);
+    }
+
     // Load the actual .anim files
     let mut anims = std::collections::HashMap::new();
     let mut debug_names = std::collections::HashMap::new();
@@ -422,13 +454,43 @@ pub fn load_anim_library(
                 }
             }
         };
-        let anim = match parse_anim(&data) {
+        let mut anim = match parse_anim(&data) {
             Some(a) => a,
             None => {
                 skipped_missing += 1;
                 continue;
             }
         };
+
+        let atdt_file = format!("{}/{}.atdt", entity_dir, anim_name);
+        if let Ok(atdt_data) = crate::vfs::read_to_string("", &atdt_file) {
+            anim.attack_data = Some(crate::oni2_loader::parsers::atdt::parse_atdt_content(&atdt_data));
+        } else if let Some(prefix) = anim_name.split('_').next() {
+            let mut parts: Vec<&str> = entity_dir.split('/').collect();
+            if let Some(last) = parts.last_mut() {
+                *last = prefix;
+            }
+            let fallback_atdt = format!("{}/{}.atdt", parts.join("/"), anim_name);
+            if let Ok(atdt_data) = crate::vfs::read_to_string("", &fallback_atdt) {
+                anim.attack_data = Some(crate::oni2_loader::parsers::atdt::parse_atdt_content(&atdt_data));
+            }
+        }
+
+        if alias.starts_with("ANIMREACT_") {
+            let rct_file = format!("{}/{}.rct", entity_dir, alias);
+            if let Ok(rct_data) = crate::vfs::read_to_string("", &rct_file) {
+                anim.react_data = Some(crate::oni2_loader::parsers::rct::parse_rct_content(&rct_data));
+            } else if let Some(prefix) = anim_name.split('_').next() {
+                let mut parts: Vec<&str> = entity_dir.split('/').collect();
+                if let Some(last) = parts.last_mut() {
+                    *last = prefix;
+                }
+                let fallback_rct = format!("{}/{}.rct", parts.join("/"), alias);
+                if let Ok(rct_data) = crate::vfs::read_to_string("", &fallback_rct) {
+                    anim.react_data = Some(crate::oni2_loader::parsers::rct::parse_rct_content(&rct_data));
+                }
+            }
+        }
         // Only skip if the anim has more than 1 channel but doesn't match skeleton.
         // Single-channel anims (e.g. simple rotation) are always accepted.
         // Also allow 6 channels for 0-joint skeletons (root pos + rot) like BCTrashTest.

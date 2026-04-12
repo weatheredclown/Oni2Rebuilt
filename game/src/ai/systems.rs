@@ -164,11 +164,11 @@ pub fn ai_decision_system(
                     if rng.random_range(0.0..1.0) < attack_chance
                         && distance <= effective_attack_range
                     {
-                        // Can't attack if already attacking, in cooldown, or reacting
+                        // Can't attack if already attacking or reacting
                         if attack_state.active_attack.is_none()
-                            && now >= attack_state.cooldown_until
                         {
-                            // Pick attack type: weighted toward punches
+                            // Pick attack type: weighted toward punches (FSM proxy for now)
+                            /*
                             let roll: f32 = rng.random_range(0.0..1.0);
                             let (class, strength, target) = if roll < 0.5 {
                                 (AttackClass::Punch, AttackStrength::Low, AttackTarget::Body)
@@ -187,6 +187,7 @@ pub fn ai_decision_system(
                             );
 
                             attack_state.active_attack = Some(attack);
+                            */
                             ai.state = AiState::Attacking;
                         }
                     }
