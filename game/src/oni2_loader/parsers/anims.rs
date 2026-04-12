@@ -60,7 +60,7 @@ pub fn parse_anims_content(
 
 /// Parse an entity's .attacks file and return the standing forward combo chain.
 /// Entries are kept only when the anim filename contains `_comb_fwd_`, preserving
-/// file order — this matches how ONI2's crAttackData drives DoTriggerAtk.
+/// file order.
 pub fn load_attack_data(entity_dir: &str, entity_name: &str) -> crate::combat::components::AttackData {
     let tune_path = format!("entity.tune/{}/{}.attacks", entity_name, entity_name);
     let entity_path = format!("{}/{}.attacks", entity_dir, entity_name);
