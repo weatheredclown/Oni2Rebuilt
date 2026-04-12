@@ -249,21 +249,28 @@ pub struct ActiveReaction {
     pub duration: f32,
     pub elapsed: f32,
     pub direction: Vec3,
+    /// animReactEnum integer used to look up the animation alias.
+    pub react_enum: i32,
+    /// AnimId hash of the react animation that was started (0 = none played).
+    /// Used to detect when the animation finishes so we can clear the reaction.
+    pub react_anim_id: u64,
 }
 
 impl ActiveReaction {
-    pub fn new(kind: ReactionKind, direction: Vec3) -> Self {
+    pub fn new(kind: ReactionKind, direction: Vec3, react_enum: i32) -> Self {
         let duration = match kind {
-            ReactionKind::Flinch => 0.2,
-            ReactionKind::Knockback => 0.4,
-            ReactionKind::Knockdown => 0.8,
-            ReactionKind::GuardBreak => 0.5,
+            ReactionKind::Flinch => 0.5,
+            ReactionKind::Knockback => 0.8,
+            ReactionKind::Knockdown => 1.5,
+            ReactionKind::GuardBreak => 0.7,
         };
         Self {
             kind,
             duration,
             elapsed: 0.0,
             direction,
+            react_enum,
+            react_anim_id: 0,
         }
     }
 }

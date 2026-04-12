@@ -2,6 +2,8 @@ use avian3d::prelude::*;
 use bevy::prelude::*;
 use rb_shared::events::CombatEvent;
 
+use crate::oni2_loader::animation::{AnimId, Oni2AnimLibrary, Oni2AnimState};
+use crate::oni2_loader::parsers::rct::ANIMREACT_NAMES;
 use crate::player::components::{InputState, Player};
 use crate::telemetry::bridge::TelemetryChannel;
 
@@ -53,9 +55,15 @@ pub fn hit_detection_system(
             continue;
         }
 
-        let phase = anim_state.current_time / (anim_state.anim.num_frames as f32 - 1.0);
-
-        let is_active = phase >= strike.minradiusframe && phase <= strike.maxradiusframe;
+        // Hit window: framenum..framenum+frameduration are raw frame numbers matching current_time.
+        // (minradiusframe/maxradiusframe describe the disk-radius ramp-up, not the hit window.)
+        let frame = anim_state.current_time;
+        let is_active = if strike.frameduration > 0.0 {
+            frame >= strike.framenum && frame <= strike.framenum + strike.frameduration
+        } else {
+            // No explicit hit window — active throughout the animation.
+            true
+        };
         if !is_active {
             continue;
         }
@@ -78,33 +86,40 @@ pub fn hit_detection_system(
                 continue;
             }
 
-            // Cylinder check
+            // Cylinder check (XZ distance)
             let diff = target_tf.translation - attacker_tf.translation;
             let dist_sq = diff.x * diff.x + diff.z * diff.z;
             if dist_sq > strike.reactdiskradius * strike.reactdiskradius {
+                debug!(
+                    "hit miss: dist {:.2} > radius {:.2}",
+                    dist_sq.sqrt(), strike.reactdiskradius
+                );
                 continue;
             }
 
-            // Height check - placeholder boundaries, Oni 2 uses exact skeletal offsets or explicit disk height.
-            if diff.y < -0.5 || diff.y > strike.reactdiskheight {
+            // Height check: target must be between attacker origin and reactdiskheight above it.
+            if diff.y < -strike.reactdiskheight || diff.y > strike.reactdiskheight {
+                debug!("hit miss: height diff {:.2} outside ±{:.2}", diff.y, strike.reactdiskheight);
                 continue;
             }
 
             // Slice angular check
             let dir_to_target = Vec3::new(diff.x, 0.0, diff.z).normalize_or_zero();
-            
-            // Oni2's sliceheadingradiansb is offset relative to facing.
+
+            // sliceheadingradiansb offsets the slice center relative to the attacker's forward.
             let slice_heading = Quat::from_rotation_y(strike.sliceheadingradiansb) * attacker_forward;
             let slice_heading_xz = Vec3::new(slice_heading.x, 0.0, slice_heading.z).normalize_or_zero();
 
             let dot = slice_heading_xz.dot(dir_to_target);
-            let angle = dot.clamp(-1.0, 1.0).acos(); // 0 to PI
-
-            // Use cross product Y to get signed angle.
+            let angle = dot.clamp(-1.0, 1.0).acos();
             let cross_y = slice_heading_xz.cross(dir_to_target).y;
             let signed_angle = if cross_y < 0.0 { -angle } else { angle };
 
             if signed_angle < strike.slicestartradians || signed_angle > strike.sliceendradians {
+                debug!(
+                    "hit miss: angle {:.3}rad outside [{:.3}, {:.3}]",
+                    signed_angle, strike.slicestartradians, strike.sliceendradians
+                );
                 continue;
             }
 
@@ -150,6 +165,7 @@ pub fn hit_detection_system(
                     entity: target_entity,
                     kind,
                     direction: knockback_dir,
+                    react_enum,
                 });
 
                 info!(
@@ -358,6 +374,7 @@ pub fn grab_system(
                     entity: target_entity,
                     kind: ReactionKind::Knockback,
                     direction: throw_dir,
+                    react_enum: 0, // ANIMREACT_REGULAR for throw
                 });
 
                 grab.phase = Some(GrabPhase::Released);
@@ -372,62 +389,101 @@ pub fn grab_system(
     }
 }
 
-/// Hit reaction system: applies and ticks hit reactions using physics impulses for knockback.
+/// Hit reaction system: applies and ticks hit reactions.
+/// Plays the correct ANIMREACT_* animation via the entity's Oni2AnimLibrary,
+/// and clears the reaction when the animation finishes (timer fallback if no anim).
 pub fn hit_reaction_system(
     mut reader: MessageReader<HitReactionMessage>,
-    mut query: Query<(&mut HitReaction, &mut LinearVelocity)>,
+    mut query: Query<(
+        &mut HitReaction,
+        &mut LinearVelocity,
+        Option<&mut Oni2AnimState>,
+        Option<&Oni2AnimLibrary>,
+    )>,
     time: Res<Time>,
 ) {
     let dt = time.delta_secs();
 
-    // Tick existing reactions
-    for (mut reaction, _velocity) in &mut query {
-        if let Some(ref mut active) = reaction.active {
-            active.elapsed += dt;
+    // Tick existing reactions — clear when react anim finishes, or fallback timer.
+    for (mut reaction, _vel, anim_state_opt, _lib) in &mut query {
+        let Some(ref mut active) = reaction.active else { continue };
 
-            if active.elapsed >= active.duration {
-                reaction.active = None;
+        let mut done = false;
+        if let Some(ref anim_state) = anim_state_opt {
+            // If the currently playing anim matches what we triggered and it has reached its
+            // last frame (non-looping), the react is complete.
+            if active.react_anim_id != 0
+                && anim_state.current_anim_id == Some(AnimId(active.react_anim_id))
+                && !anim_state.looping
+            {
+                let last = (anim_state.anim.num_frames as f32 - 1.0).max(0.0);
+                if anim_state.current_time >= last {
+                    done = true;
+                }
             }
+        }
+
+        if !done {
+            active.elapsed += dt;
+            if active.elapsed >= active.duration {
+                done = true;
+            }
+        }
+
+        if done {
+            reaction.active = None;
         }
     }
 
-    // Apply new reactions via physics impulse
+    // Apply new reactions: play animation + physics impulse.
     for msg in reader.read() {
-        if let Ok((mut reaction, mut velocity)) = query.get_mut(msg.entity) {
-            reaction.active = Some(ActiveReaction::new(msg.kind, msg.direction));
+        let Ok((mut reaction, mut velocity, mut anim_state_opt, lib_opt)) =
+            query.get_mut(msg.entity)
+        else {
+            continue;
+        };
 
-            // Apply knockback as an immediate velocity change
-            match msg.kind {
-                ReactionKind::Knockback => {
-                    let knockback_dir =
-                        Vec3::new(msg.direction.x, 0.0, msg.direction.z).normalize_or_zero();
-                    let impulse = knockback_dir * 8.0 + Vec3::Y * 2.0;
-                    velocity.x += impulse.x;
-                    velocity.y += impulse.y;
-                    velocity.z += impulse.z;
+        let mut active = ActiveReaction::new(msg.kind, msg.direction, msg.react_enum);
+
+        // Play the ANIMREACT_* animation and record its id for completion detection.
+        if let (Some(ref mut anim_state), Some(lib)) = (anim_state_opt.as_mut(), lib_opt) {
+            if msg.react_enum >= 0 {
+                if let Some(&anim_name) = ANIMREACT_NAMES.get(msg.react_enum as usize) {
+                    if lib.play(anim_name, anim_state) {
+                        active.react_anim_id = AnimId::new(anim_name).0;
+                    } else {
+                        warn!("hit_reaction: react anim '{}' not in library", anim_name);
+                    }
                 }
-                ReactionKind::Knockdown => {
-                    let knockback_dir =
-                        Vec3::new(msg.direction.x, 0.0, msg.direction.z).normalize_or_zero();
-                    let impulse = knockback_dir * 12.0 + Vec3::Y * 4.0;
-                    velocity.x += impulse.x;
-                    velocity.y += impulse.y;
-                    velocity.z += impulse.z;
-                }
-                ReactionKind::Flinch => {
-                    let knockback_dir =
-                        Vec3::new(msg.direction.x, 0.0, msg.direction.z).normalize_or_zero();
-                    let impulse = knockback_dir * 3.0;
-                    velocity.x += impulse.x;
-                    velocity.z += impulse.z;
-                }
-                ReactionKind::GuardBreak => {
-                    let knockback_dir =
-                        Vec3::new(msg.direction.x, 0.0, msg.direction.z).normalize_or_zero();
-                    let impulse = knockback_dir * 5.0;
-                    velocity.x += impulse.x;
-                    velocity.z += impulse.z;
-                }
+            }
+        }
+
+        reaction.active = Some(active);
+
+        // Physics impulse
+        let knockback_dir = Vec3::new(msg.direction.x, 0.0, msg.direction.z).normalize_or_zero();
+        match msg.kind {
+            ReactionKind::Knockback => {
+                let impulse = knockback_dir * 8.0 + Vec3::Y * 2.0;
+                velocity.x += impulse.x;
+                velocity.y += impulse.y;
+                velocity.z += impulse.z;
+            }
+            ReactionKind::Knockdown => {
+                let impulse = knockback_dir * 12.0 + Vec3::Y * 4.0;
+                velocity.x += impulse.x;
+                velocity.y += impulse.y;
+                velocity.z += impulse.z;
+            }
+            ReactionKind::Flinch => {
+                let impulse = knockback_dir * 3.0;
+                velocity.x += impulse.x;
+                velocity.z += impulse.z;
+            }
+            ReactionKind::GuardBreak => {
+                let impulse = knockback_dir * 5.0;
+                velocity.x += impulse.x;
+                velocity.z += impulse.z;
             }
         }
     }
@@ -498,13 +554,13 @@ pub fn death_cleanup_system(
         if let Ok(dod) = query.get(msg.entity) {
             if let Some(delay) = dod {
                 if delay.0 <= 0.0 {
-                    commands.entity(msg.entity).despawn();
+                    commands.entity(msg.entity).try_despawn();
                 } else {
                     commands.entity(msg.entity).insert(DeathSequenceTimer(Timer::from_seconds(delay.0, TimerMode::Once)));
                 }
             } else {
                 info!("Entity {} has no DestroyOnDeath component, despawning immediately", msg.entity);
-                commands.entity(msg.entity).despawn();
+                commands.entity(msg.entity).try_despawn();
             }
         }
     }
@@ -519,7 +575,7 @@ pub fn death_timer_system(
     for (entity, mut timer) in &mut query {
         if timer.0.tick(time.delta()).just_finished() {
             info!("Entity {} death timer finished, despawning", entity);
-            commands.entity(entity).despawn();
+            commands.entity(entity).try_despawn();
         }
     }
 }

@@ -45,6 +45,9 @@ pub struct HitReactionMessage {
     pub entity: Entity,
     pub kind: ReactionKind,
     pub direction: Vec3,
+    /// animReactEnum integer from the attacker's ATDT reactanim0 field.
+    /// Indexes into ANIMREACT_NAMES to pick the animation to play.
+    pub react_enum: i32,
 }
 
 #[derive(Message)]

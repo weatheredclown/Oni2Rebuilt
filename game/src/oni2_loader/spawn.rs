@@ -95,24 +95,28 @@ pub fn ground_snap_system(
 
         if let Some((ground_pos, _)) = best_hit {
             // Place capsule center above ground (capsule half-height above ground surface)
-            transform.translation = Vec3::new(
+            let final_pos = Vec3::new(
                 ground_pos.x,
                 ground_pos.y + capsule_half_height + 0.1, // small buffer
                 ground_pos.z,
             );
+            transform.translation = final_pos;
+            commands.entity(entity).insert(avian3d::prelude::Position(final_pos));
             info!(
                 "Ground-snapped creature {:?} from ({:.1}, {:.1}, {:.1}) to ({:.1}, {:.1}, {:.1})",
                 entity,
                 origin.x,
                 origin.y,
                 origin.z,
-                transform.translation.x,
-                transform.translation.y,
-                transform.translation.z,
+                final_pos.x,
+                final_pos.y,
+                final_pos.z,
             );
         } else {
             // No ground found — spawn above origin and hope for the best
-            transform.translation = Vec3::new(origin.x, origin.y + 2.0, origin.z);
+            let final_pos = Vec3::new(origin.x, origin.y + 2.0, origin.z);
+            transform.translation = final_pos;
+            commands.entity(entity).insert(avian3d::prelude::Position(final_pos));
             warn!(
                 "No ground found for creature {:?} near ({:.1}, {:.1}, {:.1}), spawning above origin",
                 entity, origin.x, origin.y, origin.z
@@ -153,6 +157,7 @@ pub struct PlatformRider {
 /// of the already-moved position.
 pub fn moving_platform_system(
     mut riders: Query<(
+        Entity,
         &mut avian3d::prelude::Position,
         &mut avian3d::prelude::Rotation,
         &mut PlatformRider,
@@ -160,9 +165,12 @@ pub fn moving_platform_system(
     )>,
     platforms: Query<(&Transform, &avian3d::prelude::RigidBody)>,
 ) {
-    for (mut pos, mut rider_rot, mut rider, hits) in &mut riders {
+    for (rider_entity, mut pos, mut rider_rot, mut rider, hits) in &mut riders {
         // Find first ground contact that is on a kinematic or static body (important for ScrOni mutated static props).
         let new_platform: Option<Entity> = hits.iter().find_map(|hit| {
+            if hit.entity == rider_entity {
+                return None; // Skip self collisions!
+            }
             if let Ok((_, rb)) = platforms.get(hit.entity) {
                 if matches!(rb, avian3d::prelude::RigidBody::Kinematic | avian3d::prelude::RigidBody::Static) {
                     return Some(hit.entity);
@@ -229,20 +237,24 @@ pub fn creature_movement_anim_system(
         &GlobalTransform,
         Option<&crate::oni2_loader::parsers::loco::LocomotionController>,
         Option<&crate::statemachine::runtime::FsmRuntime>,
+        Option<&crate::combat::components::HitReaction>,
     )>,
 ) {
     const WALK_THRESHOLD: f32 = 0.5;
     const RUN_THRESHOLD: f32 = 3.0;
     const MAX_RUN_SPEED: f32 = 6.0;
 
-    for (library, mut anim_state, mut move_anim, vel, transform, loco_opt, fsm_opt) in &mut creatures {
-        // Skip locomotion only while the FSM is actively playing a non-looping animation
-        // (e.g. an attack). Once it finishes (timed_out) or there is no active anim,
-        // locomotion takes back over.
+    for (library, mut anim_state, mut move_anim, vel, transform, loco_opt, fsm_opt, react_opt) in &mut creatures {
+        // Block locomotion while an FSM-driven animation (attack, etc.) is playing.
         if let Some(fsm) = fsm_opt {
             if fsm.active_anim.is_some() && !fsm.timed_out {
                 continue;
             }
+        }
+
+        // Block locomotion while a hit reaction animation is playing.
+        if react_opt.map_or(false, |r| r.active.is_some()) {
+            continue;
         }
 
         let horiz_speed = Vec2::new(vel.x, vel.z).length();

@@ -2051,7 +2051,6 @@ impl ScriptExec {
                         self.eval_expr(tid, d, now, ctx).as_float(),
                     )
                 });
-                info!("VM: PlayAmbientSound {} v:{:?} p:{:?} vr:{:?} pr:{:?}", n, v, p, vr, pr);
                 self.sys_requests.push(SysRequest::PlayAmbientSound(0, n, v, p, vr, pr));
             }
             Stmt::MusicPlay(expr) => {
@@ -2704,7 +2703,6 @@ impl ScriptExec {
                         }
 
                         let handle = rand::random::<i32>().abs();
-                        info!("VM: Expr PlayAmbientSound {} v:{:?} p:{:?} vr:{:?} pr:{:?} (Handle: {})", n, v, p, vr, pr, handle);
                         self.sys_requests.push(SysRequest::PlayAmbientSound(handle, n, v, p, vr, pr));
                         Value::Int(handle)
                     }
@@ -3256,11 +3254,16 @@ pub fn scroni_tick_system(
         all_messages.append(&mut script.exec.outgoing_messages);
 
         if is_done {
-            if script.exec.owner == Entity::PLACEHOLDER {
-                commands.entity(entity).despawn();
-            } else {
-                commands.entity(entity).remove::<ScrOniScript>();
-            }
+            let is_placeholder = script.exec.owner == Entity::PLACEHOLDER;
+            commands.queue(move |world: &mut World| {
+                if let Ok(mut e) = world.get_entity_mut(entity) {
+                    if is_placeholder {
+                        e.despawn();
+                    } else {
+                        e.remove::<ScrOniScript>();
+                    }
+                }
+            });
         }
     }
 
@@ -3402,7 +3405,7 @@ pub fn cleanup_scroni_text(
     let now = time.elapsed_secs_f64();
     for (entity, text_element, _text) in &query {
         if now > text_element.expires_at {
-            commands.entity(entity).despawn();
+            commands.entity(entity).try_despawn();
         }
     }
 }
@@ -3437,6 +3440,7 @@ pub fn scroni_sys_event_observer(
         Query<(
             &mut Transform,
             Option<&mut avian3d::prelude::LinearVelocity>,
+            Option<&mut avian3d::prelude::Position>,
         )>,
         Query<&Children>,
         Query<&mut MeshMaterial3d<StandardMaterial>>,
@@ -3860,17 +3864,27 @@ pub fn scroni_sys_event_observer(
             to,
             face,
         } => {
-            if player_query.get(target).is_ok() {
-                let caller_name = if let Ok((_, script, _, _)) = script_query.get(script_entity) {
-                    script.exec.main_thread.script.name.clone()
-                } else {
-                    "UnknownScript".to_string()
-                };
+            let mut caller_name = "UnknownScript".to_string();
+            if let Ok((_, script, _, _)) = script_query.get(script_entity) {
+                caller_name = script.exec.main_thread.script.name.clone();
             }
-            if let Ok((mut transform, mut opt_vel)) = transform_query.get_mut(target) {
+            
+            if player_query.get(target).is_ok() {
+                info!("VM: [{}] Requested TELEPORT on PLAYER! Raw coords: {:?}, face: {:?}", caller_name, to, face);
+            }
+
+            if let Ok((mut transform, mut opt_vel, mut opt_phys_pos)) = transform_query.get_mut(target) {
                 if let Some(pos) = to {
                     let bevy_pos = Vec3::new(-pos.x, pos.y, -pos.z);
+                    if player_query.get(target).is_ok() {
+                        info!("VM: [{}] Translating PLAYER to mapped Bevy Coords: {:?}", caller_name, bevy_pos);
+                    }
                     transform.translation = bevy_pos;
+                    // Also update Avian3D's authoritative Position so the physics engine
+                    // doesn't overwrite the translation on the next physics step.
+                    if let Some(ref mut phys_pos) = opt_phys_pos {
+                        phys_pos.0 = bevy_pos;
+                    }
                     commands
                         .entity(target)
                         .insert(crate::oni2_loader::spawn::NeedsGroundSnap {
@@ -4202,16 +4216,20 @@ pub fn scroni_sys_event_observer(
             for (entity, active_sound) in &ambient_sound_query {
                 if active_sound.handle == handle {
                     info!("VM: Despawning AmbientSound handle {}", handle);
-                    commands.entity(entity).despawn();
+                    commands.entity(entity).try_despawn();
                 }
             }
         }
         ScrOniSysEvent::Destroy(target) => {
             info!("VM: Received native script request to permanently despawn {:?}", target);
-            if let Ok(mut cmds) = commands.get_entity(target) {
-                // Warning note: If this fires multiple times in a single frame for the same entity, Bevy will warn.
-                cmds.despawn();
-            }
+            // Use a world closure so the existence check happens at apply-time rather
+            // than queue-time — this silences the double-despawn warning that occurs
+            // when two scripts schedule despawn for the same entity in the same frame.
+            commands.queue(move |world: &mut World| {
+                if let Ok(entity) = world.get_entity_mut(target) {
+                    entity.despawn();
+                }
+            });
         }
     }
 }
