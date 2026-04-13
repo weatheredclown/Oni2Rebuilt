@@ -5,7 +5,7 @@ Oni2 engine reimplementation in Rust/Bevy.
 ## Building
 
 ```
-cargo build
+cargo build --workspace
 ```
 
 Dependencies are compiled with optimizations even in dev builds (`[profile.dev.package."*"] opt-level = 2`) for acceptable runtime performance.
@@ -14,12 +14,15 @@ Dependencies are compiled with optimizations even in dev builds (`[profile.dev.p
 
 | Flag | Argument | Description |
 |---|---|---|
+| `--dat` | `<path>` | Path to extracted `.DAT` files (default: `RB.DAT/STREAMS.DAT` in current dir) |
+| `--path` | `<path>` | Path to raw assets directory |
 | `--layout` | `<name>` | Skip the menu and load a layout directly (e.g. `--layout tim06`) |
-| `--testanim` | `<path>` | Animation preview mode. Loads a single entity and plays the specified `.anim` file |
+| `--testanim` | `<path>` | Animation preview mode. Loads a single entity and plays an `.anim` file |
+| `--testentity` | `<name>` | Spawns the specified character model for previewing in a blank scene |
 | `--sandbox` | | Flat ground with a single kno entity, no layout |
 | `--formation` | | Spawn all known character entities in a grid for visual inspection |
 | `--fog` | | Enable distance fog from layout.fog files |
-| `--diagnostics` | | Enable Bevy's `LogDiagnosticsPlugin` (prints FPS, frame time, GPU stats to console every second) |
+| `--diagnostics` | | Enable Bevy's `LogDiagnosticsPlugin` (prints FPS, frame time, GPU stats) |
 
 With no flags, the game starts at a layout selection menu.
 
@@ -27,22 +30,25 @@ With no flags, the game starts at a layout selection menu.
 
 ```bash
 # Normal game with layout menu
-cargo run
+cargo run --bin rb-game -- --dat path/to/iso
 
 # Jump straight into a level
-cargo run -- --layout tim06
+cargo run --bin rb-game -- --dat path/to/iso --layout tim06
 
 # Preview a specific animation file
-cargo run -- --testanim oni2/zips/assets/Entity/kno/kno_nav_run_fwd.anim
+cargo run --bin rb-game -- --dat path/to/iso --testanim oni2/zips/assets/Entity/kno/kno_nav_run_fwd.anim
+
+# Check a specific character model
+cargo run --bin rb-game -- --dat path/to/iso --testentity kno
 
 # Inspect all character models side by side
-cargo run -- --formation
+cargo run --bin rb-game -- --dat path/to/iso --formation
 
 # Flat sandbox with one character
-cargo run -- --sandbox
+cargo run --bin rb-game -- --dat path/to/iso --sandbox
 
-# Any mode with diagnostics logging
-cargo run -- --layout tim06 --diagnostics
+# Override assets using the raw directory
+cargo run --bin rb-game -- --dat path/to/iso --path custom/raw
 ```
 
 ## In-Game Controls
@@ -51,19 +57,17 @@ cargo run -- --layout tim06 --diagnostics
 | Key | Action |
 |---|---|
 | W/A/S/D | Move forward/left/back/right |
-| Space | Jump |
+| Q | Jump |
+| F | Evade |
 | Left Shift | Block |
-| Left Mouse | Light attack |
+| Left Mouse / Space | Light attack |
 | Right Mouse | Heavy attack |
-| Ctrl + A/D/S | Directional attack (left/right/back) |
 | E | Grab |
-| F | Pick up weapon |
-| Q | Drop weapon |
 
 ### Camera
 | Key | Action |
 |---|---|
-| Tab | Toggle camera mode (MouseLook / SmartFollow) |
+| Tab | Cycle camera mode (GameNavigation / GameFighting / GameTargeting) |
 | F5 | Toggle FreeCam mode |
 | Mouse Wheel | Zoom in/out |
 
@@ -78,9 +82,15 @@ cargo run -- --layout tim06 --diagnostics
 ### Debug
 | Key | Action |
 |---|---|
+| F2 | Toggle prototype element visibility (capsules, weapons, HUD) |
 | F3 | Toggle debug bounds + physics capsule wireframes |
 | F4 | Toggle debug skeleton rendering |
-| F6 | Toggle prototype element visibility (capsules, weapons, HUD) |
+| F6 | Toggle procedural light grid |
+| F7 | Toggle avian3d physics debug rendering |
+| F8 | Toggle debug point light |
+| F9 | Toggle debug fog |
+| F11 | Scan player geometry and print log |
+| K | Kill all active creatures (excluding player) |
 | Escape | Return to menu |
 
 ### Animation Preview Mode (`--testanim`)

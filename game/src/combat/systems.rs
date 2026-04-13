@@ -16,6 +16,11 @@ const FIST_REST: Vec3 = Vec3::new(0.3, 0.3, -0.5);
 const FIST_EXTENDED: Vec3 = Vec3::new(0.3, 0.3, -2.0);
 const GRAB_DAMAGE: f32 = 15.0;
 const GRAB_HOLD_MAX: f32 = 2.0;
+/// Height of the physics capsule center above ground (capsule_half_height + snap_buffer).
+/// Must match the value used in spawn.rs / NeedsGroundSnap.
+const CAPSULE_CENTER_HEIGHT: f32 = 1.1;
+/// Half-height of the capsule cylinder section (exclusive of hemisphere caps).
+const CAPSULE_HALF_HEIGHT: f32 = 1.0;
 
 /// Syncs the AttackState with the current running animation. Clears collision lists when a new animation plays.
 pub fn attack_sync_system(
@@ -68,7 +73,9 @@ pub fn hit_detection_system(
             continue;
         }
 
-        let attacker_forward = attacker_tf.forward().as_vec3();
+        // Fighter.facing is the canonical world-space facing direction for both player and AI.
+        // (player sets it from transform.forward(), AI sets it from dir_to_target)
+        let attacker_forward = attacker_fighter.facing;
 
         // Get or insert active attack (cleared by attack_sync_system on new anims)
         let active_attack = attack_state.active_attack.get_or_insert_with(ActiveAttack::default);
@@ -86,8 +93,9 @@ pub fn hit_detection_system(
                 continue;
             }
 
-            // Cylinder check (XZ distance)
             let diff = target_tf.translation - attacker_tf.translation;
+
+            // XZ distance check
             let dist_sq = diff.x * diff.x + diff.z * diff.z;
             if dist_sq > strike.reactdiskradius * strike.reactdiskradius {
                 debug!(
@@ -97,19 +105,27 @@ pub fn hit_detection_system(
                 continue;
             }
 
-            // Height check: target must be vertically contained within the cylinder slice.
-            let min_height = strike.reactdiskheight - strike.reactdiskheighttolerance;
-            let max_height = strike.reactdiskheight + strike.reactdiskheighttolerance;
+            // Height check: target's capsule Y extent must overlap the disk's world-space Y band.
+            // Disk is at attacker's feet + reactdiskheight, ±reactdiskheighttolerance.
+            // Matches rb attackdata.cpp TestHit: [ReactDiskHeight ± Tolerance + chrY] vs [tgtLoY, tgtHiY].
+            let attacker_feet_y = attacker_tf.translation.y - CAPSULE_CENTER_HEIGHT;
+            let disk_min_y = attacker_feet_y + strike.reactdiskheight - strike.reactdiskheighttolerance;
+            let disk_max_y = attacker_feet_y + strike.reactdiskheight + strike.reactdiskheighttolerance;
+            let target_lo_y = target_tf.translation.y - CAPSULE_HALF_HEIGHT;
+            let target_hi_y = target_tf.translation.y + CAPSULE_HALF_HEIGHT;
 
-            if diff.y < min_height || diff.y > max_height {
-                debug!("hit miss: height diff {:.2} outside [{:.2}, {:.2}]", diff.y, min_height, max_height);
+            if target_lo_y > disk_max_y || target_hi_y < disk_min_y {
+                debug!(
+                    "hit miss: target Y [{:.2}, {:.2}] misses disk Y [{:.2}, {:.2}]",
+                    target_lo_y, target_hi_y, disk_min_y, disk_max_y
+                );
                 continue;
             }
 
             // Slice angular check
             let dir_to_target = Vec3::new(diff.x, 0.0, diff.z).normalize_or_zero();
 
-            // sliceheadingradiansb offsets the slice center relative to the attacker's forward.
+            // sliceheadingradiansb offsets the slice center relative to the attacker's facing.
             let slice_heading = Quat::from_rotation_y(strike.sliceheadingradiansb) * attacker_forward;
             let slice_heading_xz = Vec3::new(slice_heading.x, 0.0, slice_heading.z).normalize_or_zero();
 
