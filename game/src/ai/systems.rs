@@ -19,6 +19,10 @@ pub fn ai_target_system(
     players: Query<(Entity, &Transform), With<Player>>,
 ) {
     for (mut ai, ai_tf) in &mut ai_query {
+        if ai.manual_target {
+            continue;
+        }
+
         let mut best: Option<(Entity, f32)> = None;
         for (player_entity, player_tf) in &players {
             let dist = ai_tf.translation.distance(player_tf.translation);
@@ -234,7 +238,7 @@ pub fn ai_movement_system(
         let horizontal = Vec3::new(to_target.x, 0.0, to_target.z);
         let distance = horizontal.length();
 
-        if distance < 0.01 {
+        if distance < 1.0 {
             velocity.x = 0.0;
             velocity.z = 0.0;
             continue;

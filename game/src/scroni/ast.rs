@@ -170,8 +170,8 @@ pub enum Stmt {
     Follow(Expr),
     /// `attack <expr>`
     Attack(Expr),
-    /// `retreat`
-    Retreat,
+    /// `retreat [to <expr>]`
+    Retreat(Option<Expr>),
     /// `destroy <expr>`
     Destroy(Expr),
 

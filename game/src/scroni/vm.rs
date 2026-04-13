@@ -198,10 +198,11 @@ pub enum SysRequest {
     CameraReset,
     CameraMode(String),
     CameraSetFOV(f32, f32), // Target FOV, Duration
+    CameraShake,
     CameraTrackActor(Entity),
     CameraTrackPoint(Vec3),
     CameraMoveToActor(Entity, f32), // Target, Duration
-    CameraMoveToPoint(Vec3, f32), 
+    CameraMoveToPoint(Vec3, f32),
     CameraMoveAlongRail(String, f32),
     DrawText(String),
     At(f32, f32),
@@ -226,6 +227,14 @@ pub enum SysRequest {
     SetUpdateState {
         target: String,
         state: String,
+    },
+    SetAiTarget {
+        actor: Entity,
+        target: Entity,
+    },
+    FollowActor {
+        actor: Entity,
+        target: Entity,
     },
     UsePad(Entity),
     PlayAmbientSound(
@@ -307,6 +316,7 @@ pub enum ScrOniSysEvent {
     CameraReset,
     CameraMode(String),
     CameraSetFOV(f32, f32), // Target FOV, Duration
+    CameraShake,
     CameraTrackActor(Entity),
     CameraTrackPoint(Vec3),
     CameraMoveToActor(Entity, f32),
@@ -337,6 +347,14 @@ pub enum ScrOniSysEvent {
     SetUpdateState {
         target: String,
         state: String,
+    },
+    SetAiTarget {
+        actor: Entity,
+        target: Entity,
+    },
+    FollowActor {
+        actor: Entity,
+        target: Entity,
     },
     UsePad {
         script_entity: Entity,
@@ -1421,8 +1439,21 @@ impl ScriptExec {
                 self.get_thread_mut(tid).state = ExecState::Yielded;
             }
             Stmt::Destroy(target) => {
-                if let Value::Actor(ent) = self.eval_expr(tid, target, now, ctx) {
-                    self.sys_requests.push(SysRequest::Destroy(ent));
+                let val = self.eval_expr(tid, target, now, ctx);
+                match val {
+                    Value::Actor(ent) => {
+                        self.sys_requests.push(SysRequest::Destroy(ent));
+                    }
+                    Value::Int(guid) => {
+                        for (e, _, name_opt) in ctx.all_entities.iter() {
+                            if let Some(n) = name_opt {
+                                if hash_name(n.as_str()) == guid {
+                                    self.sys_requests.push(SysRequest::Destroy(e));
+                                }
+                            }
+                        }
+                    }
+                    _ => {}
                 }
             }
             Stmt::Done => {
@@ -2134,7 +2165,7 @@ impl ScriptExec {
                 self.sys_requests.push(SysRequest::CameraSetFOV(fov, frames / 60.0));
             }
             Stmt::CameraShake => {
-                info!("VM: CameraShake (unimplemented)");
+                self.sys_requests.push(SysRequest::CameraShake);
             }
 
             Stmt::SetFogType(expr) => {
@@ -2267,20 +2298,7 @@ impl ScriptExec {
 
             Stmt::Unimplemented { command, args } => {
                 let lower = command.to_lowercase();
-                if lower == "retreat" {
-                    // Retreat command stub
-                    let target_str = if !args.is_empty() {
-                        self.eval_expr(tid, &args[0], now, ctx).as_string()
-                    } else {
-                        "me".to_string()
-                    };
-                    if self
-                        .warned_unimplemented
-                        .insert(format!("retreat_{}", target_str))
-                    {
-                        info!("VM: Retreat {} (unimplemented)", target_str);
-                    }
-                } else if lower == "look" {
+                if lower == "look" {
                     if let Some(target_expr) = args.first() {
                         let target_val = self.eval_expr(tid, target_expr, now, ctx);
                         let caller = self.owner;
@@ -2315,13 +2333,51 @@ impl ScriptExec {
                     }
                 }
             }
+            Stmt::Retreat(target_opt) => {
+                if let Some(expr) = target_opt {
+                    let t = self.eval_expr(tid, expr, now, ctx);
+                    self.get_thread_mut(tid).blocking = Some(BlockingAction::GotoPoint {
+                        target: t,
+                        within: None,
+                        speed: None,
+                        duration: None,
+                    });
+                    self.get_thread_mut(tid).state = ExecState::Blocked;
+                } else {
+                    if self.warned_unimplemented.insert(format!("{:?}", stmt)) {
+                        info!("VM: Unimplemented AI action {:?} (Yielding continuously)", stmt);
+                    }
+                    self.get_thread_mut(tid).state = ExecState::Yielded;
+                }
+            }
+            Stmt::Patrol(expr) => {
+                let t = self.eval_expr(tid, expr, now, ctx);
+                self.get_thread_mut(tid).blocking = Some(BlockingAction::GotoPoint {
+                    target: t,
+                    within: None,
+                    speed: None,
+                    duration: None,
+                });
+                self.get_thread_mut(tid).state = ExecState::Blocked;
+            }
             // AI Commands that inherently block execution natively waiting for physical locomotion responses
-            Stmt::Retreat | Stmt::Patrol(_) | Stmt::Follow(_) | Stmt::Attack(_) => {
-                if self.warned_unimplemented.insert(format!("{:?}", stmt)) {
-                    info!(
-                        "VM: Unimplemented AI action {:?} (Yielding continuously)",
-                        stmt
-                    );
+            Stmt::Attack(expr) => {
+                let t = self.eval_expr(tid, expr, now, ctx);
+                if let Value::Actor(target_ent) = t {
+                    self.sys_requests.push(SysRequest::SetAiTarget {
+                        actor: self.owner,
+                        target: target_ent,
+                    });
+                }
+                self.get_thread_mut(tid).state = ExecState::Yielded;
+            }
+            Stmt::Follow(expr) => {
+                let t = self.eval_expr(tid, expr, now, ctx);
+                if let Value::Actor(target_ent) = t {
+                    self.sys_requests.push(SysRequest::FollowActor {
+                        actor: self.owner,
+                        target: target_ent,
+                    });
                 }
                 self.get_thread_mut(tid).state = ExecState::Yielded;
             }
@@ -2756,9 +2812,9 @@ impl ScriptExec {
                         }
                         Value::Int(1)
                     }
-                    "navpoint" => {
-                        // navpoint("Name") — return the name as a string so that
-                        // the goto resolver can look it up in nav.names.
+                    "navpoint" | "path" => {
+                        // navpoint("Name") or path("Name") -> return the name as a string so that
+                        // the goto resolver can look it up in nav.names or path configs.
                         if let Some(e) = args.get(0) {
                             Value::String(self.eval_expr(tid, e, now, ctx).as_string())
                         } else {
@@ -3013,6 +3069,7 @@ pub fn scroni_tick_system(
                             path,
                             current_wp: 0,
                             speed_throttle: throttle,
+                            within,
                         });
                         script.exec.get_thread_mut(tid).blocking = Some(BlockingAction::WaitingForPath);
                         continue;
@@ -3133,6 +3190,9 @@ pub fn scroni_tick_system(
                 SysRequest::CameraSetFOV(fov, dur) => {
                     commands.trigger(ScrOniSysEvent::CameraSetFOV(fov, dur));
                 }
+                SysRequest::CameraShake => {
+                    commands.trigger(ScrOniSysEvent::CameraShake);
+                }
                 SysRequest::CameraTrackActor(e) => {
                     commands.trigger(ScrOniSysEvent::CameraTrackActor(e));
                 }
@@ -3195,6 +3255,12 @@ pub fn scroni_tick_system(
                 }
                 SysRequest::SetUpdateState { target, state } => {
                     commands.trigger(ScrOniSysEvent::SetUpdateState { target, state });
+                }
+                SysRequest::SetAiTarget { actor, target } => {
+                    commands.trigger(ScrOniSysEvent::SetAiTarget { actor, target });
+                }
+                SysRequest::FollowActor { actor, target } => {
+                    commands.trigger(ScrOniSysEvent::FollowActor { actor, target });
                 }
                 SysRequest::SetFullScreenColor { color, duration } => {
                     commands.trigger(ScrOniSysEvent::SetFullScreenColor { color, duration });
@@ -3436,6 +3502,7 @@ pub fn scroni_sys_event_observer(
     mut scroni_text_state: ResMut<ScroniTextState>,
     time: Res<Time>,
     screen_fade: Option<Res<ScreenFadeState>>,
+    mut ai_target_query: Query<&mut crate::ai::components::AiFighter>,
     misc_queries: (
         Query<(
             &mut Transform,
@@ -3668,13 +3735,23 @@ pub fn scroni_sys_event_observer(
             }
         }
         ScrOniSysEvent::CameraSetFOV(fov, dur) => {
-            for (ent, mut controller, _, seq_opt) in &mut camera_query {
+            for (ent, mut controller, mut channel, seq_opt) in &mut camera_query {
                 controller.active_mode = crate::camera::components::ActiveCameraMode::Script;
                 let mut seq = seq_opt.cloned().unwrap_or_default();
-                seq.fov_start = Some(50.0); // Would read actual FOV if available, mapping 50.0 for brevity
+                seq.fov_start = Some(channel.current_fov);
                 seq.fov_target = Some(fov);
                 seq.fov_duration = dur;
+                seq.fov_time_elapsed = 0.0;
                 commands.entity(ent).insert(seq);
+            }
+        }
+        ScrOniSysEvent::CameraShake => {
+            // Fixed shake parameters matching rb xcameracommand.cpp DoCameraShake:
+            // ShakeCamera(Vector3(0.1, 0.06, 0.03), 1.5s, 1.5s)
+            for (_, _, mut channel, _) in &mut camera_query {
+                channel.shake_amplitude = Vec3::new(0.1, 0.06, 0.03);
+                channel.shake_time_remaining = 1.5;
+                channel.shake_time_to_damp = 1.5;
             }
         }
         ScrOniSysEvent::CameraTrackActor(actor_ent) => {
@@ -3706,6 +3783,8 @@ pub fn scroni_sys_event_observer(
                 let mut seq = seq_opt.cloned().unwrap_or_default();
                 seq.move_target = Some(crate::camera::components::ScriptFocusTarget::Actor(actor_ent));
                 seq.move_duration = dur;
+                seq.move_time_elapsed = 0.0;
+                seq.move_start = None; // lazily captured from camera position on first script tick
                 commands.entity(ent).insert(seq);
             }
         }
@@ -3713,10 +3792,12 @@ pub fn scroni_sys_event_observer(
             for (ent, mut controller, _, seq_opt) in &mut camera_query {
                 controller.active_mode = crate::camera::components::ActiveCameraMode::Script;
                 let mut seq = seq_opt.cloned().unwrap_or_default();
-                let mapped_pt = Vec3::new(-pt.x, pt.y, -pt.z); 
+                let mapped_pt = Vec3::new(-pt.x, pt.y, -pt.z);
                 info!("📽️ [Camera] Script commanding MOVE to Point {} over {:.2}s", mapped_pt, dur);
                 seq.move_target = Some(crate::camera::components::ScriptFocusTarget::Point(mapped_pt));
                 seq.move_duration = dur;
+                seq.move_time_elapsed = 0.0;
+                seq.move_start = None; // lazily captured from camera position on first script tick
                 commands.entity(ent).insert(seq);
             }
         }
@@ -3937,6 +4018,23 @@ pub fn scroni_sys_event_observer(
                 entity_cmds.insert(ActiveHeadIK { task: task.clone() });
                 debug!("VM: Observed ControlHead {:?} onto actor {:?}", task, actor);
             }
+        }
+        ScrOniSysEvent::SetAiTarget { actor, target } => {
+            if let Ok(mut ai) = ai_target_query.get_mut(actor) {
+                ai.target = Some(target);
+                ai.manual_target = true; // Lock it so auto-awareness doesn't overwrite it immediately.
+                ai.state = crate::ai::components::AiState::Pursuing;
+            }
+            info!("VM: AI {:?} ordered to Attack {:?}", actor, target);
+        }
+        ScrOniSysEvent::FollowActor { actor, target } => {
+            // "Follow" simply paths closely to the target but does not engage in combat. 
+            // We assign an active ActorFollower pointing directly to the target.
+            commands.entity(actor).insert(crate::ai::components::ActorFollower {
+                target,
+                within: 3.0,
+            });
+            info!("VM: AI {:?} ordered to Follow {:?}", actor, target);
         }
         ScrOniSysEvent::SetLightIntensity {
             script_entity: _,

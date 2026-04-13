@@ -17,6 +17,7 @@ impl Plugin for AiPlugin {
                 systems::ai_decision_system,
                 systems::ai_movement_system,
                 navigation::path_following_system,
+                navigation::actor_follower_system,
             )
                 .chain()
                 .before(crate::combat::systems::ground_detection_system)

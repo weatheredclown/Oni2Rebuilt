@@ -161,6 +161,7 @@ pub struct ActorPathfollower {
     pub path: Vec<Vec3>,
     pub current_wp: usize,
     pub speed_throttle: f32,
+    pub within: Option<f32>,
 }
 
 pub fn path_following_system(
@@ -185,7 +186,14 @@ pub fn path_following_system(
         to_target.y = 0.0;
 
         let dist = to_target.length();
-        if dist < 1.0 {
+        let is_last_wp = follower.current_wp == follower.path.len() - 1;
+        let tolerance = if is_last_wp {
+            follower.within.unwrap_or(2.5).max(1.0)
+        } else {
+            1.0
+        };
+
+        if dist <= tolerance {
             follower.current_wp += 1;
             continue;
         }
@@ -205,5 +213,41 @@ pub fn path_following_system(
         target_tf.look_at(look_target, Vec3::Y);
         target_tf.rotate_y(std::f32::consts::PI);
         tf.rotation = tf.rotation.slerp(target_tf.rotation, (10.0 * dt).min(1.0));
+    }
+}
+
+pub fn actor_follower_system(
+    time: Res<Time>,
+    mut query: Query<(&crate::ai::components::ActorFollower, &mut Transform, &mut avian3d::prelude::LinearVelocity, &mut crate::combat::components::Fighter)>,
+    targets: Query<&Transform, Without<crate::ai::components::ActorFollower>>,
+) {
+    let speed_multiplier = 4.5;
+    let dt = time.delta_secs();
+
+    for (follower, mut tf, mut vel, mut fighter) in &mut query {
+        if let Ok(target_tf) = targets.get(follower.target) {
+            let mut to_target = target_tf.translation - tf.translation;
+            to_target.y = 0.0;
+            
+            let dist = to_target.length();
+            let tolerance = follower.within.max(1.0);
+            if dist <= tolerance {
+                vel.x = 0.0;
+                vel.z = 0.0;
+                continue;
+            }
+            
+            let dir = to_target / dist;
+            let desired = dir * speed_multiplier;
+            vel.x = desired.x;
+            vel.z = desired.z;
+            fighter.facing = dir;
+            
+            let look_target = tf.translation + dir;
+            let mut expected_tf = *tf;
+            expected_tf.look_at(look_target, Vec3::Y);
+            expected_tf.rotate_y(std::f32::consts::PI);
+            tf.rotation = tf.rotation.slerp(expected_tf.rotation, (10.0 * dt).min(1.0));
+        }
     }
 }

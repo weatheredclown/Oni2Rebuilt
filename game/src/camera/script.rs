@@ -56,9 +56,21 @@ pub fn script_camera_system(
         // 1. Evaluate explicit fov changes over time
         if let (Some(start), Some(target)) = (seq.fov_start, seq.fov_target) {
             seq.fov_time_elapsed += dt;
-            let mut t = if seq.fov_duration > 0.0 { seq.fov_time_elapsed / seq.fov_duration } else { 1.0 };
-            if t > 1.0 { t = 1.0; }
-            channel.desired_fov = start + (target - start) * t;
+            let t = if seq.fov_duration > 0.0 {
+                (seq.fov_time_elapsed / seq.fov_duration).min(1.0)
+            } else {
+                1.0
+            };
+            let fov = start + (target - start) * t;
+            channel.script_fov_override = Some(fov);
+            if t >= 1.0 {
+                // Animation complete — lock at target and stop interpolating
+                seq.fov_start = None;
+                seq.fov_target = None;
+            }
+        } else {
+            // No active FOV script; let polar use the package value
+            channel.script_fov_override = None;
         }
         
         // Ensure tracked_target resolves dynamically if it's an actor

@@ -418,7 +418,12 @@ impl Compiler {
             }
             TokenCode::Retreat => {
                 self.advance();
-                Stmt::Retreat
+                let target = if self.skip_if(TokenCode::To) || is_expr_start(self.code()) {
+                    Some(self.parse_expr())
+                } else {
+                    None
+                };
+                Stmt::Retreat(target)
             }
             TokenCode::Destroy => {
                 self.advance();
@@ -1515,6 +1520,7 @@ impl Compiler {
             | TokenCode::Sqrt
             | TokenCode::DeltaHeight
             | TokenCode::NavPoint
+            | TokenCode::Path
             | TokenCode::IncomingAttack
             | TokenCode::IncomingAttackTime
             | TokenCode::SuccessiveAttacks

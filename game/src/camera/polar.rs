@@ -13,7 +13,8 @@ pub fn polar_interpolation_system(
 
     for (_controller, mut channel) in &mut query {
         
-        channel.desired_fov = channel.package_fov;
+        // Script FOV override takes precedence over the package FOV
+        channel.desired_fov = channel.script_fov_override.unwrap_or(channel.package_fov);
         
         // Mode-specific lerp rates
         let fov_speed = 5.0;
@@ -77,6 +78,7 @@ pub fn apply_camera_transform(
         if let Some(script_tf) = channel.script_override_transform {
             cam_tf.translation = script_tf.translation;
             cam_tf.rotation = script_tf.rotation;
+            apply_camera_shake(&mut cam_tf, &mut channel, dt);
             continue;
         }
         
@@ -127,8 +129,37 @@ pub fn apply_camera_transform(
         
         let t = (6.0 * dt).clamp(0.0, 1.0);
         cam_tf.translation = cam_tf.translation.lerp(desired_pos, t);
-        
+
         // Lock looking at the target center
         cam_tf.look_at(target_base + Vec3::Y * 0.5, Vec3::Y);
+
+        apply_camera_shake(&mut cam_tf, &mut channel, dt);
+    }
+}
+
+/// Applies and decays any active camera shake as a random rotation perturbation.
+/// Matches rb camnewManager::ProcessShake: random Euler angles, damped when near expiry.
+fn apply_camera_shake(cam_tf: &mut Transform, channel: &mut CameraChannel, dt: f32) {
+    if channel.shake_time_remaining <= 0.0 {
+        return;
+    }
+
+    let scale = if channel.shake_time_remaining < channel.shake_time_to_damp {
+        channel.shake_time_remaining / channel.shake_time_to_damp
+    } else {
+        1.0
+    };
+
+    // Pseudo-random per-frame perturbation using the remaining time as a seed.
+    // Different frequencies per axis to avoid correlated motion.
+    let t = channel.shake_time_remaining;
+    let rx = (t * 97.3).sin() * channel.shake_amplitude.x * scale;
+    let ry = (t * 53.7).sin() * channel.shake_amplitude.y * scale;
+    let rz = (t * 31.1).sin() * channel.shake_amplitude.z * scale;
+
+    cam_tf.rotation *= Quat::from_euler(EulerRot::XYZ, rx, ry, rz);
+    channel.shake_time_remaining -= dt;
+    if channel.shake_time_remaining < 0.0 {
+        channel.shake_time_remaining = 0.0;
     }
 }

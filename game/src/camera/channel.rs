@@ -94,6 +94,14 @@ pub struct CameraChannel {
     
     // Bypass constraints entirely if VM script forces explicit camera matrix
     pub script_override_transform: Option<Transform>,
+
+    // Camera shake state (driven by CameraShake script command or fx events)
+    pub shake_amplitude: Vec3,       // Per-axis Euler rotation amplitude (radians)
+    pub shake_time_remaining: f32,
+    pub shake_time_to_damp: f32,     // Shake starts damping below this remaining time
+
+    // Script FOV override: when Some, polar interpolation defers to this instead of package_fov
+    pub script_fov_override: Option<f32>,
 }
 
 impl Default for CameraChannel {
@@ -159,6 +167,12 @@ impl Default for CameraChannel {
             active_set_name: String::new(),
             
             script_override_transform: None,
+
+            shake_amplitude: Vec3::ZERO,
+            shake_time_remaining: 0.0,
+            shake_time_to_damp: 0.0,
+
+            script_fov_override: None,
         }
     }
 }

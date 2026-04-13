@@ -11,9 +11,16 @@ pub enum AiState {
 }
 
 #[derive(Component)]
+pub struct ActorFollower {
+    pub target: Entity,
+    pub within: f32,
+}
+
+#[derive(Component)]
 pub struct AiFighter {
     pub state: AiState,
     pub target: Option<Entity>,
+    pub manual_target: bool,
     pub decision_timer: f32,
     pub block_probability: f32,
     pub aggression: f32,
@@ -27,6 +34,7 @@ impl Default for AiFighter {
         Self {
             state: AiState::Idle,
             target: None,
+            manual_target: false,
             decision_timer: 0.5,
             block_probability: 0.6,
             aggression: 0.5,
