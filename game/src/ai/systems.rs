@@ -42,22 +42,16 @@ pub fn ai_decision_system(
         &mut AiFighter,
         &Transform,
         &mut AttackState,
-        &mut BlockState,
         &HitReaction,
-        &AboutToBeHit,
-        &GrabState,
         Option<&crate::ai::navigation::ActorPathfollower>,
     )>,
     targets: Query<&Transform>,
     time: Res<Time>,
 ) {
     let dt = time.delta_secs();
-    let now = time.elapsed_secs_f64();
     let mut rng = rand::rng();
 
-    for (mut ai, ai_tf, mut attack_state, mut block_state, reaction, about_to_be_hit, grab, follower_opt) in
-        &mut ai_query
-    {
+    for (mut ai, ai_tf, mut attack_state, reaction, follower_opt) in &mut ai_query {
         if follower_opt.is_some() {
             // Let the path following system handle its state.
             continue;
@@ -65,12 +59,6 @@ pub fn ai_decision_system(
         // Priority 1: If in a hit reaction, go to Recovering
         if reaction.active.is_some() {
             ai.state = AiState::Recovering;
-            block_state.is_blocking = false;
-            continue;
-        }
-
-        // Priority 2: If in a grab, don't interfere
-        if grab.phase.is_some() {
             continue;
         }
 
@@ -87,14 +75,12 @@ pub fn ai_decision_system(
         // No target -> Idle
         let Some(target_entity) = ai.target else {
             ai.state = AiState::Idle;
-            block_state.is_blocking = false;
             continue;
         };
 
         let Ok(target_tf) = targets.get(target_entity) else {
             ai.target = None;
             ai.state = AiState::Idle;
-            block_state.is_blocking = false;
             continue;
         };
 
@@ -103,25 +89,6 @@ pub fn ai_decision_system(
 
         // attack range (range_extension is negative = further reach)
         let effective_attack_range = ATTACK_RANGE;
-
-        // Priority 3: React to incoming attack with block
-        if about_to_be_hit.active.is_some() && ai.state != AiState::Attacking {
-            if rng.random_range(0.0..1.0) < ai.block_probability {
-                ai.state = AiState::Blocking;
-                block_state.is_blocking = true;
-                continue;
-            }
-        }
-
-        // If blocking and threat cleared, stop blocking
-        if ai.state == AiState::Blocking {
-            if about_to_be_hit.active.is_none() {
-                block_state.is_blocking = false;
-                ai.state = AiState::Circling;
-                ai.decision_timer = rng.random_range(0.3..0.6);
-            }
-            continue;
-        }
 
         // If attacking, wait for attack to complete
         if ai.state == AiState::Attacking {
@@ -287,7 +254,7 @@ pub fn ai_movement_system(
                 velocity.x = desired.x;
                 velocity.z = desired.z;
             }
-            AiState::Idle | AiState::Blocking | AiState::Recovering => {
+            AiState::Idle | AiState::Recovering => {
                 velocity.x = 0.0;
                 velocity.z = 0.0;
             }

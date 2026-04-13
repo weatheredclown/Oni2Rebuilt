@@ -17,12 +17,12 @@ Dependencies are compiled with optimizations even in dev builds (`[profile.dev.p
 | `--dat` | `<path>` | Path to extracted `.DAT` files (default: `RB.DAT/STREAMS.DAT` in current dir) |
 | `--path` | `<path>` | Path to raw assets directory |
 | `--layout` | `<name>` | Skip the menu and load a layout directly (e.g. `--layout tim06`) |
-| `--testanim` | `<path>` | Animation preview mode. Loads a single entity and plays an `.anim` file |
+| `--testanim` | `<path>` | Animation preview mode. Path to an `.anim` file relative to the working directory. The entity model is derived automatically from the filename prefix before the first `_` (e.g. `kno_nav_run_fwd.anim` loads the `kno` entity) |
 | `--testentity` | `<name>` | Spawns the specified character model for previewing in a blank scene |
 | `--sandbox` | | Flat ground with a single kno entity, no layout |
 | `--formation` | | Spawn all known character entities in a grid for visual inspection |
 | `--fog` | | Enable distance fog from layout.fog files |
-| `--diagnostics` | | Enable Bevy's `LogDiagnosticsPlugin` (prints FPS, frame time, GPU stats) |
+| `--diagnostics` | | Enable Bevy's `LogDiagnosticsPlugin` (prints FPS and frame time to console every second) |
 
 With no flags, the game starts at a layout selection menu.
 
@@ -56,13 +56,13 @@ cargo run --bin rb-game -- --dat path/to/iso --path custom/raw
 ### Player Movement
 | Key | Action |
 |---|---|
-| W/A/S/D | Move forward/left/back/right |
+| W / S | Run forward / turn and run back |
+| A / D | Turn left / right |
+| Left Shift + W/A/S/D | Strafe (walk forward/left/back/right without turning) |
 | Q | Jump |
 | F | Evade |
-| Left Shift | Block |
 | Left Mouse / Space | Light attack |
 | Right Mouse | Heavy attack |
-| E | Grab |
 
 ### Camera
 | Key | Action |

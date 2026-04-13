@@ -2993,7 +2993,6 @@ pub fn scroni_tick_system(
                 crate::ai::components::AiState::Pursuing
                 | crate::ai::components::AiState::Circling
                 | crate::ai::components::AiState::Attacking
-                | crate::ai::components::AiState::Blocking
                 | crate::ai::components::AiState::Recovering => "fighting",
                 _ => "alive",
             }

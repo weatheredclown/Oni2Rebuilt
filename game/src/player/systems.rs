@@ -2,7 +2,7 @@ use avian3d::prelude::*;
 use bevy::input::mouse::MouseMotion;
 use bevy::prelude::*;
 
-use crate::combat::components::{BlockState, Fighter};
+use crate::combat::components::Fighter;
 
 use super::components::*;
 
@@ -21,9 +21,9 @@ const DOUBLE_JUMP_IMPULSE: f32 = 7.0;
 pub fn keyboard_input_system(
     keyboard: Res<ButtonInput<KeyCode>>,
     mouse: Res<ButtonInput<MouseButton>>,
-    mut query: Query<(&mut InputState, &mut BlockState), With<Player>>,
+    mut query: Query<&mut InputState, With<Player>>,
 ) {
-    for (mut input, mut block) in &mut query {
+    for mut input in &mut query {
         // Movement: W=forward(−y), S=back(+y), A=left(+x), D=right(−x)
         let mut movement = Vec2::ZERO;
         if keyboard.pressed(KeyCode::KeyW) {
@@ -53,8 +53,6 @@ pub fn keyboard_input_system(
         input.grab = keyboard.just_pressed(KeyCode::KeyE);
         input.jump = keyboard.just_pressed(KeyCode::KeyQ);
         input.evade = keyboard.just_pressed(KeyCode::KeyF);
-
-        block.is_blocking = input.blocking;
     }
 }
 
@@ -67,14 +65,14 @@ pub fn keyboard_input_system(
 /// This runs *after* keyboard_input_system so gamepad can override/supplement.
 pub fn gamepad_input_system(
     gamepads: Query<(Entity, &Gamepad)>,
-    mut query: Query<(&mut InputState, &mut BlockState), With<Player>>,
+    mut query: Query<&mut InputState, With<Player>>,
 ) {
     // Find the first connected gamepad
     let Some((_, gamepad)) = gamepads.iter().next() else {
         return;
     };
 
-    for (mut input, mut block) in &mut query {
+    for mut input in &mut query {
         // Left stick → movement
         let lx = gamepad.get(GamepadAxis::LeftStickX).unwrap_or(0.0);
         let ly = gamepad.get(GamepadAxis::LeftStickY).unwrap_or(0.0);
@@ -103,9 +101,7 @@ pub fn gamepad_input_system(
         }
 
         // Shoulder buttons
-        let lb = gamepad.pressed(GamepadButton::LeftTrigger);
-        input.blocking = lb;
-        block.is_blocking = lb;
+        input.blocking = gamepad.pressed(GamepadButton::LeftTrigger);
 
         if gamepad.just_pressed(GamepadButton::RightTrigger) {
             input.grab = true;
@@ -137,7 +133,7 @@ pub fn player_mouse_look_system(
 
         if input.blocking {
             transform.rotate_y(yaw);
-            fighter.facing = transform.forward().as_vec3();
+            fighter.facing = transform.back().as_vec3();
         } else {
             if let Some(mut channel) = camera_query.iter_mut().next() {
                 channel.desired_azimuth += yaw;
@@ -236,7 +232,7 @@ pub fn player_movement_system(
                 let target_rot =
                     Transform::default().looking_to(move_dir, Vec3::Y).rotation;
                 transform.rotation = transform.rotation.slerp(target_rot, 0.25);
-                fighter.facing = transform.forward().as_vec3();
+                fighter.facing = transform.back().as_vec3();
             }
         } else {
             let forward = transform.forward().as_vec3();

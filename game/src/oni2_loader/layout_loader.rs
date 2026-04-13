@@ -375,10 +375,7 @@ pub fn spawn_layout_actor(
                 }
                 assets.commands.entity(entity).insert((
                     crate::combat::components::AttackState::default(),
-                    crate::combat::components::BlockState::new(),
                     crate::combat::components::ComboTracker::default(),
-                    crate::combat::components::SuperMeter::default(),
-                    crate::combat::components::GrabState::default(),
                     crate::combat::components::HitReaction::default(),
                     crate::combat::components::AboutToBeHit::default(),
                 ));

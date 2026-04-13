@@ -4,18 +4,12 @@ use rb_shared::events::CombatEvent;
 
 use crate::oni2_loader::animation::{AnimId, Oni2AnimLibrary, Oni2AnimState};
 use crate::oni2_loader::parsers::rct::ANIMREACT_NAMES;
-use crate::player::components::{InputState, Player};
 use crate::telemetry::bridge::TelemetryChannel;
 
 use super::components::*;
 use super::events::*;
 
-const HIT_RADIUS: f32 = 0.6;
 const INVULN_DURATION: f64 = 0.2;
-const FIST_REST: Vec3 = Vec3::new(0.3, 0.3, -0.5);
-const FIST_EXTENDED: Vec3 = Vec3::new(0.3, 0.3, -2.0);
-const GRAB_DAMAGE: f32 = 15.0;
-const GRAB_HOLD_MAX: f32 = 2.0;
 /// Height of the physics capsule center above ground (capsule_half_height + snap_buffer).
 /// Must match the value used in spawn.rs / NeedsGroundSnap.
 const CAPSULE_CENTER_HEIGHT: f32 = 1.1;
@@ -41,7 +35,7 @@ pub fn attack_sync_system(
 /// Cylinder-slice overlap hit detection reading from `.atdt` files embedded in Oni2AnimState.
 pub fn hit_detection_system(
     mut attackers: Query<(Entity, &Transform, &Fighter, &mut AttackState, &crate::oni2_loader::animation::Oni2AnimState)>,
-    mut targets: Query<(Entity, &Transform, &mut Health, &mut BlockState, &Fighter, Option<&ReactLibrary>)>,
+    mut targets: Query<(Entity, &Transform, &mut Health, &Fighter, Option<&ReactLibrary>)>,
     time: Res<Time>,
     mut damage_writer: MessageWriter<DamageMessage>,
     mut reaction_writer: MessageWriter<HitReactionMessage>,
@@ -80,7 +74,7 @@ pub fn hit_detection_system(
         // Get or insert active attack (cleared by attack_sync_system on new anims)
         let active_attack = attack_state.active_attack.get_or_insert_with(ActiveAttack::default);
 
-        for (target_entity, target_tf, mut health, mut block_state, target_fighter, react_lib) in &mut targets {
+        for (target_entity, target_tf, mut health, target_fighter, react_lib) in &mut targets {
             if target_entity == attacker_entity {
                 continue;
             }
@@ -146,11 +140,7 @@ pub fn hit_detection_system(
             active_attack.hit_entities.push(target_entity);
 
             let damage = attack_data.damage;
-            let mut was_blocked = false;
-
-            if block_state.is_blocking && block_state.can_block_hit_type(strike.hittype) {
-                was_blocked = true;
-            }
+            let was_blocked = false;
 
             // Resolve react data from the target's ReactLibrary using reactanim0
             // (reactanim[0] is the primary reaction; higher indices are alternatives for different states)
@@ -217,25 +207,6 @@ pub fn hit_detection_system(
     }
 }
 
-/// Shield visual system - shows/hides shield disc based on blocking state.
-pub fn shield_visual_system(
-    fighters: Query<(&BlockState, &Children)>,
-    mut shield_query: Query<&mut Visibility, With<ShieldVisual>>,
-) {
-    for (block_state, children) in &fighters {
-        for child in children.iter() {
-            let Ok(mut vis) = shield_query.get_mut(child) else {
-                continue;
-            };
-            *vis = if block_state.is_blocking {
-                Visibility::Visible
-            } else {
-                Visibility::Hidden
-            };
-        }
-    }
-}
-
 /// About-to-be-hit system: reads messages and sets component on target.
 /// Ticks down existing warnings and clears expired ones.
 pub fn about_to_be_hit_system(
@@ -262,148 +233,6 @@ pub fn about_to_be_hit_system(
                 from: msg.from,
                 attacker: msg.attacker,
             });
-        }
-    }
-}
-
-/// Grab input system: reads InputState grab flag and initiates grab.
-pub fn grab_input_system(
-    mut player_query: Query<
-        (
-            Entity,
-            &Transform,
-            &InputState,
-            &AttackState,
-            &mut GrabState,
-            &HitReaction,
-        ),
-        With<Player>,
-    >,
-    targets: Query<(Entity, &Transform), (With<Fighter>, Without<Player>)>,
-    mut grab_writer: MessageWriter<GrabMessage>,
-) {
-    for (player_entity, player_tf, input, attack_state, mut grab, reaction) in &mut player_query {
-        if !input.grab {
-            continue;
-        }
-        if attack_state.active_attack.is_some() || reaction.active.is_some() || grab.phase.is_some()
-        {
-            continue;
-        }
-
-        // Find closest target in range
-        let mut closest: Option<(Entity, f32)> = None;
-        for (target_entity, target_tf) in &targets {
-            let dist = player_tf.translation.distance(target_tf.translation);
-            if dist <= grab.grab_range {
-                if closest.map_or(true, |(_, d)| dist < d) {
-                    closest = Some((target_entity, dist));
-                }
-            }
-        }
-
-        if let Some((target, _)) = closest {
-            grab.phase = Some(GrabPhase::Reaching);
-            grab.target = Some(target);
-            grab.hold_timer = 0.0;
-            grab.shake_amount = 0.0;
-            grab_writer.write(GrabMessage {
-                attacker: player_entity,
-                target,
-            });
-        }
-    }
-}
-
-/// Grab system: manages grab lifecycle (Reaching -> Holding -> Throwing/Released).
-pub fn grab_system(
-    mut grabbers: Query<(Entity, &Transform, &mut GrabState)>,
-    mut targets: Query<(&mut Transform, &mut Health), Without<GrabState>>,
-    mouse: Res<ButtonInput<MouseButton>>,
-    time: Res<Time>,
-    mut damage_writer: MessageWriter<DamageMessage>,
-    mut reaction_writer: MessageWriter<HitReactionMessage>,
-) {
-    let dt = time.delta_secs();
-
-    for (grabber_entity, grabber_tf, mut grab) in &mut grabbers {
-        let Some(phase) = grab.phase else {
-            continue;
-        };
-        let Some(target_entity) = grab.target else {
-            grab.phase = None;
-            continue;
-        };
-
-        // Copy grabber translation to avoid borrow issues
-        let grabber_pos = grabber_tf.translation;
-        let grabber_forward = grabber_tf.forward().as_vec3();
-
-        let Ok((mut target_tf, mut target_health)) = targets.get_mut(target_entity) else {
-            grab.phase = None;
-            grab.target = None;
-            continue;
-        };
-
-        match phase {
-            GrabPhase::Reaching => {
-                let dist = grabber_pos.distance(target_tf.translation);
-                if dist <= 1.2 {
-                    grab.phase = Some(GrabPhase::Holding);
-                    grab.hold_timer = 0.0;
-                } else {
-                    grab.hold_timer += dt;
-                    if grab.hold_timer > 0.5 {
-                        grab.phase = Some(GrabPhase::Released);
-                    }
-                }
-            }
-            GrabPhase::Holding => {
-                // Lock target position near grabber
-                let hold_pos = grabber_pos + grabber_forward * -1.0;
-                target_tf.translation = target_tf.translation.lerp(hold_pos, 10.0 * dt);
-
-                grab.hold_timer += dt;
-                grab.shake_amount = (grab.hold_timer / GRAB_HOLD_MAX).clamp(0.0, 1.0);
-
-                // Left click during hold -> throw
-                if mouse.just_pressed(MouseButton::Left) {
-                    grab.phase = Some(GrabPhase::Throwing);
-                }
-                // Timer expiry -> release
-                if grab.hold_timer >= GRAB_HOLD_MAX {
-                    grab.phase = Some(GrabPhase::Released);
-                }
-            }
-            GrabPhase::Throwing => {
-                let throw_dir = (target_tf.translation - grabber_pos).normalize();
-
-                target_health.current = (target_health.current - GRAB_DAMAGE).max(0.0);
-
-                damage_writer.write(DamageMessage {
-                    attacker: grabber_entity,
-                    target: target_entity,
-                    damage: GRAB_DAMAGE,
-                    was_blocked: false,
-                    attack_class: AttackClass::Grab,
-                    attack_strength: AttackStrength::High,
-                });
-
-                reaction_writer.write(HitReactionMessage {
-                    entity: target_entity,
-                    kind: ReactionKind::Knockback,
-                    direction: throw_dir,
-                    react_enum: 0, // ANIMREACT_REGULAR for throw
-                });
-
-                grab.phase = Some(GrabPhase::Released);
-            }
-            GrabPhase::Released => {
-                grab.phase = None;
-                grab.target = None;
-                grab.hold_timer = 0.0;
-                grab.shake_amount = 0.0;
-            }
         }
     }
 }
@@ -499,30 +328,6 @@ pub fn hit_reaction_system(
                 velocity.x += impulse.x;
                 velocity.z += impulse.z;
             }
-            ReactionKind::GuardBreak => {
-                let impulse = knockback_dir * 5.0;
-                velocity.x += impulse.x;
-                velocity.z += impulse.z;
-            }
-        }
-    }
-}
-
-/// Super meter system: gains meter on hits and damage taken.
-pub fn super_meter_system(
-    mut reader: MessageReader<DamageMessage>,
-    mut meters: Query<&mut SuperMeter>,
-) {
-    for msg in reader.read() {
-        // Attacker gains meter on hit
-        if let Ok(mut meter) = meters.get_mut(msg.attacker) {
-            let gain = if msg.was_blocked { 2.5 } else { 5.0 };
-            meter.current = (meter.current + gain).min(meter.max);
-        }
-        // Defender gains meter from taking damage
-        if let Ok(mut meter) = meters.get_mut(msg.target) {
-            let gain = msg.damage * 0.25;
-            meter.current = (meter.current + gain).min(meter.max);
         }
     }
 }

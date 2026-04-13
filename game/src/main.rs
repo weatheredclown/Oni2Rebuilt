@@ -352,23 +352,13 @@ fn setup_scene(
         emissive: LinearRgba::new(0.4, 0.25, 0.1, 1.0),
         ..default()
     });
-    let shield_mat = materials.add(StandardMaterial {
-        base_color: Color::srgba(0.0, 0.8, 1.0, 0.5),
-        emissive: LinearRgba::new(0.0, 0.5, 0.8, 1.0),
-        alpha_mode: AlphaMode::Blend,
-        ..default()
-    });
-
     let fist_mesh = meshes.add(Sphere::new(0.15));
-    let shield_mesh = meshes.add(Circle::new(0.5));
 
     commands.insert_resource(CombatMaterials {
         fist_startup: fist_startup.clone(),
         fist_active: fist_active.clone(),
         fist_recovery: fist_recovery.clone(),
-        shield: shield_mat.clone(),
         fist_mesh: fist_mesh.clone(),
-        shield_mesh: shield_mesh.clone(),
     });
 
     let scoped = InGameEntity;
@@ -474,10 +464,7 @@ fn setup_scene(
         ));
         commands.entity(pi.entity).insert((
             AttackState::default(),
-            BlockState::new(),
             ComboTracker::default(),
-            SuperMeter::default(),
-            GrabState::default(),
             HitReaction::default(),
             AboutToBeHit::default(),
         ));
@@ -519,10 +506,7 @@ fn setup_scene(
                 ),
                 (
                     AttackState::default(),
-                    BlockState::new(),
                     ComboTracker::default(),
-                    SuperMeter::default(),
-                    GrabState::default(),
                     HitReaction::default(),
                     AboutToBeHit::default(),
                 ),
@@ -534,14 +518,6 @@ fn setup_scene(
                     Transform::from_translation(Vec3::new(0.3, 0.3, -0.5)),
                     Visibility::Hidden,
                     FistVisual,
-                ));
-                parent.spawn((
-                    Mesh3d(shield_mesh.clone()),
-                    MeshMaterial3d(shield_mat.clone()),
-                    Transform::from_translation(Vec3::new(0.0, 0.3, -0.6))
-                        .with_rotation(Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2)),
-                    Visibility::Hidden,
-                    ShieldVisual,
                 ));
             })
             .id()

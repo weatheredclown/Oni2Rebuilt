@@ -109,45 +109,6 @@ pub struct ActiveAttack {
 
 
 
-// === Enhanced Block State (from rb's crBlockData) ===
-
-#[derive(Component)]
-pub struct BlockState {
-    pub is_blocking: bool,
-    pub heading_offset: f32,
-    pub width_radians: f32,
-    pub blockable_hit_types: u32,
-    pub auto_counter: bool,
-    pub damage_multiplier: f32,
-    pub combo_count_before_react: u32,
-    pub hits_absorbed: u32,
-}
-
-impl Default for BlockState {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl BlockState {
-    pub fn new() -> Self {
-        Self {
-            is_blocking: false,
-            heading_offset: 0.0,
-            width_radians: std::f32::consts::FRAC_PI_2,
-            blockable_hit_types: 0b0010_0011_1111, // all punch, kick, and ranged types
-            auto_counter: false,
-            damage_multiplier: 0.25,
-            combo_count_before_react: 5,
-            hits_absorbed: 0,
-        }
-    }
-
-    pub fn can_block_hit_type(&self, hit_type: u8) -> bool {
-        self.blockable_hit_types & (1 << hit_type) != 0
-    }
-}
-
 // === Combo Tracker ===
 
 #[derive(Component)]
@@ -167,23 +128,6 @@ impl Default for ComboTracker {
     }
 }
 
-// === Super Meter (from rb's SuperPowerUp/Dn) ===
-
-#[derive(Component)]
-pub struct SuperMeter {
-    pub current: f32,
-    pub max: f32,
-}
-
-impl Default for SuperMeter {
-    fn default() -> Self {
-        Self {
-            current: 0.0,
-            max: 100.0,
-        }
-    }
-}
-
 // === About-to-be-Hit Warning (from rb's SetAboutToBeHit) ===
 
 #[derive(Component, Default)]
@@ -198,37 +142,6 @@ pub struct AboutToBeHitData {
     pub attacker: Entity,
 }
 
-// === Grab/Grapple State (from rb's crGrab) ===
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum GrabPhase {
-    Reaching,
-    Holding,
-    Throwing,
-    Released,
-}
-
-#[derive(Component)]
-pub struct GrabState {
-    pub phase: Option<GrabPhase>,
-    pub target: Option<Entity>,
-    pub grab_range: f32,
-    pub hold_timer: f32,
-    pub shake_amount: f32,
-}
-
-impl Default for GrabState {
-    fn default() -> Self {
-        Self {
-            phase: None,
-            target: None,
-            grab_range: 2.0,
-            hold_timer: 0.0,
-            shake_amount: 0.0,
-        }
-    }
-}
-
 // === Hit Reaction ===
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -236,7 +149,6 @@ pub enum ReactionKind {
     Flinch,
     Knockback,
     Knockdown,
-    GuardBreak,
 }
 
 #[derive(Component, Default)]
@@ -262,7 +174,6 @@ impl ActiveReaction {
             ReactionKind::Flinch => 0.5,
             ReactionKind::Knockback => 0.8,
             ReactionKind::Knockdown => 1.5,
-            ReactionKind::GuardBreak => 0.7,
         };
         Self {
             kind,
@@ -280,9 +191,6 @@ impl ActiveReaction {
 #[derive(Component)]
 pub struct FistVisual;
 
-#[derive(Component)]
-pub struct ShieldVisual;
-
 // === Combat Materials Resource ===
 
 #[derive(Resource)]
@@ -290,9 +198,7 @@ pub struct CombatMaterials {
     pub fist_startup: Handle<StandardMaterial>,
     pub fist_active: Handle<StandardMaterial>,
     pub fist_recovery: Handle<StandardMaterial>,
-    pub shield: Handle<StandardMaterial>,
     pub fist_mesh: Handle<Mesh>,
-    pub shield_mesh: Handle<Mesh>,
 }
 
 // === React library (from entity's ANIMREACT_*.rct files) ===

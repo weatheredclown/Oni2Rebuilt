@@ -26,12 +26,6 @@ pub struct DeathMessage {
 }
 
 #[derive(Message)]
-pub struct GrabMessage {
-    pub attacker: Entity,
-    pub target: Entity,
-}
-
-#[derive(Message)]
 pub struct AboutToBeHitMessage {
     pub target: Entity,
     pub eta: f32,
@@ -48,10 +42,4 @@ pub struct HitReactionMessage {
     /// animReactEnum integer from the attacker's ATDT reactanim0 field.
     /// Indexes into ANIMREACT_NAMES to pick the animation to play.
     pub react_enum: i32,
-}
-
-#[derive(Message)]
-pub struct BlockSuccessMessage {
-    pub blocker: Entity,
-    pub attacker: Entity,
 }

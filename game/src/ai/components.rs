@@ -6,7 +6,6 @@ pub enum AiState {
     Pursuing,
     Circling,
     Attacking,
-    Blocking,
     Recovering,
 }
 
@@ -22,7 +21,6 @@ pub struct AiFighter {
     pub target: Option<Entity>,
     pub manual_target: bool,
     pub decision_timer: f32,
-    pub block_probability: f32,
     pub aggression: f32,
     pub preferred_range: f32,
     pub circle_direction: f32,
@@ -36,7 +34,6 @@ impl Default for AiFighter {
             target: None,
             manual_target: false,
             decision_timer: 0.5,
-            block_probability: 0.6,
             aggression: 0.5,
             preferred_range: 3.0,
             circle_direction: 1.0,
