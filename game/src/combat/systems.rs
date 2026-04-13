@@ -120,13 +120,16 @@ pub fn hit_detection_system(
             let dir_to_target = Vec3::new(diff.x, 0.0, diff.z).normalize_or_zero();
 
             // sliceheadingradiansb offsets the slice center relative to the attacker's facing.
-            let slice_heading = Quat::from_rotation_y(strike.sliceheadingradiansb) * attacker_forward;
+            // Match the debug renderer: Oni negates the Y rotation so positive angles swing left (-X).
+            let slice_heading = Quat::from_rotation_y(-strike.sliceheadingradiansb) * attacker_forward;
             let slice_heading_xz = Vec3::new(slice_heading.x, 0.0, slice_heading.z).normalize_or_zero();
 
             let dot = slice_heading_xz.dot(dir_to_target);
             let angle = dot.clamp(-1.0, 1.0).acos();
             let cross_y = slice_heading_xz.cross(dir_to_target).y;
-            let signed_angle = if cross_y < 0.0 { -angle } else { angle };
+            // If cross_y > 0, target is to the right (+X), which represents a negative angle.
+            // If cross_y < 0, target is to the left (-X), which represents a positive angle.
+            let signed_angle = if cross_y > 0.0 { -angle } else { angle };
 
             if signed_angle < strike.slicestartradians || signed_angle > strike.sliceendradians {
                 debug!(
