@@ -81,6 +81,12 @@ impl FsmRuntime {
                 if cond.ctrl_flags != 0 && (packet.ctrl_flags & cond.ctrl_flags) != cond.ctrl_flags {
                     return false;
                 }
+                if cond.not_pad_flags != 0 && (packet.pad_flags & cond.not_pad_flags) != 0 {
+                    return false;
+                }
+                if cond.not_ctrl_flags != 0 && (packet.ctrl_flags & cond.not_ctrl_flags) != 0 {
+                    return false;
+                }
                 if let Some(req) = cond.class_hit {
                     if packet.class_hit != req {
                         return false;

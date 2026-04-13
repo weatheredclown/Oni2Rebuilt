@@ -315,15 +315,30 @@ fn parse_packet_args(
             continue;
         }
 
-        if let Some(rest) = token.strip_prefix("CLASSHIT:") {
+        let is_negated = token.starts_with('!');
+        let key = if is_negated { token[1..].trim() } else { token };
+
+        if let Some(rest) = key.strip_prefix("CLASSHIT:") {
             cond.class_hit = rest.trim().parse::<i32>().ok();
-        } else if token.starts_with("HAS_WEAPON:") {
+        } else if key.starts_with("HAS_WEAPON:") {
             // Any weapon type maps to the generic HAS_WEAPON_PIPE ctrl flag for now
-            cond.ctrl_flags |= ctrl_flags::HAS_WEAPON_PIPE;
-        } else if let Some(&bit) = pad.get(token) {
-            cond.pad_flags |= bit;
-        } else if let Some(&bit) = ctrl.get(token) {
-            cond.ctrl_flags |= bit;
+            if is_negated {
+                cond.not_ctrl_flags |= ctrl_flags::HAS_WEAPON_PIPE;
+            } else {
+                cond.ctrl_flags |= ctrl_flags::HAS_WEAPON_PIPE;
+            }
+        } else if let Some(&bit) = pad.get(key) {
+            if is_negated {
+                cond.not_pad_flags |= bit;
+            } else {
+                cond.pad_flags |= bit;
+            }
+        } else if let Some(&bit) = ctrl.get(key) {
+            if is_negated {
+                cond.not_ctrl_flags |= bit;
+            } else {
+                cond.ctrl_flags |= bit;
+            }
         } else {
             bevy::log::warn!("FSM: unknown Packet arg '{}'", token);
         }

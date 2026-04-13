@@ -98,6 +98,8 @@ pub struct FsmPacket {
 pub struct PacketCondition {
     pub pad_flags: u64,
     pub ctrl_flags: u32,
+    pub not_pad_flags: u64,
+    pub not_ctrl_flags: u32,
     /// If Some(n), packet.class_hit must equal n
     pub class_hit: Option<i32>,
 }

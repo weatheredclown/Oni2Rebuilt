@@ -181,8 +181,11 @@ pub fn hit_detection_system(
                 });
 
                 info!(
-                    "Hit: damage={:.1} react_enum={} ({})",
+                    "Hit [{:?} -> {:?}]: damage={:.1} | remaining_health={:.1} | react={} ({})",
+                    attacker_entity,
+                    target_entity,
                     damage,
+                    health.current,
                     react_enum,
                     crate::oni2_loader::parsers::rct::ANIMREACT_NAMES
                         .get(react_enum.max(0) as usize)
