@@ -198,50 +198,56 @@ pub fn player_movement_system(
             continue;
         }
 
-        let mut move_dir = Vec3::ZERO;
+        let mut travel = Vec3::ZERO;
 
         if input.blocking {
-            let forward = -transform.forward().as_vec3();
-            let right = -transform.right().as_vec3();
-            move_dir = (forward * input.movement.y + right * input.movement.x)
+            // The 3D model inherently faces local +Z (which is transform.back())
+            let visual_front = transform.back().as_vec3();
+            let visual_right = -transform.right().as_vec3(); // +X is left relative to +Z front, so right is -X
+            
+            // W -> y=-1 -> go visual_front
+            // S -> y=+1 -> go -visual_front
+            // A -> x=+1 -> go -visual_right (left)
+            // D -> x=-1 -> go +visual_right (right)
+            travel = (visual_front * -input.movement.y + visual_right * -input.movement.x)
                 .normalize_or_zero();
         } else if let Some(cam_tf) = camera_tf_opt {
-            let mov_x = input.movement.x;
-            let mov_y = input.movement.y;
             let cam_fwd = cam_tf.forward().as_vec3();
             let cam_right = cam_tf.right().as_vec3();
             let xz_fwd = Vec3::new(cam_fwd.x, 0.0, cam_fwd.z).normalize_or_zero();
             let xz_right = Vec3::new(cam_right.x, 0.0, cam_right.z).normalize_or_zero();
 
-            if mov_y < -0.1 {
-                move_dir -= xz_fwd;
+            if input.movement.y < -0.1 { // W
+                travel += xz_fwd;
             }
-            if mov_y > 0.1 {
-                move_dir += xz_fwd;
+            if input.movement.y > 0.1 { // S
+                travel -= xz_fwd;
             }
-            if mov_x > 0.1 {
-                move_dir += xz_right;
+            if input.movement.x > 0.1 { // A
+                travel -= xz_right;
             }
-            if mov_x < -0.1 {
-                move_dir -= xz_right;
+            if input.movement.x < -0.1 { // D
+                travel += xz_right;
             }
 
-            move_dir = move_dir.normalize_or_zero();
+            travel = travel.normalize_or_zero();
 
-            if move_dir.length_squared() > 0.001 {
-                let target_rot =
-                    Transform::default().looking_to(move_dir, Vec3::Y).rotation;
+            if travel.length_squared() > 0.001 {
+                // Since visually the model faces local +Z, we must point local -Z OPPOSITE to travel
+                let target_rot = Transform::default().looking_to(-travel, Vec3::Y).rotation;
                 transform.rotation = transform.rotation.slerp(target_rot, 0.25);
+                
+                // The camera system tracks the character's visual face
                 fighter.facing = transform.back().as_vec3();
             }
         } else {
-            let forward = transform.forward().as_vec3();
-            let right = transform.right().as_vec3();
-            move_dir = (forward * input.movement.y + right * input.movement.x)
+            let visual_front = transform.back().as_vec3();
+            let visual_right = -transform.right().as_vec3();
+            travel = (visual_front * -input.movement.y + visual_right * -input.movement.x)
                 .normalize_or_zero();
         }
 
-        let desired = move_dir * -MOVE_SPEED;
+        let desired = travel * MOVE_SPEED;
         velocity.x = desired.x;
         velocity.z = desired.z;
     }

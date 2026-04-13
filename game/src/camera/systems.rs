@@ -141,7 +141,9 @@ pub fn update_camera_channel(
         channel.current_focus_pos = target_pos;
         
         channel.previous_focus_azimuth = channel.current_focus_azimuth;
-        channel.current_focus_azimuth = fighter.facing.x.atan2(fighter.facing.z);
+        // fighter.facing points toward the model's visual front (+Z in Oni2 convention).
+        // The camera must sit BEHIND that direction, so we negate before atan2.
+        channel.current_focus_azimuth = (-fighter.facing.x).atan2(-fighter.facing.z);
         
         channel.is_moving = input_opt.map_or(false, |i| i.movement.length_squared() > 0.01);
         
