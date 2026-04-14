@@ -1,6 +1,7 @@
 mod ai;
 mod camera;
 mod combat;
+mod debug;
 mod filesystem;
 mod fx_system;
 mod hud;
@@ -16,9 +17,7 @@ pub use filesystem::dave_vfs;
 pub use filesystem::vfs;
 
 use avian3d::prelude::*;
-use bevy::diagnostic::{DiagnosticsStore, FrameTimeDiagnosticsPlugin};
-use bevy::ecs::relationship::Relationship;
-use bevy::gizmos::config::GizmoConfigStore;
+use bevy::diagnostic::FrameTimeDiagnosticsPlugin;
 use bevy::prelude::*;
 use uuid::Uuid;
 
@@ -50,7 +49,7 @@ struct SandboxMode;
 
 /// Resource indicating formation inspection mode.
 #[derive(Resource)]
-struct FormationMode;
+pub struct FormationMode;
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
@@ -78,7 +77,6 @@ fn main() {
         cli_dats.push("BANKS.DAT".to_string());
     }
 
-    // Set fallback singletons for logic needing a primary path/dat if they still use it
     if !cli_paths.is_empty() {
         ASSETS_PATH.set(cli_paths[0].clone()).ok();
     }
@@ -87,20 +85,11 @@ fn main() {
     }
 
     let cli_layout = args.windows(2).find_map(|w| {
-        if w[0] == "--layout" {
-            Some(w[1].clone())
-        } else {
-            None
-        }
+        if w[0] == "--layout" { Some(w[1].clone()) } else { None }
     });
     let cli_testanim = args.windows(2).find_map(|w| {
-        if w[0] == "--testanim" || w[0] == "--animtest" {
-            Some(w[1].clone())
-        } else {
-            None
-        }
+        if w[0] == "--testanim" || w[0] == "--animtest" { Some(w[1].clone()) } else { None }
     });
-
     let cli_testentity = args
         .iter()
         .position(|a| a == "--testentity" || a == "--entitytest")
@@ -116,8 +105,7 @@ fn main() {
     let diagnostics_mode = args.iter().any(|a| a == "--diagnostics");
     let fog_enabled = args.iter().any(|a| a == "--fog");
 
-    let mut app = App::new();
-
+    // --- VFS setup ---
     let mut multi_vfs = vfs::MultiVfs::new();
 
     for disk_path in &cli_paths {
@@ -144,6 +132,9 @@ fn main() {
 
     vfs::set_vfs(Box::new(multi_vfs));
 
+    // --- App setup ---
+    let mut app = App::new();
+
     app.add_plugins(DefaultPlugins.set(WindowPlugin {
         primary_window: Some(Window {
             title: "rb-reborn".to_string(),
@@ -167,23 +158,19 @@ fn main() {
     .add_plugins(hud::HudPlugin)
     .add_plugins(fx_system::FxPlugin)
     .add_plugins(projectile_system::ProjectilePlugin)
-    .insert_resource(oni2_loader::DebugBoundsVisible(false))
-    .insert_resource(oni2_loader::DebugSkeletonVisible(false));
+    .add_plugins(oni2_loader::Oni2LoaderPlugin)
+    .add_plugins(scroni::ScroniPlugin)
+    .add_plugins(debug::DebugPlugin);
 
     if fog_enabled {
         app.insert_resource(oni2_loader::FogEnabled);
     }
 
-    app.init_resource::<scroni::vm::ScroniTextState>()
-        .init_resource::<oni2_loader::DebugLightGridState>()
-        .init_resource::<oni2_loader::registries::EntityLibrary>()
-        .init_resource::<oni2_loader::registries::AnimRegistry>()
-        .init_resource::<oni2_loader::registries::ProjLibrary>()
-        .init_resource::<oni2_loader::registries::FxLibrary>()
-        .init_resource::<oni2_loader::registries::ParticleLibrary>()
-        .init_resource::<crate::oni2_loader::components::CurrentCheckpointIndex>()
-        .add_observer(scroni::system_bindings::scroni_sys_event_observer);
+    if diagnostics_mode {
+        app.add_plugins(bevy::diagnostic::LogDiagnosticsPlugin::default());
+    }
 
+    // --- Scene entry points ---
     app.add_systems(
         OnEnter(AppState::InGame),
         setup_scene.run_if(
@@ -194,7 +181,7 @@ fn main() {
     )
     .add_systems(
         OnEnter(AppState::InGame),
-        setup_formation_scene.run_if(resource_exists::<FormationMode>),
+        oni2_loader::setup_formation_scene.run_if(resource_exists::<FormationMode>),
     )
     .add_systems(
         OnEnter(AppState::InGame),
@@ -206,93 +193,12 @@ fn main() {
     )
     .add_systems(
         Update,
-        free_camera_system
+        oni2_loader::free_camera_system
             .run_if(resource_exists::<FormationMode>)
             .run_if(in_state(AppState::InGame)),
-    )
-    .add_systems(
-        Update,
-        (
-            oni2_loader::toggle_debug_bounds,
-            oni2_loader::toggle_debug_skeleton,
-            oni2_loader::update_oni2_animation,
-            oni2_loader::head_ik_setup_system,
-            oni2_loader::head_ik_system.after(oni2_loader::update_oni2_animation),
-            oni2_loader::resolve_pending_parents_system,
-            oni2_loader::creature_movement_anim_system,
-            oni2_loader::ground_snap_system,
-            oni2_loader::apply_fog_to_camera.run_if(resource_exists::<oni2_loader::FogEnabled>),
-            oni2_loader::update_skyhat,
-            scroni::vm::update_broadcast_triggers.before(scroni::vm::scroni_tick_system),
-            scroni::vm::checkpoint_trigger_system.before(scroni::vm::scroni_tick_system),
-            scroni::vm::scroni_tick_system,
-            scroni::vm::cleanup_scroni_text,
-            scroni::vm::update_screen_fade_system,
-            scroni::vm::apply_shader_locals_system,
-            oni2_loader::scroni_curve_bridge_system,
-            oni2_loader::curve_follower_system,
-        )
-            .run_if(in_state(AppState::InGame)),
-    )
-    .add_systems(
-        Update,
-        (
-            oni2_loader::debug_draw_bounds,
-            oni2_loader::debug_draw_capsules,
-            oni2_loader::debug_draw_curves,
-            oni2_loader::debug_draw_attack_wedges,
-        )
-            .run_if(in_state(AppState::InGame))
-            .run_if(|v: Res<oni2_loader::DebugBoundsVisible>| v.0),
-    )
-    .add_systems(
-        Update,
-        oni2_loader::debug_draw_skeleton
-            .run_if(in_state(AppState::InGame))
-            .run_if(|v: Res<oni2_loader::DebugSkeletonVisible>| v.0),
-    )
-    .add_systems(
-        Update,
-        (
-            oni2_loader::testanim_input_system,
-            oni2_loader::update_testanim_hud,
-        )
-            .run_if(in_state(AppState::InGame).and(resource_exists::<TestAnimMode>)),
-    )
-    .add_systems(
-        Update,
-        oni2_loader::orbit_camera_system.run_if(in_state(AppState::InGame).and(
-            |t1: Option<Res<TestAnimMode>>, t2: Option<Res<oni2_loader::TestEntityMode>>| {
-                t1.is_some() || t2.is_some()
-            },
-        )),
-    )
-    .add_systems(
-        Startup,
-        (
-            setup_fps_counter,
-            disable_physics_debug,
-            oni2_loader::load_global_registries,
-        ),
-    )
-    .add_systems(
-        Update,
-        (
-            update_fps_counter,
-            toggle_physics_debug,
-            toggle_debug_light,
-            debug_kill_creatures,
-            oni2_loader::toggle_debug_fog,
-            oni2_loader::toggle_debug_light_grid,
-            oni2_loader::update_debug_light_grid,
-            debug_scan_player_geometry,
-        ),
     );
 
-    if diagnostics_mode {
-        app.add_plugins(bevy::diagnostic::LogDiagnosticsPlugin::default());
-    }
-
+    // --- Initial state ---
     if let Some(anim_path) = cli_testanim {
         if anim_path.to_lowercase().ends_with(".anim") {
             app.insert_resource(TestAnimMode(anim_path));
@@ -331,50 +237,24 @@ fn setup_scene(
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut images: ResMut<Assets<Image>>,
     mut skinned_mesh_ibp: ResMut<Assets<bevy::mesh::skinning::SkinnedMeshInverseBindposes>>,
-    mut entity_lib: ResMut<crate::oni2_loader::registries::EntityLibrary>,
-    mut anim_registry: ResMut<crate::oni2_loader::registries::AnimRegistry>,
+    mut entity_lib: ResMut<oni2_loader::registries::EntityLibrary>,
+    mut anim_registry: ResMut<oni2_loader::registries::AnimRegistry>,
+    combat_materials: Res<CombatMaterials>,
     selected_layout: Option<Res<SelectedLayout>>,
     sandbox: Option<Res<SandboxMode>>,
 ) {
-    // Create combat materials
-    let fist_startup = materials.add(StandardMaterial {
-        base_color: Color::srgb(1.0, 1.0, 0.2),
-        emissive: LinearRgba::new(1.0, 1.0, 0.2, 1.0),
-        ..default()
-    });
-    let fist_active = materials.add(StandardMaterial {
-        base_color: Color::srgb(1.0, 0.4, 0.1),
-        emissive: LinearRgba::new(3.0, 1.2, 0.3, 1.0),
-        ..default()
-    });
-    let fist_recovery = materials.add(StandardMaterial {
-        base_color: Color::srgb(0.8, 0.5, 0.2),
-        emissive: LinearRgba::new(0.4, 0.25, 0.1, 1.0),
-        ..default()
-    });
-    let fist_mesh = meshes.add(Sphere::new(0.15));
-
-    commands.insert_resource(CombatMaterials {
-        fist_startup: fist_startup.clone(),
-        fist_active: fist_active.clone(),
-        fist_recovery: fist_recovery.clone(),
-        fist_mesh: fist_mesh.clone(),
-    });
-
     let scoped = InGameEntity;
 
-    // Determine layout path
     let layout_name = selected_layout
         .as_ref()
         .map(|s| s.0.as_str())
         .unwrap_or("tim06");
     let layout_path = format!("layout/{}", layout_name);
-    // Spawn pos will be determined after layout loads (from Player="1" creature)
     let fallback_spawn = oni2_loader::find_konoko_spawn(&layout_path)
         .map(|p| p + Vec3::Y * 1.0)
         .unwrap_or(Vec3::new(0.0, 2.0, 0.0));
 
-    // Invisible safety floor so nothing falls forever
+    // Invisible safety floor
     commands.spawn((
         Transform::from_xyz(0.0, -150.0, 0.0),
         RigidBody::Static,
@@ -382,9 +262,8 @@ fn setup_scene(
         scoped.clone(),
     ));
 
-    // === Load ONI2 Layout or Sandbox (before player spawn so we know the spawn point) ===
+    // Load layout or sandbox ground
     let layout_player_info = if sandbox.is_some() {
-        // Sandbox mode: flat ground plane + kno model
         commands.spawn((
             Mesh3d(meshes.add(Plane3d::new(Vec3::Y, Vec2::splat(50.0)))),
             MeshMaterial3d(materials.add(StandardMaterial {
@@ -397,7 +276,6 @@ fn setup_scene(
             scoped.clone(),
         ));
 
-        // Load kno entity
         let entity_path_kno = "Entity/kno".to_string();
         oni2_loader::spawn_oni2_entity(
             &mut commands,
@@ -428,7 +306,7 @@ fn setup_scene(
         )
     };
 
-    // Fallback lights for sandbox mode (layout mode gets lights from layout.lights / default.environment)
+    // Fallback lights for sandbox
     if sandbox.is_some() {
         commands.spawn((
             DirectionalLight {
@@ -449,11 +327,8 @@ fn setup_scene(
         ));
     }
 
-    // Attach player components to the creature entity from the layout,
-    // or spawn a fallback capsule if no layout player was found (sandbox mode).
+    // Attach player components to layout entity, or spawn a fallback capsule
     let player_id = if let Some(ref pi) = layout_player_info {
-        // The creature entity already has: model, physics capsule, animation library.
-        // Just add player + combat components to it.
         commands.entity(pi.entity).insert((
             scoped.clone(),
             Player,
@@ -470,7 +345,6 @@ fn setup_scene(
         ));
         pi.entity
     } else {
-        // Sandbox fallback: spawn a blue capsule as the player
         commands
             .spawn((
                 Mesh3d(meshes.add(Capsule3d::new(0.4, 1.2))),
@@ -513,8 +387,8 @@ fn setup_scene(
             ))
             .with_children(|parent| {
                 parent.spawn((
-                    Mesh3d(fist_mesh.clone()),
-                    MeshMaterial3d(fist_startup.clone()),
+                    Mesh3d(combat_materials.fist_mesh.clone()),
+                    MeshMaterial3d(combat_materials.fist_startup.clone()),
                     Transform::from_translation(Vec3::new(0.3, 0.3, -0.5)),
                     Visibility::Hidden,
                     FistVisual,
@@ -523,7 +397,7 @@ fn setup_scene(
             .id()
     };
 
-    // Camera with zone-based rig
+    // Camera
     commands.spawn((
         Camera3d::default(),
         Transform::from_xyz(0.0, 8.0, -12.0).looking_at(Vec3::new(0.0, 1.0, 0.0), Vec3::Y),
@@ -535,349 +409,4 @@ fn setup_scene(
             ..default()
         },
     ));
-}
-
-/// Marker for the free-fly camera in formation mode.
-#[derive(Component)]
-struct FreeCamera {
-    yaw: f32,
-    pitch: f32,
-    speed: f32,
-}
-
-/// Formation inspection scene: spawn characters side by side with different LODs in rows.
-fn setup_formation_scene(
-    mut commands: Commands,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
-    mut images: ResMut<Assets<Image>>,
-    mut skinned_mesh_ibp: ResMut<Assets<bevy::mesh::skinning::SkinnedMeshInverseBindposes>>,
-    mut entity_lib: ResMut<crate::oni2_loader::registries::EntityLibrary>,
-    mut anim_registry: ResMut<crate::oni2_loader::registries::AnimRegistry>,
-) {
-    let scoped = InGameEntity;
-
-    // Ground plane
-    commands.spawn((
-        Mesh3d(meshes.add(Plane3d::new(Vec3::Y, Vec2::splat(50.0)))),
-        MeshMaterial3d(materials.add(StandardMaterial {
-            base_color: Color::srgb(0.2, 0.25, 0.2),
-            ..default()
-        })),
-        Transform::default(),
-        scoped.clone(),
-    ));
-
-    // Auto-discover all entities with Entity.type files
-    let entity_base_str = "Entity".to_string();
-    let mut entity_dirs: Vec<(String, String)> = Vec::new(); // (dir_path, name)
-
-    if let Ok(mut entries) = crate::vfs::read_dir(&entity_base_str) {
-        entries.sort_by(|a, b| a.path.split('/').last().cmp(&b.path.split('/').last()));
-
-        for entry in entries {
-            if entry.is_dir {
-                let dir_path_str = &entry.path;
-                let dir_name = dir_path_str
-                    .split('/')
-                    .last()
-                    .unwrap_or_default()
-                    .to_string();
-
-                // 3-letter character directories with Entity.type
-                if dir_name.len() == 3 && crate::vfs::exists(dir_path_str, "Entity.type") {
-                    entity_dirs.push((dir_path_str.to_string(), dir_name));
-                }
-            }
-        }
-    }
-
-    info!("Formation: {} entities with Entity.type", entity_dirs.len());
-
-    // Formation layout: grid of entities
-    let col_spacing = 3.0;
-    let cols = 10; // entities per row
-
-    for (idx, (entity_dir, name)) in entity_dirs.iter().enumerate() {
-        let col = idx % cols;
-        let row = idx / cols;
-        let x = col as f32 * col_spacing - (cols as f32 - 1.0) * col_spacing / 2.0;
-        let z = -(row as f32 * col_spacing) - 5.0;
-        let pos = Vec3::new(x, 0.0, z);
-
-        oni2_loader::spawn_oni2_entity(
-            &mut commands,
-            &mut meshes,
-            &mut materials,
-            &mut images,
-            &mut skinned_mesh_ibp,
-            &mut entity_lib,
-            &mut anim_registry,
-            entity_dir,
-            pos,
-            name,
-        );
-    }
-
-    // Enable skeleton debug by default
-    commands.insert_resource(oni2_loader::DebugSkeletonVisible(true));
-
-    // Directional light
-    commands.spawn((
-        DirectionalLight {
-            illuminance: 10_000.0,
-            shadows_enabled: true,
-            ..default()
-        },
-        Transform::from_xyz(50.0, 50.0, 50.0).looking_at(Vec3::ZERO, Vec3::Y),
-        scoped.clone(),
-    ));
-
-    // Ambient light
-    commands.spawn((
-        AmbientLight {
-            color: Color::WHITE,
-            brightness: 500.0,
-            affects_lightmapped_meshes: false,
-        },
-        scoped.clone(),
-    ));
-
-    // Free camera — positioned in front of the formation, looking at them
-    // yaw=0 means looking down -Z in Bevy (toward the formation)
-    commands.spawn((
-        Camera3d::default(),
-        Transform::from_xyz(0.0, 2.0, 5.0),
-        IsDefaultUiCamera,
-        FreeCamera {
-            yaw: 0.0,
-            pitch: -0.1,
-            speed: 5.0,
-        },
-        scoped,
-    ));
-}
-
-/// WASD + mouse free-fly camera for formation inspection.
-fn free_camera_system(
-    time: Res<Time>,
-    keyboard: Res<ButtonInput<KeyCode>>,
-    mouse_button: Res<ButtonInput<MouseButton>>,
-    accumulated_motion: Res<bevy::input::mouse::AccumulatedMouseMotion>,
-    mut query: Query<(&mut Transform, &mut FreeCamera)>,
-) {
-    let Ok((mut transform, mut cam)) = query.single_mut() else {
-        return;
-    };
-
-    // Mouse look (hold right mouse button)
-    if mouse_button.pressed(MouseButton::Right) {
-        let sensitivity = 0.003;
-        let delta = accumulated_motion.delta;
-        cam.yaw -= delta.x * sensitivity;
-        cam.pitch = (cam.pitch - delta.y * sensitivity).clamp(-1.4, 1.4);
-    }
-
-    // Speed boost with shift
-    let speed = if keyboard.pressed(KeyCode::ShiftLeft) {
-        cam.speed * 3.0
-    } else {
-        cam.speed
-    };
-
-    // WASD movement relative to camera orientation
-    let forward = Vec3::new(cam.yaw.sin(), 0.0, cam.yaw.cos()).normalize();
-    let right = Vec3::new(-cam.yaw.cos(), 0.0, cam.yaw.sin()).normalize();
-    let mut velocity = Vec3::ZERO;
-
-    if keyboard.pressed(KeyCode::KeyS) {
-        velocity += forward;
-    }
-    if keyboard.pressed(KeyCode::KeyW) {
-        velocity -= forward;
-    }
-    if keyboard.pressed(KeyCode::KeyA) {
-        velocity += right;
-    }
-    if keyboard.pressed(KeyCode::KeyD) {
-        velocity -= right;
-    }
-    if keyboard.pressed(KeyCode::Space) {
-        velocity += Vec3::Y;
-    }
-    if keyboard.pressed(KeyCode::ControlLeft) {
-        velocity -= Vec3::Y;
-    }
-
-    if velocity.length_squared() > 0.0 {
-        velocity = velocity.normalize() * speed * time.delta_secs();
-        transform.translation += velocity;
-    }
-
-    // Apply rotation
-    transform.rotation = Quat::from_rotation_y(cam.yaw) * Quat::from_rotation_x(cam.pitch);
-}
-
-#[derive(Component)]
-struct FpsText;
-
-fn setup_fps_counter(mut commands: Commands) {
-    commands
-        .spawn((
-            Node {
-                position_type: PositionType::Absolute,
-                top: Val::Px(5.0),
-                right: Val::Px(10.0),
-                ..default()
-            },
-            GlobalZIndex(i32::MAX),
-        ))
-        .with_children(|parent| {
-            parent.spawn((
-                Text::new("FPS: --"),
-                TextFont {
-                    font_size: 20.0,
-                    ..default()
-                },
-                TextColor(Color::srgb(1.0, 1.0, 0.0)),
-                FpsText,
-            ));
-        });
-}
-
-fn update_fps_counter(
-    diagnostics: Res<DiagnosticsStore>,
-    mut query: Query<&mut Text, With<FpsText>>,
-) {
-    use bevy::diagnostic::FrameTimeDiagnosticsPlugin;
-    for mut text in &mut query {
-        if let Some(diag) = diagnostics.get(&FrameTimeDiagnosticsPlugin::FPS) {
-            if let Some(val) = diag.smoothed() {
-                *text = Text::new(format!("FPS: {val:.0}"));
-            }
-        }
-    }
-}
-
-/// Start with avian3d physics debug gizmos disabled.
-fn disable_physics_debug(mut store: ResMut<GizmoConfigStore>) {
-    store
-        .config_mut::<avian3d::debug_render::PhysicsGizmos>()
-        .0
-        .enabled = false;
-}
-
-/// F7 toggles avian3d's native physics debug rendering (collider wireframes, contacts, etc).
-fn toggle_physics_debug(keyboard: Res<ButtonInput<KeyCode>>, mut store: ResMut<GizmoConfigStore>) {
-    if keyboard.just_pressed(KeyCode::F7) {
-        let config = store.config_mut::<avian3d::debug_render::PhysicsGizmos>().0;
-        config.enabled = !config.enabled;
-        info!(
-            "Physics debug rendering: {}",
-            if config.enabled { "ON" } else { "OFF" }
-        );
-    }
-}
-
-#[derive(Component)]
-struct DebugPointLight;
-
-/// F8 toggles a bright white point light above the player to help light environments.
-fn toggle_debug_light(
-    mut commands: Commands,
-    keyboard: Res<ButtonInput<KeyCode>>,
-    player_query: Query<Entity, With<player::components::Player>>,
-    light_query: Query<Entity, With<DebugPointLight>>,
-) {
-    if keyboard.just_pressed(KeyCode::F8) {
-        if let Some(light_entity) = light_query.iter().next() {
-            commands.entity(light_entity).despawn();
-            info!("Debug point light OFF");
-        } else if let Some(player_entity) = player_query.iter().next() {
-            commands.entity(player_entity).with_children(|parent| {
-                parent.spawn((
-                    PointLight {
-                        color: Color::WHITE,
-                        intensity: 1_000_000.0,
-                        range: 100.0,
-                        shadows_enabled: true,
-                        ..default()
-                    },
-                    Transform::from_xyz(0.0, 5.0, 0.0),
-                    DebugPointLight,
-                ));
-            });
-            info!("Debug point light ON");
-        }
-    }
-}
-
-/// K kills all spawned/active creatures that are not the player for debugging
-fn debug_kill_creatures(
-    mut commands: Commands,
-    keyboard: Res<ButtonInput<KeyCode>>,
-    creature_query: Query<
-        Entity,
-        (
-            With<crate::ai::components::AiFighter>,
-            Without<player::components::Player>,
-        ),
-    >,
-) {
-    if keyboard.just_pressed(KeyCode::KeyK) {
-        let mut count = 0;
-        for entity in &creature_query {
-            commands.entity(entity).despawn();
-            count += 1;
-        }
-        info!("Killed {} active AiFighter creatures!", count);
-    }
-}
-
-/// F9 scans all entities within 5 meters of the player and prints them to the console.
-fn debug_scan_player_geometry(
-    keyboard: Res<ButtonInput<KeyCode>>,
-    player_query: Query<&GlobalTransform, With<crate::player::components::Player>>,
-    query: Query<(Entity, &GlobalTransform, Option<&Name>, Option<&ChildOf>)>,
-    names: Query<&Name>,
-    parents: Query<&ChildOf>,
-) {
-    if keyboard.just_pressed(KeyCode::F11) {
-        let origin: Vec3 = if let Some(player_tf) = player_query.iter().next() {
-            player_tf.translation()
-        } else {
-            // Fallback for formation or sandbox modes without an explicit player
-            Vec3::ZERO
-        };
-
-        info!(
-            "--- SCANNING PLAYER GEOMETRY (< 5m from {:.2}, {:.2}, {:.2}) ---",
-            origin.x, origin.y, origin.z
-        );
-        let mut count = 0;
-        for (entity, global_transform, name_opt, parent_opt) in &query {
-            let dist = global_transform.translation().distance(origin);
-            if dist <= 5.0 {
-                count += 1;
-                let name = name_opt.map(|n: &Name| n.as_str()).unwrap_or("<unnamed>");
-
-                let mut path = String::new();
-                let mut curr_parent: Option<&ChildOf> = parent_opt;
-                while let Some(p) = curr_parent {
-                    let p_name = names
-                        .get(p.get())
-                        .map(|n| n.as_str())
-                        .unwrap_or("<unnamed_parent>");
-                    path = format!("{} -> {}", p_name, path);
-                    curr_parent = parents.get(p.get()).ok();
-                }
-
-                info!(
-                    "Entity: {:?} | Name: '{}' | Dist: {:.2} | Path: {}",
-                    entity, name, dist, path
-                );
-            }
-        }
-        info!("--- END SCAN (Total: {}) ---", count);
-    }
 }

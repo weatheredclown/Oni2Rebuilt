@@ -7,11 +7,42 @@ use bevy::prelude::*;
 
 use crate::menu::AppState;
 
+fn setup_combat_materials(
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+) {
+    let fist_startup = materials.add(StandardMaterial {
+        base_color: Color::srgb(1.0, 1.0, 0.2),
+        emissive: LinearRgba::new(1.0, 1.0, 0.2, 1.0),
+        ..default()
+    });
+    let fist_active = materials.add(StandardMaterial {
+        base_color: Color::srgb(1.0, 0.4, 0.1),
+        emissive: LinearRgba::new(3.0, 1.2, 0.3, 1.0),
+        ..default()
+    });
+    let fist_recovery = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.8, 0.5, 0.2),
+        emissive: LinearRgba::new(0.4, 0.25, 0.1, 1.0),
+        ..default()
+    });
+    let fist_mesh = meshes.add(Sphere::new(0.15));
+
+    commands.insert_resource(components::CombatMaterials {
+        fist_startup,
+        fist_active,
+        fist_recovery,
+        fist_mesh,
+    });
+}
+
 pub struct CombatPlugin;
 
 impl Plugin for CombatPlugin {
     fn build(&self, app: &mut App) {
-        app.add_message::<events::AttackMessage>()
+        app.add_systems(Startup, setup_combat_materials)
+            .add_message::<events::AttackMessage>()
             .add_message::<events::DamageMessage>()
             .add_message::<events::DeathMessage>()
             .add_message::<events::AboutToBeHitMessage>()
