@@ -182,7 +182,7 @@ fn main() {
         .init_resource::<oni2_loader::registries::FxLibrary>()
         .init_resource::<oni2_loader::registries::ParticleLibrary>()
         .init_resource::<crate::oni2_loader::components::CurrentCheckpointIndex>()
-        .add_observer(scroni::vm::scroni_sys_event_observer);
+        .add_observer(scroni::system_bindings::scroni_sys_event_observer);
 
     app.add_systems(
         OnEnter(AppState::InGame),
