@@ -393,10 +393,11 @@ pub fn retreat_steering_system(
         let mut best_score = f32::MIN;
 
         for (i, p) in nav_graph.points.iter().enumerate() {
-            let dist_to_pt = pos.distance(*p);
-            if dist_to_pt > 5.0 && dist_to_pt < 30.0 { // Between 5m and 30m away
+            let dist_sq = pos.distance_squared(*p);
+            if dist_sq > 25.0 && dist_sq < 900.0 { // Between 5m and 30m away
                 let dir_to_pt = (*p - pos).normalize_or_zero();
                 let alignment = dir_to_pt.dot(escape_dir);
+                let dist_to_pt = dist_sq.sqrt(); // Need actual linear distance for scoring
                 let score = alignment * dist_to_pt;
                 if score > best_score {
                     best_score = score;

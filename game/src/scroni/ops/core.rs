@@ -284,17 +284,71 @@ pub fn exec(ctx: &mut OpsCtx, stmt: &Stmt) -> bool {
             conditions,
             range,
         } => {
-            let eval_conds = conditions
+            let eval_conds: Vec<(String, Value)> = conditions
                 .iter()
                 .map(|(k, e)| (k.clone(), ctx.eval(e)))
                 .collect();
             let eval_range = range.as_ref().map(|e| ctx.eval_float(e));
-            ctx.thread_mut().blocking = Some(BlockingAction::Find {
-                list_var: list_var.clone(),
-                conditions: eval_conds,
-                range: eval_range,
-            });
-            ctx.thread_mut().state = ExecState::Blocked;
+
+            let mut found = Vec::new();
+            let mut my_pos = match ctx.ctx.all_entities.get(ctx.exec.owner) {
+                Ok((_, tf, _)) => tf.translation(),
+                _ => bevy::math::Vec3::ZERO,
+            };
+            let max_dist = eval_range.unwrap_or(9999.0);
+            let max_dist_sq = max_dist * max_dist;
+
+            for (k, v) in &eval_conds {
+                if k.to_lowercase() == "at" {
+                    if let Value::Vector(vec) = v {
+                        my_pos = bevy::math::Vec3::new(-vec[0] as f32, vec[1] as f32, -vec[2] as f32);
+                    }
+                }
+            }
+
+            for (other_ent, other_tf, name_opt) in ctx.ctx.all_entities {
+                if ctx.exec.owner == other_ent {
+                    continue;
+                }
+
+                let dist_sq = my_pos.distance_squared(other_tf.translation());
+                if dist_sq <= max_dist_sq {
+                    let mut matches_all = true;
+                    for (k, v) in &eval_conds {
+                        let k_lower = k.to_lowercase();
+                        if k_lower == "name" || k_lower == "group" {
+                            let expected_name = v.as_string();
+                            let actual_name = name_opt.map(|n| n.as_str()).unwrap_or("");
+                            if actual_name != expected_name {
+                                matches_all = false;
+                                break;
+                            }
+                        } else if k_lower == "status" {
+                            let expected_status = v.as_string().to_lowercase();
+                            let actual_status = ctx.ctx.actor_statuses.get(&other_ent).map(|s| s.as_str()).unwrap_or("dead");
+                            if expected_status == "enemy" {
+                                if actual_status == "dead" {
+                                    matches_all = false;
+                                    break;
+                                }
+                                // Very rudimentry check for now: Is it the player?
+                                if Some(other_ent) != ctx.ctx.player {
+                                    matches_all = false;
+                                    break;
+                                }
+                            } else if actual_status != expected_status {
+                                matches_all = false;
+                                break;
+                            }
+                        }
+                    }
+                    if matches_all {
+                        found.push(other_ent);
+                    }
+                }
+            }
+
+            ctx.set_var(list_var.clone(), Value::ActorList(found, 0));
             true
         }
         Stmt::SendMessage { msg, to, with } => {

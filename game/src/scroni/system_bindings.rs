@@ -563,6 +563,17 @@ pub fn scroni_sys_event_observer(
             }
             info!("VM: AI {:?} ordered to Attack {:?}", actor, target);
         }
+        ScrOniSysEvent::TriggerFight { actor, target } => {
+            if let Ok(mut ai) = ai_target_query.get_mut(actor) {
+                ai.state = crate::ai::components::AiState::Pursuing;
+                if let Some(t) = target {
+                    ai.target = Some(t);
+                    ai.manual_target = true; // Lock the optional target
+                } else {
+                    ai.manual_target = false; // Unlock so auto-awareness can pick nearest targets
+                }
+            }
+        }
         ScrOniSysEvent::FollowActor { actor, target } => {
             // [AUDIT]: Prototype leakage. `ActorFollower` is a hacky prototype component used for steering.
             // "Follow" simply paths closely to the target but does not engage in combat. 

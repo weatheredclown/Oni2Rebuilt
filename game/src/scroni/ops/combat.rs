@@ -30,21 +30,52 @@ pub fn exec(ctx: &mut OpsCtx, stmt: &Stmt) -> bool {
                 actor: ctx.exec.owner,
                 target: target_ent,
             });
+            ctx.thread_mut().state = crate::scroni::vm::ExecState::Yielded;
             true
         }
-        Stmt::Fight => {
-            info!("VM: Fight (unimplemented)");
+        Stmt::Fight(opt_expr) => {
+            let target_ent = opt_expr.as_ref().map(|expr| {
+                match ctx.eval(expr) {
+                    Value::Actor(act) => act,
+                    Value::Int(_) | Value::String(_) => {
+                        let evaluated_val = ctx.eval(expr);
+                        let targets = ctx.ctx.resolve_targets(&evaluated_val);
+                        if !targets.is_empty() {
+                            targets[0]
+                        } else {
+                            Entity::PLACEHOLDER
+                        }
+                    }
+                    _ => Entity::PLACEHOLDER,
+                }
+            });
+            ctx.sys_request(SysRequest::TriggerFight { 
+                actor: ctx.exec.owner, 
+                target: target_ent 
+            });
+            ctx.thread_mut().state = crate::scroni::vm::ExecState::Yielded;
             true
         }
         Stmt::Shoot => {
             info!("VM: Shoot (unimplemented)");
+            ctx.thread_mut().state = crate::scroni::vm::ExecState::Yielded;
             true
         }
         Stmt::Hit { hit_type, victim, damage } => {
-            let _t = ctx.eval(hit_type);
-            let _v = ctx.eval(victim);
-            let _d = ctx.eval(damage);
-            info!("VM: Hit (unimplemented)");
+            let eval_hit_type = ctx.eval_string(hit_type);
+            let eval_victim = ctx.eval(victim);
+            let eval_damage = ctx.eval_float(damage);
+
+            let targets = ctx.ctx.resolve_targets(&eval_victim);
+            for target in targets {
+                ctx.sys_request(SysRequest::Hit {
+                    target,
+                    hit_type: eval_hit_type.clone(),
+                    damage: eval_damage,
+                });
+            }
+
+            ctx.thread_mut().state = crate::scroni::vm::ExecState::Yielded;
             true
         }
         Stmt::Retreat(opt_expr) => {
@@ -67,6 +98,7 @@ pub fn exec(ctx: &mut OpsCtx, stmt: &Stmt) -> bool {
                 actor: ctx.exec.owner,
                 target: target_ent,
             });
+            ctx.thread_mut().state = crate::scroni::vm::ExecState::Yielded;
             true
         }
         _ => false,

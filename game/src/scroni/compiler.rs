@@ -405,7 +405,12 @@ impl Compiler {
             TokenCode::Goto => self.parse_goto(),
             TokenCode::Fight => {
                 self.advance();
-                Stmt::Fight
+                let target = if is_expr_start(self.code()) {
+                    Some(self.parse_expr())
+                } else {
+                    None
+                };
+                Stmt::Fight(target)
             }
             TokenCode::Shoot => {
                 self.advance();
@@ -1145,8 +1150,14 @@ impl Compiler {
 
     fn parse_hit(&mut self) -> Stmt {
         self.advance(); // skip 'hit'
-        let hit_type = self.parse_expr();
-        let victim = self.parse_expr();
+        let expr1 = self.parse_expr();
+        
+        let (hit_type, victim) = if self.code() == TokenCode::For || !is_expr_start(self.code()) {
+            (Expr::StringLit("instant".to_string()), expr1)
+        } else {
+            (expr1, self.parse_expr())
+        };
+
         let damage = if self.skip_if(TokenCode::For) {
             self.parse_expr()
         } else {

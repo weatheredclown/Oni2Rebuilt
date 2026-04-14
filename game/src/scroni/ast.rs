@@ -162,8 +162,8 @@ pub enum Stmt {
         speed: Option<Expr>,
         duration: Option<Expr>,
     },
-    /// `fight`
-    Fight,
+    /// `fight [expr]`
+    Fight(Option<Expr>),
     /// `shoot`
     Shoot,
     /// `hit <expr> <expr> for <expr>`

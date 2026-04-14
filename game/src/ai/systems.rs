@@ -32,11 +32,12 @@ pub fn ai_target_system(
         }
 
         let mut best: Option<(Entity, f32)> = None;
+        let awareness_range_sq = AWARENESS_RANGE * AWARENESS_RANGE;
         for (player_entity, player_tf) in &players {
-            let dist = ai_tf.translation.distance(player_tf.translation);
-            if dist <= AWARENESS_RANGE {
-                if best.map_or(true, |(_, d)| dist < d) {
-                    best = Some((player_entity, dist));
+            let dist_sq = ai_tf.translation.distance_squared(player_tf.translation);
+            if dist_sq <= awareness_range_sq {
+                if best.map_or(true, |(_, d)| dist_sq < d) {
+                    best = Some((player_entity, dist_sq));
                 }
             }
         }

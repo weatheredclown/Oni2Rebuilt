@@ -165,18 +165,11 @@ pub enum BlockingAction {
     Patrol(Value),
     Follow(Value),
     Attack(Value),
-    Retreat,
     /// Internal: waiting for CurveFollower to reach its target phase.
     /// Set by the bridge system after configuring the CurveFollower from a GotoCurvePhase.
     WaitingForCurve,
     /// Internal: waiting for a non-looping animation to finish playing.
     WaitingForAnimation,
-    /// Request to the ECS system to query entities and return an actor list.
-    Find {
-        list_var: String,
-        conditions: Vec<(String, Value)>,
-        range: Option<f32>,
-    },
     WaitingForPath,
 }
 
@@ -251,6 +244,10 @@ pub enum SysRequest {
     SetAiTarget {
         actor: Entity,
         target: Entity,
+    },
+    TriggerFight {
+        actor: Entity,
+        target: Option<Entity>,
     },
     FollowActor {
         actor: Entity,
@@ -371,6 +368,10 @@ pub enum ScrOniSysEvent {
     SetAiTarget {
         actor: Entity,
         target: Entity,
+    },
+    TriggerFight {
+        actor: Entity,
+        target: Option<Entity>,
     },
     FollowActor {
         actor: Entity,
@@ -919,8 +920,8 @@ impl ScriptExec {
                     break;
                 } else if current_state == ExecState::Blocked {
                     warn!(
-                        "[ScrOni] Whenever block attempted to block (state: {:?})",
-                        current_state
+                        "[ScrOni][{}] Whenever block attempted to block (state: {:?})",
+                        self.get_thread(tid).script.name, current_state
                     );
                     self.get_thread_mut(tid).state = ExecState::Running;
                     break;
@@ -1885,7 +1886,7 @@ pub struct ScrOniScript {
 /// Bevy system: tick all ScrOni scripts each frame.
 pub fn scroni_tick_system(
     mut commands: Commands,
-    mut query: Query<(Entity, &mut ScrOniScript, &GlobalTransform, Option<&crate::ai::navigation::ActorPathfollower>)>,
+    mut query: Query<(Entity, &mut ScrOniScript, &GlobalTransform, Option<&crate::ai::navigation::ActorPathfollower>, Option<&crate::ai::components::ActorRetreating>)>,
     all_entities: Query<(Entity, &'static GlobalTransform, Option<&'static Name>)>,
     triggers: Query<&'static BroadcastTrigger>,
     time: Res<Time>,
@@ -1920,7 +1921,7 @@ pub fn scroni_tick_system(
         actor_statuses.insert(ent, status.to_string());
     }
 
-    for (entity, mut script, transform, pathfollower_opt) in &mut query {
+    for (entity, mut script, transform, pathfollower_opt, retreating_opt) in &mut query {
         if script.exec.ticks_alive == 0 {
             script.exec.ticks_alive += 1;
             continue;
@@ -1942,13 +1943,10 @@ pub fn scroni_tick_system(
 
         let is_done = script.exec.main_thread.state == ExecState::Done;
 
-        let mut finds_to_resolve = Vec::new();
         let mut gotos_to_resolve = Vec::new();
         let mut waiting_for_path = Vec::new();
         for t in script.exec.all_threads_mut() {
-            if let Some(BlockingAction::Find { list_var, conditions, range }) = t.blocking.clone() {
-                finds_to_resolve.push((t.thread_id, list_var, conditions, range));
-            } else if let Some(BlockingAction::GotoPoint { target, within, speed, duration }) = t.blocking.clone() {
+            if let Some(BlockingAction::GotoPoint { target, within, speed, duration }) = t.blocking.clone() {
                 gotos_to_resolve.push((t.thread_id, target, within, speed, duration));
             } else if let Some(BlockingAction::WaitingForPath) = t.blocking.clone() {
                 waiting_for_path.push(t.thread_id);
@@ -1999,54 +1997,6 @@ pub fn scroni_tick_system(
             script.exec.tick_thread(tid, now, &mut ctx);
         }
 
-        // Handle Find request
-        for (tid, list_var, conditions, range) in finds_to_resolve {
-            let mut found = Vec::new();
-            let mut my_pos = transform.translation(); // Fallback default to script entity center
-            let max_dist = range.unwrap_or(9999.0);
-
-            for (k, v) in &conditions {
-                if k.to_lowercase() == "at" {
-                    if let Value::Vector(vec) = v {
-                        // The vector evaluated by the AST (e.g., location(me)) was generated in internal Oni coordinate space
-                        // We must convert it back to Bevy layout coordinates (-X, Y, -Z) for physics evaluation mathematically
-                        my_pos = Vec3::new(-vec[0] as f32, vec[1] as f32, -vec[2] as f32);
-                    }
-                }
-            }
-
-            for (other_ent, other_tf, name_opt) in &all_entities {
-                if entity == other_ent {
-                    continue;
-                }
-
-                let dist = my_pos.distance(other_tf.translation());
-                if dist <= max_dist {
-                    let mut matches_all = true;
-                    for (k, v) in &conditions {
-                        let k_lower = k.to_lowercase();
-                        if k_lower == "name" || k_lower == "group" {
-                            let expected_name = v.as_string();
-                            let actual_name = name_opt.map(|n| n.as_str()).unwrap_or("");
-                            if actual_name != expected_name {
-                                matches_all = false;
-                                break;
-                            }
-                        }
-                    }
-                    if matches_all {
-                        found.push(other_ent);
-                    }
-                }
-            }
-
-            script
-                .exec
-                .set_var(tid, list_var, Value::ActorList(found, 0));
-            script.exec.clear_blocking(tid);
-            // Tick again to resume immediately
-            script.exec.tick_thread(tid, now, &mut ctx);
-        }
         let script_name = script.exec.main_thread.script.name.clone();
         for req in script.exec.sys_requests.drain(..) {
             match req {
@@ -2182,6 +2132,9 @@ pub fn scroni_tick_system(
                 SysRequest::SetAiTarget { actor, target } => {
                     commands.trigger(ScrOniSysEvent::SetAiTarget { actor, target });
                 }
+                SysRequest::TriggerFight { actor, target } => {
+                    commands.trigger(ScrOniSysEvent::TriggerFight { actor, target });
+                }
                 SysRequest::FollowActor { actor, target } => {
                     commands.trigger(ScrOniSysEvent::FollowActor { actor, target });
                 }
@@ -2261,7 +2214,7 @@ pub fn scroni_tick_system(
         let is_action = msg.is_action;
         let msg_text = msg.msg.clone();
         let target_entity = msg.to;
-        if let Ok((_, mut target_script, _, _)) = query.get_mut(target_entity) {
+        if let Ok((_, mut target_script, _, _, _)) = query.get_mut(target_entity) {
             target_script.exec.message_queue.push(msg);
         } else {
             // "sendaction activate" and "sendaction deactivate" target raw props without script components
