@@ -193,6 +193,14 @@ pub fn exec(ctx: &mut OpsCtx, stmt: &Stmt) -> bool {
             ctx.thread_mut().state = ExecState::Yielded;
             true
         }
+        Stmt::SetFaction(expr) => {
+            let faction_val = ctx.eval_string(expr);
+            ctx.sys_request(SysRequest::SetFaction {
+                actor: ctx.exec.owner,
+                faction: faction_val,
+            });
+            true
+        }
         Stmt::Destroy(target) => {
             let val = ctx.eval(target);
             match val {

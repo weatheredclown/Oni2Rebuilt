@@ -41,6 +41,8 @@ pub struct LayoutActor {
     pub is_creature: bool,
     /// Whether this creature is the player (Player="1" in Creature component).
     pub is_player: bool,
+    /// Faction allegiance (e.g. "Syndicate", "TCTF").
+    pub faction: Option<String>,
     /// Curve name from <Curve> component (for path-following entities).
     pub curve_name: Option<String>,
     /// Whether the entity should NOT rotate to look along the curve.
@@ -228,9 +230,13 @@ pub fn parse_actor_xml(dir: &str, filename: &str, template_dir: &str) -> Option<
     // Extract Creature props
     let mut is_creature = creature_block.is_some();
     let mut is_player = false;
+    let mut faction: Option<String> = None;
     if let Some(block) = &creature_block {
         if let Some(v) = extract_xml_attr(block, "Player") {
             is_player = v == "1";
+        }
+        if let Some(v) = extract_xml_attr(block, "Faction") {
+            faction = Some(v);
         }
     }
 
@@ -364,6 +370,7 @@ pub fn parse_actor_xml(dir: &str, filename: &str, template_dir: &str) -> Option<
         animator_type,
         is_creature,
         is_player,
+        faction,
         curve_name,
         curve_fixed_orientation,
         curve_look_xz,

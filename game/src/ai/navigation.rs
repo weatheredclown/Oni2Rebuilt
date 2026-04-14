@@ -16,6 +16,8 @@ pub struct NavGraph {
     pub points: Vec<Vec3>,
     pub names: HashMap<String, usize>,
     pub adj: Vec<Vec<(usize, f32)>>,
+    pub edge_doors: HashMap<(usize, usize), usize>,
+    pub doors_open: Vec<bool>,
 }
 
 #[derive(Clone, PartialEq)]
@@ -69,7 +71,75 @@ impl NavGraph {
             offset += g.points.len();
         }
         
-        Self { points, names, adj }
+        Self { 
+            points, 
+            names, 
+            adj, 
+            edge_doors: HashMap::new(), 
+            doors_open: Vec::new() 
+        }
+    }
+    
+    pub fn add_door(&mut self, pos: Vec3, radius: f32) -> usize {
+        let door_id = self.doors_open.len();
+        self.doors_open.push(false); // doors start closed by default
+        
+        let r_sq = radius * radius;
+        for u in 0..self.points.len() {
+            let mut edges_to_tag = Vec::new();
+            for &(v, _) in &self.adj[u] {
+                let p1 = self.points[u];
+                let p2 = self.points[v];
+                
+                let p1_2d = Vec2::new(p1.x, p1.z);
+                let p2_2d = Vec2::new(p2.x, p2.z);
+                let pos_2d = Vec2::new(pos.x, pos.z);
+                
+                let line_dir = p2_2d - p1_2d;
+                let length_sq = line_dir.length_squared();
+                
+                let dist_sq = if length_sq == 0.0 {
+                    pos_2d.distance_squared(p1_2d)
+                } else {
+                    let t = ((pos_2d - p1_2d).dot(line_dir) / length_sq).clamp(0.0, 1.0);
+                    let projection = p1_2d + t * line_dir;
+                    pos_2d.distance_squared(projection)
+                };
+                
+                let y_min = pos.y - 1.0;
+                let y_max = pos.y + 4.0;
+                let edge_y_min = p1.y.min(p2.y);
+                let edge_y_max = p1.y.max(p2.y);
+                let vertically_overlapping = edge_y_min <= y_max && edge_y_max >= y_min;
+                
+                if dist_sq <= r_sq && vertically_overlapping {
+                    edges_to_tag.push(v);
+                }
+            }
+            for v in edges_to_tag {
+                self.edge_doors.insert((u, v), door_id);
+            }
+        }
+        door_id
+    }
+    
+    pub fn set_door_state(&mut self, door_id: usize, is_open: bool) {
+        if door_id < self.doors_open.len() {
+            self.doors_open[door_id] = is_open;
+        }
+    }
+    
+    pub fn find_closest_point(&self, pos: Vec3) -> usize {
+        let mut min_dist = f32::MAX;
+        let mut idx = 0;
+        for (i, p) in self.points.iter().enumerate() {
+            let d = p.distance_squared(pos);
+            if d < min_dist {
+                min_dist = d;
+                idx = i;
+            }
+        }
+        idx
     }
     
     pub fn find_path(&self, start: Vec3, target_name: &str) -> Option<Vec<Vec3>> {
@@ -148,6 +218,13 @@ impl NavGraph {
             if cost > dists[index] { continue; }
             
             for &(next, w) in &self.adj[index] {
+                // Check if edge is blocked by a closed door
+                if let Some(&door_id) = self.edge_doors.get(&(index, next)) {
+                    if !self.doors_open[door_id] {
+                        continue;
+                    }
+                }
+                
                 let next_cost = cost + w;
                 if next_cost < dists[next] {
                     dists[next] = next_cost;
@@ -256,5 +333,88 @@ pub fn actor_follower_system(
             expected_tf.rotate_y(std::f32::consts::PI);
             tf.rotation = tf.rotation.slerp(expected_tf.rotation, (10.0 * dt).min(1.0));
         }
+    }
+}
+
+pub fn retreat_steering_system(
+    mut commands: Commands,
+    mut query: Query<(Entity, &crate::ai::components::ActorRetreating, &Transform, &crate::combat::faction::Faction)>,
+    all_factions: Query<(Entity, &Transform, &crate::combat::faction::Faction)>,
+    faction_manager: Res<crate::combat::faction::FactionManager>,
+    nav_graph: Res<NavGraph>,
+) {
+    if nav_graph.points.is_empty() { return; }
+
+    for (entity, retreating, tf, my_faction) in &mut query {
+        let pos = tf.translation;
+        let mut combined_threat = Vec3::ZERO;
+        let mut enemies_found = 0;
+
+        for (other_ent, other_tf, other_faction) in &all_factions {
+            if entity == other_ent { continue; }
+            let status = faction_manager.get_status(&my_faction.0, &other_faction.0);
+            if status == crate::combat::faction::FactionStatus::Enemy {
+                let dist_sq = pos.distance_squared(other_tf.translation);
+                if dist_sq < 225.0 { // 15 meters radius
+                    let dist = dist_sq.sqrt().max(0.1);
+                    combined_threat += (other_tf.translation - pos) / dist; // Normalize and weight by dist inversely if needed
+                    enemies_found += 1;
+                }
+            }
+        }
+
+        let mut escape_dir = Vec3::ZERO;
+        if enemies_found > 0 {
+            // Direction away from enemies
+            escape_dir = -(combined_threat / enemies_found as f32).normalize_or_zero();
+        } else {
+            // No enemies explicitly near? Just run anywhere safe. Pick forward
+            escape_dir = tf.local_z().normalize_or_zero();
+        }
+
+        if let Some(target) = retreating.avoid_target {
+            if let Ok((_, target_tf, _)) = all_factions.get(target) {
+                // If script explicitly requested retreating from this specific person, override with away vector
+                let away = pos - target_tf.translation;
+                escape_dir = away.normalize_or_zero();
+            }
+        }
+        
+        escape_dir.y = 0.0;
+        if escape_dir.length_squared() > 0.0 {
+            escape_dir = escape_dir.normalize();
+        } else {
+            escape_dir = Vec3::Z;
+        }
+
+        // Find safest waypoint furthest in `escape_dir` out of the closest 10-20 reachable points
+        let current_pt = nav_graph.find_closest_point(pos);
+        let mut best_target_pt = current_pt;
+        let mut best_score = f32::MIN;
+
+        for (i, p) in nav_graph.points.iter().enumerate() {
+            let dist_to_pt = pos.distance(*p);
+            if dist_to_pt > 5.0 && dist_to_pt < 30.0 { // Between 5m and 30m away
+                let dir_to_pt = (*p - pos).normalize_or_zero();
+                let alignment = dir_to_pt.dot(escape_dir);
+                let score = alignment * dist_to_pt;
+                if score > best_score {
+                    best_score = score;
+                    best_target_pt = i;
+                }
+            }
+        }
+        
+        // Execute pathfinding towards this safe point
+        if let Some(path) = nav_graph.a_star(current_pt, best_target_pt) {
+            commands.entity(entity).insert(ActorPathfollower {
+                path,
+                current_wp: 0,
+                speed_throttle: 1.0,
+                within: None,
+            });
+        }
+        // Purge retreating state so we don't recalculate next frame
+        commands.entity(entity).remove::<crate::ai::components::ActorRetreating>();
     }
 }

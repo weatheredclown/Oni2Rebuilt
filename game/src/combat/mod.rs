@@ -8,6 +8,7 @@
  */
 pub mod components;
 pub mod events;
+pub mod faction;
 pub mod hitbox;
 pub mod systems;
 
@@ -49,7 +50,8 @@ pub struct CombatPlugin;
 
 impl Plugin for CombatPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Startup, setup_combat_materials)
+        app.add_plugins(faction::FactionPlugin)
+            .add_systems(Startup, setup_combat_materials)
             .add_message::<events::AttackMessage>()
             .add_message::<events::DamageMessage>()
             .add_message::<events::DeathMessage>()

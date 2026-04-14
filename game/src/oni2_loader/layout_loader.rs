@@ -18,6 +18,7 @@ pub struct LayoutPlayerInfo {
     pub entity_type: String,
     pub animator_type: String,
     pub max_hitpoints: Option<f32>,
+    pub faction: Option<String>,
 }
 
 /// Load an ONI2 layout directory, spawning all entities and creatures.
@@ -140,6 +141,7 @@ pub fn load_layout(
                         entity_type: actor.entity_type.clone(),
                         animator_type: actor.animator_type.clone().unwrap_or_default(),
                         max_hitpoints: actor.max_hitpoints,
+                        faction: actor.faction.clone(),
                     });
                 }
             } else {
@@ -377,6 +379,7 @@ pub fn spawn_layout_actor(
                 // It should be removed once real AI behavior components replace it.
                 assets.commands.entity(entity).insert((
                     crate::combat::components::Enemy,
+                    crate::combat::faction::Faction(actor.faction.clone().unwrap_or_default()),
                     crate::ai::components::AiFighter::default(),
                     crate::combat::components::Fighter::default(),
                     crate::combat::components::FighterId(uuid::Uuid::new_v4()),

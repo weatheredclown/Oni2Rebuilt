@@ -206,6 +206,14 @@ pub enum SysRequest {
         to: Option<Vec3>,
         face: Option<f32>,
     },
+    SetFaction {
+        actor: Entity,
+        faction: String,
+    },
+    Retreat {
+        actor: Entity,
+        target: Option<Entity>,
+    },
     CameraSetPackage(String),
     CameraReset,
     CameraMode(String),
@@ -2086,6 +2094,12 @@ pub fn scroni_tick_system(
                         to,
                         face,
                     });
+                }
+                SysRequest::SetFaction { actor, faction } => {
+                    commands.entity(actor).insert(crate::combat::faction::Faction(faction));
+                }
+                SysRequest::Retreat { actor, target } => {
+                    commands.entity(actor).insert(crate::ai::components::ActorRetreating { avoid_target: target });
                 }
                 SysRequest::CameraSetPackage(pkg_name) => {
                     commands.trigger(ScrOniSysEvent::CameraSetPackage(pkg_name));

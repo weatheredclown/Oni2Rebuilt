@@ -21,6 +21,7 @@ mod oni2_loader;
 mod player;
 mod projectile_system;
 mod scroni;
+mod door;
 mod fight_vector;
 mod statemachine;
 mod telemetry;
@@ -171,6 +172,7 @@ fn main() {
     .add_plugins(projectile_system::ProjectilePlugin)
     .add_plugins(oni2_loader::Oni2LoaderPlugin)
     .add_plugins(scroni::ScroniPlugin)
+    .add_plugins(door::DoorPlugin)
     .add_plugins(debug::DebugPlugin);
 
     if fog_enabled {
@@ -343,6 +345,7 @@ fn setup_scene(
         commands.entity(pi.entity).insert((
             scoped.clone(),
             Player,
+            crate::combat::faction::Faction(pi.faction.clone().unwrap_or_default()),
             InputState::default(),
             Fighter::default(),
             FighterId(Uuid::new_v4()),
@@ -416,6 +419,7 @@ pub fn spawn_fallback_player(
             PrototypeElement,
             (
                 Player,
+                crate::combat::faction::Faction("TCTF".to_string()),
                 InputState::default(),
                 Fighter::default(),
                 FighterId(Uuid::new_v4()),

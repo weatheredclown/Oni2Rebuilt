@@ -48,8 +48,25 @@ pub fn exec(ctx: &mut OpsCtx, stmt: &Stmt) -> bool {
             true
         }
         Stmt::Retreat(opt_expr) => {
-            let ent = opt_expr.as_ref().map(|e| ctx.eval(e));
-            info!("VM: Retreat from {:?} (unimplemented)", ent);
+            let target_ent = opt_expr.as_ref().map(|expr| {
+                match ctx.eval(expr) {
+                    Value::Actor(act) => act,
+                    Value::Int(_) | Value::String(_) => {
+                        let evaluated_val = ctx.eval(expr);
+                        let targets = ctx.ctx.resolve_targets(&evaluated_val);
+                        if !targets.is_empty() {
+                            targets[0]
+                        } else {
+                            Entity::PLACEHOLDER
+                        }
+                    }
+                    _ => Entity::PLACEHOLDER,
+                }
+            });
+            ctx.sys_request(SysRequest::Retreat {
+                actor: ctx.exec.owner,
+                target: target_ent,
+            });
             true
         }
         _ => false,

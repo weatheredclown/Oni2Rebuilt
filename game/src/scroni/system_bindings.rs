@@ -537,6 +537,11 @@ pub fn scroni_sys_event_observer(
                     action: action.clone(),
                     target: target,
                 });
+            } else if component.eq_ignore_ascii_case("actorspecific") {
+                commands.trigger(crate::door::ActorSpecificAction {
+                    action: action.clone(),
+                    target: target,
+                });
             } else {
                 warn!("SendAction: Unrecognized component '{}'", component);
             }

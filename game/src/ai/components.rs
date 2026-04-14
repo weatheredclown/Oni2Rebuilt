@@ -19,7 +19,12 @@ pub enum AiState {
 #[derive(Component)]
 pub struct ActorFollower {
     pub target: Entity,
-    pub within: f32,
+    pub within: f32, // Dist to stop following
+}
+
+#[derive(Component)]
+pub struct ActorRetreating {
+    pub avoid_target: Option<Entity>,
 }
 
 #[derive(Component)]
