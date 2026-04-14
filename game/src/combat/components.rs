@@ -16,6 +16,7 @@ pub struct Fighter {
     pub is_grounded: bool,
     pub jumps_remaining: u8,
     pub max_jumps: u8,
+    pub throttle: f32, // Generic locomotion speed requested (0.0 to 1.0+)
 }
 
 impl Default for Fighter {
@@ -25,6 +26,7 @@ impl Default for Fighter {
             is_grounded: true,
             jumps_remaining: 2,
             max_jumps: 2,
+            throttle: 0.0,
         }
     }
 }

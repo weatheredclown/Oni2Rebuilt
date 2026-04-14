@@ -57,6 +57,7 @@ impl Plugin for CombatPlugin {
             .add_message::<events::DeathMessage>()
             .add_message::<events::AboutToBeHitMessage>()
             .add_message::<events::HitReactionMessage>()
+            .add_message::<events::InjureMessage>()
             .add_systems(
                 FixedUpdate,
                 (
@@ -64,6 +65,7 @@ impl Plugin for CombatPlugin {
                     systems::attack_sync_system,
                     systems::hit_detection_system,
                     systems::about_to_be_hit_system,
+                    systems::injure_system,
                     systems::hit_reaction_system,
                     systems::combo_tracking_system,
                     systems::death_system,

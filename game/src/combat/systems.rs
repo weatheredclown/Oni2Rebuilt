@@ -50,7 +50,7 @@ pub fn hit_detection_system(
     mut targets: Query<(Entity, &Transform, &mut Health, &Fighter, Option<&ReactLibrary>)>,
     time: Res<Time>,
     mut damage_writer: MessageWriter<DamageMessage>,
-    mut reaction_writer: MessageWriter<HitReactionMessage>,
+    mut injure_writer: MessageWriter<InjureMessage>,
 ) {
     let now = time.elapsed_secs_f64();
 
@@ -160,51 +160,7 @@ pub fn hit_detection_system(
             // Resolve react data from the target's ReactLibrary using reactanim0
             // (reactanim[0] is the primary reaction; higher indices are alternatives for different states)
             let react_enum = strike.reactanim[0];
-            let react = react_lib.and_then(|lib| lib.get(react_enum));
-
-            if !was_blocked {
-                health.current = (health.current - damage).max(0.0);
-
-                // Invulnerability: use react's InvulnerabilityStartPhase if available,
-                // scaled to a time estimate (react anim duration unknown here — use INVULN_DURATION as floor).
-                // TODO: once react anims are played via Oni2AnimState, derive duration from num_frames.
-                let invuln_secs = if let Some(rct) = react {
-                    // invulnerability_start_phase is 0..1 of the react anim; use flat minimum for now
-                    INVULN_DURATION.max(rct.invulnerability_start_phase as f64 * 0.5)
-                } else {
-                    INVULN_DURATION
-                };
-                health.invulnerable_until = now + invuln_secs;
-
-                let knockback_dir = (target_tf.translation - attacker_tf.translation).normalize_or_zero();
-
-                // Classify reaction kind from react enum (knockdown vs flinch vs standard)
-                let kind = match react_enum {
-                    4 => ReactionKind::Knockdown,   // ANIMREACT_KNOCKDOWN
-                    46 | 47 => ReactionKind::Knockback, // ANIMREACT_WALL / WALL_GETUP
-                    _ => ReactionKind::Flinch,
-                };
-
-                reaction_writer.write(HitReactionMessage {
-                    entity: target_entity,
-                    kind,
-                    direction: knockback_dir,
-                    react_enum,
-                });
-
-                info!(
-                    "Hit [{:?} -> {:?}]: damage={:.1} | remaining_health={:.1} | react={} ({})",
-                    attacker_entity,
-                    target_entity,
-                    damage,
-                    health.current,
-                    react_enum,
-                    crate::oni2_loader::parsers::rct::ANIMREACT_NAMES
-                        .get(react_enum.max(0) as usize)
-                        .unwrap_or(&"?")
-                );
-            }
-
+            
             // Map hittype to AttackClass for the event
             let attack_class = match strike.hittype {
                 0 | 1 | 2 => AttackClass::Punch,
@@ -212,6 +168,34 @@ pub fn hit_detection_system(
                 6 | 7 | 8 => AttackClass::Grab,
                 _ => AttackClass::Punch,
             };
+
+            if !was_blocked {
+                let knockback_dir = (target_tf.translation - attacker_tf.translation).normalize_or_zero();
+
+                injure_writer.write(InjureMessage {
+                    target: target_entity,
+                    attacker: Some(attacker_entity),
+                    damage,
+                    hit_type: "strike".to_string(), // Represents melee strike
+                    from: Some(attacker_tf.translation),
+                    play_react: true,
+                    disable_creature_detect: false,
+                    attack_class: Some(attack_class),
+                    attack_strength: Some(AttackStrength::High),
+                    strike_react_enum: Some(react_enum),
+                });
+
+                info!(
+                    "Hit [{:?} -> {:?}]: damage={:.1} | react={} ({})",
+                    attacker_entity,
+                    target_entity,
+                    damage,
+                    react_enum,
+                    crate::oni2_loader::parsers::rct::ANIMREACT_NAMES
+                        .get(react_enum.max(0) as usize)
+                        .unwrap_or(&"?")
+                );
+            }
 
             damage_writer.write(DamageMessage {
                 attacker: attacker_entity,
@@ -250,6 +234,161 @@ pub fn about_to_be_hit_system(
                 hit_type: msg.hit_type,
                 from: msg.from,
                 attacker: msg.attacker,
+            });
+        }
+    }
+}
+
+/// Applies generic injury logic (from strikes, explosions, hazards)
+pub fn injure_system(
+    mut events: MessageReader<InjureMessage>,
+    mut query: Query<(
+        &mut Health,
+        Option<&mut Fighter>,
+        Option<&mut Transform>,
+        Option<&HitReaction>,
+        Option<&Oni2AnimState>,
+    )>,
+    time: Res<Time>,
+    mut reaction_writer: MessageWriter<HitReactionMessage>,
+    mut commands: Commands,
+) {
+    let now = time.elapsed_secs_f64();
+
+    for msg in events.read() {
+        let Ok((
+            mut health,
+            mut fighter_opt,
+            mut transform_opt,
+            hit_reaction_opt,
+            anim_state_opt,
+        )) = query.get_mut(msg.target)
+        else {
+            continue;
+        };
+
+        if now < health.invulnerable_until {
+            continue;
+        }
+
+        let is_env_hazard = msg.hit_type.eq_ignore_ascii_case("environmentalhazard");
+
+        if is_env_hazard {
+            // "not allowed to do environmental damage until you've finished reacting"
+            if let Some(hr) = hit_reaction_opt {
+                if hr.active.is_some() {
+                    continue;
+                }
+            }
+        }
+
+        let damage = if is_env_hazard {
+            msg.damage * time.delta_secs()
+        } else {
+            msg.damage
+        };
+
+        let last_hp = health.current;
+        health.current = (health.current - damage).max(0.0);
+
+        let mut reacting_to_hit_from_behind = false;
+        let mut hit_from_behind = false;
+
+        if let Some(ref mut fighter) = fighter_opt {
+            fighter.facing = fighter.facing; // Trigger mut access
+
+            if let Some(from_pos) = msg.from {
+                if let Some(tf) = &transform_opt {
+                    let mut diff = from_pos - tf.translation;
+                    diff.y = 0.0;
+                    if diff.length_squared() > 0.001 {
+                        let to_attack = diff.normalize_or_zero();
+                        let my_forward = fighter.facing;
+                        let angle = my_forward.dot(to_attack).clamp(-1.0, 1.0).acos();
+                        if angle > 100.0f32.to_radians() {
+                            hit_from_behind = true;
+                        }
+                    }
+                }
+            }
+
+            if fighter.throttle > 0.65 && hit_from_behind {
+                // If running and hit from behind, substitute override
+                let react_strength = msg.attack_strength.unwrap_or(AttackStrength::Low);
+                match react_strength {
+                    AttackStrength::Low => {
+                        // CR_ATTACK_STRENGTH_LOW -> ANIMREACT_FROMBACK_RUN_SFT
+                        if msg.play_react {
+                            reacting_to_hit_from_behind = true;
+                            // 10 = ANIMREACT_FROMBACK_RUN_SFT
+                        }
+                    }
+                    AttackStrength::High | AttackStrength::Super => {
+                        if msg.play_react {
+                            reacting_to_hit_from_behind = true;
+                            // 11 = ANIMREACT_FROMBACK_RUN_HRD
+                        }
+                    }
+                }
+            }
+        }
+
+        // Face and React
+        if let Some(from_pos) = msg.from {
+            if let Some(ref mut fighter) = fighter_opt {
+                if msg.play_react {
+                    if let Some(ref mut tf) = transform_opt {
+                         let mut to_attacker = (from_pos - tf.translation).normalize_or_zero();
+                         to_attacker.y = 0.0;
+                         if to_attacker.length_squared() > 0.001 {
+                             if reacting_to_hit_from_behind {
+                                 to_attacker = -to_attacker;
+                             }
+                             fighter.facing = to_attacker;
+                         }
+                    }
+                }
+            }
+        }
+
+        if health.current <= 0.0 && last_hp > 0.0 {
+            // Handled mostly by death_system, but could dispatch custom death anim here
+        }
+
+        if msg.play_react {
+            let mut react_enum = msg.strike_react_enum.unwrap_or(0); // 0 = Generic Flinch
+            if reacting_to_hit_from_behind {
+                 let react_strength = msg.attack_strength.unwrap_or(AttackStrength::Low);
+                 react_enum = match react_strength {
+                     AttackStrength::Low => 10,
+                     _ => 11,
+                 };
+            }
+
+            let kind = match react_enum {
+                4 => ReactionKind::Knockdown,
+                46 | 47 => ReactionKind::Knockback,
+                _ => ReactionKind::Flinch,
+            };
+
+            let knockback_dir = if let (Some(from_pos), Some(tf)) = (msg.from, &transform_opt) {
+                (tf.translation - from_pos).normalize_or_zero()
+            } else {
+                Vec3::X
+            };
+
+            reaction_writer.write(HitReactionMessage {
+                entity: msg.target,
+                kind,
+                direction: knockback_dir,
+                react_enum,
+            });
+            
+            // Queue scream sound! (using engine SFX pipeline)
+            commands.trigger(crate::scroni::vm::ScrOniSysEvent::PlaySound {
+                script_entity: msg.target, // using the struck entity as originator
+                actor: None,               // implicit on same entity
+                name: "scream".to_string(), // fallback label if actor is missing an exact mapping
             });
         }
     }

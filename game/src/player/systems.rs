@@ -11,6 +11,7 @@ use bevy::input::mouse::MouseMotion;
 use bevy::prelude::*;
 
 use crate::combat::components::Fighter;
+use crate::control_map::{PadMapper, RawInputFrame};
 
 use super::components::*;
 
@@ -115,6 +116,189 @@ pub fn gamepad_input_system(
             input.grab = true;
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// PadMapper update — builds RawInputFrame from Bevy hardware state and ticks
+// the data-driven control mapper so FSM logic can read PADCMD_* values.
+// ---------------------------------------------------------------------------
+
+/// Keyboard/mouse layout → control.map button / axis names.
+///
+/// Button name mapping (PlayStation-style from control.map):
+///   Rup   = triangle  → Space (primary attack)
+///   Rdown = cross/X   → Q (jump)
+///   Rleft = circle    → E / LMB (grab, action, weapon fire)
+///   Rright= square    → RMB (secondary attack)
+///   L2    = L-trigger → Left Shift (block)
+///   R1    = R-shoulder→ Left Ctrl (fight mode / lock-on)
+///   R2    = R-trigger → C (crouch)
+///   L1    = L-shoulder→ Tab (sweep forward)
+///   R3    = R-stick Ø → V (weapon draw)
+///
+/// Analog axis mapping (character-relative, matching AnalogCharacter* in control.map):
+///   AnalogCharacterForward   → W key (1.0 when pressed)
+///   AnalogCharacterBackward  → S key
+///   AnalogCharacterLeft      → A key
+///   AnalogCharacterRight     → D key
+///   AnalogLmag               → movement vector magnitude (0..1)
+pub fn pad_mapper_update_system(
+    time: Res<Time>,
+    keyboard: Res<ButtonInput<KeyCode>>,
+    mouse: Res<ButtonInput<MouseButton>>,
+    gamepads: Query<(Entity, &Gamepad)>,
+    mut pad_mapper: ResMut<PadMapper>,
+) {
+    let t = time.elapsed_secs();
+    let mut frame = RawInputFrame {
+        time: t,
+        ..Default::default()
+    };
+
+    // ── Keyboard + mouse ──────────────────────────────────────────────────
+
+    // Face buttons (right cluster)
+    if keyboard.just_pressed(KeyCode::Space) {
+        frame.press("Rup");
+    } else if keyboard.pressed(KeyCode::Space) {
+        frame.hold("Rup");
+    }
+    if keyboard.just_pressed(KeyCode::KeyQ) {
+        frame.press("Rdown");
+    } else if keyboard.pressed(KeyCode::KeyQ) {
+        frame.hold("Rdown");
+    }
+    if keyboard.just_pressed(KeyCode::KeyE) || mouse.just_pressed(MouseButton::Left) {
+        frame.press("Rleft");
+    } else if keyboard.pressed(KeyCode::KeyE) || mouse.pressed(MouseButton::Left) {
+        frame.hold("Rleft");
+    }
+    if mouse.just_pressed(MouseButton::Right) {
+        frame.press("Rright");
+    } else if mouse.pressed(MouseButton::Right) {
+        frame.hold("Rright");
+    }
+
+    // Shoulder / trigger buttons
+    if keyboard.pressed(KeyCode::ShiftLeft) {
+        frame.hold("L2"); // block
+    }
+    if keyboard.just_pressed(KeyCode::ShiftLeft) {
+        frame.press("L2");
+    }
+    if keyboard.pressed(KeyCode::ControlLeft) {
+        frame.hold("R1"); // fight mode / lock-on
+    }
+    if keyboard.just_pressed(KeyCode::ControlLeft) {
+        frame.press("R1");
+    }
+    if keyboard.pressed(KeyCode::KeyC) {
+        frame.hold("R2"); // crouch
+    }
+    if keyboard.just_pressed(KeyCode::KeyC) {
+        frame.press("R2");
+    }
+    if keyboard.just_pressed(KeyCode::Tab) {
+        frame.press("L1"); // sweep forward
+    } else if keyboard.pressed(KeyCode::Tab) {
+        frame.hold("L1");
+    }
+    if keyboard.just_pressed(KeyCode::KeyV) {
+        frame.press("R3"); // weapon draw
+    } else if keyboard.pressed(KeyCode::KeyV) {
+        frame.hold("R3");
+    }
+
+    // Movement / character analogs
+    let fwd  = if keyboard.pressed(KeyCode::KeyW) { 1.0_f32 } else { 0.0 };
+    let back = if keyboard.pressed(KeyCode::KeyS) { 1.0_f32 } else { 0.0 };
+    let left = if keyboard.pressed(KeyCode::KeyA) { 1.0_f32 } else { 0.0 };
+    let right= if keyboard.pressed(KeyCode::KeyD) { 1.0_f32 } else { 0.0 };
+
+    frame.set_analog("AnalogCharacterForward",  fwd);
+    frame.set_analog("AnalogCharacterBackward", back);
+    frame.set_analog("AnalogCharacterLeft",     left);
+    frame.set_analog("AnalogCharacterRight",    right);
+
+    // D-pad / left stick cardinal analogs (same as WASD for keyboard)
+    frame.set_analog("Lup",    fwd);
+    frame.set_analog("Ldown",  back);
+    frame.set_analog("Lleft",  left);
+    frame.set_analog("Lright", right);
+
+    // Left stick magnitude and direction angle
+    let lx = right - left;  // +right, −left
+    let ly = fwd - back;    // +forward, −backward
+    let lmag = (lx * lx + ly * ly).sqrt().min(1.0);
+    frame.set_analog("AnalogLmag", lmag);
+    if lmag > 0.01 {
+        // Direction: 0 = forward, increasing clockwise (matching PS2 convention)
+        let angle = ly.atan2(lx); // simple 2D angle
+        // Normalise to [0, 1] range as control.map uses ANALOG_RANGE on AnalogLdir
+        frame.set_analog("AnalogLdir", (angle + std::f32::consts::PI) / (2.0 * std::f32::consts::PI));
+    }
+
+    // ── Gamepad (merges on top of keyboard) ──────────────────────────────
+
+    if let Some((_, gamepad)) = gamepads.iter().next() {
+        let lx = gamepad.get(GamepadAxis::LeftStickX).unwrap_or(0.0);
+        let ly = gamepad.get(GamepadAxis::LeftStickY).unwrap_or(0.0); // +Y = up
+        let rx = gamepad.get(GamepadAxis::RightStickX).unwrap_or(0.0);
+        let ry = gamepad.get(GamepadAxis::RightStickY).unwrap_or(0.0);
+        const DEAD: f32 = 0.15;
+
+        let gfwd  = if ly >  DEAD { ly } else { 0.0 };
+        let gback = if ly < -DEAD { -ly } else { 0.0 };
+        let gleft = if lx < -DEAD { -lx } else { 0.0 };
+        let gright= if lx >  DEAD { lx } else { 0.0 };
+
+        // Override with gamepad values when stick is active
+        let gmag = (lx * lx + ly * ly).sqrt();
+        if gmag > DEAD {
+            frame.set_analog("AnalogCharacterForward",  gfwd);
+            frame.set_analog("AnalogCharacterBackward", gback);
+            frame.set_analog("AnalogCharacterLeft",     gleft);
+            frame.set_analog("AnalogCharacterRight",    gright);
+            frame.set_analog("Lup",    gfwd);
+            frame.set_analog("Ldown",  gback);
+            frame.set_analog("Lleft",  gleft);
+            frame.set_analog("Lright", gright);
+            frame.set_analog("AnalogLmag", gmag.min(1.0));
+            let angle = ly.atan2(lx);
+            frame.set_analog("AnalogLdir", (angle + std::f32::consts::PI) / (2.0 * std::f32::consts::PI));
+        }
+
+        // Right stick aim
+        let rmag = (rx * rx + ry * ry).sqrt();
+        if rmag > DEAD {
+            frame.set_analog("AnalogRmag", rmag.min(1.0));
+            let angle = ry.atan2(rx);
+            frame.set_analog("AnalogRdir", (angle + std::f32::consts::PI) / (2.0 * std::f32::consts::PI));
+        }
+
+        // Face buttons (South=cross, North=triangle, West=square, East=circle)
+        if gamepad.just_pressed(GamepadButton::North) { frame.press("Rup"); }
+        else if gamepad.pressed(GamepadButton::North) { frame.hold("Rup"); }
+        if gamepad.just_pressed(GamepadButton::South) { frame.press("Rdown"); }
+        else if gamepad.pressed(GamepadButton::South) { frame.hold("Rdown"); }
+        if gamepad.just_pressed(GamepadButton::East)  { frame.press("Rleft"); }
+        else if gamepad.pressed(GamepadButton::East)  { frame.hold("Rleft"); }
+        if gamepad.just_pressed(GamepadButton::West)  { frame.press("Rright"); }
+        else if gamepad.pressed(GamepadButton::West)  { frame.hold("Rright"); }
+
+        // Shoulders / triggers
+        if gamepad.pressed(GamepadButton::LeftTrigger)  { frame.hold("L2"); }
+        if gamepad.just_pressed(GamepadButton::LeftTrigger) { frame.press("L2"); }
+        if gamepad.pressed(GamepadButton::RightTrigger2) { frame.hold("R2"); }
+        if gamepad.just_pressed(GamepadButton::RightTrigger2) { frame.press("R2"); }
+        if gamepad.pressed(GamepadButton::RightTrigger)  { frame.hold("R1"); }
+        if gamepad.just_pressed(GamepadButton::RightTrigger) { frame.press("R1"); }
+        if gamepad.pressed(GamepadButton::LeftTrigger2)  { frame.hold("L1"); }
+        if gamepad.just_pressed(GamepadButton::LeftTrigger2) { frame.press("L1"); }
+        if gamepad.just_pressed(GamepadButton::RightThumb) { frame.press("R3"); }
+    }
+
+    pad_mapper.update(&frame);
 }
 
 // ---------------------------------------------------------------------------

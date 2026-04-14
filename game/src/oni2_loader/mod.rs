@@ -69,7 +69,7 @@ impl Plugin for Oni2LoaderPlugin {
             .init_resource::<registries::FxLibrary>()
             .init_resource::<registries::ParticleLibrary>()
             .init_resource::<components::CurrentCheckpointIndex>()
-            .add_systems(Startup, load_global_registries)
+            .add_systems(Startup, (load_global_registries, load_global_explosions))
             .add_systems(
                 Update,
                 (
@@ -83,6 +83,12 @@ impl Plugin for Oni2LoaderPlugin {
                     ground_snap_system,
                     apply_fog_to_camera.run_if(resource_exists::<FogEnabled>),
                     update_skyhat,
+                )
+                    .run_if(in_state(AppState::InGame)),
+            )
+            .add_systems(
+                Update,
+                (
                     scroni::vm::update_broadcast_triggers
                         .before(scroni::vm::scroni_tick_system),
                     scroni::vm::checkpoint_trigger_system

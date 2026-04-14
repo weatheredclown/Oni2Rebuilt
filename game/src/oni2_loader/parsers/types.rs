@@ -155,3 +155,45 @@ pub struct Oni2Animation {
     pub attack_data: Option<crate::oni2_loader::parsers::atdt::AtdtData>,
     pub react_data: Option<crate::oni2_loader::parsers::rct::ReactData>,
 }
+
+// === Parsed .expl explosion data ===
+
+#[derive(Debug, Clone)]
+pub struct ExplodeFXDef {
+    pub fx_type: String,
+    pub offset: [f32; 3],
+    pub delay: f32,
+}
+
+#[derive(Debug, Clone)]
+pub struct EllipsoidDamageDef {
+    pub offset: [f32; 3],
+    pub max_radii: [f32; 3],
+    pub orientation: [f32; 3],
+    pub start_radius_percentage: f32,
+    pub blast_duration: f32,
+    pub max_damage: f32,
+    pub max_damage_radius_percentage: f32,
+    pub continuous_damage: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct BoxDamageDef {
+    pub offset: [f32; 3],
+    pub orientation: [f32; 3],
+    pub blast_duration: f32,
+    pub continuous_damage: bool,
+    pub start_damage: f32,
+    pub end_damage: f32,
+    pub start_dimensions: [f32; 3],
+    pub end_dimensions: [f32; 3],
+    pub end_translation: [f32; 3],
+}
+
+#[derive(Debug, Clone)]
+pub struct BasicExplosionDef {
+    pub name: String,
+    pub fx: Vec<ExplodeFXDef>,
+    pub ellipsoid: Option<EllipsoidDamageDef>,
+    pub r#box: Option<BoxDamageDef>,
+}

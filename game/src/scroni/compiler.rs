@@ -417,6 +417,7 @@ impl Compiler {
                 Stmt::Shoot
             }
             TokenCode::Hit => self.parse_hit(),
+            TokenCode::MakeExplosion => self.parse_make_explosion(),
             TokenCode::Patrol => {
                 self.advance();
                 Stmt::Patrol(self.parse_expr())
@@ -1146,6 +1147,21 @@ impl Compiler {
             self.skip_if(TokenCode::Comma);
         }
         Stmt::Sound { args }
+    }
+
+    fn parse_make_explosion(&mut self) -> Stmt {
+        self.advance(); // skip 'makeexplosion'
+        let name = self.parse_expr();
+        let mut orientation = None;
+        if self.skip_if(TokenCode::Identifier) {
+            // Check if identifier is `orientation`
+            if self.tokens[self.pos - 1].text.eq_ignore_ascii_case("orientation") {
+                orientation = Some(self.parse_expr());
+            }
+        }
+        self.skip_if(TokenCode::Identifier); // skip `at`
+        let at = self.parse_expr();
+        Stmt::MakeExplosion { name, orientation, at }
     }
 
     fn parse_hit(&mut self) -> Stmt {

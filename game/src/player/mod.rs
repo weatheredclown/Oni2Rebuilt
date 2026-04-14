@@ -22,11 +22,14 @@ impl Plugin for PlayerPlugin {
         app.add_systems(
             Update,
             (
-                // Input backends — keyboard first, gamepad merges on top
+                // 1. Raw hardware → InputState (movement physics path)
                 systems::keyboard_input_system,
                 systems::gamepad_input_system,
+                // 2. Raw hardware → RawInputFrame → PadMapper (FSM / attack path)
+                systems::pad_mapper_update_system,
+                // 3. Mouse look uses InputState
                 systems::player_mouse_look_system,
-                // FSM ticks after input is settled
+                // 4. FSM reads PadMapper values
                 fsm_update_system,
             )
                 .chain()

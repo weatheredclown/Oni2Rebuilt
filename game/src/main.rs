@@ -12,7 +12,9 @@
 mod ai;
 mod camera;
 mod combat;
+mod control_map;
 mod debug;
+mod explosion;
 mod filesystem;
 mod fx_system;
 mod hud;
@@ -162,6 +164,7 @@ fn main() {
     .add_plugins(telemetry::TelemetryPlugin)
     .add_plugins(menu::MenuPlugin)
     .add_plugins(combat::CombatPlugin)
+    .add_plugins(control_map::ControlMapPlugin)
     .add_plugins(fight_vector::FightVectorPlugin)
     .add_plugins(statemachine::StateMachinePlugin)
     .add_plugins(player::PlayerPlugin)
@@ -208,7 +211,13 @@ fn main() {
         Update,
         oni2_loader::free_camera_system
             .run_if(resource_exists::<FormationMode>)
-            .run_if(in_state(AppState::InGame)),
+            .run_if(in_state(AppState::InGame))
+    )
+    .add_systems(
+        Update,
+        (
+            explosion::update_explosion_system,
+        )
     );
 
     // --- Initial state ---

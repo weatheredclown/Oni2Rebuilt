@@ -36,6 +36,14 @@ impl<'a, 'b, 'w_e, 's_e, 'w_t, 's_t> OpsCtx<'a, 'b, 'w_e, 's_e, 'w_t, 's_t> {
         self.eval(expr).as_float()
     }
 
+    pub fn eval_vec3(&mut self, expr: &Expr) -> [f32; 3] {
+        if let crate::scroni::vm::Value::Vector(v) = self.eval(expr) {
+            [v.x, v.y, v.z]
+        } else {
+            [0.0, 0.0, 0.0]
+        }
+    }
+
     pub fn eval_int(&mut self, expr: &Expr) -> i32 {
         self.eval(expr).as_int()
     }

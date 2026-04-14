@@ -172,6 +172,12 @@ pub enum Stmt {
         victim: Expr,
         damage: Expr,
     },
+    /// `makeexplosion <expr> [orientation <expr>] at <expr>`
+    MakeExplosion {
+        name: Expr,
+        orientation: Option<Expr>,
+        at: Expr,
+    },
     /// `patrol <expr>`
     Patrol(Expr),
     /// `follow <expr>`

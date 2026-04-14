@@ -271,6 +271,11 @@ pub enum SysRequest {
         hit_type: String,
         damage: f32,
     },
+    MakeExplosion {
+        name: String,
+        orientation: [f32; 3],
+        at: [f32; 3],
+    },
     Destroy(Entity),
 }
 
@@ -404,6 +409,12 @@ pub enum ScrOniSysEvent {
         handle: i32,
         target_pitch: f32,
         duration: f32,
+    },
+    MakeExplosion {
+        script_entity: Entity,
+        name: String,
+        orientation: [f32; 3],
+        at: [f32; 3],
     },
     Destroy(Entity),
 }
@@ -1895,6 +1906,7 @@ pub fn scroni_tick_system(
     layout_context: Option<Res<crate::oni2_loader::environment::LayoutContext>>,
     mut health_query: Query<(Entity, &mut crate::combat::components::Health, Option<&crate::ai::components::AiFighter>)>,
     nav_graph_opt: Option<Res<crate::ai::navigation::NavGraph>>,
+    mut injure_writer: MessageWriter<crate::combat::events::InjureMessage>,
 ) {
     let now = time.elapsed_secs_f64();
     let delta_time = time.delta_secs();
@@ -2000,6 +2012,14 @@ pub fn scroni_tick_system(
         let script_name = script.exec.main_thread.script.name.clone();
         for req in script.exec.sys_requests.drain(..) {
             match req {
+                SysRequest::MakeExplosion { name, orientation, at } => {
+                    commands.trigger(ScrOniSysEvent::MakeExplosion {
+                        script_entity: entity,
+                        name,
+                        orientation,
+                        at,
+                    });
+                }
                 SysRequest::PlaySound(actor, name) => {
                     commands.trigger(ScrOniSysEvent::PlaySound {
                         script_entity: entity,
@@ -2172,14 +2192,18 @@ pub fn scroni_tick_system(
                     });
                 }
                 SysRequest::Hit { target, hit_type, damage } => {
-                    if let Ok((_, mut health, _)) = health_query.get_mut(target) {
-                        let final_damage = if hit_type.eq_ignore_ascii_case("environmentalhazard") {
-                            damage * time.delta_secs()
-                        } else {
-                            damage
-                        };
-                        health.current = (health.current - final_damage).max(0.0);
-                    }
+                    injure_writer.write(crate::combat::events::InjureMessage {
+                        target,
+                        attacker: Some(entity),
+                        damage,
+                        hit_type,
+                        from: None,
+                        play_react: true,
+                        disable_creature_detect: false,
+                        attack_class: None,
+                        attack_strength: None,
+                        strike_react_enum: None,
+                    });
                 }
                 SysRequest::AmbientSoundStop(handle) => {
                     commands.trigger(ScrOniSysEvent::AmbientSoundStop {

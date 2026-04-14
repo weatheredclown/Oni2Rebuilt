@@ -52,3 +52,19 @@ pub struct HitReactionMessage {
     /// Indexes into ANIMREACT_NAMES to pick the animation to play.
     pub react_enum: i32,
 }
+
+#[derive(Message, Clone)]
+pub struct InjureMessage {
+    pub target: Entity,
+    pub attacker: Option<Entity>,
+    pub damage: f32,
+    pub hit_type: String,
+    pub from: Option<Vec3>,
+    pub play_react: bool,
+    pub disable_creature_detect: bool,
+    // Provide combat context if this injury comes from a physical strike
+    pub attack_class: Option<AttackClass>,
+    pub attack_strength: Option<AttackStrength>,
+    // For handling animations resolving HitReaction logic
+    pub strike_react_enum: Option<i32>,
+}

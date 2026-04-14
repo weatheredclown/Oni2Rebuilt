@@ -13,6 +13,7 @@ use crate::fight_vector::{FightVectorTrigger, facing_within, find_fight_trigger_
 use crate::oni2_loader::{Oni2AnimLibrary, Oni2AnimState};
 use crate::player::components::{InputState, Player};
 use crate::combat::components::Fighter;
+use crate::control_map::PadMapper;
 use super::types::*;
 use super::types::{ctrl_flags, pad_flags};
 
@@ -272,12 +273,19 @@ impl FsmRuntime {
 // Bevy system: build FsmPacket and tick every FsmRuntime on player entities
 // ---------------------------------------------------------------------------
 
-/// Build the FSM input packet from the player's InputState and Fighter status.
-pub fn build_fsm_packet(input: &InputState, fighter: &Fighter) -> FsmPacket {
+/// Build the FSM input packet from PadMapper values (data-driven) plus Fighter state.
+///
+/// PadMapper has already evaluated control.map this frame; we just read command
+/// values and map them onto FsmPacket bit-fields.  The old hand-coded
+/// `directional_attack_flag` helper is no longer needed — the ACK_* directional
+/// commands are evaluated directly from the control.map ANALOG_DEBOUNCE + button
+/// combos.
+pub fn build_fsm_packet(input: &InputState, fighter: &Fighter, mapper: &PadMapper) -> FsmPacket {
     let mut pad: u64 = 0;
     let mut ctrl: u32 = 0;
 
-    // --- control flags from fighter state ---
+    // ── Body / controller state flags ─────────────────────────────────────
+
     if fighter.is_grounded {
         let speed = input.movement.length();
         if speed > 0.6 {
@@ -291,57 +299,99 @@ pub fn build_fsm_packet(input: &InputState, fighter: &Fighter) -> FsmPacket {
         ctrl |= ctrl_flags::JUMPING;
     }
 
-    if input.blocking {
+    if mapper.get("PADCMD_BLOCK") > 0.0 {
         ctrl |= ctrl_flags::CAN_BLOCK;
     }
-
-    // --- pad commands from logical input ---
-    if input.blocking {
-        pad |= pad_flags::PADCMD_BLOCK;
+    if mapper.get("PADCMD_WEAPON_FIGHT_MODE") > 0.0 || mapper.get("PADCMD_WEAPON_LOCKON") > 0.0 {
+        ctrl |= ctrl_flags::FIGHT_MODE;
+    }
+    if mapper.get("PADCMD_CROUCH") > 0.0 {
+        ctrl |= ctrl_flags::CROUCHING;
     }
 
-    if input.grab {
-        pad |= pad_flags::PADCMD_GRAPPLE;
-    }
+    // ── Pad command flags (from control.map evaluation) ───────────────────
 
-    // Attack buttons — directional variants derived from movement vector
-    // movement: y < 0 = forward (W), y > 0 = back (S), x > 0 = left (A), x < 0 = right (D)
-    let mx = input.movement.x;
-    let my = input.movement.y;
-    let moving = input.movement.length_squared() > 0.09; // ≈ 0.3 threshold
+    // Block / grapple
+    if mapper.get("PADCMD_BLOCK")       > 0.0 { pad |= pad_flags::PADCMD_BLOCK; }
+    if mapper.get("PADCMD_GRAPPLE")     > 0.0 { pad |= pad_flags::PADCMD_GRAPPLE; }
+    if mapper.get("PADCMD_GRAPPLE_ATK") > 0.0 { pad |= pad_flags::PADCMD_GRAPPLE_ATK; }
+    if mapper.get("PADCMD_GRAPPLE_ATK_2") > 0.0 { pad |= pad_flags::PADCMD_GRAPPLE_ATK_2; }
+    if mapper.get("PADCMD_END_GRAPPLE") > 0.0 { pad |= pad_flags::PADCMD_END_GRAPPLE; }
 
-    if input.attack {
-        let flag = if moving {
-            directional_attack_flag(mx, my, false)
-        } else {
-            pad_flags::PADCMD_ATTACK_HIGH
+    // Primary/secondary attack (neutral — no directional modifier)
+    if mapper.get("PADCMD_ATTACK_HIGH")     > 0.0 { pad |= pad_flags::PADCMD_ATTACK_HIGH; }
+    if mapper.get("PADCMD_ATTACK_TWO_HIGH") > 0.0 { pad |= pad_flags::PADCMD_ATTACK_TWO_HIGH; }
+
+    // Sweep / lariat
+    if mapper.get("PADCMD_SWEEP_FORWARD") > 0.0 { pad |= pad_flags::PADCMD_SWEEP_FORWARD; }
+    if mapper.get("PADCMD_LARIAT")        > 0.0 { pad |= pad_flags::PADCMD_LARIAT; }
+
+    // Weapon fire (directional — resolved from PADCMD_WEAPON_FIRE + character analogs)
+    if mapper.get("PADCMD_WEAPON_FIRE") > 0.0 {
+        // Determine firing direction from character movement analogs
+        let fwd   = mapper.get("PADCMD_CHR_FWD") > 0.0;
+        let back  = mapper.get("PADCMD_CHR_BAK") > 0.0;
+        let left  = mapper.get("PADCMD_CHR_LFT") > 0.0;
+        let right = mapper.get("PADCMD_CHR_RGH") > 0.0;
+        let dir_flag = match (fwd, back, left, right) {
+            (true, _, true, _)  => pad_flags::PADCMD_WEAPON_FIRE_FWD_LEFT,
+            (true, _, _, true)  => pad_flags::PADCMD_WEAPON_FIRE_FWD_RIGHT,
+            (_, true, true, _)  => pad_flags::PADCMD_WEAPON_FIRE_BACK_LEFT,
+            (_, true, _, true)  => pad_flags::PADCMD_WEAPON_FIRE_BACK_RIGHT,
+            (_, true, _, _)     => pad_flags::PADCMD_WEAPON_FIRE_BACK,
+            (_, _, true, _)     => pad_flags::PADCMD_WEAPON_FIRE_LEFT,
+            (_, _, _, true)     => pad_flags::PADCMD_WEAPON_FIRE_RIGHT,
+            _                   => pad_flags::PADCMD_WEAPON_FIRE_FORWARD,
         };
-        pad |= flag;
-
-        // Add RUNNING ctrl flag for forward attacks while moving
-        if my < -0.3 && fighter.is_grounded {
-            ctrl |= ctrl_flags::RUNNING;
-        }
+        pad |= dir_flag;
     }
 
-    if input.attack_two {
-        let flag = if moving {
-            directional_attack_flag(mx, my, true)
-        } else {
-            pad_flags::PADCMD_ATTACK_TWO_HIGH
-        };
-        pad |= flag;
-    }
+    // Weapon lock-on flag (also read as a pad flag for FSM Packet conditions)
+    if mapper.get("PADCMD_WEAPON_LOCKON") > 0.0 { pad |= pad_flags::PADCMD_WEAPON_LOCKON; }
 
-    let me_flags = 0u32; // filled in when grapple is implemented
-    let target_flags = 0u32;
+    // Character movement direction flags (used by some FSM checks)
+    if mapper.get("PADCMD_CHR_FWD") > 0.0 { pad |= pad_flags::PADCMD_CHR_FWD; }
+    if mapper.get("PADCMD_CHR_BAK") > 0.0 { pad |= pad_flags::PADCMD_CHR_BAK; }
+    if mapper.get("PADCMD_CHR_LFT") > 0.0 { pad |= pad_flags::PADCMD_CHR_LFT; }
+    if mapper.get("PADCMD_CHR_RGH") > 0.0 { pad |= pad_flags::PADCMD_CHR_RGH; }
+
+    // Redirect commands
+    if mapper.get("PADCMD_REDIRECT_FWD_BACK")       > 0.0 { pad |= pad_flags::PADCMD_REDIRECT_FWD_BACK; }
+    if mapper.get("PADCMD_REDIRECT_FWD_BACK_LEFT")  > 0.0 { pad |= pad_flags::PADCMD_REDIRECT_FWD_BACK_LEFT; }
+    if mapper.get("PADCMD_REDIRECT_FWD_BACK_RIGHT") > 0.0 { pad |= pad_flags::PADCMD_REDIRECT_FWD_BACK_RIGHT; }
+
+    // Directional attack 1 (ACK_*) — evaluated fully by control.map
+    if mapper.get("ACK")               > 0.0 { pad |= pad_flags::ACK; }
+    if mapper.get("ACK_LEFT")          > 0.0 { pad |= pad_flags::ACK_LEFT; }
+    if mapper.get("ACK_RIGHT")         > 0.0 { pad |= pad_flags::ACK_RIGHT; }
+    if mapper.get("ACK_FORWARD_LEFT")  > 0.0 { pad |= pad_flags::ACK_FORWARD_LEFT; }
+    if mapper.get("ACK_FORWARD_RIGHT") > 0.0 { pad |= pad_flags::ACK_FORWARD_RIGHT; }
+    if mapper.get("ACK_BACKWARD_LEFT") > 0.0 { pad |= pad_flags::ACK_BACKWARD_LEFT; }
+    if mapper.get("ACK_BACKWARD_RIGHT")> 0.0 { pad |= pad_flags::ACK_BACKWARD_RIGHT; }
+
+    // Directional attack 2 (ACK_TWO_*)
+    if mapper.get("ACK_TWO")               > 0.0 { pad |= pad_flags::ACK_TWO; }
+    if mapper.get("ACK_TWO_LEFT")          > 0.0 { pad |= pad_flags::ACK_TWO_LEFT; }
+    if mapper.get("ACK_TWO_RIGHT")         > 0.0 { pad |= pad_flags::ACK_TWO_RIGHT; }
+    if mapper.get("ACK_TWO_FORWARD_LEFT")  > 0.0 { pad |= pad_flags::ACK_TWO_FORWARD_LEFT; }
+    if mapper.get("ACK_TWO_FORWARD_RIGHT") > 0.0 { pad |= pad_flags::ACK_TWO_FORWARD_RIGHT; }
+    if mapper.get("ACK_TWO_BACKWARD_LEFT") > 0.0 { pad |= pad_flags::ACK_TWO_BACKWARD_LEFT; }
+    if mapper.get("ACK_TWO_BACKWARD_RIGHT")> 0.0 { pad |= pad_flags::ACK_TWO_BACKWARD_RIGHT; }
+
+    // Running flag: forward attack while moving fast
+    if pad & (pad_flags::PADCMD_ATTACK_HIGH | pad_flags::ACK_FORWARD_LEFT | pad_flags::ACK_FORWARD_RIGHT) != 0
+        && mapper.get("PADCMD_CHR_FWD") > 0.0
+        && fighter.is_grounded
+    {
+        ctrl |= ctrl_flags::RUNNING;
+    }
 
     FsmPacket {
         pad_flags: pad,
         ctrl_flags: ctrl,
         class_hit: -1,
-        me_flags,
-        target_flags,
+        me_flags: 0,
+        target_flags: 0,
     }
 }
 
@@ -433,42 +483,10 @@ pub fn apply_timing_windows(
     (gated, false)
 }
 
-/// Map a normalised movement vector + attack button index onto the correct ACK flag.
-fn directional_attack_flag(mx: f32, my: f32, is_two: bool) -> u64 {
-    // Classify direction: my < 0 = forward, my > 0 = back, mx > 0 = left, mx < 0 = right
-    let fwd = my < -0.3;
-    let back = my > 0.3;
-    let left = mx > 0.3;
-    let right = mx < -0.3;
-
-    if is_two {
-        match (fwd, back, left, right) {
-            (true, _, true, _) => pad_flags::ACK_TWO_FORWARD_LEFT,
-            (true, _, _, true) => pad_flags::ACK_TWO_FORWARD_RIGHT,
-            (_, true, true, _) => pad_flags::ACK_TWO_BACKWARD_LEFT,
-            (_, true, _, true) => pad_flags::ACK_TWO_BACKWARD_RIGHT,
-            (_, true, _, _) => pad_flags::ACK_TWO,
-            (_, _, true, _) => pad_flags::ACK_TWO_LEFT,
-            (_, _, _, true) => pad_flags::ACK_TWO_RIGHT,
-            _ => pad_flags::PADCMD_ATTACK_TWO_HIGH,
-        }
-    } else {
-        match (fwd, back, left, right) {
-            (true, _, true, _) => pad_flags::ACK_FORWARD_LEFT,
-            (true, _, _, true) => pad_flags::ACK_FORWARD_RIGHT,
-            (_, true, true, _) => pad_flags::ACK_BACKWARD_LEFT,
-            (_, true, _, true) => pad_flags::ACK_BACKWARD_RIGHT,
-            (_, true, _, _) => pad_flags::ACK,
-            (_, _, true, _) => pad_flags::ACK_LEFT,
-            (_, _, _, true) => pad_flags::ACK_RIGHT,
-            _ => pad_flags::PADCMD_ATTACK_HIGH,
-        }
-    }
-}
-
 /// Update system: ticks every player's FsmRuntime and applies animation outputs.
 pub fn fsm_update_system(
     time: Res<Time>,
+    pad_mapper: Res<PadMapper>,
     mut query: Query<
         (
             &mut FsmRuntime,
@@ -505,7 +523,7 @@ pub fn fsm_update_system(
         let (gated_input, is_critical_frame) =
             apply_timing_windows(&mut runtime, input, &anim_state);
 
-        let mut packet = build_fsm_packet(&gated_input, fighter);
+        let mut packet = build_fsm_packet(&gated_input, fighter, &pad_mapper);
         if is_critical_frame {
             packet.ctrl_flags |= ctrl_flags::CRITICAL_FRAME;
         }

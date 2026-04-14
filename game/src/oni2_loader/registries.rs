@@ -13,6 +13,7 @@ use std::collections::HashMap;
 use crate::oni2_loader::Oni2AnimLibrary;
 use crate::oni2_loader::Oni2DebugBounds;
 use crate::oni2_loader::Oni2Skeleton;
+use crate::oni2_loader::parsers::expl::parse_expl;
 use crate::oni2_loader::parsers::effect::{EffectDef, parse_effect};
 use crate::oni2_loader::parsers::particle::{ParticleSystemDef, parse_ptx};
 use crate::oni2_loader::parsers::projectile::{ProjectileDef, parse_projectile};
@@ -75,6 +76,11 @@ pub struct FxLibrary {
 #[derive(Resource, Default)]
 pub struct ParticleLibrary {
     pub systems: HashMap<String, ParticleSystemDef>,
+}
+
+#[derive(Resource, Default)]
+pub struct ExplosionRegistry {
+    pub explosions: HashMap<String, crate::oni2_loader::parsers::types::BasicExplosionDef>,
 }
 
 pub fn load_global_registries(
@@ -186,4 +192,23 @@ pub fn try_load_ptx(
         "Expected to find {}.ptx for particle system but it was not found in Settings/.",
         name
     );
+}
+
+pub fn load_global_explosions(mut cmd: Commands) {
+    let mut reg = ExplosionRegistry::default();
+    
+    // We scan the exact path the user specified: `assets/Settings/rb.expl`
+    // Note: vfs handles the actual path resolving.
+    if let Ok(text) = vfs::read_to_string("Settings", "rb.expl") {
+        let explosions = parse_expl(&text);
+        for ex in explosions {
+            reg.explosions.insert(ex.name.clone(), ex);
+        }
+    } else {
+        warn!("Could not find Settings/rb.expl in VFS!");
+        return; // Soft fail, missing file
+    }
+    
+    info!("Loaded {} global basic explosions from Settings/rb.expl", reg.explosions.len());
+    cmd.insert_resource(reg);
 }

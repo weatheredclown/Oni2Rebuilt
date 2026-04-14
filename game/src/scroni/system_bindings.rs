@@ -32,6 +32,7 @@ pub fn scroni_sys_event_observer(
     time: Res<Time>,
     screen_fade: Option<Res<ScreenFadeState>>,
     mut ai_target_query: Query<&mut crate::ai::components::AiFighter>,
+    explosion_registry: Res<crate::oni2_loader::registries::ExplosionRegistry>,
     misc_queries: (
         Query<(
             &mut Transform,
@@ -92,6 +93,33 @@ pub fn scroni_sys_event_observer(
                 timer: 0.0,
                 duration,
             });
+        }
+        ScrOniSysEvent::MakeExplosion { script_entity, name, orientation, at } => {
+            info!("MakeExplosion requested: {} at {:?}", name, at);
+            if let Some(def) = explosion_registry.explosions.get(&name.to_lowercase()) {
+                let position = Vec3::new(at[0], at[1], at[2]);
+
+                commands.spawn((
+                    crate::explosion::ActiveExplosion {
+                        name: name.clone(),
+                        at: position,
+                        timer: 0.0,
+                        blast_duration: def.ellipsoid.as_ref().map(|e| e.blast_duration).unwrap_or(1.0),
+                        spawn_source: script_entity, // Store who requested it
+                    },
+                    Transform::from_translation(position),
+                    GlobalTransform::default(),
+                ));
+
+                for fx in &def.fx {
+                    if fx.delay <= 0.0 {
+                        info!("(Instant) Spawning explosion FX: {}", fx.fx_type);
+                        // Trigger PlaySound or other visuals mapped to fx_type
+                    }
+                }
+            } else {
+                warn!("MakeExplosion {} not found in ExplosionRegistry", name);
+            }
         }
         ScrOniSysEvent::PlaySound { script_entity, actor, name } => {
             let mut resolved_name = name.clone();

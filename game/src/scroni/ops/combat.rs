@@ -78,6 +78,20 @@ pub fn exec(ctx: &mut OpsCtx, stmt: &Stmt) -> bool {
             ctx.thread_mut().state = crate::scroni::vm::ExecState::Yielded;
             true
         }
+        Stmt::MakeExplosion { name, orientation, at } => {
+            let name_val = ctx.eval_string(name);
+            let at_val = ctx.eval_vec3(at);
+            let ori_val = orientation.as_ref().map(|o| ctx.eval_vec3(o)).unwrap_or([0.0;3]);
+
+            ctx.sys_request(crate::scroni::vm::SysRequest::MakeExplosion {
+                name: name_val,
+                at: at_val,
+                orientation: ori_val,
+            });
+
+            ctx.thread_mut().state = crate::scroni::vm::ExecState::Yielded;
+            true
+        }
         Stmt::Retreat(opt_expr) => {
             let target_ent = opt_expr.as_ref().map(|expr| {
                 match ctx.eval(expr) {
