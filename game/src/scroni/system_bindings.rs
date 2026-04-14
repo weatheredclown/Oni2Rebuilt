@@ -549,6 +549,8 @@ pub fn scroni_sys_event_observer(
             }
         }
         ScrOniSysEvent::SetAiTarget { actor, target } => {
+            // [AUDIT]: Prototype leakage. Direct writes to `ai.target` and hardcoding `AiState::Pursuing`.
+            // A real combat AI should interpret "Target = X" as an input, letting its behavior tree manage its own enum transitions.
             if let Ok(mut ai) = ai_target_query.get_mut(actor) {
                 ai.target = Some(target);
                 ai.manual_target = true; // Lock it so auto-awareness doesn't overwrite it immediately.
@@ -557,6 +559,7 @@ pub fn scroni_sys_event_observer(
             info!("VM: AI {:?} ordered to Attack {:?}", actor, target);
         }
         ScrOniSysEvent::FollowActor { actor, target } => {
+            // [AUDIT]: Prototype leakage. `ActorFollower` is a hacky prototype component used for steering.
             // "Follow" simply paths closely to the target but does not engage in combat. 
             // We assign an active ActorFollower pointing directly to the target.
             commands.entity(actor).insert(crate::ai::components::ActorFollower {
@@ -641,6 +644,8 @@ pub fn scroni_sys_event_observer(
             }
         }
         ScrOniSysEvent::UsePad { script_entity } => {
+            // [AUDIT]: Prototype leakage. Using `AiFighter` exclusively as an "is AI" boolean marker.
+            // True AI character structures likely have many more components that need pausing/disabling during possession!
             commands
                 .entity(script_entity)
                 .insert(crate::player::components::Player);

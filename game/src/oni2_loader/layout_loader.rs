@@ -373,6 +373,8 @@ pub fn spawn_layout_actor(
         ) {
             if !actor.is_player {
                 // Non-player creature: attach AI + combat components
+                // [AUDIT]: Prototype leakage. `AiFighter` acts as a crude tag for VM interaction.
+                // It should be removed once real AI behavior components replace it.
                 assets.commands.entity(entity).insert((
                     crate::combat::components::Enemy,
                     crate::ai::components::AiFighter::default(),

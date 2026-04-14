@@ -141,6 +141,7 @@ fn debug_kill_creatures(
     creature_query: Query<
         Entity,
         (
+            // [AUDIT]: Prototype leakage. Filters by `AiFighter` purely as an AI marker to kill them.
             With<crate::ai::components::AiFighter>,
             Without<crate::player::components::Player>,
         ),

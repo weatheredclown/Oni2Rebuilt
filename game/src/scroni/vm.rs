@@ -1897,6 +1897,8 @@ pub fn scroni_tick_system(
         let status = if health.current <= 0.0 {
             "dead"
         } else if let Some(ai) = ai_opt {
+            // [AUDIT]: Prototype leakage. `AiState` variants here match the prototype logic to emit generic "fighting".
+            // A real combat AI should decouple its specific behavior trees from the VM's high-level `status` inquiry.
             match ai.state {
                 crate::ai::components::AiState::Pursuing
                 | crate::ai::components::AiState::Circling
