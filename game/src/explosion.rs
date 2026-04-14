@@ -35,7 +35,19 @@ pub fn update_explosion_system(
         // Process delayed FX dynamically based on timer
         for fx in &def.fx {
             if active.timer >= fx.delay && active.timer - dt < fx.delay {
-                info!("(Delayed {:.2}s) Spawning explosion FX: {}", fx.delay, fx.fx_type);
+                commands.trigger(crate::fx_system::SpawnFx {
+                    name: fx.fx_type.clone(),
+                    at: Some(active.at),
+                    parent: None,
+                    start_active: true,
+                });
+                
+                // Fallback attempt to play as sound if it was an Sfx moniker
+                commands.trigger(crate::scroni::vm::ScrOniSysEvent::PlaySound {
+                    script_entity: active.spawn_source,
+                    actor: None,
+                    name: fx.fx_type.clone(),
+                });
             }
         }
 

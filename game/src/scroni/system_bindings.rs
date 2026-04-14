@@ -113,8 +113,18 @@ pub fn scroni_sys_event_observer(
 
                 for fx in &def.fx {
                     if fx.delay <= 0.0 {
-                        info!("(Instant) Spawning explosion FX: {}", fx.fx_type);
-                        // Trigger PlaySound or other visuals mapped to fx_type
+                        commands.trigger(crate::fx_system::SpawnFx {
+                            name: fx.fx_type.clone(),
+                            at: Some(position),
+                            parent: None,
+                            start_active: true,
+                        });
+                        
+                        commands.trigger(ScrOniSysEvent::PlaySound {
+                            script_entity,
+                            actor: None,
+                            name: fx.fx_type.clone(),
+                        });
                     }
                 }
             } else {
