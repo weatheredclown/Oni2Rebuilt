@@ -540,17 +540,6 @@ pub fn fsm_update_system(
                 }
             });
 
-        // Log state + packet every time attack is pressed
-        if packet.pad_flags != 0 {
-            info!(
-                "FSM tick: state='{}' pad=0x{:x} ctrl=0x{:x}{}",
-                runtime.data.state_name(runtime.current_state),
-                packet.pad_flags,
-                packet.ctrl_flags,
-                if is_critical_frame { " [CRITICAL]" } else { "" },
-            );
-        }
-
         let output = runtime.update(&packet, &anim_state, fight_vector_anim.as_deref());
 
         if let Some((anim_name, _rotation)) = &output.attack_anim {
