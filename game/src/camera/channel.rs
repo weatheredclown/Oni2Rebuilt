@@ -1,6 +1,15 @@
+/*
+ * camera/channel.rs — CameraChannel blackboard component.
+ *
+ * Sensors (update_camera_channel) write
+ * current_focus_pos, current_focus_azimuth, is_moving, package_* parameters
+ * etc.  Mode evaluators (follow, fight, script, targeting) read those and write
+ * desired_azimuth / desired_incline / desired_distance / desired_fov.
+ * FocusHeadingZone and CameraBumpDirection enums are also defined here.
+ */
 use bevy::prelude::*;
 
-/// Describes the heading direction of the focus actor relative to the camera heading (from camnewChannel).
+/// Describes the heading direction of the focus actor relative to the camera heading.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum FocusHeadingZone {
     #[default]
@@ -21,7 +30,7 @@ pub enum CameraBumpDirection {
     None,      // No bump
 }
 
-/// A data-only component mirroring the C++ `camnewChannel`.
+/// A data-only blackboard component for the camera rig.
 /// It acts as a blackboard that physical sensors update and specific camera sub-modes
 /// read from and write `desired_*` values into.
 #[derive(Component, Clone, Debug)]

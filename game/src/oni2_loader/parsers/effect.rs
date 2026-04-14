@@ -1,3 +1,10 @@
+/*
+ * oni2_loader/parsers/effect.rs — visual effect definition parser.
+ *
+ * EffectDef enum: Sfx (sound), Sprite (billboard), DelayedParticle, etc.
+ * parse_effect: reads a .effect settings block and returns an EffectDef used by
+ * FxLibrary and spawned at runtime via SpawnFx events.
+ */
 use super::projectile::SettingsExt;
 use super::settings::SettingsBlock;
 use bevy::prelude::*;

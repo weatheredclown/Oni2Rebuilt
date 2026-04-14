@@ -1,3 +1,15 @@
+/*
+ * scroni/vm.rs — ScrOni virtual machine.
+ *
+ * Core execution engine for ONI2 .oni scripts.  Manages named scripts loaded
+ * from the VFS, thread scheduling (fork/kill), blocking actions (sleep, move,
+ * camera), variable scopes, and message passing between threads.
+ * scroni_tick_system: advances all active ScriptExec instances each frame.
+ * update_broadcast_triggers / checkpoint_trigger_system: fire scripts on world events.
+ * update_screen_fade_system / apply_shader_locals_system: render-state helpers.
+ * ScroniTextState / ScrOniSysEvent: shared state and the event type dispatched
+ * to system_bindings for world-mutation side effects.
+ */
 use std::collections::HashMap;
 
 use bevy::prelude::*;

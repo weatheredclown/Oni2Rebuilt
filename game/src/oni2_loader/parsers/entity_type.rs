@@ -1,3 +1,10 @@
+/*
+ * oni2_loader/parsers/entity_type.rs — Entity.type file parser.
+ *
+ * parse_entity_type: reads the text-format Entity.type for a character directory.
+ * Returns Oni2EntityType with model_file, bound_file, skel_file, and lod_radius.
+ * Used by spawn_oni2_entity to locate all sub-assets for a character.
+ */
 use super::types::Oni2EntityType;
 
 pub fn parse_entity_type(content: &str) -> Oni2EntityType {

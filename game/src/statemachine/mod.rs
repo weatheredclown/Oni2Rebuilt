@@ -1,3 +1,11 @@
+/*
+ * statemachine/mod.rs — StateMachinePlugin: player animation FSM.
+ *
+ * Loads player.fsm at Startup into PlayerFsmData (shared Arc).  Attaches
+ * FsmRuntime to any newly spawned Player entity via insert_player_fsm.
+ * fsm_update_system (in PlayerPlugin) evaluates input pad flags each frame
+ * and drives ONI2 animation transitions.
+ */
 pub mod parser;
 pub mod runtime;
 pub mod types;

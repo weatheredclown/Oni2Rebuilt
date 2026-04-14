@@ -1,3 +1,10 @@
+/*
+ * scroni/ops/camera.rs — camera script opcodes.
+ *
+ * Handles CameraReset, CameraScript (begin scripted sequence), and any
+ * camera-mode overrides.  Issues SysRequest::CameraReset / CameraScript
+ * which system_bindings forwards to CameraController.
+ */
 use crate::scroni::ast::Stmt;
 use crate::scroni::vm::{SysRequest, Value};
 use super::OpsCtx;

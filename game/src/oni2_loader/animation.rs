@@ -1,3 +1,11 @@
+/*
+ * oni2_loader/animation.rs — ONI2 skeletal animation playback.
+ *
+ * update_oni2_animation: advances Oni2AnimState frame counters, samples keyframe
+ * channels (position, rotation, scale per bone), and writes SkinnedMesh joint
+ * transforms.  Also drives curve_follower_system, creature_movement_anim_system,
+ * ground_snap_system, and debug-draw systems for attack wedges / bounds / skeleton.
+ */
 use super::*;
 
 /// System: advance CurveFollower phase, evaluate NURBS position, update Transform.

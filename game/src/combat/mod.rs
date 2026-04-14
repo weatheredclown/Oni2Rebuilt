@@ -1,3 +1,11 @@
+/*
+ * combat/mod.rs — CombatPlugin: hit detection, reactions, combos, and death.
+ *
+ * Startup: setup_combat_materials creates and inserts CombatMaterials (fist
+ * sphere meshes / materials used for sandbox visual feedback).
+ * FixedUpdate chain: ground detection → attack sync → hit detection → about-to-
+ * be-hit → hit reaction → combo tracking → death → telemetry → cleanup → timers.
+ */
 pub mod components;
 pub mod events;
 pub mod hitbox;

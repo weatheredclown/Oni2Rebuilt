@@ -1,3 +1,11 @@
+/*
+ * ai/systems.rs — AI behaviour systems.
+ *
+ * ai_target_system: picks the nearest Player as the combat target.
+ * ai_decision_system: evaluates priorities (attack, pursue, circle) and updates
+ * AiState + emits AttackMessage.
+ * ai_movement_system: converts AiState into LinearVelocity toward / around target.
+ */
 use avian3d::prelude::*;
 use bevy::prelude::*;
 use rand::Rng;

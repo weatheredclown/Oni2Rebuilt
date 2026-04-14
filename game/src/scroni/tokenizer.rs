@@ -1,3 +1,11 @@
+/*
+ * scroni/tokenizer.rs — ScrOni source → token stream.
+ *
+ * Tokenizer: character-by-character scanner.  Handles line comments (#),
+ * block comments (## … ##), string literals, integer/float constants,
+ * identifiers, and all operator tokens.  Produces a Vec<Token> consumed by
+ * the compiler.
+ */
 use std::collections::HashMap;
 
 use super::token::{Token, TokenCode, keyword_table};

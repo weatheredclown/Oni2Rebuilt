@@ -1,3 +1,11 @@
+/*
+ * oni2_loader/parsers/model.rs — .mod 3D model file parser.
+ *
+ * parse_mod: reads vertices, normals, colors, UVs, materials, adjuncts (bone
+ * weights), and packets (indexed triangle lists) from the text .mod format.
+ * Handles both ASCII and hex-encoded data sections.  Returns Oni2Model consumed
+ * by build_meshes_by_material and the bone-local conversion utilities.
+ */
 use super::types::{Oni2Adjunct, Oni2Material, Oni2MaterialPass, Oni2Model, Oni2Packet};
 use crate::oni2_loader::utils::binary::{read_f32_le, read_u16_le, read_u32_le};
 use bevy::prelude::*;

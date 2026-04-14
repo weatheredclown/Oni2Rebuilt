@@ -1,3 +1,11 @@
+/*
+ * oni2_loader/parsers/types.rs — shared parsed data types.
+ *
+ * Plain Rust structs shared across multiple parsers:
+ * Oni2Model (vertices, normals, UVs, materials, packets, adjuncts),
+ * Oni2Skeleton (positions, parent indices, names, channels),
+ * Oni2Bound, Oni2Animation, Oni2EntityType, Oni2Material / Oni2Packet, etc.
+ */
 // === Parsed .mod file data ===
 
 #[derive(Debug, Clone)]

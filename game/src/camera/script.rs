@@ -1,3 +1,10 @@
+/*
+ * camera/script.rs — scripted camera path playback.
+ *
+ * script_camera_system runs when mode is set to a scripted sequence by the
+ * ScrOni VM.  Evaluates a Catmull-Rom spline over ScriptCameraSequence control
+ * points, interpolating position and focus toward ScriptFocusTarget over time.
+ */
 use bevy::prelude::*;
 use super::channel::CameraChannel;
 use crate::camera::components::{ActiveCameraMode, CameraController, ScriptCameraSequence, ScriptFocusTarget};
@@ -30,7 +37,7 @@ fn evaluate_catmull_rom(pts: &[Vec3], t: f32) -> Vec3 {
            (-p0 + 3.0 * p1 - 3.0 * p2 + p3) * t3)
 }
 
-/// Calculates optimal desired azimuth, incline, and distance for the Script state (camnewScript).
+/// Calculates optimal desired azimuth, incline, and distance for the scripted camera state.
 pub fn script_camera_system(
     time: Res<Time>, 
     mut camera_query: Query<(

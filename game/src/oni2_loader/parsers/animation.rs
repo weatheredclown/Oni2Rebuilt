@@ -1,8 +1,15 @@
+/*
+ * oni2_loader/parsers/animation.rs — .anim binary file parser.
+ *
+ * Supports three format variants (format_id 0 / ANI0 / ANI1).  Decodes per-bone
+ * keyframe channels (position, orientation, scale) and extracts attack-data (ATDT)
+ * and locomotion-data (LOCO) sub-blocks embedded in the file.
+ */
 use super::types::Oni2Animation;
 use crate::oni2_loader::utils::binary::{read_f32_le, read_u32_le};
 use bevy::prelude::*;
 
-// Magic numbers matching C++ MAKE_MAGIC_NUMBER macro (little-endian u32)
+// Magic numbers identifying the animation format variant (little-endian u32)
 const ANIM_MAGIC_ANI0: u32 = u32::from_le_bytes([b'a', b'n', b'i', 0]); // 0x00696E61
 const ANIM_MAGIC_ANI1: u32 = u32::from_le_bytes([b'A', b'N', b'I', b'1']); // 0x31494E41
 

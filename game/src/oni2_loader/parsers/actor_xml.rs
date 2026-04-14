@@ -1,3 +1,10 @@
+/*
+ * oni2_loader/parsers/actor_xml.rs — actor XML reader.
+ *
+ * Parses per-entity actor.xml files (cached after first read).  Extracts the
+ * base="…" entity type reference and per-property overrides used to configure
+ * spawned entities (health, team, initial animation, etc.).
+ */
 use bevy::prelude::*;
 use std::collections::HashMap;
 use std::sync::{LazyLock, RwLock};

@@ -1,3 +1,11 @@
+/*
+ * scroni/mod.rs — ScroniPlugin: ONI2 scripting runtime.
+ *
+ * ScroniPlugin initialises ScroniTextState and registers the
+ * scroni_sys_event_observer.  The scripting VM (vm.rs) executes .oni script
+ * files compiled from the text AST.  System bindings bridge VM SysRequests
+ * to Bevy ECS operations (spawning entities, playing sound, camera commands, etc.).
+ */
 pub mod ast;
 pub mod compiler;
 pub mod token;

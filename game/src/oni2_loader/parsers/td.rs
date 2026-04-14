@@ -1,3 +1,10 @@
+/*
+ * oni2_loader/parsers/td.rs — TD (trigger/dialogue) audio split parser.
+ *
+ * TdSplit: named entry with VAG and parameter indices into an audio bank.
+ * parse_td: reads the .td text format for a dialogue bank and returns a list
+ * of TdSplits used to locate and play voiced dialogue lines at runtime.
+ */
 use bevy::prelude::*;
 use std::collections::HashMap;
 use std::fs;

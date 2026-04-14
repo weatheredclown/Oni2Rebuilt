@@ -1,3 +1,15 @@
+/*
+ * combat/systems.rs — all combat FixedUpdate systems.
+ *
+ * ground_detection_system: ShapeCaster ground check → Fighter.is_grounded.
+ * attack_sync_system: drives AttackState frames from Oni2AnimState ATDT data.
+ * hit_detection_system: cylinder-slice overlap test for active strike frames.
+ * about_to_be_hit_system: predictive warning for targets about to be struck.
+ * hit_reaction_system: applies knockback impulse and posts HitReactionMessage.
+ * combo_tracking_system: counts consecutive hits and classifies combo strength.
+ * death_system / death_cleanup_system / death_timer_system: entity removal.
+ * telemetry_combat_system: forwards DamageMessage to the telemetry channel.
+ */
 use avian3d::prelude::*;
 use bevy::prelude::*;
 use rb_shared::events::CombatEvent;
@@ -101,7 +113,7 @@ pub fn hit_detection_system(
 
             // Height check: target's capsule Y extent must overlap the disk's world-space Y band.
             // Disk is at attacker's feet + reactdiskheight, ±reactdiskheighttolerance.
-            // Matches rb attackdata.cpp TestHit: [ReactDiskHeight ± Tolerance + chrY] vs [tgtLoY, tgtHiY].
+            // Test: [ReactDiskHeight ± Tolerance + attackerY] vs [tgtLoY, tgtHiY].
             let attacker_feet_y = attacker_tf.translation.y - CAPSULE_CENTER_HEIGHT;
             let disk_min_y = attacker_feet_y + strike.reactdiskheight - strike.reactdiskheighttolerance;
             let disk_max_y = attacker_feet_y + strike.reactdiskheight + strike.reactdiskheighttolerance;

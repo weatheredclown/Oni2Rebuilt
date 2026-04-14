@@ -1,3 +1,12 @@
+/*
+ * oni2_loader/registries.rs — global asset registries.
+ *
+ * EntityLibrary: cached map of entity-dir → parsed EntityType + meshes.
+ * AnimRegistry: cached map of anim-path → Oni2AnimData.
+ * ProjLibrary, FxLibrary, ParticleLibrary: projectile, effect, and particle
+ * definitions loaded at startup and looked up by name at runtime.
+ * try_load_ptx: helper to lazily load a ParticleSystemDef on first reference.
+ */
 use bevy::prelude::*;
 use std::collections::HashMap;
 

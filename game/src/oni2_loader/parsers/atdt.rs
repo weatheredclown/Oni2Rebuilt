@@ -1,3 +1,11 @@
+/*
+ * oni2_loader/parsers/atdt.rs — .atdt attack-data parser.
+ *
+ * AtdtStrike: one active frame window — radius, height, slice angles
+ * (slicestartradians / sliceendradians / sliceheadingradiansb), damage, and
+ * reaction animation index.  parse_atdt returns a Vec<AtdtStrike> consumed by
+ * attack_sync_system and hit_detection_system.
+ */
 use bevy::prelude::*;
 
 #[derive(Debug, Clone, Reflect)]
@@ -29,8 +37,8 @@ pub struct AtdtStrike {
     pub react_sliderphase: [[f32; 4]; 4],
     pub react_speed: [[f32; 4]; 4],
 
-    // --- Combo-linking timing windows (crAtkAnimCtrlBlock) ---
-    // C++ field mapping (from attackdata.cpp FileIO / Save):
+    // --- Combo-linking timing windows ---
+    // Field layout (from the .atdt binary format):
     //   AtkNoQueueThreshold      = before this phase: input is ignored entirely
     //   AtkBeginRedirectThreshold= redirect-window open (earliest branch point)
     //   AtkEndRedirectThreshold  = CRITICAL_FRAME queue window opens
@@ -79,7 +87,7 @@ impl Default for AtdtStrike {
             reactanim: [0; 4],
             react_sliderphase: [[0.0; 4]; 4],
             react_speed: [[0.0; 4]; 4],
-            // C++ crAtkAnimCtrlBlock defaults
+            // Default values for combo-linking timing windows
             opp2_q_start: 0.0,
             opp2_begin_redirect: 0.0,
             opp2_do_start: 0.75,

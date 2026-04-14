@@ -1,3 +1,12 @@
+/*
+ * oni2_loader/utils/bone.rs — bone-space vertex conversion utilities.
+ *
+ * convert_world_to_bone_local: transforms world-space vertex positions in an
+ * Oni2Model to bone-local coordinates by subtracting each bone's bind-pose
+ * world position.  Normalises win32 (world-space) models to match the PS2 /
+ * ASCII bone-local format so both animate identically.
+ * compute_inverse_bind_poses: builds SkinnedMeshInverseBindposes from skeleton.
+ */
 use crate::oni2_loader::parsers::types::{Oni2Model, Oni2Skeleton};
 use bevy::prelude::*;
 

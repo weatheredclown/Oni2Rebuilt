@@ -1,8 +1,15 @@
+/*
+ * camera/fight.rs — combat camera mode.
+ *
+ * fight_camera_system runs when mode is GameFighting.  Applies Z-lock distance
+ * constraints around the target and handles evasive bump inputs (CameraBumpDirection)
+ * to temporarily offset the camera for visual clarity during combat.
+ */
 use bevy::prelude::*;
 use super::channel::CameraChannel;
 use super::components::{ActiveCameraMode, CameraController};
 
-/// Calculates optimal desired azimuth and distance for the combat state (camnewFight).
+/// Calculates optimal desired azimuth and distance for the combat state.
 pub fn fight_camera_system(
     time: Res<Time>,
     mut camera_query: Query<(&CameraController, &mut CameraChannel)>,

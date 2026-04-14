@@ -1,3 +1,10 @@
+/*
+ * scroni/ops/audio.rs — audio script opcodes.
+ *
+ * Handles Stmt::Sound (play / stop sound on an actor) and any other
+ * audio-related statement variants.  Issues SysRequest::PlaySound which the
+ * system_bindings observer routes to Bevy's audio system.
+ */
 use crate::scroni::ast::Stmt;
 use crate::scroni::vm::{SysRequest, Value};
 use bevy::prelude::*;

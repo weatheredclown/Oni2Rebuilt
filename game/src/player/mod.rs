@@ -1,3 +1,11 @@
+/*
+ * player/mod.rs — PlayerPlugin: input handling and physics movement.
+ *
+ * Update chain: keyboard_input_system → gamepad_input_system →
+ * player_mouse_look_system → fsm_update_system (animation state machine).
+ * FixedUpdate: moving_platform_system → player_movement_system (camera-relative
+ * WASD + jump via Avian3d LinearVelocity).
+ */
 pub mod components;
 pub mod systems;
 

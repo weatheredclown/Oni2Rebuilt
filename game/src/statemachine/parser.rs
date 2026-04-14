@@ -1,3 +1,10 @@
+/*
+ * statemachine/parser.rs — .fsm file parser.
+ *
+ * parse_fsm(text) → FsmData.  Reads the ONI2 state machine text format:
+ * state blocks with transition rules that reference pad / ctrl / entity flags
+ * and animation names.  Builds lookup tables for fast runtime evaluation.
+ */
 use std::collections::HashMap;
 
 use super::types::*;

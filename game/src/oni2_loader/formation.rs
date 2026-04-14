@@ -1,3 +1,11 @@
+/*
+ * oni2_loader/formation.rs — --formation mode scene and free-fly camera.
+ *
+ * setup_formation_scene: auto-discovers all 3-letter entity dirs with an
+ * Entity.type file and spawns them in a grid for visual inspection.  Enables
+ * skeleton debug by default and spawns a FreeCamera.
+ * free_camera_system: WASD + right-mouse free-fly drive for FreeCamera entities.
+ */
 use super::*;
 use bevy::prelude::*;
 

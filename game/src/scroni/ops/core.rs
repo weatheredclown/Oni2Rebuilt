@@ -1,3 +1,10 @@
+/*
+ * scroni/ops/core.rs — core control-flow and variable opcodes.
+ *
+ * Handles: if/elif/else, while/break/continue, fork/kill thread, message
+ * send/receive, sleep, print, var assignment, function call, return, and
+ * the ScrOni-specific loop/once/whenever constructs.
+ */
 use crate::scroni::ast::{Stmt, VarType};
 use crate::scroni::vm::{
     hash_name, init_variables, BlockingAction, CallFrame, ExecState, ScrOniThread,

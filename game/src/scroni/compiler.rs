@@ -1,3 +1,11 @@
+/*
+ * scroni/compiler.rs — ScrOni token stream → AST compiler.
+ *
+ * Recursive-descent parser that produces a ScriptFile from a token stream.
+ * CompileError carries line/col for diagnostics.  Handles the full ONI2 ScrOni
+ * grammar: variable declarations, whenever / sequence blocks, all statement
+ * kinds, and expression evaluation with operator precedence.
+ */
 use super::ast::*;
 use super::token::{Token, TokenCode};
 use super::tokenizer::Tokenizer;

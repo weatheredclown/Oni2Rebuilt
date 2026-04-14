@@ -1,3 +1,11 @@
+/*
+ * scroni/ops/mod.rs — scripting opcode dispatch and shared OpsCtx.
+ *
+ * OpsCtx bundles the mutable ScriptExec, thread id, timestamp, and
+ * ScroniContext needed by all opcode handlers.  Each sub-module (animation,
+ * audio, camera, combat, core, movement) implements an exec(ctx, stmt) → bool
+ * function dispatching the statement variants it owns.
+ */
 use crate::scroni::ast::Expr;
 use crate::scroni::vm::{ScriptExec, ScroniContext, Value, SysRequest, ScrOniThread, BlockingAction, ExecState};
 

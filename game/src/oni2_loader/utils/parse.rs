@@ -1,3 +1,10 @@
+/*
+ * oni2_loader/utils/parse.rs — text parsing helpers.
+ *
+ * parse_vec3: extracts a Vec3 from a whitespace-separated triple.
+ * extract_xml_base_attr: pulls the base="…" attribute from an <actor> tag.
+ * Other small string helpers used across layout, entity-type, and settings parsers.
+ */
 use bevy::prelude::Vec3;
 
 /// Extract the base="..." attribute from an <actor> tag.

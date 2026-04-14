@@ -1,6 +1,14 @@
+/*
+ * oni2_loader/parsers/rct.rs — reaction animation enum table.
+ *
+ * ANIMREACT_NAMES: string table mapping integer animReactEnum values (from
+ * .atdt reactanim* fields) to reaction animation name strings, in the order
+ * defined by the animReactEnum format specification.  Used by attack_sync_system to resolve
+ * which reaction animation to play on the hit target.
+ */
 use bevy::prelude::*;
 
-/// React enum names in C++ declaration order (animenums.h).
+/// Reaction animation name table, indexed by animReactEnum integer value.
 /// Index == animReactEnum integer value stored in .atdt reactanim* fields.
 pub const ANIMREACT_NAMES: &[&str] = &[
     "ANIMREACT_REGULAR",            // 0

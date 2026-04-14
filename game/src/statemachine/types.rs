@@ -1,3 +1,11 @@
+/*
+ * statemachine/types.rs — FSM data types and pad/ctrl flag constants.
+ *
+ * FsmData: parsed state machine (states, transitions, conditions).
+ * FsmState / FsmTransition / FsmCondition structs.
+ * pad_flags / ctrl_flags / entity_flags: u64 bitmask constants matching
+ * ONI2's PADCMD_* and CTRL_* enumerations used in transition rule evaluation.
+ */
 /// Bit flags for pad commands — one bit per logical button/direction.
 /// u64 gives room for all ACK directional variants.
 pub mod pad_flags {
@@ -45,7 +53,7 @@ pub mod pad_flags {
 }
 
 /// Character body-state flags checked as Packet conditions.
-/// Mirrors aiStateControlStruct::aiControlFlagEnum from the C++ source.
+/// Character body-state flags checked as packet conditions during FSM evaluation.
 pub mod ctrl_flags {
     pub const REACT: u32 = 0x00001;
     pub const STANDING: u32 = 0x00002;

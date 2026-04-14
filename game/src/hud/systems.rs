@@ -1,3 +1,10 @@
+/*
+ * hud/systems.rs — HUD update systems (currently stubbed).
+ *
+ * HUD was removed; these systems are no-op stubs retained so the plugin
+ * compiles and can be re-enabled without structural changes.  Health /
+ * ComboTracker / AttackState components remain on entities for game logic.
+ */
 use bevy::prelude::*;
 
 // HUD has been removed — systems are stubs that do nothing.

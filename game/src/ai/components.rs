@@ -1,3 +1,10 @@
+/*
+ * ai/components.rs — AI component types.
+ *
+ * AiState enum (Idle, Pursuing, Circling, Attacking, Recovering).
+ * AiFighter: per-entity AI config (attack range, patience, preferred distance)
+ * and runtime state (current AiState, target entity, timers).
+ */
 use bevy::prelude::*;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

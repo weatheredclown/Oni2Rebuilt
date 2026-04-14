@@ -1,3 +1,10 @@
+/*
+ * oni2_loader/parsers/mesh.rs — Bevy mesh builder from Oni2Model.
+ *
+ * build_meshes_by_material: groups Oni2Packet triangles by material index and
+ * builds one Bevy Mesh per material with positions, normals, UVs, colors, and
+ * skinning (joint indices + weights).  Returns (material_index, Mesh) pairs.
+ */
 use super::types::{Oni2Model, Oni2Skeleton};
 use bevy::mesh::{Indices, PrimitiveTopology, VertexAttributeValues};
 use bevy::prelude::*;

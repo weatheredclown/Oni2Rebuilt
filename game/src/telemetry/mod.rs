@@ -1,3 +1,10 @@
+/*
+ * telemetry/mod.rs — TelemetryPlugin: async combat event reporting.
+ *
+ * Spawns a background thread connected to a crossbeam channel.  Game systems
+ * send CombatEvents through TelemetryChannel; the thread forwards them to the
+ * gRPC TelemetryService.  Startup fires a session-open event.
+ */
 pub mod bridge;
 pub mod systems;
 

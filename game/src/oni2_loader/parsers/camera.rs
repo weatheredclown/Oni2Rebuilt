@@ -1,3 +1,10 @@
+/*
+ * oni2_loader/parsers/camera.rs — camera package and parameter-set parsers.
+ *
+ * CameraPackageDef: per-area package linking navigation / targeting / fighting
+ * parameter set names.  CameraParameterSet: numeric tuning values (FOV, distance,
+ * incline offset, lerp rates, dead zones) fed into CameraChannel each frame.
+ */
 use std::collections::HashMap;
 use bevy::prelude::info;
 

@@ -1,3 +1,12 @@
+/*
+ * combat/events.rs — Bevy Message types for combat communication.
+ *
+ * AttackMessage: attacker entity + attack class/strength.
+ * DamageMessage: source, target, amount, reaction kind.
+ * DeathMessage: entity that died.
+ * AboutToBeHitMessage: early-warning for dodge/reaction systems.
+ * HitReactionMessage: triggers animation FSM transition on the receiver.
+ */
 use bevy::prelude::*;
 
 use super::components::{AttackClass, AttackStrength, ReactionKind};

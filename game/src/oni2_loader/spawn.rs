@@ -1,3 +1,11 @@
+/*
+ * oni2_loader/spawn.rs — ONI2 entity spawner.
+ *
+ * spawn_oni2_entity / spawn_oni2_entity_with_rotation: load an entity from
+ * the VFS (model, skeleton, bounds, animations, physics capsule) and spawn it
+ * as a Bevy entity with SkinnedMesh, Oni2AnimLibrary, Collider, and all
+ * associated components.  Also contains moving_platform_system and ground_snap_system.
+ */
 use super::*;
 use crate::oni2_loader::parsers::texture::load_tga_texture;
 use crate::oni2_loader::utils::bone::compute_inverse_bind_poses;

@@ -1,3 +1,11 @@
+/*
+ * oni2_loader/parsers/skeleton.rs — .skel skeleton file parser.
+ *
+ * parse_skel: reads world positions, parent indices, bone names, local offsets,
+ * and channel lists from the text .skel format.  Bones are numbered in
+ * depth-first pre-order.  Returns Oni2Skeleton used by mesh building, IK, and
+ * the bone-local vertex conversion utility.
+ */
 use super::types::Oni2Skeleton;
 
 /// Parse a .skel file and return skeleton with bone world positions, parent indices, and names.

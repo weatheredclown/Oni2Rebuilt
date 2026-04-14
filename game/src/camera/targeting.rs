@@ -1,8 +1,14 @@
+/*
+ * camera/targeting.rs — targeting / ADS camera mode.
+ *
+ * targeting_camera_system runs when mode is GameTargeting.  Applies an
+ * over-the-shoulder, zoomed-in view suitable for ranged weapon aiming.
+ */
 use bevy::prelude::*;
 use super::channel::CameraChannel;
 use super::components::{ActiveCameraMode, CameraController};
 
-/// Calculates optimal desired azimuth, incline, and distance for the Targeting state (camnewTargeting).
+/// Calculates optimal desired azimuth, incline, and distance for the targeting state.
 /// This applies an over-the-shoulder, zoomed-in view, matching sniper ADS behavior natively.
 pub fn targeting_camera_system(
     time: Res<Time>,
@@ -15,9 +21,9 @@ pub fn targeting_camera_system(
             continue;
         }
 
-        // --- Targeting Mode Logic (camnewTargeting Parity) ---
+        // --- Targeting Mode Logic ---
         // Lock desired heading directly onto the reticle's X/Y aim.
-        // It ignores zone tracking natively, matching the C++ behavior 1:1.
+        // Ignores zone tracking — heading is driven purely by reticle position.
         channel.desired_azimuth = channel.reticle_x;
         channel.desired_incline = channel.reticle_y;
 

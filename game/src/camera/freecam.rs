@@ -1,3 +1,10 @@
+/*
+ * camera/freecam.rs — debug free-fly camera (F5).
+ *
+ * freecam_system drives DebugFreeCamera entities with WASD + right-mouse look.
+ * Bypasses CameraChannel entirely — directly writes Transform.  Active only when
+ * a DebugFreeCamera entity exists (spawned by camera_mode_toggle_system on F5).
+ */
 use bevy::prelude::*;
 use bevy::input::mouse::AccumulatedMouseMotion;
 use super::components::DebugFreeCamera;

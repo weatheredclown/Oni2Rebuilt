@@ -1,3 +1,11 @@
+/*
+ * hud/mod.rs — HudPlugin: in-game heads-up display.
+ *
+ * setup_hud: spawns health bars, super-meter bar, combo counter, and status
+ * display on OnEnter(InGame) (skipped in TestAnim mode).
+ * Update systems keep UI nodes synchronised with Health, ComboTracker, and
+ * AttackState component values each frame.
+ */
 pub mod systems;
 
 use bevy::prelude::*;

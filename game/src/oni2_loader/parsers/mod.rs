@@ -1,3 +1,10 @@
+/*
+ * oni2_loader/parsers/mod.rs — ONI2 file format parser sub-modules.
+ *
+ * Each sub-module handles one ONI2 binary or text format.  All parsers read
+ * data through the VFS (crate::vfs) and return plain Rust structs consumed by
+ * spawn.rs, layout_loader.rs, and the various registry loaders.
+ */
 pub mod actor_xml;
 pub mod animation;
 pub mod anims;

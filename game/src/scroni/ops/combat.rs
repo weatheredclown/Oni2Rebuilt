@@ -1,3 +1,10 @@
+/*
+ * scroni/ops/combat.rs — combat script opcodes.
+ *
+ * Handles Stmt::Attack (script-triggered attack on a target entity).
+ * Issues SysRequest::TriggerAttack resolved by system_bindings into an
+ * AttackMessage on the relevant fighter entity.
+ */
 use crate::scroni::ast::Stmt;
 use bevy::prelude::*;
 use crate::scroni::vm::{SysRequest, Value};

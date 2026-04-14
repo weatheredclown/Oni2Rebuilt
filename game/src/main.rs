@@ -1,3 +1,14 @@
+/*
+ * main.rs — application entry point.
+ *
+ * Parses CLI flags (--layout, --sandbox, --formation, --testanim, --testentity,
+ * --path, --dat, --fog, --diagnostics), mounts the virtual file system (DiskVfs +
+ * DaveVfs archives), registers all Bevy plugins, and sets the initial AppState.
+ *
+ * setup_scene: OnEnter(InGame) system for normal / sandbox gameplay — loads the
+ * ONI2 layout (or a flat sandbox ground), attaches Player + combat components to
+ * the Konoko entity, and spawns the camera rig.
+ */
 mod ai;
 mod camera;
 mod combat;
@@ -345,56 +356,14 @@ fn setup_scene(
         ));
         pi.entity
     } else {
-        commands
-            .spawn((
-                Mesh3d(meshes.add(Capsule3d::new(0.4, 1.2))),
-                MeshMaterial3d(materials.add(StandardMaterial {
-                    base_color: Color::srgb(0.2, 0.4, 0.9),
-                    ..default()
-                })),
-                Transform::from_translation(fallback_spawn),
-                scoped.clone(),
-                (
-                    RigidBody::Dynamic,
-                    Collider::capsule(0.4, 1.2),
-                    LockedAxes::new()
-                        .lock_rotation_x()
-                        .lock_rotation_y()
-                        .lock_rotation_z(),
-                    LinearVelocity::default(),
-                    ShapeCaster::new(
-                        Collider::sphere(0.35),
-                        Vec3::NEG_Y * 0.5,
-                        Quat::default(),
-                        Dir3::NEG_Y,
-                    )
-                    .with_max_distance(0.3),
-                ),
-                PrototypeElement,
-                (
-                    Player,
-                    InputState::default(),
-                    Fighter::default(),
-                    FighterId(Uuid::new_v4()),
-                    Health::new(100.0),
-                ),
-                (
-                    AttackState::default(),
-                    ComboTracker::default(),
-                    HitReaction::default(),
-                    AboutToBeHit::default(),
-                ),
-            ))
-            .with_children(|parent| {
-                parent.spawn((
-                    Mesh3d(combat_materials.fist_mesh.clone()),
-                    MeshMaterial3d(combat_materials.fist_startup.clone()),
-                    Transform::from_translation(Vec3::new(0.3, 0.3, -0.5)),
-                    Visibility::Hidden,
-                    FistVisual,
-                ));
-            })
-            .id()
+        spawn_fallback_player(
+            &mut commands,
+            &mut meshes,
+            &mut materials,
+            &combat_materials,
+            fallback_spawn,
+            scoped.clone(),
+        )
     };
 
     // Camera
@@ -409,4 +378,64 @@ fn setup_scene(
             ..default()
         },
     ));
+}
+
+pub fn spawn_fallback_player(
+    commands: &mut Commands,
+    meshes: &mut ResMut<Assets<Mesh>>,
+    materials: &mut ResMut<Assets<StandardMaterial>>,
+    combat_materials: &CombatMaterials,
+    fallback_spawn: Vec3,
+    scoped: InGameEntity,
+) -> Entity {
+    commands
+        .spawn((
+            Mesh3d(meshes.add(Capsule3d::new(0.4, 1.2))),
+            MeshMaterial3d(materials.add(StandardMaterial {
+                base_color: Color::srgb(0.2, 0.4, 0.9),
+                ..default()
+            })),
+            Transform::from_translation(fallback_spawn),
+            scoped,
+            (
+                RigidBody::Dynamic,
+                Collider::capsule(0.4, 1.2),
+                LockedAxes::new()
+                    .lock_rotation_x()
+                    .lock_rotation_y()
+                    .lock_rotation_z(),
+                LinearVelocity::default(),
+                ShapeCaster::new(
+                    Collider::sphere(0.35),
+                    Vec3::NEG_Y * 0.5,
+                    Quat::default(),
+                    Dir3::NEG_Y,
+                )
+                .with_max_distance(0.3),
+            ),
+            PrototypeElement,
+            (
+                Player,
+                InputState::default(),
+                Fighter::default(),
+                FighterId(Uuid::new_v4()),
+                Health::new(100.0),
+            ),
+            (
+                AttackState::default(),
+                ComboTracker::default(),
+                HitReaction::default(),
+                AboutToBeHit::default(),
+            ),
+        ))
+        .with_children(|parent| {
+            parent.spawn((
+                Mesh3d(combat_materials.fist_mesh.clone()),
+                MeshMaterial3d(combat_materials.fist_startup.clone()),
+                Transform::from_translation(Vec3::new(0.3, 0.3, -0.5)),
+                Visibility::Hidden,
+                FistVisual,
+            ));
+        })
+        .id()
 }

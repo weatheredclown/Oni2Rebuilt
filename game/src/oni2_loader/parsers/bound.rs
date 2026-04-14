@@ -1,3 +1,10 @@
+/*
+ * oni2_loader/parsers/bound.rs — .bound bounding geometry parser.
+ *
+ * parse_bound: reads vertices, centroid, edges, quads, and tris from the text
+ * .bound format.  Oni2Bound is used to generate Avian3d collision shapes and
+ * to drive debug-draw_bounds gizmos.
+ */
 use super::types::Oni2Bound;
 
 pub fn parse_bound(content: &str) -> Oni2Bound {

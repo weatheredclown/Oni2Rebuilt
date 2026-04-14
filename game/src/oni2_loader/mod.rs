@@ -1,3 +1,12 @@
+/*
+ * oni2_loader/mod.rs — Oni2LoaderPlugin: ONI2 asset loading and runtime systems.
+ *
+ * Plugin initialises all loader resources (registries, debug flags, checkpoint
+ * index) and registers every Update system: ONI2 animation playback, head IK,
+ * parent resolution, creature movement, fog, skyhat, scroni VM tick, curve
+ * followers, and all debug-draw systems.  Also re-exports formation mode
+ * helpers (setup_formation_scene, free_camera_system) for use in main.rs.
+ */
 pub mod animation;
 pub mod components;
 pub mod curve;

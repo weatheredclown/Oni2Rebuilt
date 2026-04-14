@@ -1,3 +1,11 @@
+/*
+ * projectile_system.rs — ProjectilePlugin: physics-driven projectile simulation.
+ *
+ * SpawnProjectileEvent creates a projectile entity from a named ProjectileDef in
+ * ProjLibrary.  Simulates linear velocity, optional tumbling rotation, and
+ * lifetime expiry.  Collision triggers SpawnFx for impact effects and applies
+ * damage via the combat event system.
+ */
 use crate::fx_system::SpawnFx;
 use crate::oni2_loader::parsers::projectile::{HitType, ProjectileDef};
 use crate::oni2_loader::registries::ProjLibrary;

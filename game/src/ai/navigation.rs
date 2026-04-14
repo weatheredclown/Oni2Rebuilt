@@ -1,3 +1,10 @@
+/*
+ * ai/navigation.rs — pathfinding and actor-follow systems.
+ *
+ * NavGraph resource: A* waypoint graph loaded from layout.graph.
+ * path_following_system: advances entities along a NavPath toward a destination.
+ * actor_follower_system: moves scripted followers to track a target entity.
+ */
 use bevy::prelude::*;
 use std::collections::{BinaryHeap, HashMap};
 use std::cmp::Ordering;

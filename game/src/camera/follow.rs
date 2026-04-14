@@ -1,3 +1,10 @@
+/*
+ * camera/follow.rs — navigation / follow camera mode.
+ *
+ * follow_camera_system runs when mode is GameNavigation or GameTargeting.
+ * Computes desired_azimuth by zone-based lag tracking of the player's facing
+ * direction, with a spin threshold to decide how aggressively to chase turns.
+ */
 use bevy::prelude::*;
 use super::channel::CameraChannel;
 use super::components::{ActiveCameraMode, CameraController};
@@ -89,7 +96,7 @@ pub fn follow_camera_system(
 
             // Dead zone: compute horizontal distance 
             // If we are too close, we don't automatically orient. 
-            // In C++, this checks m_InDeadZone against inner and outer radiuses.
+            // If distance is within the dead zone, we don't automatically orient.
             let cam_xz = Vec3::new(
                 -channel.current_azimuth.sin() * channel.current_distance, 
                 0.0, 

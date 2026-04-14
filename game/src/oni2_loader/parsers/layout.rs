@@ -1,3 +1,10 @@
+/*
+ * oni2_loader/parsers/layout.rs — level layout text-format parser.
+ *
+ * Parses layout/ directory files: lights (LayoutLight), paths (Vec<Vec3>),
+ * fog settings, camera package refs, and the entity placement list.
+ * Returns data structs consumed by layout_loader.rs to spawn level content.
+ */
 use crate::oni2_loader::utils::parse::parse_vec3;
 use bevy::prelude::*;
 

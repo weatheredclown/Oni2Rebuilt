@@ -1,3 +1,10 @@
+/*
+ * combat/components.rs — combat component types.
+ *
+ * Fighter (facing, grounded, jumps), FighterId (UUID), Health, AttackState,
+ * AttackClass / AttackStrength enums, ComboTracker, HitReaction / ActiveReaction,
+ * AboutToBeHit, ReactionKind, DestroyOnDeath, FistVisual, CombatMaterials resource.
+ */
 use bevy::prelude::*;
 use uuid::Uuid;
 
@@ -52,7 +59,7 @@ pub struct DestroyOnDeath(pub f32);
 #[derive(Component)]
 pub struct DeathSequenceTimer(pub Timer);
 
-// === Attack Enums (from rb's crAttackData) ===
+// === Attack Enums ===
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AttackClass {
@@ -205,7 +212,7 @@ pub struct CombatMaterials {
 
 /// All react animations for an entity, indexed by animReactEnum integer.
 /// Loaded at spawn time from entity.tune/<name>/ANIMREACT_*.rct files.
-/// Mirrors C++ ftFighterData::ReactData[NUMOF_ANIMREACT_ENUMS].
+/// Indexed reaction animation library for an entity.
 #[derive(Component, Default, Clone)]
 pub struct ReactLibrary {
     /// Indexed by animReactEnum value (0 = ANIMREACT_REGULAR, etc.).
@@ -227,7 +234,7 @@ impl ReactLibrary {
 /// Ordered list of ANIMATTACK_* alias names for DoTriggerAtk combo cycling.
 /// Loaded at spawn time from the entity's .attacks file; the sequence is the
 /// standing forward combo chain (filenames containing `_comb_fwd_`), in file order.
-/// Mirrors the C++ crAttackData / ftFighterComponent attack sequence.
+/// Ordered forward combo chain for DoTriggerAtk cycling.
 #[derive(Component, Default, Clone)]
 pub struct AttackData {
     pub forward_combo: Vec<String>,

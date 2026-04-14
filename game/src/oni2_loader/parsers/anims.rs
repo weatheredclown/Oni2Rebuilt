@@ -1,3 +1,10 @@
+/*
+ * oni2_loader/parsers/anims.rs — .anims animation manifest parser.
+ *
+ * parse_anims_content: reads the text-format .anims file for an entity and
+ * fills an alias map (short name → full path), loco_pkg, and jump_pkg strings
+ * used to locate the locomotion and jump animation packages.
+ */
 use bevy::prelude::*;
 
 pub fn parse_anims_content(

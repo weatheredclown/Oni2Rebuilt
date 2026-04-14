@@ -1,3 +1,11 @@
+/*
+ * filesystem/vfs.rs — VFS trait, DiskVfs, and MultiVfs implementations.
+ *
+ * Vfs trait: read_file(dir, name), read_to_string, exists, read_dir.
+ * DiskVfs: reads from a real directory on disk.
+ * MultiVfs: chains multiple Vfs backends — searches in insertion order.
+ * set_vfs() / get_vfs() provide a global singleton used throughout the codebase.
+ */
 use std::fs;
 use std::path::{Path, PathBuf};
 

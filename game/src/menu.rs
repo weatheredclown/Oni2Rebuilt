@@ -1,3 +1,12 @@
+/*
+ * menu.rs — MenuPlugin: main menu, animation browser, entity browser, and
+ * layout-loading flow.
+ *
+ * Defines AppState (Menu → LoadingLayout / AnimMenu / EntityMenu → InGame),
+ * SelectedLayout / TestAnimEntity resources, and all UI systems for scrollable
+ * layout / anim / entity picker lists.  InGameEntity is the scoped marker
+ * component used to despawn everything when leaving InGame.
+ */
 use bevy::input::mouse::AccumulatedMouseScroll;
 use bevy::prelude::*;
 

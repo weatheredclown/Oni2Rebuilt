@@ -1,3 +1,10 @@
+/*
+ * oni2_loader/parsers/graph.rs — navigation graph parser.
+ *
+ * GraphPoint / GraphEdge: waypoint nodes and weighted connections from
+ * layout.graph.  parse_graph: reads the text format and builds a LayoutGraph.
+ * Consumed by NavGraph (ai/navigation.rs) for A* pathfinding.
+ */
 use bevy::prelude::*;
 use crate::vfs;
 

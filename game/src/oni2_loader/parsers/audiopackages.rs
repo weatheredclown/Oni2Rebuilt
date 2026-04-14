@@ -1,3 +1,10 @@
+/*
+ * oni2_loader/parsers/audiopackages.rs — audio package manifest parser.
+ *
+ * Parses AudioNugget definitions (sound name, volume, pitch, delay, random
+ * ranges).  AudioPackage groups nuggets by logical name and is loaded into
+ * a registry used by the ScrOni sound opcodes and fx_system.
+ */
 use std::collections::HashMap;
 
 #[derive(Debug, Clone)]

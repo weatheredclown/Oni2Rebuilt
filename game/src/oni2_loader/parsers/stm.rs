@@ -1,3 +1,10 @@
+/*
+ * oni2_loader/parsers/stm.rs — STM streaming audio asset loader.
+ *
+ * StmAssetLoader: Bevy AssetLoader for the ONI2 .stm streaming audio format.
+ * Decodes the container and produces an AudioSource for Bevy's audio system.
+ * Registered as a Bevy asset loader so .stm files can be loaded via AssetServer.
+ */
 use std::io::Cursor;
 use bevy::asset::{AssetLoader, LoadContext, io::Reader};
 use bevy::audio::AudioSource;

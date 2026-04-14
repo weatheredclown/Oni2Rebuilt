@@ -1,3 +1,10 @@
+/*
+ * player/components.rs — player component types.
+ *
+ * Player marker, InputState (movement Vec2, attack/jump/evade/block bools,
+ * yaw_delta), and any other per-player data that input backends write and
+ * movement / combat systems read.
+ */
 use bevy::prelude::*;
 
 /// Marker component for the player entity.

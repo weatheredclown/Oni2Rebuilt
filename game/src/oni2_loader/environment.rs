@@ -1,3 +1,12 @@
+/*
+ * oni2_loader/environment.rs — level environment resources.
+ *
+ * LayoutFogSettings, NavigationCurves (named NURBS paths from layout.paths),
+ * ActiveCameraPackage / CameraPackages / CameraParameterSets (loaded from
+ * layout.cameras), FogEnabled marker, DebugLightGridState.  Systems:
+ * apply_fog_to_camera, update_skyhat, toggle_debug_fog, toggle_debug_light_grid,
+ * update_debug_light_grid, scroni_curve_bridge_system.
+ */
 use super::*;
 
 #[derive(Resource)]

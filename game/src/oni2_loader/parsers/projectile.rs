@@ -1,3 +1,10 @@
+/*
+ * oni2_loader/parsers/projectile.rs — projectile definition parser.
+ *
+ * HitType enum (Blunt, Energy, Fire, Plasma, …).  ProjectileDef: velocity,
+ * damage, hit FX names, lifetime, hit type.  parse_projectile reads a .projectile
+ * settings block.  Stored in ProjLibrary and spawned via SpawnProjectileEvent.
+ */
 use bevy::prelude::*;
 
 use super::settings::{SettingsBlock, SettingsValue};

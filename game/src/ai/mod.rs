@@ -1,3 +1,11 @@
+/*
+ * ai/mod.rs — AiPlugin: enemy AI decision loop.
+ *
+ * Runs in FixedUpdate before combat: target selection, behavioural state machine
+ * (Idle / Pursuing / Circling / Attacking / Recovering), movement steering, and
+ * A* path following.  Scheduled before ground_detection_system so physics sees
+ * intent-derived velocity each tick.
+ */
 pub mod components;
 pub mod systems;
 pub mod navigation;

@@ -1,3 +1,10 @@
+/*
+ * oni2_loader/parsers/loco.rs — locomotion package parser.
+ *
+ * LocomotionController component: forward and strafe gait blend lists, and
+ * transition maps keyed by AnimId.  Parsed from the loco package referenced
+ * in .anims and used by creature_movement_anim_system to blend walk/run cycles.
+ */
 use crate::oni2_loader::AnimId;
 use bevy::prelude::*;
 use std::collections::HashMap;

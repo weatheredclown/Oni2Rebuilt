@@ -1,6 +1,14 @@
-/// Head IK system — ports animator/headik.cpp to Bevy.
+/*
+ * oni2_loader/headik.rs — head inverse-kinematics system.
+ *
+ * head_ik_setup_system: attaches HeadIkState to newly spawned Oni2 entities.
+ * head_ik_system (runs after update_oni2_animation): rate-limited approach of
+ * neck+head bones toward a world-space goal, with angle clamping (azimuth/incline
+ * split equally between neck and head in spine-local space).
+ */
+/// Head IK system.
 ///
-/// Algorithm (matches C++ exactly):
+/// Algorithm:
 ///   1. Transform the world-space goal into spine-local space.
 ///   2. Extract azimuth  = atan2(-x, -z)  and  incline = asin(y/dist).
 ///   3. Proportionally clip both angles so their direction is preserved.
@@ -16,7 +24,7 @@ use crate::oni2_loader::animation::Oni2AnimState;
 use crate::oni2_loader::components::{ActiveHeadIK, ControlHeadTask};
 
 // ---------------------------------------------------------------------------
-// Tuning (degrees → radians where applicable, matching C++ defaults)
+// Tuning constants (degrees → radians where applicable)
 // ---------------------------------------------------------------------------
 const AZM_RANGE:    f32 = 80.0  * PI / 180.0; // horizontal look limit
 const INC_RANGE:    f32 = 45.0  * PI / 180.0; // vertical look limit
@@ -42,7 +50,7 @@ pub struct HeadIKState {
 }
 
 // ---------------------------------------------------------------------------
-// Helpers (direct ports of C++ statics)
+// Helpers
 // ---------------------------------------------------------------------------
 
 /// Proportional clip: scales (x, y) toward zero preserving direction so
@@ -182,7 +190,7 @@ pub fn head_ik_system(
 
             let dist = local_target.length();
             let mut inc = if dist > 0.001 { (local_target.y / dist).asin() } else { 0.0 };
-            // atan2(-x, -z) matches the C++ formula (forward = -Z in both Bevy & Oni2 local)
+            // atan2(-x, -z): forward faces -Z in local space, so negate to get world azimuth
             let mut azm = f32::atan2(-local_target.x, -local_target.z);
 
             clip(&mut azm, &mut inc, AZM_RANGE, INC_RANGE);
@@ -202,9 +210,9 @@ pub fn head_ik_system(
             continue;
         }
 
-        // ---- Build IK local rotation (mirrors C++ PoseSkeleton) ----------
-        // C++:  neck.MakeRotateX(incline*0.5)  →  neck.RotateY(azimuth*0.5)
-        // In Bevy quaternion order (right-to-left): Ry * Rx = apply Rx first
+        // ---- Build IK local rotation ------------------------------------------
+        // neck: RotX(incline*0.5) then RotY(azimuth*0.5), shared with head bone.
+        // In Bevy quaternion order (right-to-left): Ry * Rx = apply Rx first.
         let ik_local_rot = Quat::from_rotation_y(state.current_azimuth * 0.5)
                          * Quat::from_rotation_x(state.current_incline * 0.5);
 

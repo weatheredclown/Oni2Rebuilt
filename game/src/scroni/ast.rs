@@ -1,3 +1,11 @@
+/*
+ * scroni/ast.rs — ScrOni abstract syntax tree types.
+ *
+ * ScriptFile, ScriptDef, VarDecl, Block, Stmt, Expr — the full AST produced
+ * by the compiler and consumed by the VM.  Mirrors the ONI2 ScrOni language
+ * structure: scripts with whenever/sequence blocks, typed variables, and a
+ * rich set of game-specific statement kinds.
+ */
 /// A complete .oni file can contain `uses` declarations and multiple scripts.
 #[derive(Debug, Clone)]
 pub struct ScriptFile {

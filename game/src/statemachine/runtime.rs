@@ -1,3 +1,11 @@
+/*
+ * statemachine/runtime.rs — FsmRuntime component and fsm_update_system.
+ *
+ * FsmRuntime holds per-entity FSM execution state: current state index, active
+ * animation name, timed_out flag.  fsm_update_system evaluates pad flags from
+ * InputState + FightVectorTrigger hits each frame, fires transitions, and posts
+ * AttackMessage / updates Oni2AnimState when a new animation starts.
+ */
 use bevy::prelude::*;
 use std::sync::Arc;
 
@@ -117,9 +125,8 @@ impl FsmRuntime {
     ///
     /// `fight_vector_anim` is the pre-resolved fight-vector attack name (if the
     /// player is standing inside a trigger and facing within 30°).  It is passed
-    /// to `DoTriggerAtk` so the action can succeed or fail inline — matching the
-    /// C++ `ATriggerAtk` / `ActionFailed` behaviour where a failed action lets
-    /// rule evaluation continue to the next rule.
+    /// to `DoTriggerAtk` so the action can succeed or fail inline — a failed action
+    /// lets rule evaluation continue to the next rule rather than halting.
     pub fn update(&mut self, packet: &FsmPacket, anim_state: &Oni2AnimState, fight_vector_anim: Option<&str>) -> FsmOutput {
         let mut output = FsmOutput::default();
         self.evaluate_state(self.current_state, packet, anim_state, &mut output, 0, fight_vector_anim);
@@ -156,10 +163,9 @@ impl FsmRuntime {
             }
 
             // Execute actions.
-            // `action_failed` mirrors C++ ActionFailed: when true the goto is
-            // suppressed *and* we continue to the next rule (matching the C++
-            // UpdateEvents loop which only stops when HandleEventDirectly returns
-            // true, i.e. the state actually changed).
+            // `action_failed`: when true the goto is suppressed and evaluation
+            // continues to the next rule — the loop only stops when the state
+            // actually changes.
             let mut action_failed = false;
 
             for action in &rule.actions {
@@ -178,9 +184,9 @@ impl FsmRuntime {
                         output.counter = true;
                     }
                     FsmAction::DoTriggerAtk => {
-                        // Mirrors C++ ATriggerAtk: only succeeds when a fight-vector
-                        // trigger is in range and the character is facing within 30°.
-                        // On failure → ActionFailed, rule evaluation continues.
+                        // Only succeeds when a fight-vector trigger is in range
+                        // and the character is facing within 30°.
+                        // On failure, rule evaluation continues to the next rule.
                         if let Some(anim) = fight_vector_anim {
                             output.attack_anim = Some((anim.to_string(), 0));
                             self.active_anim = Some(anim.to_string());
@@ -226,7 +232,7 @@ impl FsmRuntime {
             }
 
             // If the action failed, don't apply the goto — continue to the next
-            // rule (mirrors C++ UpdateEvents: only stops when state changed).
+            // rule — only stops when the state actually changes.
             if action_failed {
                 continue;
             }
@@ -342,7 +348,7 @@ pub fn build_fsm_packet(input: &InputState, fighter: &Fighter) -> FsmPacket {
 /// Apply ATDT combo-linking timing windows to produce a gated InputState and
 /// the CRITICAL_FRAME ctrl flag.
 ///
-/// Windows (from crAtkAnimCtrlBlock):
+/// Windows:
 ///   0.0 .. opp2_q_start   → no-queue: ignore attack input entirely
 ///   opp2_q_start .. opp2_do_start → queue: remember press, don't fire yet
 ///   opp2_do_start .. opp2_do_end  → branch/CRITICAL_FRAME: fire queued or new press
@@ -505,7 +511,7 @@ pub fn fsm_update_system(
         }
 
         // Pre-resolve fight vector so DoTriggerAtk can succeed or fail inline.
-        // Mirrors C++ ATriggerAtk: query level-placed triggers, angle-check facing.
+        // Query level-placed triggers and angle-check facing for DoTriggerAtk.
         let fighter_pos = gtf.translation();
         let fight_vector_anim: Option<String> =
             find_fight_trigger_vector(fighter_pos, &triggers).and_then(|fv| {

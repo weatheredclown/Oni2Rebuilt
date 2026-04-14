@@ -1,3 +1,10 @@
+/*
+ * scroni/ops/movement.rs — movement script opcodes.
+ *
+ * Handles Face, Move, Follow, Teleport, and related actor-movement statements.
+ * Issues BlockingAction for timed moves and SysRequest variants that
+ * system_bindings translates into Transform / LinearVelocity mutations.
+ */
 use crate::scroni::ast::Stmt;
 use crate::scroni::vm::{ExecState, BlockingAction, SysRequest, Value};
 use bevy::prelude::*;

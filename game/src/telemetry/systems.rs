@@ -1,3 +1,9 @@
+/*
+ * telemetry/systems.rs — Bevy systems that emit telemetry events.
+ *
+ * send_startup_event fires once at Startup to record a session-begin event.
+ * Additional per-combat systems (damage, death) are wired from combat observers.
+ */
 use bevy::prelude::*;
 use rb_shared::events::CombatEvent;
 use uuid::Uuid;

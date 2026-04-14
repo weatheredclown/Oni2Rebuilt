@@ -1,6 +1,13 @@
+/*
+ * combat/hitbox.rs — geometric hit-test utilities.
+ *
+ * cone_hit_test: returns true if a target position falls within a cone defined
+ * by origin, forward direction, half-angle, and range.  Used by hit_detection_system
+ * as a fast first-pass before the full ATDT cylinder-slice check.
+ */
 use bevy::prelude::*;
 
-/// Cone-shaped hit test inspired by ONI 2's crStrike sweep system.
+/// Cone-shaped hit test.
 ///
 /// Returns true if `target_pos` is within a cone defined by:
 /// - `origin`: base of the cone

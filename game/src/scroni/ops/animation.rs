@@ -1,3 +1,10 @@
+/*
+ * scroni/ops/animation.rs — animation script opcodes.
+ *
+ * Handles GotoCurvePhase and any other animation-related Stmt variants.
+ * Issues BlockingAction::GotoCurvePhase to pause the script thread until
+ * the entity reaches the specified curve phase.
+ */
 use crate::scroni::ast::Stmt;
 use crate::scroni::vm::{ExecState, BlockingAction};
 use super::OpsCtx;

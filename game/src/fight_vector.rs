@@ -1,8 +1,17 @@
-/// Fight vector trigger system — matches ONI2's trigFightVectorComponent.
+/*
+ * fight_vector.rs — FightVectorPlugin: fight vector trigger system.
+ *
+ * FightVectorTrigger entities are placed in the world by level designers.
+ * DoTriggerAtk queries the best trigger near a fighter and uses its recommended
+ * attack.  Two scoring modes: directional (projection onto a forward vector) and
+ * positional (proximity to a target point).  No per-frame systems — triggers are
+ * passive query targets; layout loading populates them.
+ */
+/// Fight vector trigger system.
 ///
 /// Designers place FightVectorTrigger entities in the world. When a fighter steps
 /// inside a trigger's radius, DoTriggerAtk queries the best one and uses its
-/// recommended attack. Two modes (mirrors C++):
+/// recommended attack. Two scoring modes:
 ///
 ///   Directional — trigger has a normalized direction (offset); scored by flat
 ///                 projection of (target_pt - fighter_pos) onto that direction.
@@ -60,7 +69,7 @@ impl FightVectorTrigger {
         dx * dx + dz * dz <= self.radius * self.radius
     }
 
-    /// Relevance score (lower = more relevant).  Mirrors C++ r2 selection.
+    /// Relevance score (lower = more relevant).
     fn score(&self, trigger_origin: Vec3, fighter_pos: Vec3) -> f32 {
         if self.directional {
             let dir = Vec3::new(self.offset.x, 0.0, self.offset.z).normalize_or_zero();
@@ -113,8 +122,6 @@ pub struct FightVectorResult {
 
 /// Scan all active FightVectorTrigger entities and return the best one for
 /// `fighter_pos`, or `None` if the fighter is outside every trigger.
-///
-/// Mirrors `trigFightVectorComponent::GetFightTriggerVector`.
 pub fn find_fight_trigger_vector(
     fighter_pos: Vec3,
     triggers: &Query<(&GlobalTransform, &FightVectorTrigger)>,
@@ -133,7 +140,7 @@ pub fn find_fight_trigger_vector(
         }
 
         let score = trigger.score(origin, fighter_pos);
-        // C++: skip if score >= best; also reject score == 0 (degenerate)
+        // Skip if score >= best; also reject score == 0 (degenerate)
         if score == 0.0 || score >= best_score {
             continue;
         }
@@ -150,13 +157,13 @@ pub fn find_fight_trigger_vector(
 }
 
 // ---------------------------------------------------------------------------
-// Angle check helper (mirrors C++ 30° threshold)
+// Angle check helper
 // ---------------------------------------------------------------------------
 
 /// Returns true when the fighter's heading is within `threshold_deg` of `target_dir`.
 /// `fighter_facing` and `target_dir` are flat (XZ) unit vectors.
 pub fn facing_within(fighter_facing: Vec3, target_dir: Vec3, threshold_deg: f32) -> bool {
-    // Use atan2 difference, same as C++
+    // atan2 difference
     let heading = f32::atan2(fighter_facing.x, fighter_facing.z);
     let desired = f32::atan2(target_dir.x, target_dir.z);
     let mut diff = (heading - desired).abs();

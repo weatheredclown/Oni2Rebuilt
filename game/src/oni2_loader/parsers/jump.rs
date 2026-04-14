@@ -1,3 +1,10 @@
+/*
+ * oni2_loader/parsers/jump.rs — jump parameter data parser.
+ *
+ * JumpState component: height, gravity_factor, length, jump_type string.
+ * Parsed from the jump package referenced in an entity's .anims file and
+ * attached to the entity on spawn to drive jump physics.
+ */
 use bevy::prelude::*;
 
 #[derive(Debug, Clone, Reflect, Component, Default)]

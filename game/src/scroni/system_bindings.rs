@@ -1,3 +1,10 @@
+/*
+ * scroni/system_bindings.rs — Bevy observer that executes ScrOni VM system requests.
+ *
+ * scroni_sys_event_observer: handles every ScrOniSysEvent variant emitted by the VM:
+ * SpawnEntity, PlaySound, PlayFx, CameraScript, ScreenFade, TriggerLayout, etc.
+ * Acts as the bridge between the pure-Rust scripting VM and Bevy ECS world mutations.
+ */
 use crate::scroni::vm::*;
 use bevy::prelude::*;
 pub fn scroni_sys_event_observer(
@@ -268,7 +275,7 @@ pub fn scroni_sys_event_observer(
             }
         }
         ScrOniSysEvent::CameraShake => {
-            // Fixed shake parameters matching rb xcameracommand.cpp DoCameraShake:
+            // Fixed shake parameters:
             // ShakeCamera(Vector3(0.1, 0.06, 0.03), 1.5s, 1.5s)
             for (_, _, mut channel, _) in &mut camera_query {
                 channel.shake_amplitude = Vec3::new(0.1, 0.06, 0.03);

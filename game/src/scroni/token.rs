@@ -1,4 +1,11 @@
-/// Token codes matching the C++ ScrOni tokenizer.
+/*
+ * scroni/token.rs — ScrOni token types and keyword table.
+ *
+ * TokenCode enum (Error, Eof, literals, identifiers, operators, all keywords).
+ * Token struct: code + source text + line/col.  keyword_table() returns the
+ * case-insensitive keyword → TokenCode mapping used by the tokenizer.
+ */
+/// ScrOni token codes.
 /// Keywords are case-insensitive; identifiers preserve case.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum TokenCode {
@@ -31,7 +38,7 @@ pub enum TokenCode {
     LessOrEqual,
     Cross,
 
-    // Keywords (alphabetical, matching C++ TOKENLIST)
+    // Keywords (alphabetical)
     ActorEnabled,
     Accuracy,
     Active,

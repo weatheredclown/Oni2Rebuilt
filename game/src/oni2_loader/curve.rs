@@ -1,6 +1,13 @@
+/*
+ * oni2_loader/curve.rs — NURBS curve evaluation.
+ *
+ * NurbsCurve: cubic B-spline for smooth path evaluation.
+ * Control points come from layout.paths; knot vector uses multiple end knots.
+ * evaluate(t) → Vec3 used by CurveFollower and scripted camera paths.
+ */
 use bevy::math::Vec3;
 
-/// Cubic B-spline (NURBS) curve matching the C++ cNurbsCurve implementation.
+/// Cubic B-spline (NURBS) curve for smooth path evaluation.
 /// Control points from layout.paths, knot vector generated with multiple end knots.
 pub struct NurbsCurve {
     points: Vec<Vec3>,

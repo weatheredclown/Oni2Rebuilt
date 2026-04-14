@@ -1,3 +1,11 @@
+/*
+ * debug.rs — DebugPlugin: in-game developer tools.
+ *
+ * FPS counter (top-right overlay), physics collider wireframe toggle (F7),
+ * player-attached point light toggle (F8), AI creature kill key (K), and
+ * F11 geometry scanner that prints all entities within 5 m of the player.
+ * Avian3d physics debug gizmos are disabled at startup and re-enabled by F7.
+ */
 use avian3d::debug_render::PhysicsGizmos;
 use bevy::diagnostic::{DiagnosticsStore, FrameTimeDiagnosticsPlugin};
 use bevy::ecs::relationship::Relationship;

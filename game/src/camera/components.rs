@@ -1,3 +1,11 @@
+/*
+ * camera/components.rs — camera component types.
+ *
+ * CameraController: active mode (GameNavigation / GameFighting / GameTargeting)
+ * and spring parameters.  ActiveCameraMode enum.  DebugFreeCamera for the F5
+ * free-fly override.  PrototypeElement / PrototypeVisible for dev-overlay toggle.
+ * ScriptCameraSequence / ScriptFocusTarget for scripted camera paths.
+ */
 use bevy::prelude::*;
 
 /// Marker for prototype gameplay elements (capsules, combat markers, HUD) that can be toggled.
@@ -43,7 +51,7 @@ impl Default for ActiveCameraMode {
     }
 }
 
-/// CameraController tracks the active state and handles mode switching, mirroring camnewManager.
+/// CameraController tracks the active mode and handles mode switching.
 #[derive(Component, Default)]
 pub struct CameraController {
     pub active_mode: ActiveCameraMode,

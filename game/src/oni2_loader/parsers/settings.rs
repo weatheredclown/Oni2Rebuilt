@@ -1,3 +1,10 @@
+/*
+ * oni2_loader/parsers/settings.rs — generic key-value settings file parser.
+ *
+ * SettingsValue enum (String, Float, Int, FloatArray, Block) and SettingsBlock
+ * (HashMap<String, SettingsValue>).  parse_settings: tokenises the shared text
+ * format used by .projectile, .effect, .ptx, camera package files, etc.
+ */
 use bevy::prelude::*;
 use std::collections::HashMap;
 

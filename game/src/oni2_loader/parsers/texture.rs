@@ -1,3 +1,11 @@
+/*
+ * oni2_loader/parsers/texture.rs — ONI2 texture decoders.
+ *
+ * decode_tex: decodes the ONI2 proprietary .tex format (various pixel types:
+ * RGBA4444, RGBA5551, RGB565, A8, etc.) into raw RGBA8 bytes.
+ * load_tga_texture: loads a .tga file from the VFS into a Bevy Image handle.
+ * Used by spawn.rs and layout_loader.rs when building StandardMaterial instances.
+ */
 use bevy::prelude::*;
 
 pub fn decode_tex(data: &[u8]) -> Option<(u32, u32, Vec<u8>, bool)> {

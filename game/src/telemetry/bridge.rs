@@ -1,3 +1,10 @@
+/*
+ * telemetry/bridge.rs — TelemetryChannel resource and background gRPC thread.
+ *
+ * TelemetryChannel holds the crossbeam Sender used by in-game systems.
+ * spawn_telemetry_thread launches a Tokio runtime on a background thread,
+ * drains the Receiver, and forwards events to TelemetryServiceClient over gRPC.
+ */
 use bevy::prelude::*;
 use crossbeam_channel::{Receiver, Sender};
 use rb_shared::events::CombatEvent;

@@ -1,3 +1,11 @@
+/*
+ * camera/polar.rs — polar coordinate interpolation and transform application.
+ *
+ * polar_interpolation_system: lerps current_azimuth / current_incline /
+ * current_distance / current_fov toward their desired_ counterparts each frame.
+ * apply_camera_transform: converts the current polar values into a world-space
+ * Transform (position = focus + spherical offset, looking_at focus point).
+ */
 use bevy::prelude::*;
 use super::channel::CameraChannel;
 use super::components::CameraController;
@@ -138,7 +146,7 @@ pub fn apply_camera_transform(
 }
 
 /// Applies and decays any active camera shake as a random rotation perturbation.
-/// Matches rb camnewManager::ProcessShake: random Euler angles, damped when near expiry.
+/// Applies a random Euler-angle perturbation, damped as the shake timer approaches expiry.
 fn apply_camera_shake(cam_tf: &mut Transform, channel: &mut CameraChannel, dt: f32) {
     if channel.shake_time_remaining <= 0.0 {
         return;

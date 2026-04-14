@@ -1,3 +1,13 @@
+/*
+ * camera/systems.rs — shared camera systems.
+ *
+ * camera_mode_toggle_system: Tab cycles Navigation ↔ Fighting; F5 spawns /
+ * despawns the debug free camera.
+ * update_camera_channel: gathers player position, facing, input, scroll, and
+ * active camera package parameters into CameraChannel each frame.
+ * prototype_toggle_system: F2 shows/hides prototype overlay and HUD.
+ * debug_render_camera_targets: draws gizmo spheres for focus/lens positions.
+ */
 use bevy::prelude::*;
 use bevy::input::mouse::AccumulatedMouseScroll;
 

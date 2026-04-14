@@ -1,3 +1,9 @@
+/*
+ * oni2_loader/utils/binary.rs — little-endian binary read helpers.
+ *
+ * read_u16_le, read_u32_le, read_f32_le: read typed values from a &[u8] at a
+ * given byte offset.  Used by all binary format parsers (model, animation, etc.).
+ */
 /// Read a little-endian u32 from a byte slice at an offset.
 pub fn read_u32_le(data: &[u8], off: usize) -> u32 {
     u32::from_le_bytes([data[off], data[off + 1], data[off + 2], data[off + 3]])

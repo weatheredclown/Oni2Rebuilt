@@ -1,3 +1,12 @@
+/*
+ * camera/mod.rs — CameraPlugin: multi-mode camera rig.
+ *
+ * Orchestrates the camera pipeline each frame:
+ *   update_camera_channel → mode evaluators (follow / fight / script / targeting)
+ *   → polar_interpolation_system → apply_camera_transform.
+ * PrototypeVisible resource and prototype_toggle_system (F2) also live here.
+ * freecam_system handles the F5 debug free-fly camera independently.
+ */
 pub mod channel;
 pub mod components;
 pub mod systems;

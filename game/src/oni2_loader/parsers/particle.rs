@@ -1,3 +1,11 @@
+/*
+ * oni2_loader/parsers/particle.rs — particle system definition parser.
+ *
+ * ParticleSystemDef: texture handle, spawn parameters (position variance,
+ * radius, life, velocity, color, birth rate, particle count).  parse_ptx reads
+ * the .ptx settings block and loads the referenced texture into Assets<Image>.
+ * Stored in ParticleLibrary and instantiated by fx_system via SpawnPtx events.
+ */
 use bevy::prelude::*;
 use std::collections::HashMap;
 

@@ -1,3 +1,13 @@
+/*
+ * oni2_loader/testanim.rs — --testanim / --testentity mode scenes.
+ *
+ * TestAnimMode / TestEntityMode resources carry the CLI path/name.
+ * setup_testanim_scene: spawns a single entity with the specified .anim file
+ * playing, plus an orbit camera and floor plane.
+ * setup_testentity_scene: spawns a named entity in a minimal environment.
+ * testanim_input_system / update_testanim_hud / orbit_camera_system: controls
+ * and HUD for the animation viewer.
+ */
 use super::*;
 use bevy::prelude::Resource;
 

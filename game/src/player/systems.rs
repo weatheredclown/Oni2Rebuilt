@@ -1,3 +1,11 @@
+/*
+ * player/systems.rs — player input and movement systems.
+ *
+ * keyboard_input_system / gamepad_input_system: write InputState from hardware.
+ * player_mouse_look_system: yaw camera or rotate player while blocking.
+ * player_movement_system (FixedUpdate): converts InputState + camera forward
+ * into Avian3d LinearVelocity; handles jump impulses and model rotation.
+ */
 use avian3d::prelude::*;
 use bevy::input::mouse::MouseMotion;
 use bevy::prelude::*;

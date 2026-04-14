@@ -1,3 +1,10 @@
+/*
+ * oni2_loader/parsers/hd_bd.rs — HD/BD audio subsong parser.
+ *
+ * SubsongInfo: index, stream offset/size, sample rate, channel count.
+ * parse_hd: reads the .HD header file for a DAVE audio bank and returns the
+ * list of embedded subsongs used to seek into the corresponding .BD stream.
+ */
 use anyhow::{bail, Result};
 use std::io::Cursor;
 

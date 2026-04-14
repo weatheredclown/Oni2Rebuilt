@@ -1,3 +1,10 @@
+/*
+ * filesystem/dave_vfs.rs — read-only VFS backend for DAVE archive files.
+ *
+ * Parses the DAVE container format used by ONI2's .DAT archives (RB.DAT,
+ * STREAMS.DAT, BANKS.DAT).  Supports deflate-compressed and raw entries.
+ * Implements the Vfs trait so it can be stacked in a MultiVfs alongside DiskVfs.
+ */
 use bevy::log::{info, warn};
 use flate2::read::DeflateDecoder;
 use std::collections::HashMap;

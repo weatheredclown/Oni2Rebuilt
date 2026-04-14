@@ -1,3 +1,13 @@
+/*
+ * oni2_loader/layout_loader.rs — ONI2 level layout loader.
+ *
+ * load_layout: reads layout/ directory (lights, geometry, entities, cameras,
+ * paths, fog, scripts) and spawns the corresponding Bevy entities.  Returns
+ * LayoutPlayerInfo if a Player="1" creature was found.
+ * find_konoko_spawn: quick scan for the player spawn point without full load.
+ * load_global_registries: Startup system that pre-loads entity, anim, fx, and
+ * projectile registries from the VFS.
+ */
 use super::*;
 use crate::oni2_loader::parsers::texture::decode_tex;
 use crate::oni2_loader::parsers::texture::load_tga_texture;

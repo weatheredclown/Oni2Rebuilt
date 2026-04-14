@@ -1,3 +1,11 @@
+/*
+ * fx_system.rs — FxPlugin: visual effect and particle spawning.
+ *
+ * SpawnFx and SpawnPtx events trigger entity creation for named effects from
+ * FxLibrary / ParticleLibrary.  Handles Hanabi GPU particle systems, screen-space
+ * sprites, and delayed effects.  Receives ScrOniSysEvent::PlayFx from the
+ * scripting VM via the observer pipeline.
+ */
 use bevy::prelude::*;
 use bevy_hanabi::prelude::*;
 

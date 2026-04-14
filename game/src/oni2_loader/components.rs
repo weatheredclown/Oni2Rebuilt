@@ -1,3 +1,11 @@
+/*
+ * oni2_loader/components.rs — ONI2 entity component types.
+ *
+ * Oni2Entity (name marker), CurveFollower (NURBS path position),
+ * Oni2AnimState (current anim + frame + speed), MovingPlatform, Checkpoint,
+ * ActorFxType, CurrentCheckpointIndex, and other per-entity runtime state
+ * shared between animation, scripting, and layout systems.
+ */
 use super::curve::NurbsCurve;
 use bevy::prelude::*;
 
