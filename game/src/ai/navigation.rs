@@ -341,8 +341,9 @@ pub fn retreat_steering_system(
     mut query: Query<(Entity, &crate::ai::components::ActorRetreating, &Transform, &crate::combat::faction::Faction)>,
     all_factions: Query<(Entity, &Transform, &crate::combat::faction::Faction)>,
     faction_manager: Res<crate::combat::faction::FactionManager>,
-    nav_graph: Res<NavGraph>,
+    nav_graph: Option<Res<NavGraph>>,
 ) {
+    let Some(nav_graph) = nav_graph else { return; };
     if nav_graph.points.is_empty() { return; }
 
     for (entity, retreating, tf, my_faction) in &mut query {

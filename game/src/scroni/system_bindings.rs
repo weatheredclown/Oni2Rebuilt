@@ -908,14 +908,9 @@ pub fn scroni_sys_event_observer(
         }
         ScrOniSysEvent::Destroy(target) => {
             info!("VM: Received native script request to permanently despawn {:?}", target);
-            // Use a world closure so the existence check happens at apply-time rather
-            // than queue-time — this silences the double-despawn warning that occurs
-            // when two scripts schedule despawn for the same entity in the same frame.
-            commands.queue(move |world: &mut World| {
-                if let Ok(entity) = world.get_entity_mut(target) {
-                    entity.despawn();
-                }
-            });
+            if let Ok(mut entity_cmds) = commands.get_entity(target) {
+                entity_cmds.despawn();
+            }
         }
     }
 }

@@ -666,7 +666,7 @@ pub fn load_oni2_entity_type(
 
         let mut was_world_space = false;
         if let (Some(model), Some(skel)) = (&mut m, &skeleton) {
-            if skel.positions.len() > 1 {
+            if skel.positions.len() > 10 { // this is totally a hack, but a lot of the sophisticated characters have bone local meshes, but we seem to have to guess
                 model.world_space_verts = false; // All multi-bone characters strictly map natively as bone-local!
             }
             was_world_space = model.world_space_verts;
@@ -778,30 +778,15 @@ pub fn load_oni2_entity_type(
         })
         .unwrap_or_default();
 
-    // Build merged debug bounds (entity-local space, used only for F3 gizmo draw).
-    // Re-add bone origins to get back to entity-local from bone-local.
-    let (debug_verts, debug_edges) = {
-        let mut verts: Vec<Vec3> = Vec::new();
-        let mut edges: Vec<[u32; 2]> = Vec::new();
-        for (bone_idx, sub) in &bone_colliders {
-            let origin = bone_bevy_positions
-                .get(*bone_idx)
-                .copied()
-                .unwrap_or(Vec3::ZERO);
-            let base = verts.len() as u32;
-            for v in &sub.vertices {
-                verts.push(Vec3::new(v[0] + origin.x, v[1] + origin.y, v[2] + origin.z));
+    // Build debug bounds grouped by bone.
+    let debug_bounds = crate::oni2_loader::animation::Oni2DebugBounds {
+        sub_bounds: bone_colliders.iter().map(|(bone_idx, sub)| {
+            crate::oni2_loader::animation::Oni2DebugSubBound {
+                bone_idx: *bone_idx,
+                vertices: sub.vertices.iter().map(|v| Vec3::new(v[0], v[1], v[2])).collect(),
+                edges: sub.edges.clone(),
             }
-            for e in &sub.edges {
-                edges.push([e[0] + base, e[1] + base]);
-            }
-        }
-        (verts, edges)
-    };
-
-    let debug_bounds = crate::oni2_loader::spawn::Oni2DebugBounds {
-        vertices: debug_verts,
-        edges: debug_edges,
+        }).collect(),
     };
 
     let debug_skeleton = skeleton.as_ref().map(|skel| {

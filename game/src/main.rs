@@ -32,9 +32,10 @@ pub use filesystem::vfs;
 
 use avian3d::prelude::*;
 use bevy::diagnostic::FrameTimeDiagnosticsPlugin;
+use bevy::log::LogPlugin;
 use bevy::prelude::*;
 use uuid::Uuid;
-
+    
 use camera::components::{CameraController, PrototypeElement};
 use camera::channel::CameraChannel;
 use combat::components::*;
@@ -154,6 +155,11 @@ fn main() {
             title: "rb-reborn".to_string(),
             ..default()
         }),
+        ..default()
+    })
+    .set(LogPlugin {
+        filter: "info,bevy_ecs=trace,wgpu_core=warn,wgpu_hal=warn,rb_game=debug".into(),
+        level: bevy::log::Level::DEBUG,
         ..default()
     }))
     .insert_resource(Time::<Fixed>::from_hz(60.0))

@@ -68,6 +68,8 @@ impl Plugin for Oni2LoaderPlugin {
             .init_resource::<registries::ProjLibrary>()
             .init_resource::<registries::FxLibrary>()
             .init_resource::<registries::ParticleLibrary>()
+            .init_resource::<registries::ExplosionRegistry>()
+            .init_resource::<environment::TextureCollections>()
             .init_resource::<components::CurrentCheckpointIndex>()
             .add_systems(Startup, (load_global_registries, load_global_explosions))
             .add_systems(

@@ -129,6 +129,13 @@ impl PadMapper {
         }
     }
 
+    /// Flush all historic input buffers.
+    pub fn clear(&mut self) {
+        self.analog_prev.clear();
+        self.button_press_time.clear();
+        self.values.fill(0.0);
+    }
+
     /// Returns the current value (0 = inactive, >0 = active) for a named command.
     pub fn get(&self, name: &str) -> f32 {
         self.name_to_index
@@ -196,6 +203,9 @@ fn eval_method(
     button_press_time: &HashMap<String, f32>,
     t: f32,
 ) -> bool {
+    if method.inputs.is_empty() {
+        return false;
+    }
     // All input blocks must pass (AND)
     for block in &method.inputs {
         if !eval_input_block(block, frame, analog_prev, button_press_time, t) {
@@ -218,6 +228,10 @@ fn eval_input_block(
     button_press_time: &HashMap<String, f32>,
     t: f32,
 ) -> bool {
+    if block.constraints.is_empty() {
+        return false;
+    }
+    // All constraints within the block must pass (AND)
     let woo = block.window_of_opportunity;
     for c in &block.constraints {
         if !eval_constraint(c, frame, analog_prev, button_press_time, t, woo) {

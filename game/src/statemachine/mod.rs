@@ -55,14 +55,21 @@ fn load_player_fsm(mut commands: Commands) {
 fn insert_player_fsm(
     query: Query<Entity, Added<Player>>,
     fsm_res: Option<Res<PlayerFsmData>>,
+    mut pad_mapper: ResMut<crate::control_map::PadMapper>,
     mut commands: Commands,
 ) {
     let Some(fsm) = fsm_res else { return };
 
+    let mut spawned = false;
     for entity in &query {
         commands
             .entity(entity)
             .insert(FsmRuntime::new(fsm.0.clone()));
         info!("FSM: FsmRuntime attached to player {:?}", entity);
+        spawned = true;
+    }
+    
+    if spawned {
+        pad_mapper.clear();
     }
 }

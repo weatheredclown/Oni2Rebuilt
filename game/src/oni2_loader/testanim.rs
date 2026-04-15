@@ -109,9 +109,6 @@ pub fn setup_testanim_scene(
     let cam_pos = orbit_camera_position(&orbit);
     commands.spawn((
         Camera3d::default(),
-        Camera {
-            ..default()
-        },
         Projection::Perspective(PerspectiveProjection {
             fov: std::f32::consts::PI / 4.0,
             ..default()
@@ -248,8 +245,9 @@ pub fn setup_testentity_scene(
     mut skinned_mesh_ibp: ResMut<Assets<SkinnedMeshInverseBindposes>>,
     mut entity_lib: ResMut<crate::oni2_loader::registries::EntityLibrary>,
     mut anim_registry: ResMut<crate::oni2_loader::registries::AnimRegistry>,
-    testent: Res<TestEntityMode>,
+    testent: Option<Res<TestEntityMode>>,
 ) {
+    let Some(testent) = testent else { return; };
     let entity_name = &testent.0;
     let entity_dir = format!("Entity/{}", entity_name);
 
@@ -305,9 +303,6 @@ pub fn setup_testentity_scene(
     let cam_pos = orbit_camera_position(&orbit);
     commands.spawn((
         Camera3d::default(),
-        Camera {
-            ..default()
-        },
         Projection::Perspective(PerspectiveProjection {
             fov: std::f32::consts::PI / 4.0,
             ..default()

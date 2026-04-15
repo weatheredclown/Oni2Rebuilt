@@ -175,6 +175,7 @@ impl FsmRuntime {
                         output.attack_anim = Some((anim_name.clone(), *rotation_notches));
                         self.active_anim = Some(anim_name.clone());
                         self.timed_out = false;
+                        info!("FSM: Fired Rule Event for DoAttack: {:?} (negated: {})", rule.event, rule.negated);
                     }
                     FsmAction::DoBlock { anim_name } => {
                         output.block_anim = Some(anim_name.clone());
@@ -543,7 +544,7 @@ pub fn fsm_update_system(
         let output = runtime.update(&packet, &anim_state, fight_vector_anim.as_deref());
 
         if let Some((anim_name, _rotation)) = &output.attack_anim {
-            info!("FSM: DoAttack → '{}'", anim_name);
+            info!("FSM: DoAttack → '{}', pad_flags: {:#x}, ctrl_flags: {:#x}", anim_name, packet.pad_flags, packet.ctrl_flags);
             if !anim_lib.play(anim_name, &mut anim_state) {
                 warn!("FSM: attack anim NOT in library: '{}' (lib has {} anims)", anim_name, anim_lib.anims.len());
             }

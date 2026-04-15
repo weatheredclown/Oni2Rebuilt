@@ -197,9 +197,7 @@ pub fn try_load_ptx(
     );
 }
 
-pub fn load_global_explosions(mut cmd: Commands) {
-    let mut reg = ExplosionRegistry::default();
-    
+pub fn load_global_explosions(mut reg: ResMut<ExplosionRegistry>) {
     // We scan the exact path the user specified: `assets/Settings/rb.expl`
     // Note: vfs handles the actual path resolving.
     if let Ok(text) = vfs::read_to_string("Settings", "rb.expl") {
@@ -209,9 +207,7 @@ pub fn load_global_explosions(mut cmd: Commands) {
         }
     } else {
         warn!("Could not find Settings/rb.expl in VFS!");
-        return; // Soft fail, missing file
     }
     
     info!("Loaded {} global basic explosions from Settings/rb.expl", reg.explosions.len());
-    cmd.insert_resource(reg);
 }

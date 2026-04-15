@@ -135,11 +135,6 @@ fn parse_anim_ani1(data: &[u8]) -> Option<Oni2Animation> {
         false,
     )?;
 
-    info!(
-        "Parsed anim (ANI1): {} frames, {} channels, stride_z={}, loop={}, flags=0x{:X}",
-        num_frames, num_channels, stride_z, is_loop, format_flags
-    );
-
     Some(Oni2Animation {
         num_frames,
         num_channels,

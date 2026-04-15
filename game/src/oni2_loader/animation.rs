@@ -230,7 +230,13 @@ pub fn scroni_curve_bridge_system(
 /// Info about a spawned player creature from the layout.
 #[derive(Component, Clone)]
 pub struct Oni2DebugBounds {
-    pub vertices: Vec<Vec3>, // bound vertices in local space (Z-negated)
+    pub sub_bounds: Vec<Oni2DebugSubBound>,
+}
+
+#[derive(Clone)]
+pub struct Oni2DebugSubBound {
+    pub bone_idx: usize,
+    pub vertices: Vec<Vec3>, // bound vertices in bone-local space
     pub edges: Vec<[u32; 2]>,
 }
 
@@ -623,7 +629,13 @@ pub fn toggle_debug_bounds(
 
 /// Draw wireframe bounds using the actual bound edge geometry.
 pub fn debug_draw_bounds(
-    query: Query<(&Transform, &Oni2DebugBounds, Option<&crate::oni2_loader::spawn::CreatureRenderOffset>)>,
+    query: Query<(
+        &Transform,
+        &Oni2DebugBounds,
+        Option<&Oni2AnimState>,
+        Option<&crate::oni2_loader::spawn::CreatureRenderOffset>,
+    )>,
+    joints: Query<&GlobalTransform>,
     mut gizmos: Gizmos,
     visible: Res<DebugBoundsVisible>,
 ) {
@@ -631,19 +643,38 @@ pub fn debug_draw_bounds(
         return;
     }
     let color = Color::srgb(0.0, 1.0, 0.0);
-    for (transform, bounds, creature_offset) in &query {
+    for (transform, bounds, anim_state, creature_offset) in &query {
         // Character physics centers are above ground by physics_center_height; their Oni bounds
         // are ground-relative, so subtract that to re-align. Level geometry has no correction.
         let y_correction = creature_offset.map(|o| o.physics_center_height).unwrap_or(0.0);
         let base_translation = transform.translation - Vec3::new(0.0, y_correction, 0.0);
-        for edge in &bounds.edges {
-            if let (Some(&va), Some(&vb)) = (
-                bounds.vertices.get(edge[0] as usize),
-                bounds.vertices.get(edge[1] as usize),
-            ) {
-                let wa = base_translation + transform.rotation * va;
-                let wb = base_translation + transform.rotation * vb;
-                gizmos.line(wa, wb, color);
+
+        for sub in &bounds.sub_bounds {
+            let mut use_joint = false;
+            let mut joint_tf = Transform::IDENTITY;
+
+            if let Some(state) = anim_state {
+                if let Some(&j_ent) = state.joint_entities.get(sub.bone_idx) {
+                    if let Ok(gtf) = joints.get(j_ent) {
+                        let (_, rot, trans) = gtf.to_scale_rotation_translation();
+                        joint_tf = Transform::from_translation(trans).with_rotation(rot);
+                        use_joint = true;
+                    }
+                }
+            }
+
+            for edge in &sub.edges {
+                if let (Some(&va), Some(&vb)) = (
+                    sub.vertices.get(edge[0] as usize),
+                    sub.vertices.get(edge[1] as usize),
+                ) {
+                    let (wa, wb) = if use_joint {
+                        (joint_tf * va, joint_tf * vb)
+                    } else {
+                        (base_translation + transform.rotation * va, base_translation + transform.rotation * vb)
+                    };
+                    gizmos.line(wa, wb, color);
+                }
             }
         }
     }

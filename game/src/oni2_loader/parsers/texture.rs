@@ -197,10 +197,6 @@ pub fn load_tga_texture(
         if crate::vfs::exists(entity_dir, &tex_filename) {
             if let Ok(tex_bytes) = crate::vfs::read(entity_dir, &tex_filename) {
                 if let Some((width, height, rgba, has_alpha)) = decode_tex(&tex_bytes) {
-                    info!(
-                        "Loaded native {} texture: {:?} ({}x{}) alpha={}",
-                        ext, tex_filename, width, height, has_alpha
-                    );
                     let mut image = Image::new(
                         bevy::render::render_resource::Extent3d {
                             width,
