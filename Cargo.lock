@@ -5220,6 +5220,7 @@ dependencies = [
  "bevy_egui",
  "image",
  "quick-xml",
+ "rb-game",
  "serde",
 ]
 

@@ -1,12 +1,14 @@
 use anyhow::{Context, Result};
 use bevy::app::AppExit;
 use bevy::input::mouse::{MouseMotion, MouseWheel};
+use bevy::mesh::skinning::SkinnedMeshInverseBindposes;
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
 use bevy_egui::{EguiContexts, EguiPlugin, EguiPrimaryContextPass, egui};
 use image::{ImageBuffer, Rgba};
 use quick_xml::de::from_str;
 use quick_xml::se::to_string;
+use rb_game::oni2_loader::registries::{AnimRegistry, EntityLibrary};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::env;
@@ -15,6 +17,10 @@ use std::path::{Path, PathBuf};
 
 fn main() -> Result<()> {
     let config = EditorConfig::from_args()?;
+    let assets_root = config.assets_root.to_string_lossy().to_string();
+    rb_game::set_assets_path(assets_root.clone());
+    rb_game::vfs::set_vfs(Box::new(rb_game::vfs::DiskVfs::new(assets_root)));
+
     let mut layout = LayoutDocument::load(&config.layout_dir)
         .with_context(|| format!("failed to load layout from {}", config.layout_dir.display()))?;
     layout.refresh_thumbnails(&config.entity_dir);
@@ -26,6 +32,8 @@ fn main() -> Result<()> {
         .insert_resource(EditorState::default())
         .insert_resource(LayoutPicker::default())
         .insert_resource(ThumbnailGenerator::default())
+        .insert_resource(EntityLibrary::default())
+        .insert_resource(AnimRegistry::default())
         .add_plugins(DefaultPlugins)
         .add_plugins(EguiPlugin::default())
         .add_systems(Startup, setup)
@@ -52,6 +60,7 @@ fn main() -> Result<()> {
 
 #[derive(Resource, Clone)]
 struct EditorConfig {
+    assets_root: PathBuf,
     layout_root: PathBuf,
     entity_dir: PathBuf,
     layout_name: String,
@@ -106,6 +115,7 @@ impl EditorConfig {
         let layout_dir = layout_root.join(&layout_name);
 
         Ok(Self {
+            assets_root: assets_root.clone(),
             layout_root,
             entity_dir,
             layout_name,
@@ -253,6 +263,10 @@ fn setup(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    mut images: ResMut<Assets<Image>>,
+    mut skinned_mesh_ibp: ResMut<Assets<SkinnedMeshInverseBindposes>>,
+    mut entity_lib: ResMut<EntityLibrary>,
+    mut anim_registry: ResMut<AnimRegistry>,
     mut picker: ResMut<LayoutPicker>,
     mut thumbs: ResMut<ThumbnailGenerator>,
     config: Res<EditorConfig>,
@@ -283,7 +297,16 @@ fn setup(
         })),
     ));
 
-    spawn_actor_visuals(&mut commands, &mut meshes, &mut materials, &layout);
+    spawn_actor_visuals(
+        &mut commands,
+        &mut meshes,
+        &mut materials,
+        &mut images,
+        &mut skinned_mesh_ibp,
+        &mut entity_lib,
+        &mut anim_registry,
+        &layout,
+    );
 
     commands.spawn((
         Camera3d::default(),
@@ -299,46 +322,66 @@ fn setup(
 
 fn spawn_actor_visuals(
     commands: &mut Commands,
-    meshes: &mut Assets<Mesh>,
-    materials: &mut Assets<StandardMaterial>,
+    meshes: &mut ResMut<Assets<Mesh>>,
+    materials: &mut ResMut<Assets<StandardMaterial>>,
+    images: &mut ResMut<Assets<Image>>,
+    skinned_mesh_ibp: &mut ResMut<Assets<SkinnedMeshInverseBindposes>>,
+    entity_lib: &mut ResMut<EntityLibrary>,
+    anim_registry: &mut ResMut<AnimRegistry>,
     layout: &LayoutDocument,
 ) {
     for actor in &layout.actors {
-        let entity_type = actor
-            .xml_root
-            .contents
-            .entity
-            .attributes
-            .entity_type
-            .value
-            .to_lowercase();
+        let entity_type = actor.entity_name();
         let color = match entity_type.as_str() {
             "kno" => Color::srgb(0.3, 0.9, 0.5),
             "tctf" => Color::srgb(0.8, 0.45, 0.9),
             _ => Color::srgb(0.75, 0.75, 0.82),
         };
 
-        commands.spawn((
-            Mesh3d(meshes.add(Cuboid::new(1.0, 1.0, 1.0))),
-            MeshMaterial3d(materials.add(StandardMaterial {
-                base_color: color,
-                ..default()
-            })),
-            Transform {
-                translation: actor.position(),
-                rotation: Quat::from_euler(
-                    EulerRot::XYZ,
-                    actor.rotation_radians().x,
-                    actor.rotation_radians().y,
-                    actor.rotation_radians().z,
-                ),
-                scale: Vec3::ONE,
-            },
-            ActorHandle {
-                name: actor.name.clone(),
-            },
-            ActorVisual,
-        ));
+        let rotation = Quat::from_euler(
+            EulerRot::XYZ,
+            actor.rotation_radians().x,
+            actor.rotation_radians().y,
+            actor.rotation_radians().z,
+        );
+        let entity_dir = format!("entity/{}", actor.entity_name());
+        let spawned = rb_game::oni2_loader::spawn_oni2_entity_with_rotation(
+            commands,
+            meshes,
+            materials,
+            images,
+            skinned_mesh_ibp,
+            entity_lib,
+            anim_registry,
+            &entity_dir,
+            actor.position(),
+            rotation,
+            &actor.name,
+            None,
+            Some(&entity_type),
+        );
+
+        if let Some(entity) = spawned {
+            commands.entity(entity).insert((
+                ActorHandle {
+                    name: actor.name.clone(),
+                },
+                ActorVisual,
+            ));
+        } else {
+            commands.spawn((
+                Mesh3d(meshes.add(Cuboid::new(1.0, 1.0, 1.0))),
+                MeshMaterial3d(materials.add(StandardMaterial {
+                    base_color: color,
+                    ..default()
+                })),
+                Transform::from_translation(actor.position()).with_rotation(rotation),
+                ActorHandle {
+                    name: actor.name.clone(),
+                },
+                ActorVisual,
+            ));
+        }
     }
 }
 
@@ -615,6 +658,10 @@ fn regenerate_actor_meshes(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    mut images: ResMut<Assets<Image>>,
+    mut skinned_mesh_ibp: ResMut<Assets<SkinnedMeshInverseBindposes>>,
+    mut entity_lib: ResMut<EntityLibrary>,
+    mut anim_registry: ResMut<AnimRegistry>,
     existing: Query<Entity, With<ActorVisual>>,
     layout: Res<LayoutDocument>,
 ) {
@@ -626,7 +673,16 @@ fn regenerate_actor_meshes(
         commands.entity(e).despawn();
     }
 
-    spawn_actor_visuals(&mut commands, &mut meshes, &mut materials, &layout);
+    spawn_actor_visuals(
+        &mut commands,
+        &mut meshes,
+        &mut materials,
+        &mut images,
+        &mut skinned_mesh_ibp,
+        &mut entity_lib,
+        &mut anim_registry,
+        &layout,
+    );
 }
 
 fn keyboard_shortcuts_system(
@@ -888,6 +944,16 @@ struct ActorRecord {
 }
 
 impl ActorRecord {
+    fn entity_name(&self) -> String {
+        self.xml_root
+            .contents
+            .entity
+            .attributes
+            .entity_type
+            .value
+            .to_lowercase()
+    }
+
     fn position(&self) -> Vec3 {
         parse_triplet(
             &self
