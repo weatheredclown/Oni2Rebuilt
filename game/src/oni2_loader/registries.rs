@@ -54,9 +54,12 @@ pub struct Oni2EntityType {
     pub material_animators: Vec<Vec<TextureUVAnimator>>,
     pub skeleton: Option<Oni2Skeleton>,
     pub inverse_bind_poses: Option<Handle<SkinnedMeshInverseBindposes>>,
+    /// Debug wireframe used by F3 gizmo rendering (merged, entity-local space).
     pub bounds: Oni2DebugBounds,
-    pub bound_quads: Vec<[u32; 4]>,
-    pub bound_tris: Vec<[u32; 3]>,
+    /// Per-sub-bound collision geometry ready for spawning.
+    /// Each entry is (bone_index, sub_bound_in_bone_local_space).
+    /// bone_index == 0 means the entity root (or no skeleton).
+    pub bone_colliders: Vec<(usize, crate::oni2_loader::parsers::types::Oni2SubBound)>,
     pub anim_library: Option<Oni2AnimLibrary>,
     pub locomotion: Option<crate::oni2_loader::parsers::loco::LocomotionController>,
     pub debug_skeleton: Option<crate::oni2_loader::Oni2DebugSkeleton>,

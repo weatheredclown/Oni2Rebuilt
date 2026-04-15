@@ -152,6 +152,16 @@ fn extract_component(chain: &[String], has_components_xml: bool, tag: &str) -> O
     Some(merged)
 }
 
+trait OptionExt {
+    fn is_none_or_empty_hint(&self) -> bool;
+}
+
+impl OptionExt for Option<String> {
+    fn is_none_or_empty_hint(&self) -> bool {
+        self.as_deref().map_or(true, |v| v.eq_ignore_ascii_case("none"))
+    }
+}
+
 /// Parse an actor XML file, resolving full template inheritance chain.
 /// Template values are base; actor values override. Supports multi-level inheritance.
 pub fn parse_actor_xml(dir: &str, filename: &str, template_dir: &str) -> Option<LayoutActor> {
@@ -187,8 +197,6 @@ pub fn parse_actor_xml(dir: &str, filename: &str, template_dir: &str) -> Option<
         if let Some(v) = extract_xml_attr(content, "EntityType") {
             if !v.eq_ignore_ascii_case("none") {
                 entity_type = Some(v);
-            } else {
-                info!("EntityType is none in actor xml {}", filename);
             }
         }
         if let Some(v) = extract_root_xml_attr(content, "updatestate") {
@@ -211,6 +219,9 @@ pub fn parse_actor_xml(dir: &str, filename: &str, template_dir: &str) -> Option<
         }
     }
 
+    if entity_type.is_none_or_empty_hint() {
+        info!("EntityType is missing/none in actor xml {}", filename);
+    }
     // Now extract specific Component Blocks
     // This safely pulls out ONLY the declared components and defaults
     let creature_block = extract_component(&chain, has_components_xml, "Creature");

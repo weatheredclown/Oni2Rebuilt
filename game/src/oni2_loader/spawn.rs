@@ -688,44 +688,101 @@ pub fn load_oni2_entity_type(
         }
     };
 
-    let mut bound_verts: Vec<Vec3> = bound
+    // --- Assign each sub-bound to a bone and convert vertices to bone-local space ---
+    //
+    // Each sub-bound's centroid (already in Bevy space) is compared against every
+    // bone's rest-pose world position to find the best match.  The vertices are then
+    // expressed relative to that bone's origin so that when the joint entity's
+    // Transform moves (driven by animation), the Collider follows correctly.
+    //
+    // For entities without a skeleton, all sub-bounds are assigned to bone 0 and
+    // vertices remain in entity-local space (no subtraction).
+
+    // Build bone rest-pose positions in Bevy space once.
+    let bone_bevy_positions: Vec<Vec3> = skeleton
         .as_ref()
-        .map(|b| {
-            b.vertices
+        .map(|skel| {
+            skel.positions
                 .iter()
-                .map(|v| Vec3::new(v[0], v[1], v[2]))
+                .map(|p| Vec3::new(-p[0], p[1], -p[2]))
                 .collect()
         })
         .unwrap_or_default();
 
-    if let (Some(skel), Some(model_ref)) = (&skeleton, &model) {
-        if model_ref.world_space_verts == false {
-            // Note: world_space_verts is set to false after convert_world_to_bone_local.
-            // If the model had it originally true, it was converted. But we only check here if it's false, meaning it is bone-local,
-            // or if it was converted. To be safe, let's just use the fact that skeleton exists and we want it attached.
-            // Actually, we should only translate if bounds were historically world-space and the model is bone local.
-            // But since we can't easily pass was_world_space, let's observe: oni bounds are always world space.
-            // If we are attaching to bone 0, we must subtract bone 0 origin.
-            if let Some(bp) = skel.positions.get(0) {
-                // Actually, only offset bounds if it's a 1-bone rigid model because characters use capsule bounds unaffected by .bnd
-                if skel.positions.len() == 1 {
-                    for v in &mut bound_verts {
-                        v.x -= bp[0];
-                        v.y -= bp[1];
-                        v.z -= bp[2];
+    let bone_colliders: Vec<(usize, crate::oni2_loader::parsers::types::Oni2SubBound)> = bound
+        .as_ref()
+        .map(|b| {
+            let multi = b.sub_bounds.len() > 1;
+            b.sub_bounds
+                .iter()
+                .map(|sub| {
+                    // Single-sub-bound entities (characters, simple props) keep their
+                    // vertices in entity-local space and are always assigned to bone 0
+                    // (the root / parent entity).  Only composite bounds — where each
+                    // sub-bound corresponds to a distinct animated panel — use nearest-
+                    // bone assignment and bone-local vertex conversion.
+                    let (bone_idx, bone_origin) = if multi && !bone_bevy_positions.is_empty() {
+                        let centroid = Vec3::new(
+                            sub.centroid[0],
+                            sub.centroid[1],
+                            sub.centroid[2],
+                        );
+                        let idx = bone_bevy_positions
+                            .iter()
+                            .enumerate()
+                            .min_by(|(_, a), (_, b)| {
+                                a.distance_squared(centroid)
+                                    .partial_cmp(&b.distance_squared(centroid))
+                                    .unwrap()
+                            })
+                            .map(|(i, _)| i)
+                            .unwrap_or(0);
+                        let origin = bone_bevy_positions[idx];
+                        (idx, origin)
+                    } else {
+                        (0, Vec3::ZERO)
+                    };
+
+                    let mut local_sub = sub.clone();
+                    for v in &mut local_sub.vertices {
+                        v[0] -= bone_origin.x;
+                        v[1] -= bone_origin.y;
+                        v[2] -= bone_origin.z;
                     }
-                }
+                    local_sub.centroid[0] -= bone_origin.x;
+                    local_sub.centroid[1] -= bone_origin.y;
+                    local_sub.centroid[2] -= bone_origin.z;
+
+                    (bone_idx, local_sub)
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+
+    // Build merged debug bounds (entity-local space, used only for F3 gizmo draw).
+    // Re-add bone origins to get back to entity-local from bone-local.
+    let (debug_verts, debug_edges) = {
+        let mut verts: Vec<Vec3> = Vec::new();
+        let mut edges: Vec<[u32; 2]> = Vec::new();
+        for (bone_idx, sub) in &bone_colliders {
+            let origin = bone_bevy_positions
+                .get(*bone_idx)
+                .copied()
+                .unwrap_or(Vec3::ZERO);
+            let base = verts.len() as u32;
+            for v in &sub.vertices {
+                verts.push(Vec3::new(v[0] + origin.x, v[1] + origin.y, v[2] + origin.z));
+            }
+            for e in &sub.edges {
+                edges.push([e[0] + base, e[1] + base]);
             }
         }
-    }
-
-    let bound_edges: Vec<[u32; 2]> = bound.as_ref().map(|b| b.edges.clone()).unwrap_or_default();
-    let bound_quads: Vec<[u32; 4]> = bound.as_ref().map(|b| b.quads.clone()).unwrap_or_default();
-    let bound_tris: Vec<[u32; 3]> = bound.as_ref().map(|b| b.tris.clone()).unwrap_or_default();
+        (verts, edges)
+    };
 
     let debug_bounds = crate::oni2_loader::spawn::Oni2DebugBounds {
-        vertices: bound_verts,
-        edges: bound_edges,
+        vertices: debug_verts,
+        edges: debug_edges,
     };
 
     let debug_skeleton = skeleton.as_ref().map(|skel| {
@@ -909,8 +966,7 @@ pub fn load_oni2_entity_type(
         skeleton,
         inverse_bind_poses: ibp_handle,
         bounds: debug_bounds,
-        bound_quads,
-        bound_tris,
+        bone_colliders,
         anim_library: library,
         locomotion,
         jump_controller,
@@ -957,27 +1013,39 @@ pub fn spawn_oni2_entity_with_rotation(
     }
     let ent_type = entity_lib.entities.get(&cache_key)?;
 
-    // 2. Build Collider from bounds on the fly
-    let collider = if !ent_type.bounds.vertices.is_empty()
-        && (!ent_type.bound_quads.is_empty() || !ent_type.bound_tris.is_empty())
-    {
-        let mut tri_indices: Vec<[u32; 3]> =
-            Vec::with_capacity(ent_type.bound_quads.len() * 2 + ent_type.bound_tris.len());
-        for q in &ent_type.bound_quads {
-            tri_indices.push([q[0], q[1], q[2]]);
-            tri_indices.push([q[0], q[2], q[3]]);
-        }
-        for t in &ent_type.bound_tris {
-            tri_indices.push(*t);
-        }
-        Collider::try_trimesh(ent_type.bounds.vertices.clone(), tri_indices)
-            .ok()
-            .or_else(|| Collider::convex_hull(ent_type.bounds.vertices.clone()))
-    } else if !ent_type.bounds.vertices.is_empty() {
-        Collider::convex_hull(ent_type.bounds.vertices.clone())
-    } else {
-        None
-    };
+    // 2. Pre-build per-sub-bound Colliders from bone-local geometry.
+    //    Each sub-bound was already assigned to a bone and its vertices converted
+    //    to bone-local space in load_oni2_entity_type.
+    let has_any_collider = !ent_type.bone_colliders.is_empty();
+    let built_colliders: Vec<(usize, Collider)> = ent_type
+        .bone_colliders
+        .iter()
+        .filter_map(|(bone_idx, sub)| {
+            let verts: Vec<Vec3> = sub
+                .vertices
+                .iter()
+                .map(|v| Vec3::new(v[0], v[1], v[2]))
+                .collect();
+            if verts.is_empty() {
+                return None;
+            }
+            let mut tris: Vec<[u32; 3]> =
+                Vec::with_capacity(sub.quads.len() * 2 + sub.tris.len());
+            for q in &sub.quads {
+                tris.push([q[0], q[1], q[2]]);
+                tris.push([q[0], q[2], q[3]]);
+            }
+            tris.extend_from_slice(&sub.tris);
+            let collider = if !tris.is_empty() {
+                Collider::try_trimesh(verts.clone(), tris)
+                    .ok()
+                    .or_else(|| Collider::convex_hull(verts))
+            } else {
+                Collider::convex_hull(verts)
+            };
+            collider.map(|c| (*bone_idx, c))
+        })
+        .collect();
 
     let transform = Transform::from_translation(position).with_rotation(rotation);
 
@@ -998,7 +1066,7 @@ pub fn spawn_oni2_entity_with_rotation(
         InGameEntity,
     ));
 
-    if collider.is_some() && ent_type.skeleton.is_none() && ent_type.anim_library.is_none() {
+    if has_any_collider && ent_type.skeleton.is_none() && ent_type.anim_library.is_none() {
         ec.insert(RigidBody::Static); // Truly static objects get static bodies
     }
 
@@ -1031,30 +1099,54 @@ pub fn spawn_oni2_entity_with_rotation(
         Vec::new()
     };
 
-    if let Some(c) = collider {
-        if use_gpu_skinning
-            && ent_type
-                .skeleton
-                .as_ref()
-                .map(|s| s.positions.len())
-                .unwrap_or(0)
-                == 1
-        {
-            commands.entity(joint_entities[0]).insert((
-                c,
-                RigidBody::Kinematic,
-                avian3d::prelude::LinearVelocity::default(),
-                avian3d::prelude::AngularVelocity::default(),
-            ));
-        } else if use_gpu_skinning {
+    // 3. Attach colliders.
+    //
+    // Three cases:
+    //
+    // a) Animated, single sub-bound (characters, single-panel props):
+    //    Collider goes on parent_entity. RigidBody::Kinematic on parent.
+    //    Vertices are entity-local (bone_origin == ZERO), so the box sits
+    //    correctly relative to the spawned position and does not flail.
+    //
+    // b) Animated, multiple sub-bounds (sliding doors, compound mechanisms):
+    //    Each sub-bound Collider goes on its assigned joint entity as a compound
+    //    child shape of the parent's RigidBody::Kinematic.  Avian3D re-reads
+    //    child Transforms when they change, so the physics shape follows the
+    //    animation every frame automatically.
+    //
+    // c) Static (no skeleton / no anim library):
+    //    Each sub-bound becomes its own child entity carrying a Collider.
+    //    All are children of the parent static body.  Using child entities
+    //    avoids the type-map overwrite that would happen if we called
+    //    insert(Collider) multiple times on the same entity.
+    if !built_colliders.is_empty() {
+        if use_gpu_skinning {
             commands.entity(parent_entity).insert((
-                c,
                 RigidBody::Kinematic,
                 avian3d::prelude::LinearVelocity::default(),
                 avian3d::prelude::AngularVelocity::default(),
             ));
+            let all_root = built_colliders.iter().all(|(idx, _)| *idx == 0);
+            if all_root {
+                // Single-body bound (case a): merge onto parent entity.
+                for (_, collider) in built_colliders {
+                    commands.entity(parent_entity).insert(collider);
+                }
+            } else {
+                // Per-panel animated bound (case b): each sub-shape on its joint.
+                for (bone_idx, collider) in built_colliders {
+                    let target = joint_entities.get(bone_idx).copied().unwrap_or(parent_entity);
+                    commands.entity(target).insert(collider);
+                }
+            }
         } else {
-            commands.entity(parent_entity).insert(c);
+            // Static (case c): one child entity per sub-bound collider.
+            for (_, collider) in built_colliders {
+                let child = commands
+                    .spawn((Transform::IDENTITY, GlobalTransform::default(), collider))
+                    .id();
+                commands.entity(parent_entity).add_child(child);
+            }
         }
     }
 

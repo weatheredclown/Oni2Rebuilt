@@ -70,13 +70,23 @@ pub struct Oni2Adjunct {
 
 // === Parsed .bnd file data ===
 
-#[derive(Debug, Clone)]
-pub struct Oni2Bound {
+/// One section from a composite .bnd file (or the entire file for simple bounds).
+/// Vertices are in entity-local Bevy space (X and Z already negated).
+/// Edge/quad/tri indices are local to THIS sub-bound's vertex array (always base-0).
+#[derive(Debug, Clone, Default)]
+pub struct Oni2SubBound {
     pub vertices: Vec<[f32; 3]>,
     pub centroid: [f32; 3],
     pub edges: Vec<[u32; 2]>,
     pub quads: Vec<[u32; 4]>,
     pub tris: Vec<[u32; 3]>,
+}
+
+/// Parsed .bnd file — a list of sub-bounds plus an overall composite centroid.
+#[derive(Debug, Clone, Default)]
+pub struct Oni2Bound {
+    pub sub_bounds: Vec<Oni2SubBound>,
+    pub centroid: [f32; 3],
 }
 
 // === Parsed .skel file data ===
