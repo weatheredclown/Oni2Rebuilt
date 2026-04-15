@@ -1,7 +1,10 @@
 use anyhow::{Context, Result};
+use bevy::app::AppExit;
 use bevy::input::mouse::{MouseMotion, MouseWheel};
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
+use bevy_egui::{EguiContexts, EguiPlugin, EguiPrimaryContextPass, egui};
+use image::{ImageBuffer, Rgba};
 use quick_xml::de::from_str;
 use quick_xml::se::to_string;
 use serde::{Deserialize, Serialize};
@@ -12,15 +15,19 @@ use std::path::{Path, PathBuf};
 
 fn main() -> Result<()> {
     let config = EditorConfig::from_args()?;
-    let layout = LayoutDocument::load(&config.layout_dir)
+    let mut layout = LayoutDocument::load(&config.layout_dir)
         .with_context(|| format!("failed to load layout from {}", config.layout_dir.display()))?;
+    layout.refresh_thumbnails(&config.entity_dir);
 
     App::new()
         .insert_resource(ClearColor(Color::srgb(0.04, 0.04, 0.05)))
         .insert_resource(config)
         .insert_resource(layout)
         .insert_resource(EditorState::default())
+        .insert_resource(LayoutPicker::default())
+        .insert_resource(ThumbnailGenerator::default())
         .add_plugins(DefaultPlugins)
+        .add_plugins(EguiPlugin::default())
         .add_systems(Startup, setup)
         .add_systems(
             Update,
@@ -30,9 +37,14 @@ fn main() -> Result<()> {
                 mouse_pick_system,
                 transform_edit_system,
                 sync_actor_transforms,
+                regenerate_actor_meshes,
                 update_window_title_system,
+                thumbnail_background_generation_system,
+                debug_bounds_toggle_system,
+                draw_debug_bounds_system,
             ),
         )
+        .add_systems(EguiPrimaryContextPass, ui_system)
         .run();
 
     Ok(())
@@ -40,31 +52,28 @@ fn main() -> Result<()> {
 
 #[derive(Resource, Clone)]
 struct EditorConfig {
-    layout_dir: PathBuf,
+    layout_root: PathBuf,
     entity_dir: PathBuf,
+    layout_name: String,
+    layout_dir: PathBuf,
 }
 
 impl EditorConfig {
     fn from_args() -> Result<Self> {
-        let mut layout_dir: Option<PathBuf> = None;
-        let mut entity_dir: Option<PathBuf> = None;
+        let mut path_root: Option<PathBuf> = None;
 
         let args: Vec<String> = env::args().collect();
         let mut i = 1;
         while i < args.len() {
             match args[i].as_str() {
-                "--layout" => {
+                "--path" => {
                     i += 1;
-                    layout_dir = args.get(i).map(PathBuf::from);
-                }
-                "--entities" => {
-                    i += 1;
-                    entity_dir = args.get(i).map(PathBuf::from);
+                    path_root = args.get(i).map(PathBuf::from);
                 }
                 "-h" | "--help" => {
                     println!(
-                        "Usage: layout_editor --layout <layout_dir> --entities <entity_dir>\n\
-                        Example: cargo run -p layout_editor -- --layout data/layouts/tim06 --entities data/entity"
+                        "Usage: layout_editor --path <assets_root> [--layout <layout_name>]\n\
+                        Example: cargo run -p layout_editor -- --path ../oni2/zips/assets --layout tim06"
                     );
                     std::process::exit(0);
                 }
@@ -73,13 +82,40 @@ impl EditorConfig {
             i += 1;
         }
 
-        let layout_dir = layout_dir.context("missing --layout <layout_dir>")?;
-        let entity_dir = entity_dir.context("missing --entities <entity_dir>")?;
+        let assets_root = path_root.context("missing --path <assets_root>")?;
+        let layout_root = assets_root.join("layout");
+        let entity_dir = assets_root.join("entity");
+
+        let explicit_layout = args.windows(2).find_map(|w| {
+            if w[0] == "--layout" {
+                Some(w[1].clone())
+            } else {
+                None
+            }
+        });
+
+        let mut available = discover_layout_names(&layout_root);
+        available.sort();
+        let layout_name = explicit_layout
+            .or_else(|| available.into_iter().next())
+            .context(format!(
+                "could not choose layout; no folders found under {}",
+                layout_root.display()
+            ))?;
+
+        let layout_dir = layout_root.join(&layout_name);
 
         Ok(Self {
-            layout_dir,
+            layout_root,
             entity_dir,
+            layout_name,
+            layout_dir,
         })
+    }
+
+    fn set_layout(&mut self, layout_name: String) {
+        self.layout_name = layout_name;
+        self.layout_dir = self.layout_root.join(&self.layout_name);
     }
 }
 
@@ -89,6 +125,14 @@ struct EditorState {
     selected_actor: Option<String>,
     dirty: bool,
     status: String,
+    show_load_dialog: bool,
+    show_unsaved_warning: bool,
+    pending_load_layout: Option<String>,
+    show_save_as_dialog: bool,
+    save_as_name: String,
+    show_overwrite_warning: bool,
+    pending_save_as: Option<String>,
+    show_bounds: bool,
 }
 
 #[derive(Default, Clone, Copy, PartialEq, Eq)]
@@ -96,6 +140,11 @@ enum EditMode {
     #[default]
     Transform,
     Rotate,
+}
+
+#[derive(Resource, Default)]
+struct LayoutPicker {
+    names: Vec<String>,
 }
 
 #[derive(Resource, Default)]
@@ -111,6 +160,12 @@ struct EntityTypeEntry {
     thumbnail_path: Option<PathBuf>,
 }
 
+#[derive(Resource, Default)]
+struct ThumbnailGenerator {
+    queue: Vec<String>,
+    index: usize,
+}
+
 #[derive(Component)]
 struct ActorHandle {
     name: String,
@@ -123,6 +178,9 @@ struct OrbitCamera {
     yaw: f32,
     pitch: f32,
 }
+
+#[derive(Component)]
+struct ActorVisual;
 
 impl LayoutDocument {
     fn load(layout_dir: &Path) -> Result<Self> {
@@ -195,10 +253,17 @@ fn setup(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
-    mut layout: ResMut<LayoutDocument>,
+    mut picker: ResMut<LayoutPicker>,
+    mut thumbs: ResMut<ThumbnailGenerator>,
     config: Res<EditorConfig>,
+    layout: Res<LayoutDocument>,
 ) {
-    layout.refresh_thumbnails(&config.entity_dir);
+    picker.names = discover_layout_names(&config.layout_root);
+    thumbs.queue = layout
+        .entity_types
+        .iter()
+        .map(|e| e.entity_type.clone())
+        .collect();
 
     commands.spawn((
         DirectionalLight {
@@ -218,11 +283,39 @@ fn setup(
         })),
     ));
 
+    spawn_actor_visuals(&mut commands, &mut meshes, &mut materials, &layout);
+
+    commands.spawn((
+        Camera3d::default(),
+        Transform::from_xyz(16.0, 12.0, 16.0).looking_at(Vec3::ZERO, Vec3::Y),
+        OrbitCamera {
+            focus: Vec3::ZERO,
+            radius: 25.0,
+            yaw: -0.65,
+            pitch: -0.45,
+        },
+    ));
+}
+
+fn spawn_actor_visuals(
+    commands: &mut Commands,
+    meshes: &mut Assets<Mesh>,
+    materials: &mut Assets<StandardMaterial>,
+    layout: &LayoutDocument,
+) {
     for actor in &layout.actors {
-        let color = if actor.xml_root.contents.entity.attributes.entity_type.value == "kno" {
-            Color::srgb(0.3, 0.9, 0.5)
-        } else {
-            Color::srgb(0.75, 0.75, 0.82)
+        let entity_type = actor
+            .xml_root
+            .contents
+            .entity
+            .attributes
+            .entity_type
+            .value
+            .to_lowercase();
+        let color = match entity_type.as_str() {
+            "kno" => Color::srgb(0.3, 0.9, 0.5),
+            "tctf" => Color::srgb(0.8, 0.45, 0.9),
+            _ => Color::srgb(0.75, 0.75, 0.82),
         };
 
         commands.spawn((
@@ -244,19 +337,296 @@ fn setup(
             ActorHandle {
                 name: actor.name.clone(),
             },
+            ActorVisual,
         ));
     }
+}
 
-    commands.spawn((
-        Camera3d::default(),
-        Transform::from_xyz(16.0, 12.0, 16.0).looking_at(Vec3::ZERO, Vec3::Y),
-        OrbitCamera {
-            focus: Vec3::ZERO,
-            radius: 25.0,
-            yaw: -0.65,
-            pitch: -0.45,
-        },
-    ));
+fn ui_system(
+    mut contexts: EguiContexts,
+    mut exit: MessageWriter<AppExit>,
+    mut state: ResMut<EditorState>,
+    mut config: ResMut<EditorConfig>,
+    mut layout: ResMut<LayoutDocument>,
+    mut picker: ResMut<LayoutPicker>,
+    mut thumbs: ResMut<ThumbnailGenerator>,
+) {
+    let Ok(ctx) = contexts.ctx_mut() else {
+        return;
+    };
+
+    egui::TopBottomPanel::top("menu").show(ctx, |ui| {
+        egui::MenuBar::new().ui(ui, |ui| {
+            ui.menu_button("File", |ui| {
+                if ui.button("Load").clicked() {
+                    state.show_load_dialog = true;
+                    picker.names = discover_layout_names(&config.layout_root);
+                    ui.close();
+                }
+                if ui.button("Save").clicked() {
+                    match layout.save(&config.layout_dir) {
+                        Ok(()) => {
+                            state.dirty = false;
+                            state.status = format!("Saved {}", config.layout_name);
+                        }
+                        Err(err) => {
+                            state.status = format!("Save failed: {err}");
+                        }
+                    }
+                    ui.close();
+                }
+                if ui.button("Save As").clicked() {
+                    state.save_as_name = config.layout_name.clone();
+                    state.show_save_as_dialog = true;
+                    ui.close();
+                }
+                ui.separator();
+                if ui.button("Quit").clicked() {
+                    exit.write(AppExit::Success);
+                }
+            });
+        });
+    });
+
+    egui::SidePanel::left("entity_palette")
+        .resizable(true)
+        .default_width(300.0)
+        .show(ctx, |ui| {
+            ui.heading("Entities");
+            ui.label(format!(
+                "{} entries • {} thumbnails",
+                layout.entity_types.len(),
+                layout.thumbnail_count()
+            ));
+
+            egui::ScrollArea::vertical().show(ui, |ui| {
+                egui::Grid::new("thumb_grid")
+                    .num_columns(2)
+                    .spacing([8.0, 8.0])
+                    .show(ui, |ui| {
+                        for (i, entry) in layout.entity_types.iter().enumerate() {
+                            ui.group(|ui| {
+                                ui.set_min_size(egui::vec2(130.0, 130.0));
+                                let label = if entry.thumbnail_path.is_some() {
+                                    format!("{}\nthumbnail.png", entry.entity_type)
+                                } else {
+                                    format!("{}\n(generating)", entry.entity_type)
+                                };
+                                ui.add_sized([120.0, 120.0], egui::Button::new(label));
+                            });
+                            if i % 2 == 1 {
+                                ui.end_row();
+                            }
+                        }
+                    });
+            });
+        });
+
+    if state.show_load_dialog {
+        egui::Window::new("Load layout")
+            .collapsible(false)
+            .resizable(true)
+            .show(ctx, |ui| {
+                ui.label("Select a layout folder:");
+                egui::ScrollArea::vertical()
+                    .max_height(300.0)
+                    .show(ui, |ui| {
+                        for name in &picker.names {
+                            if ui.button(name).clicked() {
+                                if state.dirty {
+                                    state.pending_load_layout = Some(name.clone());
+                                    state.show_unsaved_warning = true;
+                                } else {
+                                    load_named_layout(
+                                        name.clone(),
+                                        &mut config,
+                                        &mut layout,
+                                        &mut thumbs,
+                                        &mut state,
+                                    );
+                                }
+                                state.show_load_dialog = false;
+                            }
+                        }
+                    });
+                if ui.button("Cancel").clicked() {
+                    state.show_load_dialog = false;
+                }
+            });
+    }
+
+    if state.show_unsaved_warning {
+        egui::Window::new("Unsaved changes")
+            .collapsible(false)
+            .resizable(false)
+            .show(ctx, |ui| {
+                ui.label("You have unsaved changes. Continue loading anyway?");
+                ui.horizontal(|ui| {
+                    if ui.button("Load anyway").clicked() {
+                        if let Some(next) = state.pending_load_layout.take() {
+                            load_named_layout(
+                                next,
+                                &mut config,
+                                &mut layout,
+                                &mut thumbs,
+                                &mut state,
+                            );
+                        }
+                        state.show_unsaved_warning = false;
+                    }
+                    if ui.button("Cancel").clicked() {
+                        state.pending_load_layout = None;
+                        state.show_unsaved_warning = false;
+                    }
+                });
+            });
+    }
+
+    if state.show_save_as_dialog {
+        egui::Window::new("Save As")
+            .collapsible(false)
+            .resizable(false)
+            .show(ctx, |ui| {
+                ui.label("Layout folder name:");
+                ui.text_edit_singleline(&mut state.save_as_name);
+
+                ui.horizontal(|ui| {
+                    if ui.button("Save As").clicked() {
+                        let target = state.save_as_name.trim().to_string();
+                        if !target.is_empty() {
+                            let target_dir = config.layout_root.join(&target);
+                            if target_dir.exists() {
+                                state.pending_save_as = Some(target);
+                                state.show_overwrite_warning = true;
+                            } else {
+                                save_as_layout(target, &mut config, &mut layout, &mut state);
+                            }
+                        }
+                    }
+                    if ui.button("Cancel").clicked() {
+                        state.show_save_as_dialog = false;
+                    }
+                });
+            });
+    }
+
+    if state.show_overwrite_warning {
+        egui::Window::new("Overwrite layout?")
+            .collapsible(false)
+            .resizable(false)
+            .show(ctx, |ui| {
+                ui.label("A layout with this name already exists. Overwrite it?");
+                ui.horizontal(|ui| {
+                    if ui.button("Overwrite").clicked() {
+                        if let Some(target) = state.pending_save_as.take() {
+                            save_as_layout(target, &mut config, &mut layout, &mut state);
+                        }
+                        state.show_overwrite_warning = false;
+                    }
+                    if ui.button("Cancel").clicked() {
+                        state.pending_save_as = None;
+                        state.show_overwrite_warning = false;
+                    }
+                });
+            });
+    }
+}
+
+fn load_named_layout(
+    name: String,
+    config: &mut EditorConfig,
+    layout: &mut LayoutDocument,
+    thumbs: &mut ThumbnailGenerator,
+    state: &mut EditorState,
+) {
+    config.set_layout(name.clone());
+    match LayoutDocument::load(&config.layout_dir) {
+        Ok(mut new_doc) => {
+            new_doc.refresh_thumbnails(&config.entity_dir);
+            *layout = new_doc;
+            thumbs.queue = layout
+                .entity_types
+                .iter()
+                .map(|e| e.entity_type.clone())
+                .collect();
+            thumbs.index = 0;
+            state.selected_actor = None;
+            state.dirty = false;
+            state.status = format!("Loaded layout {name}");
+        }
+        Err(err) => {
+            state.status = format!("Load failed: {err}");
+        }
+    }
+}
+
+fn save_as_layout(
+    target: String,
+    config: &mut EditorConfig,
+    layout: &mut LayoutDocument,
+    state: &mut EditorState,
+) {
+    let target_dir = config.layout_root.join(&target);
+    if let Err(err) = fs::create_dir_all(&target_dir) {
+        state.status = format!("Save As failed: {err}");
+        return;
+    }
+    if let Err(err) = layout.save(&target_dir) {
+        state.status = format!("Save As failed: {err}");
+        return;
+    }
+
+    config.set_layout(target.clone());
+    state.dirty = false;
+    state.show_save_as_dialog = false;
+    state.status = format!("Saved as {target}");
+}
+
+fn thumbnail_background_generation_system(
+    config: Res<EditorConfig>,
+    mut generator: ResMut<ThumbnailGenerator>,
+    mut layout: ResMut<LayoutDocument>,
+) {
+    if generator.index >= generator.queue.len() {
+        return;
+    }
+
+    let entity_name = &generator.queue[generator.index];
+    let thumbnail_path = config.entity_dir.join(entity_name).join("thumbnail.png");
+    if !thumbnail_path.exists() {
+        if let Some(parent) = thumbnail_path.parent() {
+            let _ = fs::create_dir_all(parent);
+        }
+
+        let mut img: ImageBuffer<Rgba<u8>, Vec<u8>> = ImageBuffer::new(128, 128);
+        for (x, y, pixel) in img.enumerate_pixels_mut() {
+            let checker = ((x / 16) + (y / 16)) % 2 == 0;
+            let base = if checker { 64 } else { 96 };
+            *pixel = Rgba([base, base, base + 20, 255]);
+        }
+        let _ = img.save(&thumbnail_path);
+    }
+
+    layout.refresh_thumbnails(&config.entity_dir);
+    generator.index += 1;
+}
+
+fn regenerate_actor_meshes(
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    existing: Query<Entity, With<ActorVisual>>,
+    layout: Res<LayoutDocument>,
+) {
+    if !layout.is_changed() {
+        return;
+    }
+
+    for e in &existing {
+        commands.entity(e).despawn();
+    }
+
+    spawn_actor_visuals(&mut commands, &mut meshes, &mut materials, &layout);
 }
 
 fn keyboard_shortcuts_system(
@@ -293,10 +663,40 @@ fn keyboard_shortcuts_system(
     }
 }
 
+fn debug_bounds_toggle_system(keys: Res<ButtonInput<KeyCode>>, mut state: ResMut<EditorState>) {
+    if keys.just_pressed(KeyCode::KeyB) {
+        state.show_bounds = !state.show_bounds;
+    }
+}
+
+fn draw_debug_bounds_system(
+    mut gizmos: Gizmos,
+    state: Res<EditorState>,
+    actors: Query<(&Transform, &ActorHandle)>,
+) {
+    if !state.show_bounds {
+        return;
+    }
+
+    for (tf, handle) in &actors {
+        let color = if state
+            .selected_actor
+            .as_ref()
+            .is_some_and(|n| n == &handle.name)
+        {
+            Color::srgb(0.2, 0.95, 0.4)
+        } else {
+            Color::srgb(1.0, 0.8, 0.2)
+        };
+        gizmos.cube(*tf, color);
+    }
+}
+
 fn update_window_title_system(
     mut windows: Query<&mut Window, With<PrimaryWindow>>,
     state: Res<EditorState>,
     layout: Res<LayoutDocument>,
+    config: Res<EditorConfig>,
 ) {
     let Ok(mut window) = windows.single_mut() else {
         return;
@@ -311,13 +711,14 @@ fn update_window_title_system(
     let dirty = if state.dirty { "*" } else { "" };
 
     window.title = format!(
-        "Layout Editor {dirty} | mode={mode} | actors={} | entities={} (thumbs={}) | selected={} | {}",
+        "Layout Editor {dirty} | layout={} | mode={mode} | actors={} | entities={} (thumbs={}) | selected={} | {}",
+        config.layout_name,
         layout.actors.len(),
         layout.entity_types.len(),
         layout.thumbnail_count(),
         selected,
         if state.status.is_empty() {
-            "LMB select • RMB orbit • WASD pan • Wheel zoom • Arrows/QE edit • Ctrl+S save"
+            "LMB select • RMB orbit • WASD pan • Wheel zoom • Arrows/QE edit • Ctrl+S save • B bounds"
         } else {
             state.status.as_str()
         }
@@ -561,6 +962,18 @@ impl Vec3DegExt for Vec3 {
             self.z.to_radians(),
         )
     }
+}
+
+fn discover_layout_names(layout_root: &Path) -> Vec<String> {
+    let Ok(entries) = fs::read_dir(layout_root) else {
+        return Vec::new();
+    };
+
+    entries
+        .flatten()
+        .filter(|entry| entry.path().is_dir())
+        .filter_map(|entry| entry.file_name().to_str().map(|s| s.to_string()))
+        .collect()
 }
 
 fn parse_layout_actors(path: &Path) -> Result<Vec<String>> {
