@@ -15,6 +15,9 @@ bevy = { version = "0.18", default-features = false, features = [
   "multi_threaded",
   "png",
   "x11",
+  "bevy_gizmos",
 ] }
+bevy_egui = { version = "0.39", default-features = false, features = ["default_fonts", "render"] }
+image = "0.25"
 quick-xml = { version = "0.38", features = ["serialize"] }
 serde = { version = "1", features = ["derive"] }
