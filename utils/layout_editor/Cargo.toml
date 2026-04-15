@@ -1,0 +1,20 @@
+[package]
+name = "layout_editor"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow = "1.0"
+bevy = { version = "0.18", default-features = false, features = [
+  "bevy_asset",
+  "bevy_core_pipeline",
+  "bevy_pbr",
+  "bevy_render",
+  "bevy_scene",
+  "bevy_winit",
+  "multi_threaded",
+  "png",
+  "x11",
+] }
+quick-xml = { version = "0.38", features = ["serialize"] }
+serde = { version = "1", features = ["derive"] }
