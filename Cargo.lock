@@ -5110,6 +5110,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "layout_editor"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "bevy",
+ "quick-xml",
+ "serde",
+]
+
+[[package]]
 name = "lazy_static"
 version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6712,6 +6722,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b66c2058c55a409d601666cffe35f04333cf1013010882cec174a7467cd4e21c"
 dependencies = [
  "memchr",
+ "serde",
 ]
 
 [[package]]
