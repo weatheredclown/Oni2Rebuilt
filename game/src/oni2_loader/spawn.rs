@@ -112,22 +112,20 @@ pub fn ground_snap_system(
                 ground_pos.z,
             );
             transform.translation = final_pos;
-            commands.entity(entity).insert(avian3d::prelude::Position(final_pos));
+            commands
+                .entity(entity)
+                .insert(avian3d::prelude::Position(final_pos));
             info!(
                 "Ground-snapped creature {:?} from ({:.1}, {:.1}, {:.1}) to ({:.1}, {:.1}, {:.1})",
-                entity,
-                origin.x,
-                origin.y,
-                origin.z,
-                final_pos.x,
-                final_pos.y,
-                final_pos.z,
+                entity, origin.x, origin.y, origin.z, final_pos.x, final_pos.y, final_pos.z,
             );
         } else {
             // No ground found — spawn above origin and hope for the best
             let final_pos = Vec3::new(origin.x, origin.y + 2.0, origin.z);
             transform.translation = final_pos;
-            commands.entity(entity).insert(avian3d::prelude::Position(final_pos));
+            commands
+                .entity(entity)
+                .insert(avian3d::prelude::Position(final_pos));
             warn!(
                 "No ground found for creature {:?} near ({:.1}, {:.1}, {:.1}), spawning above origin",
                 entity, origin.x, origin.y, origin.z
@@ -183,7 +181,10 @@ pub fn moving_platform_system(
                 return None; // Skip self collisions!
             }
             if let Ok((_, rb)) = platforms.get(hit.entity) {
-                if matches!(rb, avian3d::prelude::RigidBody::Kinematic | avian3d::prelude::RigidBody::Static) {
+                if matches!(
+                    rb,
+                    avian3d::prelude::RigidBody::Kinematic | avian3d::prelude::RigidBody::Static
+                ) {
                     return Some(hit.entity);
                 }
             }
@@ -255,7 +256,9 @@ pub fn creature_movement_anim_system(
     const RUN_THRESHOLD: f32 = 3.0;
     const MAX_RUN_SPEED: f32 = 6.0;
 
-    for (library, mut anim_state, mut move_anim, vel, transform, loco_opt, fsm_opt, react_opt) in &mut creatures {
+    for (library, mut anim_state, mut move_anim, vel, transform, loco_opt, fsm_opt, react_opt) in
+        &mut creatures
+    {
         // Block locomotion while an FSM-driven animation (attack, etc.) is playing.
         if let Some(fsm) = fsm_opt {
             if fsm.active_anim.is_some() && !fsm.timed_out {
@@ -715,30 +718,46 @@ pub fn load_oni2_entity_type(
             let multi = b.sub_bounds.len() > 1;
             b.sub_bounds
                 .iter()
-                .map(|sub| {
+                .enumerate()
+                .map(|(sub_idx, sub)| {
                     // Single-sub-bound entities (characters, simple props) keep their
                     // vertices in entity-local space and are always assigned to bone 0
                     // (the root / parent entity).  Only composite bounds — where each
                     // sub-bound corresponds to a distinct animated panel — use nearest-
                     // bone assignment and bone-local vertex conversion.
                     let (bone_idx, bone_origin) = if multi && !bone_bevy_positions.is_empty() {
-                        let centroid = Vec3::new(
-                            sub.centroid[0],
-                            sub.centroid[1],
-                            sub.centroid[2],
-                        );
-                        let idx = bone_bevy_positions
-                            .iter()
-                            .enumerate()
-                            .min_by(|(_, a), (_, b)| {
-                                a.distance_squared(centroid)
-                                    .partial_cmp(&b.distance_squared(centroid))
-                                    .unwrap()
-                            })
-                            .map(|(i, _)| i)
-                            .unwrap_or(0);
-                        let origin = bone_bevy_positions[idx];
-                        (idx, origin)
+                        // Prefer deterministic panel->joint mapping when the skeleton has one
+                        // extra root bone (common for doors/mechanical props).
+                        if bone_bevy_positions.len() == b.sub_bounds.len() + 1 {
+                            let idx = (sub_idx + 1).min(bone_bevy_positions.len() - 1);
+                            (idx, bone_bevy_positions[idx])
+                        } else {
+                            let centroid =
+                                Vec3::new(sub.centroid[0], sub.centroid[1], sub.centroid[2]);
+                            // For composite bounds, prefer animated child joints over the
+                            // root when picking nearest rest-pose origin.
+                            let search = if bone_bevy_positions.len() > 1 {
+                                &bone_bevy_positions[1..]
+                            } else {
+                                &bone_bevy_positions[..]
+                            };
+                            let local_best = search
+                                .iter()
+                                .enumerate()
+                                .min_by(|(_, a), (_, b)| {
+                                    a.distance_squared(centroid)
+                                        .partial_cmp(&b.distance_squared(centroid))
+                                        .unwrap()
+                                })
+                                .map(|(i, _)| i)
+                                .unwrap_or(0);
+                            let idx = if bone_bevy_positions.len() > 1 {
+                                local_best + 1
+                            } else {
+                                local_best
+                            };
+                            (idx, bone_bevy_positions[idx])
+                        }
                     } else {
                         (0, Vec3::ZERO)
                     };
@@ -1029,8 +1048,7 @@ pub fn spawn_oni2_entity_with_rotation(
             if verts.is_empty() {
                 return None;
             }
-            let mut tris: Vec<[u32; 3]> =
-                Vec::with_capacity(sub.quads.len() * 2 + sub.tris.len());
+            let mut tris: Vec<[u32; 3]> = Vec::with_capacity(sub.quads.len() * 2 + sub.tris.len());
             for q in &sub.quads {
                 tris.push([q[0], q[1], q[2]]);
                 tris.push([q[0], q[2], q[3]]);
@@ -1135,7 +1153,10 @@ pub fn spawn_oni2_entity_with_rotation(
             } else {
                 // Per-panel animated bound (case b): each sub-shape on its joint.
                 for (bone_idx, collider) in built_colliders {
-                    let target = joint_entities.get(bone_idx).copied().unwrap_or(parent_entity);
+                    let target = joint_entities
+                        .get(bone_idx)
+                        .copied()
+                        .unwrap_or(parent_entity);
                     commands.entity(target).insert(collider);
                 }
             }
@@ -1187,7 +1208,14 @@ pub fn spawn_oni2_entity_with_rotation(
                 last_rendered_time: -1.0,
                 joint_entities: joint_entities.clone(),
                 base_rotation: rotation,
-                current_frame: vec![0.0; ent_type.anim_library.as_ref().and_then(|lib| lib.anims.values().next()).map_or(0, |a| a.num_channels) as usize],
+                current_frame: vec![
+                    0.0;
+                    ent_type
+                        .anim_library
+                        .as_ref()
+                        .and_then(|lib| lib.anims.values().next())
+                        .map_or(0, |a| a.num_channels) as usize
+                ],
                 current_anim_id: None,
                 previous_anim_id: None,
             });
@@ -1306,7 +1334,10 @@ pub fn spawn_oni2_creature(
 
     bevy::log::info!(
         "Creature '{}': bounds Y [{:.2}, {:.2}], offset applied: {:.2}",
-        anim_name, min_y, max_y, y_offset
+        anim_name,
+        min_y,
+        max_y,
+        y_offset
     );
 
     // Every creature gets a physics capsule + render offset + ground snap
@@ -1366,10 +1397,8 @@ pub fn spawn_oni2_creature(
             commands.entity(entity).insert(CreatureMovementAnim::Run);
 
             // Load attack combo sequence from .attacks file (data-driven DoTriggerAtk)
-            let attack_data = crate::oni2_loader::parsers::anims::load_attack_data(
-                &anim_entity_dir,
-                anim_name,
-            );
+            let attack_data =
+                crate::oni2_loader::parsers::anims::load_attack_data(&anim_entity_dir, anim_name);
             if !attack_data.forward_combo.is_empty() {
                 commands.entity(entity).insert(attack_data);
             }
@@ -1427,7 +1456,11 @@ pub(crate) fn load_tga_file(
 pub fn resolve_pending_parents_system(
     mut commands: Commands,
     pending_query: Query<(Entity, &crate::oni2_loader::components::PendingParent)>,
-    target_query: Query<(Entity, &Name, Option<&crate::oni2_loader::animation::Oni2AnimState>)>,
+    target_query: Query<(
+        Entity,
+        &Name,
+        Option<&crate::oni2_loader::animation::Oni2AnimState>,
+    )>,
 ) {
     for (child_entity, pending) in &pending_query {
         // Find matching parent by name
@@ -1457,7 +1490,9 @@ pub fn resolve_pending_parents_system(
 
         if let Some(parent) = resolved_parent {
             commands.entity(parent).add_child(child_entity);
-            commands.entity(child_entity).remove::<crate::oni2_loader::components::PendingParent>();
+            commands
+                .entity(child_entity)
+                .remove::<crate::oni2_loader::components::PendingParent>();
             info!(
                 "Successfully reparented layout actor to {}",
                 pending.parent_name
