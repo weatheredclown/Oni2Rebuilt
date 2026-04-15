@@ -133,6 +133,7 @@ impl EditorConfig {
 struct EditorState {
     mode: EditMode,
     selected_actor: Option<String>,
+    left_panel_tab: LeftPanelTab,
     dirty: bool,
     status: String,
     show_load_dialog: bool,
@@ -150,6 +151,13 @@ enum EditMode {
     #[default]
     Transform,
     Rotate,
+}
+
+#[derive(Default, Clone, Copy, PartialEq, Eq)]
+enum LeftPanelTab {
+    #[default]
+    AllEntities,
+    LayoutActors,
 }
 
 #[derive(Resource, Default)]
@@ -435,34 +443,87 @@ fn ui_system(
         .resizable(true)
         .default_width(300.0)
         .show(ctx, |ui| {
-            ui.heading("Entities");
-            ui.label(format!(
-                "{} entries • {} thumbnails",
-                layout.entity_types.len(),
-                layout.thumbnail_count()
-            ));
+            ui.horizontal(|ui| {
+                ui.selectable_value(
+                    &mut state.left_panel_tab,
+                    LeftPanelTab::AllEntities,
+                    "All entities",
+                );
+                ui.selectable_value(
+                    &mut state.left_panel_tab,
+                    LeftPanelTab::LayoutActors,
+                    "Layout actors",
+                );
+            });
+            ui.separator();
 
-            egui::ScrollArea::vertical().show(ui, |ui| {
-                egui::Grid::new("thumb_grid")
-                    .num_columns(2)
-                    .spacing([8.0, 8.0])
-                    .show(ui, |ui| {
-                        for (i, entry) in layout.entity_types.iter().enumerate() {
-                            ui.group(|ui| {
-                                ui.set_min_size(egui::vec2(130.0, 130.0));
-                                let label = if entry.thumbnail_path.is_some() {
-                                    format!("{}\nthumbnail.png", entry.entity_type)
-                                } else {
-                                    format!("{}\n(generating)", entry.entity_type)
-                                };
-                                ui.add_sized([120.0, 120.0], egui::Button::new(label));
+            match state.left_panel_tab {
+                LeftPanelTab::AllEntities => {
+                    ui.heading("All available entities");
+                    ui.label(format!(
+                        "{} entries • {} thumbnails",
+                        layout.entity_types.len(),
+                        layout.thumbnail_count()
+                    ));
+
+                    let mut to_insert: Option<String> = None;
+                    egui::ScrollArea::vertical().show(ui, |ui| {
+                        egui::Grid::new("thumb_grid")
+                            .num_columns(2)
+                            .spacing([8.0, 8.0])
+                            .show(ui, |ui| {
+                                for (i, entry) in layout.entity_types.iter().enumerate() {
+                                    ui.group(|ui| {
+                                        ui.set_min_size(egui::vec2(130.0, 130.0));
+                                        let label = if entry.thumbnail_path.is_some() {
+                                            format!("{}\nthumbnail.png", entry.entity_type)
+                                        } else {
+                                            format!("{}\n(generating)", entry.entity_type)
+                                        };
+                                        if ui
+                                            .add_sized([120.0, 120.0], egui::Button::new(label))
+                                            .clicked()
+                                        {
+                                            to_insert = Some(entry.entity_type.clone());
+                                        }
+                                    });
+                                    if i % 2 == 1 {
+                                        ui.end_row();
+                                    }
+                                }
                             });
-                            if i % 2 == 1 {
-                                ui.end_row();
+                    });
+
+                    if let Some(entity_type) = to_insert {
+                        let actor_name = next_actor_name_for_entity(layout.as_ref(), &entity_type);
+                        layout
+                            .actors
+                            .push(make_new_actor(&actor_name, &entity_type));
+                        layout.actors_file_names.push(actor_name.clone());
+                        state.selected_actor = Some(actor_name.clone());
+                        state.dirty = true;
+                        state.status =
+                            format!("Inserted entity '{entity_type}' as actor '{actor_name}'");
+                    }
+                }
+                LeftPanelTab::LayoutActors => {
+                    ui.heading("Actor list from layout");
+                    ui.label(format!("{} actors in level", layout.actors.len()));
+
+                    egui::ScrollArea::vertical().show(ui, |ui| {
+                        for actor in &layout.actors {
+                            let selected = state
+                                .selected_actor
+                                .as_ref()
+                                .is_some_and(|name| name == &actor.name);
+                            if ui.selectable_label(selected, &actor.name).clicked() {
+                                state.selected_actor = Some(actor.name.clone());
+                                state.status = format!("Selected actor '{}'", actor.name);
                             }
                         }
                     });
-            });
+                }
+            }
         });
 
     if state.show_load_dialog {
@@ -572,6 +633,49 @@ fn ui_system(
                     }
                 });
             });
+    }
+}
+
+fn next_actor_name_for_entity(layout: &LayoutDocument, entity_type: &str) -> String {
+    let mut max_n = 0u32;
+    let prefix = format!("actor_{entity_type}");
+    for actor in &layout.actors {
+        if let Some(suffix) = actor.name.strip_prefix(&prefix) {
+            if let Ok(n) = suffix.parse::<u32>() {
+                max_n = max_n.max(n);
+            }
+        }
+    }
+    format!("{prefix}{}", max_n + 1)
+}
+
+fn make_new_actor(actor_name: &str, entity_type: &str) -> ActorRecord {
+    ActorRecord {
+        name: actor_name.to_string(),
+        xml_root: ActorXml {
+            name: actor_name.to_string(),
+            contents: ActorContents {
+                entity: EntityBlock {
+                    attributes: EntityAttributes {
+                        entity_type: ValueAttribute {
+                            value: entity_type.to_string(),
+                        },
+                    },
+                },
+                actor_specific: ActorSpecific {
+                    _name: "Actor Specific".to_string(),
+                    attributes: ActorSpecificAttributes {
+                        position: ValueAttribute {
+                            value: "0 0 0".to_string(),
+                        },
+                        orientation: Some(ValueAttribute {
+                            value: "0 0 0".to_string(),
+                        }),
+                    },
+                },
+                editable: None,
+            },
+        },
     }
 }
 
