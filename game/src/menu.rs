@@ -553,14 +553,35 @@ struct EntityMenuRoot;
 #[derive(Component)]
 struct EntityButton(String);
 
-fn scan_entities() -> Vec<String> {
+fn scan_entities(filter_layout: Option<&str>) -> Vec<String> {
+    let mut allowed_entities = std::collections::HashSet::new();
+    let mut use_filter = false;
+
+    if let Some(layout_name) = filter_layout {
+        let layout_et_path = format!("layout/{}/layout.et", layout_name);
+        if let Ok(content) = crate::vfs::read_to_string("", &layout_et_path) {
+            use_filter = true;
+            for line in content.lines() {
+                let tokens: Vec<&str> = line.split_whitespace().collect();
+                if tokens.len() >= 3 && tokens[0] == "BASICENTITY" {
+                    allowed_entities.insert(tokens[2].to_string());
+                }
+            }
+        } else {
+            warn!("Could not read layout.et for '{}', showing all entities instead.", layout_name);
+        }
+    }
+
     let target_dir = "Entity".to_string();
     let mut all_folders = Vec::new();
     if let Ok(entries) = crate::vfs::read_dir(&target_dir) {
         for entry in entries {
             if entry.is_dir {
                 if let Some(name) = entry.path.split('/').last() {
-                    all_folders.push(name.to_string());
+                    let name_str = name.to_string();
+                    if !use_filter || allowed_entities.contains(&name_str) {
+                        all_folders.push(name_str);
+                    }
                 }
             }
         }
@@ -569,8 +590,12 @@ fn scan_entities() -> Vec<String> {
     all_folders
 }
 
-fn setup_entity_menu(mut commands: Commands, scroll_state: Res<MenuScrollState>) {
-    let entities = scan_entities();
+fn setup_entity_menu(
+    mut commands: Commands,
+    scroll_state: Res<MenuScrollState>,
+    selected_layout: Option<Res<SelectedLayout>>
+) {
+    let entities = scan_entities(selected_layout.as_ref().map(|sl| sl.0.as_str()));
 
     commands.spawn((Camera2d, EntityMenuRoot));
 

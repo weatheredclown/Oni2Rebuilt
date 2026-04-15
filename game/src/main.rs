@@ -226,6 +226,10 @@ fn main() {
         )
     );
 
+    if let Some(layout_name) = &cli_layout {
+        app.insert_resource(SelectedLayout(layout_name.clone()));
+    }
+
     // --- Initial state ---
     if let Some(anim_path) = cli_testanim {
         if anim_path.to_lowercase().ends_with(".anim") {
@@ -248,8 +252,7 @@ fn main() {
     } else if sandbox_mode {
         app.insert_resource(SandboxMode);
         app.insert_state(AppState::InGame);
-    } else if let Some(layout_name) = cli_layout {
-        app.insert_resource(SelectedLayout(layout_name));
+    } else if cli_layout.is_some() {
         app.insert_state(AppState::LoadingLayout);
     } else {
         app.init_state::<AppState>();
