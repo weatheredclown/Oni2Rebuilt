@@ -146,6 +146,9 @@ struct EditorState {
     show_overwrite_warning: bool,
     pending_save_as: Option<String>,
     show_bounds: bool,
+    entity_filter: String,
+    actor_filter: String,
+    request_focus_selected: bool,
 }
 
 #[derive(Default, Clone, Copy, PartialEq, Eq)]
@@ -528,10 +531,23 @@ fn ui_system(
             match state.left_panel_tab {
                 LeftPanelTab::AllEntities => {
                     ui.heading("All available entities");
+                    ui.horizontal(|ui| {
+                        ui.label("Filter:");
+                        ui.text_edit_singleline(&mut state.entity_filter);
+                        if ui.small_button("Clear").clicked() {
+                            state.entity_filter.clear();
+                        }
+                    });
+                    let filtered_entities: Vec<&EntityTypeEntry> = layout
+                        .entity_types
+                        .iter()
+                        .filter(|entry| matches_filter(&entry.entity_type, &state.entity_filter))
+                        .collect();
                     ui.label(format!(
-                        "{} entries • {} thumbnails",
+                        "{} / {} entries • {} thumbnails",
+                        filtered_entities.len(),
                         layout.entity_types.len(),
-                        layout.thumbnail_count()
+                        layout.thumbnail_count(),
                     ));
 
                     let mut to_insert: Option<String> = None;
@@ -540,7 +556,7 @@ fn ui_system(
                             .num_columns(2)
                             .spacing([8.0, 8.0])
                             .show(ui, |ui| {
-                                for (i, entry) in layout.entity_types.iter().enumerate() {
+                                for (i, entry) in filtered_entities.iter().enumerate() {
                                     ui.group(|ui| {
                                         ui.set_min_size(egui::vec2(130.0, 130.0));
                                         let label = if entry.thumbnail_path.is_some() {
@@ -575,10 +591,29 @@ fn ui_system(
                 }
                 LeftPanelTab::LayoutActors => {
                     ui.heading("Actor list from layout");
-                    ui.label(format!("{} actors in level", layout.actors.len()));
+                    ui.horizontal(|ui| {
+                        ui.label("Filter:");
+                        ui.text_edit_singleline(&mut state.actor_filter);
+                        if ui.small_button("Clear").clicked() {
+                            state.actor_filter.clear();
+                        }
+                    });
+                    let filtered_actors: Vec<&ActorRecord> = layout
+                        .actors
+                        .iter()
+                        .filter(|actor| {
+                            matches_filter(&actor.name, &state.actor_filter)
+                                || matches_filter(&actor.entity_type, &state.actor_filter)
+                        })
+                        .collect();
+                    ui.label(format!(
+                        "{} / {} actors in level",
+                        filtered_actors.len(),
+                        layout.actors.len()
+                    ));
 
                     egui::ScrollArea::vertical().show(ui, |ui| {
-                        for actor in &layout.actors {
+                        for actor in &filtered_actors {
                             let selected = state
                                 .selected_actor
                                 .as_ref()
@@ -589,6 +624,44 @@ fn ui_system(
                             }
                         }
                     });
+                    ui.separator();
+                    if let Some(selected_name) = state.selected_actor.clone() {
+                        if let Some(selected_actor) =
+                            layout.actors.iter().find(|a| a.name == selected_name)
+                        {
+                            ui.label(format!(
+                                "Selected: {} ({})",
+                                selected_actor.name, selected_actor.entity_type
+                            ));
+                            ui.horizontal(|ui| {
+                                if ui.button("Focus [F]").clicked() {
+                                    state.request_focus_selected = true;
+                                }
+                                if ui.button("Duplicate").clicked() {
+                                    let new_name = next_actor_name_for_entity(
+                                        layout.as_ref(),
+                                        &selected_actor.entity_type,
+                                    );
+                                    let duplicated =
+                                        duplicate_actor_record(selected_actor, &new_name);
+                                    layout.actors.push(duplicated);
+                                    state.selected_actor = Some(new_name.clone());
+                                    state.dirty = true;
+                                    state.status = format!(
+                                        "Duplicated actor '{}' as '{}'",
+                                        selected_name, new_name
+                                    );
+                                }
+                                if ui.button("Delete [Del]").clicked()
+                                    && remove_selected_actor(&mut layout, &mut state)
+                                {
+                                    state.dirty = true;
+                                }
+                            });
+                        }
+                    } else {
+                        ui.label("No actor selected");
+                    }
                 }
             }
         });
@@ -906,6 +979,10 @@ fn keyboard_shortcuts_system(
         }
     } else if keys.pressed(KeyCode::ControlLeft) && keys.just_pressed(KeyCode::KeyN) {
         create_blank_layout(&mut config, &mut layout, &mut state);
+    } else if keys.just_pressed(KeyCode::KeyF) {
+        state.request_focus_selected = true;
+    } else if keys.just_pressed(KeyCode::Delete) && remove_selected_actor(&mut layout, &mut state) {
+        state.dirty = true;
     }
 }
 
@@ -998,6 +1075,8 @@ fn camera_orbit_system(
     mut wheel: MessageReader<MouseWheel>,
     mut motion: MessageReader<MouseMotion>,
     mut contexts: EguiContexts,
+    mut state: ResMut<EditorState>,
+    actors: Query<(&Transform, &ActorHandle)>,
     mut query: Query<(&mut Transform, &mut OrbitCamera)>,
 ) {
     let egui_wants_scroll = contexts
@@ -1006,6 +1085,16 @@ fn camera_orbit_system(
         .is_some_and(|ctx| ctx.wants_pointer_input() || ctx.is_pointer_over_area());
 
     for (mut transform, mut orbit) in &mut query {
+        if state.request_focus_selected {
+            if let Some(selected) = state.selected_actor.as_ref() {
+                if let Some((target_tf, _)) = actors.iter().find(|(_, h)| &h.name == selected) {
+                    orbit.focus = target_tf.translation;
+                    state.status = format!("Focused '{}'", selected);
+                }
+            }
+            state.request_focus_selected = false;
+        }
+
         let mut move_delta = Vec3::ZERO;
         if keys.pressed(KeyCode::KeyW) {
             move_delta.z -= 1.0;
@@ -1041,6 +1130,35 @@ fn camera_orbit_system(
         transform.translation = orbit.focus + rot * Vec3::new(0.0, 0.0, orbit.radius);
         transform.look_at(orbit.focus, Vec3::Y);
     }
+}
+
+fn matches_filter(text: &str, filter: &str) -> bool {
+    let filter = filter.trim();
+    if filter.is_empty() {
+        return true;
+    }
+    text.to_lowercase().contains(&filter.to_lowercase())
+}
+
+fn duplicate_actor_record(source: &ActorRecord, new_name: &str) -> ActorRecord {
+    let mut duplicated = source.clone();
+    duplicated.name = new_name.to_string();
+    duplicated.raw_xml = set_actor_name_attr(&duplicated.raw_xml, new_name);
+    duplicated
+}
+
+fn remove_selected_actor(layout: &mut LayoutDocument, state: &mut EditorState) -> bool {
+    let Some(selected) = state.selected_actor.clone() else {
+        return false;
+    };
+    let before = layout.actors.len();
+    layout.actors.retain(|actor| actor.name != selected);
+    if layout.actors.len() != before {
+        state.selected_actor = None;
+        state.status = format!("Deleted actor '{}'", selected);
+        return true;
+    }
+    false
 }
 
 fn mouse_pick_system(
@@ -1219,6 +1337,18 @@ fn set_or_insert_xml_attr(xml: &str, tag: &str, new_value: &str) -> String {
     } else {
         format!("{}\n{}", xml, insert)
     }
+}
+
+fn set_actor_name_attr(xml: &str, new_name: &str) -> String {
+    let search = "<actor name=\"";
+    if let Some(start) = xml.find(search) {
+        let val_start = start + search.len();
+        if let Some(end_offset) = xml[val_start..].find('"') {
+            let end = val_start + end_offset;
+            return format!("{}{}{}", &xml[..val_start], new_name, &xml[end..]);
+        }
+    }
+    xml.to_string()
 }
 
 fn discover_layout_names(layout_root: &Path) -> Vec<String> {
