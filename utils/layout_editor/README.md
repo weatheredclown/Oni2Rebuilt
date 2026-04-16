@@ -14,6 +14,8 @@ This utility is a standalone 3D layout editor scaffold intended to sit outside `
 - Generate missing thumbnails in a background pass while the app is running.
 - Display actor placeholders in 3D, select with LMB, edit transform/rotation, and save back to XML.
 - Toggle debug bounds with `B`.
+- Filter both the entity palette and actor list with inline search boxes.
+- Duplicate, delete, and focus selected actors from the actor panel.
 
 ## Run
 
@@ -30,4 +32,6 @@ cargo run -p layout_editor -- --path ../oni2/zips/assets --layout tim06
 - **T**: transform mode (translate with arrows)
 - **R**: rotate mode (yaw with Q/E)
 - **B**: toggle debug bounds
+- **F**: focus camera on selected actor
+- **Delete**: remove selected actor
 - **Ctrl+S**: save
