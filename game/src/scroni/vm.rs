@@ -212,6 +212,7 @@ pub enum SysRequest {
     CameraMode(String),
     CameraSetFOV(f32, f32), // Target FOV, Duration
     CameraShake,
+    CameraFollowActor(Entity),
     CameraTrackActor(Entity),
     CameraTrackPoint(Vec3),
     CameraMoveToActor(Entity, f32), // Target, Duration
@@ -339,6 +340,7 @@ pub enum ScrOniSysEvent {
     CameraMode(String),
     CameraSetFOV(f32, f32), // Target FOV, Duration
     CameraShake,
+    CameraFollowActor(Entity),
     CameraTrackActor(Entity),
     CameraTrackPoint(Vec3),
     CameraMoveToActor(Entity, f32),
@@ -2085,6 +2087,9 @@ pub fn scroni_tick_system(
                 }
                 SysRequest::CameraShake => {
                     commands.trigger(ScrOniSysEvent::CameraShake);
+                }
+                SysRequest::CameraFollowActor(e) => {
+                    commands.trigger(ScrOniSysEvent::CameraFollowActor(e));
                 }
                 SysRequest::CameraTrackActor(e) => {
                     commands.trigger(ScrOniSysEvent::CameraTrackActor(e));

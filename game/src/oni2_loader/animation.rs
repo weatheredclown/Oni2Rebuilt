@@ -987,7 +987,8 @@ pub fn frame_lerp(state: &mut Oni2AnimState, idx_a: usize, idx_b: usize, t: f32)
             rot_flags[i]
         } else {
             // Legacy fallback if no explicit channel map exists
-            if len == 1 { false } else { i >= 3 }
+            if len == 1 { false } else { i < 3 || i >= 6 }
+            //if len == 1 { false } else { i >= 3 }
         };
 
         if is_rot {

@@ -238,7 +238,7 @@ pub fn parse_mod(content: &str, entity_dir: &str) -> Oni2Model {
         packets,
         bone_world_positions: Vec::new(),
         bone_rotations: Vec::new(),
-        world_space_verts: true,
+        world_space_verts: false, // ASCII .mod files are natively bone-local
     }
 }
 

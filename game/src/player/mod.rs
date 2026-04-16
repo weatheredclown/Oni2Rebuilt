@@ -35,6 +35,7 @@ impl Plugin for PlayerPlugin {
                 .chain()
                 .run_if(in_state(AppState::InGame)),
         )
+        .add_systems(OnEnter(AppState::InGame), systems::clear_inputs_on_enter)
         .add_systems(
             FixedUpdate,
             (

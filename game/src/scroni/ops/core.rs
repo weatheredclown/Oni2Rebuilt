@@ -377,16 +377,22 @@ pub fn exec(ctx: &mut OpsCtx, stmt: &Stmt) -> bool {
                 }
 
                 let mut sender_name = format!("{:?}", ctx.exec.owner);
-                if let Ok((_, _, Some(n))) = ctx.ctx.all_entities.get(ctx.exec.owner) {
-                    sender_name = format!("{} ({:?})", n.as_str(), ctx.exec.owner);
+                let mut sender_pos = bevy::math::Vec3::ZERO;
+                if let Ok((_, tf, name_opt)) = ctx.ctx.all_entities.get(ctx.exec.owner) {
+                    sender_pos = tf.translation();
+                    if let Some(n) = name_opt {
+                        sender_name = format!("{} ({:?})", n.as_str(), ctx.exec.owner);
+                    }
                 }
 
                 info!(
-                    "[ScrOni][{}] VM: SendMessage '{}' from {} to {}",
+                    "[ScrOni][{}] VM: SendMessage '{}' from {} (pos={:.2?}) to {} [seq_pc={}]",
                     ctx.thread().script.name,
                     msg_str,
                     sender_name,
-                    target_name
+                    sender_pos,
+                    target_name,
+                    ctx.thread().seq_pc
                 );
                 ctx.exec.outgoing_messages.push(ScriptMessage {
                     msg: msg_str.clone(),

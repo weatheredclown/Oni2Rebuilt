@@ -444,3 +444,14 @@ pub fn player_movement_system(
         velocity.z = desired.z;
     }
 }
+
+pub fn clear_inputs_on_enter(
+    mut mouse: ResMut<ButtonInput<MouseButton>>,
+    mut keys: ResMut<ButtonInput<KeyCode>>,
+    mut pad_mapper: ResMut<PadMapper>,
+) {
+    mouse.clear();
+    keys.clear();
+    pad_mapper.clear();
+}
+

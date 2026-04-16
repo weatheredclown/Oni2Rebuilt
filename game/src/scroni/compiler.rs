@@ -566,34 +566,34 @@ impl Compiler {
                 self.advance();
                 Stmt::CameraLetterbox(self.parse_expr())
             }
-            TokenCode::CameraFollowActor => self
-                .parse_generic_args(TokenCode::CameraFollowActor, |args| {
-                    Stmt::CameraFollowActor { args }
-                }),
-            TokenCode::CameraTrackActor => self
-                .parse_generic_args(TokenCode::CameraTrackActor, |args| Stmt::CameraTrackActor {
-                    args,
-                }),
-            TokenCode::CameraTrackPoint => self
-                .parse_generic_args(TokenCode::CameraTrackPoint, |args| Stmt::CameraTrackPoint {
-                    args,
-                }),
-            TokenCode::CameraMoveToActor => self
-                .parse_generic_args(TokenCode::CameraMoveToActor, |args| {
-                    Stmt::CameraMoveToActor { args }
-                }),
-            TokenCode::CameraMoveToPoint => self
-                .parse_generic_args(TokenCode::CameraMoveToPoint, |args| {
-                    Stmt::CameraMoveToPoint { args }
-                }),
-            TokenCode::CameraCutToActor => self
-                .parse_generic_args(TokenCode::CameraCutToActor, |args| Stmt::CameraCutToActor {
-                    args,
-                }),
-            TokenCode::CameraCutToPoint => self
-                .parse_generic_args(TokenCode::CameraCutToPoint, |args| Stmt::CameraCutToPoint {
-                    args,
-                }),
+            TokenCode::CameraFollowActor => {
+                let args = self.parse_camera_args();
+                Stmt::CameraFollowActor { args }
+            }
+            TokenCode::CameraTrackActor => {
+                let args = self.parse_camera_args();
+                Stmt::CameraTrackActor { args }
+            }
+            TokenCode::CameraTrackPoint => {
+                let args = self.parse_camera_args();
+                Stmt::CameraTrackPoint { args }
+            }
+            TokenCode::CameraMoveToActor => {
+                let args = self.parse_camera_args();
+                Stmt::CameraMoveToActor { args }
+            }
+            TokenCode::CameraMoveToPoint => {
+                let args = self.parse_camera_args();
+                Stmt::CameraMoveToPoint { args }
+            }
+            TokenCode::CameraCutToActor => {
+                let args = self.parse_camera_args();
+                Stmt::CameraCutToActor { args }
+            }
+            TokenCode::CameraCutToPoint => {
+                let args = self.parse_camera_args();
+                Stmt::CameraCutToPoint { args }
+            }
             TokenCode::CameraSetFOV => {
                 self.parse_generic_args(TokenCode::CameraSetFOV, |args| Stmt::CameraSetFOV { args })
             }
@@ -702,6 +702,35 @@ impl Compiler {
             self.skip_if(TokenCode::Comma);
         }
         constructor(args)
+    }
+
+    /// Parses camera position/actor commands that use the `offset {v}` and `time X` optional suffixes.
+    /// Returns args as [primary_expr, duration] where duration defaults to 0.0 if `time` is absent.
+    fn parse_camera_args(&mut self) -> Vec<Expr> {
+        self.advance(); // skip command keyword
+        let mut args = Vec::new();
+
+        if is_expr_start(self.code()) {
+            args.push(self.parse_expr());
+        }
+
+        // `offset {x,y,z}` — consumed but not forwarded (look-at offsets not yet implemented)
+        if self.code() == TokenCode::Offset {
+            self.advance();
+            if is_expr_start(self.code()) {
+                self.parse_expr();
+            }
+        }
+
+        // `time X` — consumed and forwarded as the duration argument
+        if self.code() == TokenCode::Time {
+            self.advance();
+            if is_expr_start(self.code()) {
+                args.push(self.parse_expr());
+            }
+        }
+
+        args
     }
 
     fn parse_set(&mut self) -> Stmt {

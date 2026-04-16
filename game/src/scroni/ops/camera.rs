@@ -24,7 +24,12 @@ pub fn exec(ctx: &mut OpsCtx, stmt: &Stmt) -> bool {
             let _on = ctx.eval_bool(expr);
             true
         }
-        Stmt::CameraFollowActor { args: _ } => {
+        Stmt::CameraFollowActor { args } => {
+            if args.len() >= 1 {
+                if let Value::Actor(ent) = ctx.eval(&args[0]) {
+                    ctx.sys_request(SysRequest::CameraFollowActor(ent));
+                }
+            }
             true
         }
         Stmt::CameraTrackActor { args } => {
