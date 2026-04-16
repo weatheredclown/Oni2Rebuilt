@@ -20,7 +20,13 @@ pub fn parse_bound(content: &str) -> Oni2Bound {
     for line in content.lines() {
         let trimmed = line.trim();
 
-        if trimmed.starts_with("bound:") {
+        if trimmed.starts_with("type:") {
+            let parts: Vec<&str> = trimmed.split(':').collect();
+            if parts.len() >= 2 {
+                let ty = parts[1].trim().to_string();
+                current.get_or_insert_with(Oni2SubBound::default).bound_type = Some(ty);
+            }
+        } else if trimmed.starts_with("bound:") {
             // Push the previous sub-bound (if any) and start a fresh one.
             if let Some(sub) = current.take() {
                 sub_bounds.push(sub);

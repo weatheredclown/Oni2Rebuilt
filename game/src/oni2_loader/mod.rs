@@ -19,6 +19,7 @@ pub mod registries;
 pub mod spawn;
 pub mod testanim;
 pub mod utils;
+pub mod physics;
 
 pub use animation::*;
 pub use components::*;
@@ -72,6 +73,11 @@ impl Plugin for Oni2LoaderPlugin {
             .init_resource::<environment::TextureCollections>()
             .init_resource::<components::CurrentCheckpointIndex>()
             .add_systems(Startup, (load_global_registries, load_global_explosions))
+            .add_systems(
+                PhysicsSchedule,
+                physics::octree_one_way_contact_system
+                    .in_set(NarrowPhaseSystems::Last),
+            )
             .add_systems(
                 Update,
                 (

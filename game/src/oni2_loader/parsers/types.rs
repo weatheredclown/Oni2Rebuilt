@@ -75,6 +75,7 @@ pub struct Oni2Adjunct {
 /// Edge/quad/tri indices are local to THIS sub-bound's vertex array (always base-0).
 #[derive(Debug, Clone, Default)]
 pub struct Oni2SubBound {
+    pub bound_type: Option<String>,
     pub vertices: Vec<[f32; 3]>,
     pub centroid: [f32; 3],
     pub edges: Vec<[u32; 2]>,

@@ -297,10 +297,10 @@ fn setup(
     ));
 
     commands.spawn((
-        Mesh3d(meshes.add(Plane3d::default().mesh().size(500.0, 500.0))),
+        Mesh3d(meshes.add(create_wireframe_grid(10.0, 10))),
         MeshMaterial3d(materials.add(StandardMaterial {
-            base_color: Color::srgb(0.08, 0.09, 0.11),
-            perceptual_roughness: 0.95,
+            base_color: Color::srgb(0.5, 0.5, 0.5),
+            unlit: true,
             ..default()
         })),
     ));
@@ -1245,3 +1245,28 @@ struct ValueAttribute {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 struct EditableBlock {}
+
+fn create_wireframe_grid(size: f32, count: u32) -> Mesh {
+    use bevy::asset::RenderAssetUsages;
+    use bevy::render::render_resource::PrimitiveTopology;
+
+    let mut positions = Vec::new();
+    let half_size = size / 2.0;
+    let step = size / count as f32;
+    
+    for i in 0..=count {
+        let t = -half_size + i as f32 * step;
+        
+        // Line along fixed X (t)
+        positions.push([t, 0.0, -half_size]);
+        positions.push([t, 0.0, half_size]);
+        
+        // Line along fixed Z (t)
+        positions.push([-half_size, 0.0, t]);
+        positions.push([half_size, 0.0, t]);
+    }
+    
+    let mut mesh = Mesh::new(PrimitiveTopology::LineList, RenderAssetUsages::default());
+    mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, positions);
+    mesh
+}

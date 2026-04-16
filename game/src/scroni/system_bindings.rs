@@ -140,13 +140,13 @@ pub fn scroni_sys_event_observer(
                 if let Some((_, pkg)) = pkgs.iter().find(|(k, _)| k.eq_ignore_ascii_case(&name)) {
                     if !pkg.nuggets.is_empty() {
                         use rand::Rng;
-                        let mut rng = rand::thread_rng();
-                        let idx = rng.gen_range(0..pkg.nuggets.len());
+                        let mut rng = rand::rng();
+                        let idx = rng.random_range(0..pkg.nuggets.len());
                         let nugget = &pkg.nuggets[idx];
                         
                         resolved_name = nugget.sound.clone();
-                        final_volume = nugget.volume * rng.gen_range(nugget.random_min_volume..=nugget.random_max_volume);
-                        final_pitch = nugget.pitch * rng.gen_range(nugget.random_min_pitch..=nugget.random_max_pitch);
+                        final_volume = nugget.volume * rng.random_range(nugget.random_min_volume..=nugget.random_max_volume);
+                        final_pitch = nugget.pitch * rng.random_range(nugget.random_min_pitch..=nugget.random_max_pitch);
                     } else {
                         warn!("Audio package `{}` found, but it has no nuggets.", name);
                     }
@@ -750,7 +750,7 @@ pub fn scroni_sys_event_observer(
                     if let Some((_, pkg)) = pkgs.iter().find(|(k, _)| k.eq_ignore_ascii_case(&resolved_name)) {
                         if !pkg.nuggets.is_empty() {
                             use rand::Rng;
-                            let mut rng = rand::thread_rng();
+                            let mut rng = rand::rng();
                             let idx = rng.random_range(0..pkg.nuggets.len());
                             let nugget = &pkg.nuggets[idx];
                             resolved_name = nugget.sound.clone();

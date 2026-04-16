@@ -77,3 +77,7 @@ pub struct PendingParent {
     pub parent_name: String,
     pub bone_name: Option<String>,
 }
+
+/// Marker component for legacy "octree" volumes which use strict 1-way collision portal culling.
+#[derive(Component, Debug, Clone)]
+pub struct OneWayOctreeBound;
