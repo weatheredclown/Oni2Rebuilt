@@ -4,7 +4,7 @@ use bevy::input::mouse::{MouseMotion, MouseWheel};
 use bevy::mesh::skinning::SkinnedMeshInverseBindposes;
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
-use bevy_egui::{EguiContexts, EguiPlugin, EguiPrimaryContextPass, egui};
+use bevy_egui::{egui, EguiContexts, EguiPlugin, EguiPrimaryContextPass};
 use image::{ImageBuffer, Rgba};
 use quick_xml::de::from_str;
 use quick_xml::se::to_string;
@@ -137,6 +137,7 @@ struct EditorState {
     dirty: bool,
     status: String,
     show_load_dialog: bool,
+    show_new_warning: bool,
     show_unsaved_warning: bool,
     pending_load_layout: Option<String>,
     show_save_as_dialog: bool,
@@ -409,6 +410,14 @@ fn ui_system(
     egui::TopBottomPanel::top("menu").show(ctx, |ui| {
         egui::MenuBar::new().ui(ui, |ui| {
             ui.menu_button("File", |ui| {
+                if ui.button("New").clicked() {
+                    if state.dirty {
+                        state.show_new_warning = true;
+                    } else {
+                        create_blank_layout(&mut layout, &mut state);
+                    }
+                    ui.close();
+                }
                 if ui.button("Load").clicked() {
                     state.show_load_dialog = true;
                     picker.names = discover_layout_names(&config.layout_root);
@@ -556,6 +565,24 @@ fn ui_system(
                 if ui.button("Cancel").clicked() {
                     state.show_load_dialog = false;
                 }
+            });
+    }
+
+    if state.show_new_warning {
+        egui::Window::new("Unsaved changes")
+            .collapsible(false)
+            .resizable(false)
+            .show(ctx, |ui| {
+                ui.label("You have unsaved changes. Create a blank layout anyway?");
+                ui.horizontal(|ui| {
+                    if ui.button("Create blank").clicked() {
+                        create_blank_layout(&mut layout, &mut state);
+                        state.show_new_warning = false;
+                    }
+                    if ui.button("Cancel").clicked() {
+                        state.show_new_warning = false;
+                    }
+                });
             });
     }
 
@@ -729,6 +756,14 @@ fn save_as_layout(
     state.status = format!("Saved as {target}");
 }
 
+fn create_blank_layout(layout: &mut LayoutDocument, state: &mut EditorState) {
+    layout.actors.clear();
+    layout.actors_file_names.clear();
+    state.selected_actor = None;
+    state.dirty = true;
+    state.status = "New blank layout created in memory".to_string();
+}
+
 fn thumbnail_background_generation_system(
     config: Res<EditorConfig>,
     mut generator: ResMut<ThumbnailGenerator>,
@@ -815,11 +850,7 @@ fn keyboard_shortcuts_system(
     }
 
     if keys.pressed(KeyCode::ControlLeft) && keys.just_pressed(KeyCode::KeyN) {
-        layout.actors.clear();
-        layout.actors_file_names.clear();
-        state.selected_actor = None;
-        state.dirty = true;
-        state.status = "New layout created in memory".to_string();
+        create_blank_layout(&mut layout, &mut state);
     }
 }
 
@@ -834,21 +865,41 @@ fn draw_debug_bounds_system(
     state: Res<EditorState>,
     actors: Query<(&Transform, &ActorHandle)>,
 ) {
-    if !state.show_bounds {
-        return;
-    }
-
     for (tf, handle) in &actors {
-        let color = if state
+        let is_selected = state
             .selected_actor
             .as_ref()
-            .is_some_and(|n| n == &handle.name)
-        {
-            Color::srgb(0.2, 0.95, 0.4)
-        } else {
-            Color::srgb(1.0, 0.8, 0.2)
-        };
-        gizmos.cube(*tf, color);
+            .is_some_and(|n| n == &handle.name);
+
+        if state.show_bounds {
+            let color = if is_selected {
+                Color::srgb(0.2, 0.95, 0.4)
+            } else {
+                Color::srgb(1.0, 0.8, 0.2)
+            };
+            gizmos.cube(*tf, color);
+        }
+
+        if is_selected {
+            let origin = tf.translation;
+            let rotation = tf.rotation;
+            let axis_len = 1.5;
+            gizmos.line(
+                origin,
+                origin + rotation * Vec3::X * axis_len,
+                Color::srgb(1.0, 0.2, 0.2),
+            );
+            gizmos.line(
+                origin,
+                origin + rotation * Vec3::Y * axis_len,
+                Color::srgb(0.2, 1.0, 0.2),
+            );
+            gizmos.line(
+                origin,
+                origin + rotation * Vec3::Z * axis_len,
+                Color::srgb(0.2, 0.55, 1.0),
+            );
+        }
     }
 }
 
