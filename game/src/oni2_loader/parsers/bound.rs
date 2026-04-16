@@ -24,7 +24,12 @@ pub fn parse_bound(content: &str) -> Oni2Bound {
             let parts: Vec<&str> = trimmed.split(':').collect();
             if parts.len() >= 2 {
                 let ty = parts[1].trim().to_string();
-                current.get_or_insert_with(Oni2SubBound::default).bound_type = Some(ty);
+                let sub = current.get_or_insert_with(Oni2SubBound::default);
+                if sub.bound_type.is_none() {
+                    sub.bound_type = Some(ty);
+                } else if sub.material_type.is_none() {
+                    sub.material_type = Some(ty);
+                }
             }
         } else if trimmed.starts_with("bound:") {
             // Push the previous sub-bound (if any) and start a fresh one.

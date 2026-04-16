@@ -78,6 +78,14 @@ pub struct PendingParent {
     pub bone_name: Option<String>,
 }
 
+/// Stores the bound type string from the .bnd file for runtime classification.
+#[derive(Component, Debug, Clone)]
+pub struct BoundType(pub String);
+
+/// Stores the physical material property set assigned to the bound.
+#[derive(Component, Debug, Clone)]
+pub struct MaterialType(pub String);
+
 /// Marker component for legacy "octree" volumes which use strict 1-way collision portal culling.
 #[derive(Component, Debug, Clone)]
 pub struct OneWayOctreeBound;

@@ -461,7 +461,7 @@ fn ui_system(
                     if state.dirty {
                         state.show_new_warning = true;
                     } else {
-                        create_blank_layout(&mut layout, &mut state);
+                        create_blank_layout(&mut config, &mut layout, &mut state);
                     }
                     ui.close();
                 }
@@ -471,6 +471,8 @@ fn ui_system(
                     ui.close();
                 }
                 if ui.button("Save").clicked() {
+                    // TODO: IF there's no layout name yet, we should treat save like a save_as
+
                     match layout.save(&config.layout_dir) {
                         Ok(()) => {
                             state.dirty = false;
@@ -622,7 +624,7 @@ fn ui_system(
                 ui.label("You have unsaved changes. Create a blank layout anyway?");
                 ui.horizontal(|ui| {
                     if ui.button("Create blank").clicked() {
-                        create_blank_layout(&mut layout, &mut state);
+                        create_blank_layout(&mut config, &mut layout, &mut state);
                         state.show_new_warning = false;
                     }
                     if ui.button("Cancel").clicked() {
@@ -794,7 +796,12 @@ fn save_as_layout(
     state.status = format!("Saved as {target}");
 }
 
-fn create_blank_layout(layout: &mut LayoutDocument, state: &mut EditorState) {
+fn create_blank_layout(
+    config: &mut EditorConfig,
+    layout: &mut LayoutDocument, 
+    state: &mut EditorState
+) {
+    config.set_layout("".to_string());
     layout.actors.clear();
     state.selected_actor = None;
     state.dirty = true;
@@ -865,18 +872,17 @@ fn keyboard_shortcuts_system(
     keys: Res<ButtonInput<KeyCode>>,
     mut state: ResMut<EditorState>,
     mut layout: ResMut<LayoutDocument>,
-    config: Res<EditorConfig>,
+    mut config: ResMut<EditorConfig>,
 ) {
     if keys.just_pressed(KeyCode::KeyT) {
         state.mode = EditMode::Transform;
         state.status = "Transform mode".to_string();
     }
-    if keys.just_pressed(KeyCode::KeyR) {
+    else if keys.just_pressed(KeyCode::KeyR) {
         state.mode = EditMode::Rotate;
         state.status = "Rotate mode".to_string();
     }
-
-    if keys.pressed(KeyCode::ControlLeft) && keys.just_pressed(KeyCode::KeyS) {
+    else if keys.pressed(KeyCode::ControlLeft) && keys.just_pressed(KeyCode::KeyS) {
         match layout.save(&config.layout_dir) {
             Ok(()) => {
                 state.dirty = false;
@@ -885,9 +891,8 @@ fn keyboard_shortcuts_system(
             Err(err) => state.status = format!("Save failed: {err}"),
         }
     }
-
-    if keys.pressed(KeyCode::ControlLeft) && keys.just_pressed(KeyCode::KeyN) {
-        create_blank_layout(&mut layout, &mut state);
+    else if keys.pressed(KeyCode::ControlLeft) && keys.just_pressed(KeyCode::KeyN) {
+        create_blank_layout(&mut config, &mut layout, &mut state);
     }
 }
 

@@ -883,7 +883,7 @@ pub fn debug_draw_attack_wedges(
     for (transform, anim_state, _fighter, offset_opt) in &query {
         let Some(data) = &anim_state.anim.attack_data else {
             // ATDT not loaded for this animation — check VFS path if wedge is expected
-            debug!("debug_draw_attack_wedges: no attack_data for anim id={:?}", anim_state.current_anim_id);
+            // debug!("debug_draw_attack_wedges: no attack_data for anim id={:?}", anim_state.current_anim_id);
             continue;
         };
         let Some(strike) = &data.strike else { continue; };

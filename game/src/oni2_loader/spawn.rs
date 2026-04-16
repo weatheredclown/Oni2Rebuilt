@@ -1021,7 +1021,7 @@ pub fn spawn_oni2_entity_with_rotation(
     //    Each sub-bound was already assigned to a bone and its vertices converted
     //    to bone-local space in load_oni2_entity_type.
     let has_any_collider = !ent_type.bone_colliders.is_empty();
-    let built_colliders: Vec<(usize, Collider, Option<String>)> = ent_type
+    let built_colliders: Vec<(usize, Collider, Option<String>, Option<String>)> = ent_type
         .bone_colliders
         .iter()
         .filter_map(|(bone_idx, sub)| {
@@ -1046,7 +1046,7 @@ pub fn spawn_oni2_entity_with_rotation(
             } else {
                 Collider::convex_hull(verts)
             };
-            collider.map(|c| (*bone_idx, c, sub.bound_type.clone()))
+            collider.map(|c| (*bone_idx, c, sub.bound_type.clone(), sub.material_type.clone()))
         })
         .collect();
 
@@ -1129,42 +1129,54 @@ pub fn spawn_oni2_entity_with_rotation(
                 avian3d::prelude::LinearVelocity::default(),
                 avian3d::prelude::AngularVelocity::default(),
             ));
-            let all_root = built_colliders.iter().all(|(idx, _, _)| *idx == 0);
+            let all_root = built_colliders.iter().all(|(idx, _, _, _)| *idx == 0);
             if all_root {
                 // Single-body bound (case a): merge onto parent entity.
-                for (_, collider, bound_type) in built_colliders {
+                for (_, collider, bound_type, material_type) in built_colliders {
                     commands.entity(parent_entity).insert(collider);
                     if let Some(bt) = bound_type {
+                        commands.entity(parent_entity).insert(crate::oni2_loader::components::BoundType(bt.clone()));
                         if bt.to_lowercase() == "octree" {
                             commands.entity(parent_entity).insert(crate::oni2_loader::components::OneWayOctreeBound);
                         }
                     }
+                    if let Some(mt) = material_type {
+                        commands.entity(parent_entity).insert(crate::oni2_loader::components::MaterialType(mt.clone()));
+                    }
                 }
             } else {
                 // Per-panel animated bound (case b): each sub-shape on its joint.
-                for (bone_idx, collider, bound_type) in built_colliders {
+                for (bone_idx, collider, bound_type, material_type) in built_colliders {
                     let target = joint_entities
                         .get(bone_idx)
                         .copied()
                         .unwrap_or(parent_entity);
                     commands.entity(target).insert(collider);
                     if let Some(bt) = bound_type {
+                        commands.entity(target).insert(crate::oni2_loader::components::BoundType(bt.clone()));
                         if bt.to_lowercase() == "octree" {
                             commands.entity(target).insert(crate::oni2_loader::components::OneWayOctreeBound);
                         }
+                    }
+                    if let Some(mt) = material_type {
+                        commands.entity(target).insert(crate::oni2_loader::components::MaterialType(mt.clone()));
                     }
                 }
             }
         } else {
             // Static (case c): one child entity per sub-bound collider.
-            for (_, collider, bound_type) in built_colliders {
+            for (_, collider, bound_type, material_type) in built_colliders {
                 let child = commands
                     .spawn((Transform::IDENTITY, GlobalTransform::default(), collider))
                     .id();
                 if let Some(bt) = bound_type {
+                    commands.entity(child).insert(crate::oni2_loader::components::BoundType(bt.clone()));
                     if bt.to_lowercase() == "octree" {
                         commands.entity(child).insert(crate::oni2_loader::components::OneWayOctreeBound);
                     }
+                }
+                if let Some(mt) = material_type {
+                    commands.entity(child).insert(crate::oni2_loader::components::MaterialType(mt.clone()));
                 }
                 commands.entity(parent_entity).add_child(child);
             }

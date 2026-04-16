@@ -11,6 +11,14 @@ use bevy::diagnostic::{DiagnosticsStore, FrameTimeDiagnosticsPlugin};
 use bevy::ecs::relationship::Relationship;
 use bevy::gizmos::config::GizmoConfigStore;
 use bevy::prelude::*;
+use std::collections::HashMap;
+use std::sync::{LazyLock, RwLock};
+
+pub static DEBUG_NAMES: LazyLock<RwLock<HashMap<Entity, String>>> = 
+    LazyLock::new(|| RwLock::new(HashMap::new()));
+
+pub static DEBUG_TYPES: LazyLock<RwLock<HashMap<Entity, String>>> = 
+    LazyLock::new(|| RwLock::new(HashMap::new()));
 
 pub struct DebugPlugin;
 
@@ -25,6 +33,10 @@ impl Plugin for DebugPlugin {
                     toggle_debug_light,
                     debug_kill_creatures,
                     debug_scan_player_geometry,
+                    sync_debug_names,
+                    cleanup_debug_names,
+                    sync_debug_types,
+                    cleanup_debug_types,
                 ),
             );
     }
@@ -202,4 +214,62 @@ fn debug_scan_player_geometry(
         }
         info!("--- END SCAN (Total: {}) ---", count);
     }
+}
+
+fn sync_debug_names(query: Query<(Entity, &Name), Changed<Name>>) {
+    if let Ok(mut map) = DEBUG_NAMES.write() {
+        for (entity, name) in &query {
+            map.insert(entity, name.to_string());
+        }
+    }
+}
+
+fn cleanup_debug_names(mut removed: RemovedComponents<Name>) {
+    if removed.is_empty() {
+        return;
+    }
+    if let Ok(mut map) = DEBUG_NAMES.write() {
+        for entity in removed.read() {
+            map.remove(&entity);
+        }
+    }
+}
+
+/// Formats an Entity's name for debug printing, falling back to its ID if no Name is present.
+pub fn debug_name(entity: Entity) -> String {
+    if let Ok(map) = DEBUG_NAMES.read() {
+        if let Some(name) = map.get(&entity) {
+            return name.clone();
+        }
+    }
+    format!("{:?}", entity)
+}
+
+fn sync_debug_types(query: Query<(Entity, &crate::oni2_loader::components::BoundType), Changed<crate::oni2_loader::components::BoundType>>) {
+    if let Ok(mut map) = DEBUG_TYPES.write() {
+        for (entity, bt) in &query {
+            map.insert(entity, bt.0.clone());
+        }
+    }
+}
+
+fn cleanup_debug_types(mut removed: RemovedComponents<crate::oni2_loader::components::BoundType>) {
+    if removed.is_empty() {
+        return;
+    }
+    if let Ok(mut map) = DEBUG_TYPES.write() {
+        for entity in removed.read() {
+            map.remove(&entity);
+        }
+    }
+}
+
+/// Retrieves an Entity's BoundType string if it has one, otherwise returns "Actor/Prop".
+pub fn debug_type(entity: Entity) -> String {
+    if let Ok(map) = DEBUG_TYPES.read() {
+        if let Some(bt) = map.get(&entity) {
+            return bt.clone();
+        }
+    }
+    "Actor/Prop".to_string()
 }

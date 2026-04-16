@@ -15,7 +15,7 @@ mod player;
 mod projectile_system;
 mod scroni;
 mod statemachine;
-mod telemetry;
+pub mod telemetry;
 
 pub use filesystem::dave_vfs;
 pub use filesystem::vfs;
