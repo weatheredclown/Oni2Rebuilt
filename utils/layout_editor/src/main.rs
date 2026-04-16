@@ -19,8 +19,11 @@ fn main() -> Result<()> {
     rb_game::set_assets_path(assets_root.clone());
     rb_game::vfs::set_vfs(Box::new(rb_game::vfs::DiskVfs::new(assets_root)));
 
-    let mut layout = LayoutDocument::load(&config.layout_dir, &config.layout_name, &config.entity_dir)
-        .with_context(|| format!("failed to load layout from {}", config.layout_dir.display()))?;
+    let mut layout =
+        LayoutDocument::load(&config.layout_dir, &config.layout_name, &config.entity_dir)
+            .with_context(|| {
+                format!("failed to load layout from {}", config.layout_dir.display())
+            })?;
     layout.refresh_thumbnails(&config.entity_dir);
 
     App::new()
@@ -212,8 +215,8 @@ impl LayoutDocument {
 
             // parse_actor_xml handles base= template inheritance and all ONI2 XML formats.
             if let Some(parsed) = parse_actor_xml(&layout_vfs_rel, &xml_filename, "template") {
-                let raw_xml = fs::read_to_string(layout_dir.join(&xml_filename))
-                    .unwrap_or_default();
+                let raw_xml =
+                    fs::read_to_string(layout_dir.join(&xml_filename)).unwrap_or_default();
                 actors.push(ActorRecord {
                     name: actor_name.clone(),
                     entity_type: parsed.entity_type.to_lowercase(),
@@ -228,7 +231,10 @@ impl LayoutDocument {
         // the current layout references.
         let entity_types = discover_entity_types(entity_dir);
 
-        Ok(Self { actors, entity_types })
+        Ok(Self {
+            actors,
+            entity_types,
+        })
     }
 
     fn save(&mut self, layout_dir: &Path) -> Result<()> {
@@ -471,15 +477,19 @@ fn ui_system(
                     ui.close();
                 }
                 if ui.button("Save").clicked() {
-                    // TODO: IF there's no layout name yet, we should treat save like a save_as
-
-                    match layout.save(&config.layout_dir) {
-                        Ok(()) => {
-                            state.dirty = false;
-                            state.status = format!("Saved {}", config.layout_name);
-                        }
-                        Err(err) => {
-                            state.status = format!("Save failed: {err}");
+                    if config.layout_name.trim().is_empty() {
+                        state.save_as_name = "new_layout".to_string();
+                        state.show_save_as_dialog = true;
+                        state.status = "No layout selected; choose a name to save.".to_string();
+                    } else {
+                        match layout.save(&config.layout_dir) {
+                            Ok(()) => {
+                                state.dirty = false;
+                                state.status = format!("Saved {}", config.layout_name);
+                            }
+                            Err(err) => {
+                                state.status = format!("Save failed: {err}");
+                            }
                         }
                     }
                     ui.close();
@@ -798,8 +808,8 @@ fn save_as_layout(
 
 fn create_blank_layout(
     config: &mut EditorConfig,
-    layout: &mut LayoutDocument, 
-    state: &mut EditorState
+    layout: &mut LayoutDocument,
+    state: &mut EditorState,
 ) {
     config.set_layout("".to_string());
     layout.actors.clear();
@@ -877,21 +887,24 @@ fn keyboard_shortcuts_system(
     if keys.just_pressed(KeyCode::KeyT) {
         state.mode = EditMode::Transform;
         state.status = "Transform mode".to_string();
-    }
-    else if keys.just_pressed(KeyCode::KeyR) {
+    } else if keys.just_pressed(KeyCode::KeyR) {
         state.mode = EditMode::Rotate;
         state.status = "Rotate mode".to_string();
-    }
-    else if keys.pressed(KeyCode::ControlLeft) && keys.just_pressed(KeyCode::KeyS) {
-        match layout.save(&config.layout_dir) {
-            Ok(()) => {
-                state.dirty = false;
-                state.status = "Saved layout with Ctrl+S".to_string();
+    } else if keys.pressed(KeyCode::ControlLeft) && keys.just_pressed(KeyCode::KeyS) {
+        if config.layout_name.trim().is_empty() {
+            state.save_as_name = "new_layout".to_string();
+            state.show_save_as_dialog = true;
+            state.status = "No layout selected; choose a name to save.".to_string();
+        } else {
+            match layout.save(&config.layout_dir) {
+                Ok(()) => {
+                    state.dirty = false;
+                    state.status = "Saved layout with Ctrl+S".to_string();
+                }
+                Err(err) => state.status = format!("Save failed: {err}"),
             }
-            Err(err) => state.status = format!("Save failed: {err}"),
         }
-    }
-    else if keys.pressed(KeyCode::ControlLeft) && keys.just_pressed(KeyCode::KeyN) {
+    } else if keys.pressed(KeyCode::ControlLeft) && keys.just_pressed(KeyCode::KeyN) {
         create_blank_layout(&mut config, &mut layout, &mut state);
     }
 }
@@ -984,8 +997,14 @@ fn camera_orbit_system(
     keys: Res<ButtonInput<KeyCode>>,
     mut wheel: MessageReader<MouseWheel>,
     mut motion: MessageReader<MouseMotion>,
+    mut contexts: EguiContexts,
     mut query: Query<(&mut Transform, &mut OrbitCamera)>,
 ) {
+    let egui_wants_scroll = contexts
+        .ctx_mut()
+        .ok()
+        .is_some_and(|ctx| ctx.wants_pointer_input() || ctx.is_pointer_over_area());
+
     for (mut transform, mut orbit) in &mut query {
         let mut move_delta = Vec3::ZERO;
         if keys.pressed(KeyCode::KeyW) {
@@ -1013,7 +1032,9 @@ fn camera_orbit_system(
         }
 
         for ev in wheel.read() {
-            orbit.radius = (orbit.radius - ev.y * 0.8).clamp(2.0, 400.0);
+            if !egui_wants_scroll {
+                orbit.radius = (orbit.radius - ev.y * 0.8).clamp(2.0, 400.0);
+            }
         }
 
         let rot = Quat::from_euler(EulerRot::YXZ, orbit.yaw, orbit.pitch, 0.0);
@@ -1255,19 +1276,19 @@ fn create_wireframe_grid(size: f32, count: u32) -> Mesh {
     let mut positions = Vec::new();
     let half_size = size / 2.0;
     let step = size / count as f32;
-    
+
     for i in 0..=count {
         let t = -half_size + i as f32 * step;
-        
+
         // Line along fixed X (t)
         positions.push([t, 0.0, -half_size]);
         positions.push([t, 0.0, half_size]);
-        
+
         // Line along fixed Z (t)
         positions.push([-half_size, 0.0, t]);
         positions.push([half_size, 0.0, t]);
     }
-    
+
     let mut mesh = Mesh::new(PrimitiveTopology::LineList, RenderAssetUsages::default());
     mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, positions);
     mesh
