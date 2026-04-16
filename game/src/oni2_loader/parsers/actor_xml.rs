@@ -53,6 +53,8 @@ pub struct LayoutActor {
     pub curve_ping_pong: bool,
     /// Speed value from Curve component (knots/sec).
     pub curve_speed: f32,
+    /// Whether the actor possesses a FightAI component.
+    pub has_fight_ai: bool,
     /// ScrOni script filename (from <ScrOni><Filename>). '$' prefix = layout-local.
     pub script_filename: Option<String>,
     /// ScrOni entry-point script name (from <ScrOni><MainScript>).
@@ -229,6 +231,8 @@ pub fn parse_actor_xml(dir: &str, filename: &str, template_dir: &str) -> Option<
     let curve_block = extract_component(&chain, has_components_xml, "Curve");
     let scroni_block = extract_component(&chain, has_components_xml, "ScrOni");
     let broadcast_block = extract_component(&chain, has_components_xml, "BroadcastTrigger");
+    let fight_ai_block = extract_component(&chain, has_components_xml, "FightAI")
+        .or_else(|| extract_component(&chain, has_components_xml, "FightAi"));
 
     // Extract Animator props
     let mut animator_type: Option<String> = None;
@@ -374,6 +378,8 @@ pub fn parse_actor_xml(dir: &str, filename: &str, template_dir: &str) -> Option<
     // Convert from left-handed to right-handed: 180° Y rotation (negate X and Z)
     let position = Vec3::new(-position.x, position.y, -position.z);
 
+    let has_fight_ai = fight_ai_block.is_some();
+
     Some(LayoutActor {
         entity_type,
         position,
@@ -387,6 +393,7 @@ pub fn parse_actor_xml(dir: &str, filename: &str, template_dir: &str) -> Option<
         curve_look_xz,
         curve_ping_pong,
         curve_speed,
+        has_fight_ai,
         script_filename,
         script_main,
         broadcast_radius,

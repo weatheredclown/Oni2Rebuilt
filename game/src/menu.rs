@@ -563,8 +563,8 @@ fn scan_entities(filter_layout: Option<&str>) -> Vec<String> {
             use_filter = true;
             for line in content.lines() {
                 let tokens: Vec<&str> = line.split_whitespace().collect();
-                if tokens.len() >= 3 && tokens[0] == "BASICENTITY" {
-                    allowed_entities.insert(tokens[2].to_string());
+                if tokens.len() >= 3 && tokens[0].eq_ignore_ascii_case("BASICENTITY") {
+                    allowed_entities.insert(tokens[2].to_lowercase());
                 }
             }
         } else {
@@ -579,7 +579,7 @@ fn scan_entities(filter_layout: Option<&str>) -> Vec<String> {
             if entry.is_dir {
                 if let Some(name) = entry.path.split('/').last() {
                     let name_str = name.to_string();
-                    if !use_filter || allowed_entities.contains(&name_str) {
+                    if !use_filter || allowed_entities.contains(&name_str.to_lowercase()) {
                         all_folders.push(name_str);
                     }
                 }

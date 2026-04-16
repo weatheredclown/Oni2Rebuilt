@@ -375,12 +375,12 @@ pub fn spawn_layout_actor(
         ) {
             if !actor.is_player {
                 // Non-player creature: attach AI + combat components
-                // [AUDIT]: Prototype leakage. `AiFighter` acts as a crude tag for VM interaction.
-                // It should be removed once real AI behavior components replace it.
+                if actor.has_fight_ai {
+                    assets.commands.entity(entity).insert(crate::ai::components::AiFighter::default());
+                }
                 assets.commands.entity(entity).insert((
                     crate::combat::components::Enemy,
                     crate::combat::faction::Faction(actor.faction.clone().unwrap_or_default()),
-                    crate::ai::components::AiFighter::default(),
                     crate::combat::components::Fighter::default(),
                     crate::combat::components::FighterId(uuid::Uuid::new_v4()),
                     crate::combat::components::Health::new(actor.max_hitpoints.unwrap_or(100.0)),
