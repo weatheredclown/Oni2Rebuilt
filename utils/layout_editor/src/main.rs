@@ -1,11 +1,14 @@
 use anyhow::{Context, Result};
 use bevy::app::AppExit;
+use bevy::asset::RenderAssetUsages;
 use bevy::input::mouse::{MouseMotion, MouseWheel};
 use bevy::mesh::skinning::SkinnedMeshInverseBindposes;
 use bevy::prelude::*;
+use bevy::render::camera::RenderTarget;
+use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat, TextureUsages};
+use bevy::render::view::screenshot::{Screenshot, save_to_disk};
 use bevy::window::PrimaryWindow;
-use bevy_egui::{egui, EguiContexts, EguiPlugin, EguiPrimaryContextPass};
-use image::{ImageBuffer, Rgba};
+use bevy_egui::{EguiContexts, EguiPlugin, EguiPrimaryContextPass, egui};
 use rb_game::oni2_loader::parsers::actor_xml::parse_actor_xml;
 use rb_game::oni2_loader::registries::{AnimRegistry, EntityLibrary};
 use std::collections::{HashMap, HashSet};
@@ -186,6 +189,17 @@ struct EntityTypeEntry {
 struct ThumbnailGenerator {
     queue: Vec<String>,
     index: usize,
+    active: Option<ThumbnailJob>,
+}
+
+struct ThumbnailJob {
+    thumbnail_path: PathBuf,
+    preview_root: Option<Entity>,
+    preview_camera: Entity,
+    preview_light: Entity,
+    target_image: Handle<Image>,
+    capture_requested: bool,
+    timeout_frames: u32,
 }
 
 #[derive(Component)]
@@ -626,8 +640,11 @@ fn ui_system(
                     });
                     ui.separator();
                     if let Some(selected_name) = state.selected_actor.clone() {
-                        if let Some(selected_actor) =
-                            layout.actors.iter().find(|a| a.name == selected_name).cloned()
+                        if let Some(selected_actor) = layout
+                            .actors
+                            .iter()
+                            .find(|a| a.name == selected_name)
+                            .cloned()
                         {
                             ui.label(format!(
                                 "Selected: {} ({})",
@@ -892,32 +909,124 @@ fn create_blank_layout(
 }
 
 fn thumbnail_background_generation_system(
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    mut images: ResMut<Assets<Image>>,
+    mut skinned_mesh_ibp: ResMut<Assets<SkinnedMeshInverseBindposes>>,
+    mut entity_lib: ResMut<EntityLibrary>,
+    mut anim_registry: ResMut<AnimRegistry>,
     config: Res<EditorConfig>,
     mut generator: ResMut<ThumbnailGenerator>,
     mut layout: ResMut<LayoutDocument>,
 ) {
+    const THUMB_SIZE: u32 = 128;
+    const PREVIEW_ORIGIN: Vec3 = Vec3::new(4096.0, 0.0, 4096.0);
+
+    if let Some(job) = generator.active.as_mut() {
+        if !job.capture_requested {
+            commands
+                .spawn(Screenshot::image(job.target_image.clone()))
+                .observe(save_to_disk(job.thumbnail_path.clone()));
+            job.capture_requested = true;
+            return;
+        }
+
+        job.timeout_frames += 1;
+        if job.thumbnail_path.exists() || job.timeout_frames > 240 {
+            if let Some(root) = job.preview_root {
+                commands.entity(root).despawn();
+            }
+            commands.entity(job.preview_camera).despawn();
+            commands.entity(job.preview_light).despawn();
+            generator.active = None;
+            generator.index += 1;
+            layout.refresh_thumbnails(&config.entity_dir);
+        }
+        return;
+    }
+
     if generator.index >= generator.queue.len() {
         return;
     }
 
     let entity_name = &generator.queue[generator.index];
     let thumbnail_path = config.entity_dir.join(entity_name).join("thumbnail.png");
-    if !thumbnail_path.exists() {
-        if let Some(parent) = thumbnail_path.parent() {
-            let _ = fs::create_dir_all(parent);
-        }
-
-        let mut img: ImageBuffer<Rgba<u8>, Vec<u8>> = ImageBuffer::new(128, 128);
-        for (x, y, pixel) in img.enumerate_pixels_mut() {
-            let checker = ((x / 16) + (y / 16)) % 2 == 0;
-            let base = if checker { 64 } else { 96 };
-            *pixel = Rgba([base, base, base + 20, 255]);
-        }
-        let _ = img.save(&thumbnail_path);
+    if thumbnail_path.exists() {
+        generator.index += 1;
+        return;
+    }
+    if let Some(parent) = thumbnail_path.parent() {
+        let _ = fs::create_dir_all(parent);
     }
 
-    layout.refresh_thumbnails(&config.entity_dir);
-    generator.index += 1;
+    let mut target_image = Image::new_fill(
+        Extent3d {
+            width: THUMB_SIZE,
+            height: THUMB_SIZE,
+            depth_or_array_layers: 1,
+        },
+        TextureDimension::D2,
+        &[20, 20, 24, 255],
+        TextureFormat::Rgba8UnormSrgb,
+        RenderAssetUsages::default(),
+    );
+    target_image.texture_descriptor.usage = TextureUsages::TEXTURE_BINDING
+        | TextureUsages::COPY_DST
+        | TextureUsages::RENDER_ATTACHMENT
+        | TextureUsages::COPY_SRC;
+    let image_handle = images.add(target_image);
+
+    let preview_light = commands
+        .spawn((
+            DirectionalLight {
+                shadows_enabled: false,
+                illuminance: 12_000.0,
+                ..default()
+            },
+            Transform::from_translation(PREVIEW_ORIGIN + Vec3::new(5.0, 8.0, 5.0))
+                .looking_at(PREVIEW_ORIGIN, Vec3::Y),
+        ))
+        .id();
+
+    let preview_camera = commands
+        .spawn((
+            Camera3d::default(),
+            Camera {
+                target: RenderTarget::Image(image_handle.clone().into()),
+                ..default()
+            },
+            Transform::from_translation(PREVIEW_ORIGIN + Vec3::new(0.0, 1.2, 4.0))
+                .looking_at(PREVIEW_ORIGIN + Vec3::new(0.0, 1.0, 0.0), Vec3::Y),
+        ))
+        .id();
+
+    let entity_dir = format!("entity/{}", entity_name);
+    let preview_root = rb_game::oni2_loader::spawn_oni2_entity_with_rotation(
+        &mut commands,
+        &mut meshes,
+        &mut materials,
+        &mut images,
+        &mut skinned_mesh_ibp,
+        &mut entity_lib,
+        &mut anim_registry,
+        &entity_dir,
+        PREVIEW_ORIGIN,
+        Quat::IDENTITY,
+        &format!("thumb_{entity_name}"),
+        None,
+        Some(entity_name),
+    );
+
+    generator.active = Some(ThumbnailJob {
+        thumbnail_path,
+        preview_root,
+        preview_camera,
+        preview_light,
+        target_image: image_handle,
+        capture_requested: false,
+        timeout_frames: 0,
+    });
 }
 
 fn regenerate_actor_meshes(
@@ -1218,12 +1327,24 @@ fn transform_edit_system(
         match mode {
             EditMode::Transform => {
                 let mut delta = Vec3::ZERO;
-                if keys.just_pressed(KeyCode::ArrowUp)    { delta.z -= 1.0; }
-                if keys.just_pressed(KeyCode::ArrowDown)  { delta.z += 1.0; }
-                if keys.just_pressed(KeyCode::ArrowLeft)  { delta.x -= 1.0; }
-                if keys.just_pressed(KeyCode::ArrowRight) { delta.x += 1.0; }
-                if keys.just_pressed(KeyCode::KeyQ)       { delta.y += 1.0; }
-                if keys.just_pressed(KeyCode::KeyE)       { delta.y -= 1.0; }
+                if keys.just_pressed(KeyCode::ArrowUp) {
+                    delta.z -= 1.0;
+                }
+                if keys.just_pressed(KeyCode::ArrowDown) {
+                    delta.z += 1.0;
+                }
+                if keys.just_pressed(KeyCode::ArrowLeft) {
+                    delta.x -= 1.0;
+                }
+                if keys.just_pressed(KeyCode::ArrowRight) {
+                    delta.x += 1.0;
+                }
+                if keys.just_pressed(KeyCode::KeyQ) {
+                    delta.y += 1.0;
+                }
+                if keys.just_pressed(KeyCode::KeyE) {
+                    delta.y -= 1.0;
+                }
                 if delta != Vec3::ZERO {
                     tf.translation += delta;
                     state.dirty = true;
@@ -1233,15 +1354,35 @@ fn transform_edit_system(
                 let step = 10f32.to_radians();
                 let mut rotated = false;
                 // Left/Right: yaw around world Y
-                if keys.just_pressed(KeyCode::ArrowLeft)  { tf.rotate_y( step); rotated = true; }
-                if keys.just_pressed(KeyCode::ArrowRight) { tf.rotate_y(-step); rotated = true; }
+                if keys.just_pressed(KeyCode::ArrowLeft) {
+                    tf.rotate_y(step);
+                    rotated = true;
+                }
+                if keys.just_pressed(KeyCode::ArrowRight) {
+                    tf.rotate_y(-step);
+                    rotated = true;
+                }
                 // Up/Down: pitch around local X
-                if keys.just_pressed(KeyCode::ArrowUp)    { tf.rotate_local_x( step); rotated = true; }
-                if keys.just_pressed(KeyCode::ArrowDown)  { tf.rotate_local_x(-step); rotated = true; }
+                if keys.just_pressed(KeyCode::ArrowUp) {
+                    tf.rotate_local_x(step);
+                    rotated = true;
+                }
+                if keys.just_pressed(KeyCode::ArrowDown) {
+                    tf.rotate_local_x(-step);
+                    rotated = true;
+                }
                 // Q/E: roll around local Z
-                if keys.just_pressed(KeyCode::KeyQ)       { tf.rotate_local_z( step); rotated = true; }
-                if keys.just_pressed(KeyCode::KeyE)       { tf.rotate_local_z(-step); rotated = true; }
-                if rotated { state.dirty = true; }
+                if keys.just_pressed(KeyCode::KeyQ) {
+                    tf.rotate_local_z(step);
+                    rotated = true;
+                }
+                if keys.just_pressed(KeyCode::KeyE) {
+                    tf.rotate_local_z(-step);
+                    rotated = true;
+                }
+                if rotated {
+                    state.dirty = true;
+                }
             }
         }
     }
