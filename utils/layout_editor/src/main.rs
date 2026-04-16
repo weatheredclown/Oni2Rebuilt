@@ -627,7 +627,7 @@ fn ui_system(
                     ui.separator();
                     if let Some(selected_name) = state.selected_actor.clone() {
                         if let Some(selected_actor) =
-                            layout.actors.iter().find(|a| a.name == selected_name)
+                            layout.actors.iter().find(|a| a.name == selected_name).cloned()
                         {
                             ui.label(format!(
                                 "Selected: {} ({})",
@@ -643,7 +643,7 @@ fn ui_system(
                                         &selected_actor.entity_type,
                                     );
                                     let duplicated =
-                                        duplicate_actor_record(selected_actor, &new_name);
+                                        duplicate_actor_record(&selected_actor, &new_name);
                                     layout.actors.push(duplicated);
                                     state.selected_actor = Some(new_name.clone());
                                     state.dirty = true;
@@ -1061,7 +1061,7 @@ fn update_window_title_system(
         layout.thumbnail_count(),
         selected,
         if state.status.is_empty() {
-            "LMB select • RMB orbit • WASD pan • Wheel zoom • Arrows/QE edit • Ctrl+S save • B bounds"
+            "LMB select • RMB orbit • WASD pan • Wheel zoom • [T]rans: Arrows=XZ Q/E=Y • [R]ot: Arrows=YX Q/E=Z • Ctrl+S save • B bounds"
         } else {
             state.status.as_str()
         }
@@ -1207,39 +1207,41 @@ fn transform_edit_system(
     mut state: ResMut<EditorState>,
     mut actors: Query<(&mut Transform, &ActorHandle)>,
 ) {
-    let mut delta = Vec3::ZERO;
-    if keys.just_pressed(KeyCode::ArrowUp) {
-        delta.z -= 1.0;
-    }
-    if keys.just_pressed(KeyCode::ArrowDown) {
-        delta.z += 1.0;
-    }
-    if keys.just_pressed(KeyCode::ArrowLeft) {
-        delta.x -= 1.0;
-    }
-    if keys.just_pressed(KeyCode::ArrowRight) {
-        delta.x += 1.0;
-    }
-
     let selected = state.selected_actor.clone();
+    let mode = state.mode;
+
     for (mut tf, handle) in &mut actors {
-        let is_selected = selected.as_ref().is_some_and(|n| n == &handle.name);
-        if !is_selected {
+        if !selected.as_ref().is_some_and(|n| n == &handle.name) {
             continue;
         }
 
-        if state.mode == EditMode::Transform && delta != Vec3::ZERO {
-            tf.translation += delta;
-            state.dirty = true;
-        }
-        if state.mode == EditMode::Rotate {
-            if keys.just_pressed(KeyCode::KeyQ) {
-                tf.rotate_y(10f32.to_radians());
-                state.dirty = true;
+        match mode {
+            EditMode::Transform => {
+                let mut delta = Vec3::ZERO;
+                if keys.just_pressed(KeyCode::ArrowUp)    { delta.z -= 1.0; }
+                if keys.just_pressed(KeyCode::ArrowDown)  { delta.z += 1.0; }
+                if keys.just_pressed(KeyCode::ArrowLeft)  { delta.x -= 1.0; }
+                if keys.just_pressed(KeyCode::ArrowRight) { delta.x += 1.0; }
+                if keys.just_pressed(KeyCode::KeyQ)       { delta.y += 1.0; }
+                if keys.just_pressed(KeyCode::KeyE)       { delta.y -= 1.0; }
+                if delta != Vec3::ZERO {
+                    tf.translation += delta;
+                    state.dirty = true;
+                }
             }
-            if keys.just_pressed(KeyCode::KeyE) {
-                tf.rotate_y(-10f32.to_radians());
-                state.dirty = true;
+            EditMode::Rotate => {
+                let step = 10f32.to_radians();
+                let mut rotated = false;
+                // Left/Right: yaw around world Y
+                if keys.just_pressed(KeyCode::ArrowLeft)  { tf.rotate_y( step); rotated = true; }
+                if keys.just_pressed(KeyCode::ArrowRight) { tf.rotate_y(-step); rotated = true; }
+                // Up/Down: pitch around local X
+                if keys.just_pressed(KeyCode::ArrowUp)    { tf.rotate_local_x( step); rotated = true; }
+                if keys.just_pressed(KeyCode::ArrowDown)  { tf.rotate_local_x(-step); rotated = true; }
+                // Q/E: roll around local Z
+                if keys.just_pressed(KeyCode::KeyQ)       { tf.rotate_local_z( step); rotated = true; }
+                if keys.just_pressed(KeyCode::KeyE)       { tf.rotate_local_z(-step); rotated = true; }
+                if rotated { state.dirty = true; }
             }
         }
     }
@@ -1249,6 +1251,10 @@ fn sync_actor_transforms(
     actors_query: Query<(&Transform, &ActorHandle), Changed<Transform>>,
     mut layout: ResMut<LayoutDocument>,
 ) {
+    if actors_query.is_empty() {
+        return;
+    }
+
     let map: HashMap<String, usize> = layout
         .actors
         .iter()
@@ -1256,9 +1262,12 @@ fn sync_actor_transforms(
         .map(|(i, a)| (a.name.clone(), i))
         .collect();
 
+    // bypass_change_detection so position/rotation updates don't trigger regenerate_actor_meshes,
+    // which would despawn and respawn all visuals every frame an entity moves.
+    let doc = layout.bypass_change_detection();
     for (tf, handle) in &actors_query {
         if let Some(index) = map.get(&handle.name) {
-            if let Some(actor) = layout.actors.get_mut(*index) {
+            if let Some(actor) = doc.actors.get_mut(*index) {
                 actor.set_position(tf.translation);
                 actor.set_rotation(tf.rotation.to_euler(EulerRot::XYZ));
             }
