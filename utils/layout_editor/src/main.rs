@@ -6,10 +6,8 @@ use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
 use bevy_egui::{egui, EguiContexts, EguiPlugin, EguiPrimaryContextPass};
 use image::{ImageBuffer, Rgba};
-use quick_xml::de::from_str;
-use quick_xml::se::to_string;
+use rb_game::oni2_loader::parsers::actor_xml::parse_actor_xml;
 use rb_game::oni2_loader::registries::{AnimRegistry, EntityLibrary};
-use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::env;
 use std::fs;
@@ -21,7 +19,7 @@ fn main() -> Result<()> {
     rb_game::set_assets_path(assets_root.clone());
     rb_game::vfs::set_vfs(Box::new(rb_game::vfs::DiskVfs::new(assets_root)));
 
-    let mut layout = LayoutDocument::load(&config.layout_dir)
+    let mut layout = LayoutDocument::load(&config.layout_dir, &config.layout_name, &config.entity_dir)
         .with_context(|| format!("failed to load layout from {}", config.layout_dir.display()))?;
     layout.refresh_thumbnails(&config.entity_dir);
 
@@ -168,7 +166,6 @@ struct LayoutPicker {
 
 #[derive(Resource, Default)]
 struct LayoutDocument {
-    actors_file_names: Vec<String>,
     actors: Vec<ActorRecord>,
     entity_types: Vec<EntityTypeEntry>,
 }
@@ -202,48 +199,60 @@ struct OrbitCamera {
 struct ActorVisual;
 
 impl LayoutDocument {
-    fn load(layout_dir: &Path) -> Result<Self> {
+    fn load(layout_dir: &Path, layout_name: &str, entity_dir: &Path) -> Result<Self> {
         let actors_file = layout_dir.join("layout.actors");
-        let et_file = layout_dir.join("layout.et");
-
         let actor_names = parse_layout_actors(&actors_file)?;
-        let et_names = parse_layout_et(&et_file)?;
+
+        // Use the VFS-relative path so parse_actor_xml can resolve template chains.
+        let layout_vfs_rel = format!("layout/{}", layout_name);
 
         let mut actors = Vec::new();
         for actor_name in &actor_names {
-            let actor_xml = layout_dir.join(format!("{actor_name}.xml"));
-            if let Ok(actor) = load_actor_xml(&actor_xml, actor_name) {
-                actors.push(actor);
+            let xml_filename = format!("{}.xml", actor_name);
+
+            // parse_actor_xml handles base= template inheritance and all ONI2 XML formats.
+            if let Some(parsed) = parse_actor_xml(&layout_vfs_rel, &xml_filename, "template") {
+                let raw_xml = fs::read_to_string(layout_dir.join(&xml_filename))
+                    .unwrap_or_default();
+                actors.push(ActorRecord {
+                    name: actor_name.clone(),
+                    entity_type: parsed.entity_type.to_lowercase(),
+                    position: parsed.position,
+                    orientation: parsed.orientation,
+                    raw_xml,
+                });
             }
         }
 
-        let entity_types = et_names
-            .into_iter()
-            .map(|name| EntityTypeEntry {
-                entity_type: name,
-                thumbnail_path: None,
-            })
-            .collect();
+        // "All entities" is every subdirectory under assets/entity/, not just what
+        // the current layout references.
+        let entity_types = discover_entity_types(entity_dir);
 
-        Ok(Self {
-            actors_file_names: actor_names,
-            actors,
-            entity_types,
-        })
+        Ok(Self { actors, entity_types })
     }
 
     fn save(&mut self, layout_dir: &Path) -> Result<()> {
+        // Write layout.actors (count + one name per line).
         let actors_file = layout_dir.join("layout.actors");
-        let mut actor_lines = vec![self.actors_file_names.len().to_string()];
-        actor_lines.extend(self.actors_file_names.iter().cloned());
+        let mut actor_lines = vec![self.actors.len().to_string()];
+        actor_lines.extend(self.actors.iter().map(|a| a.name.clone()));
         fs::write(actors_file, actor_lines.join("\n") + "\n")?;
 
         for actor in &self.actors {
             let xml_path = layout_dir.join(format!("{}.xml", actor.name));
-            let xml = to_string(&actor.xml_root)?;
+            // Strip any existing XML/DOCTYPE headers from raw_xml before re-wrapping.
+            let body: String = actor
+                .raw_xml
+                .lines()
+                .filter(|l| {
+                    let t = l.trim_start();
+                    !t.starts_with("<?xml") && !t.starts_with("<!DOCTYPE")
+                })
+                .collect::<Vec<_>>()
+                .join("\n");
             let wrapped = format!(
                 "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE actor SYSTEM \"component.dtd\">\n{}\n",
-                xml
+                body
             );
             fs::write(xml_path, wrapped)?;
         }
@@ -329,6 +338,14 @@ fn setup(
     ));
 }
 
+fn placeholder_color(entity_type: &str) -> Color {
+    match entity_type {
+        "kno" => Color::srgb(0.3, 0.9, 0.5),
+        "tctf" => Color::srgb(0.8, 0.45, 0.9),
+        _ => Color::srgb(0.75, 0.75, 0.82),
+    }
+}
+
 fn spawn_actor_visuals(
     commands: &mut Commands,
     meshes: &mut ResMut<Assets<Mesh>>,
@@ -341,11 +358,7 @@ fn spawn_actor_visuals(
 ) {
     for actor in &layout.actors {
         let entity_type = actor.entity_name();
-        let color = match entity_type.as_str() {
-            "kno" => Color::srgb(0.3, 0.9, 0.5),
-            "tctf" => Color::srgb(0.8, 0.45, 0.9),
-            _ => Color::srgb(0.75, 0.75, 0.82),
-        };
+        let color = placeholder_color(&entity_type);
 
         let rotation = Quat::from_euler(
             EulerRot::XYZ,
@@ -370,7 +383,17 @@ fn spawn_actor_visuals(
             Some(&entity_type),
         );
 
-        if let Some(entity) = spawned {
+        // spawn_oni2_entity_with_rotation populates entity_lib as a synchronous side effect,
+        // so we can inspect sub_meshes immediately to know if anything renderable was produced.
+        let has_mesh = spawned.is_some()
+            && entity_lib
+                .entities
+                .get(&entity_dir)
+                .map(|et| !et.sub_meshes.is_empty())
+                .unwrap_or(false);
+
+        if has_mesh {
+            let entity = spawned.unwrap();
             commands.entity(entity).insert((
                 ActorHandle {
                     name: actor.name.clone(),
@@ -378,18 +401,42 @@ fn spawn_actor_visuals(
                 ActorVisual,
             ));
         } else {
-            commands.spawn((
-                Mesh3d(meshes.add(Cuboid::new(1.0, 1.0, 1.0))),
-                MeshMaterial3d(materials.add(StandardMaterial {
-                    base_color: color,
-                    ..default()
-                })),
-                Transform::from_translation(actor.position()).with_rotation(rotation),
-                ActorHandle {
-                    name: actor.name.clone(),
-                },
-                ActorVisual,
-            ));
+            // Either Entity.type was missing (None) or a model was not found / produced no
+            // geometry.  In both cases keep the spawned entity (for its bounds/colliders) if
+            // present, but add a clearly visible placeholder child so the actor shows up in
+            // the editor viewport.  If nothing was spawned at all, fall back to a root cuboid.
+            if let Some(entity) = spawned {
+                commands.entity(entity).insert((
+                    ActorHandle {
+                        name: actor.name.clone(),
+                    },
+                    ActorVisual,
+                ));
+                let placeholder = commands
+                    .spawn((
+                        Mesh3d(meshes.add(Cuboid::new(0.8, 0.8, 0.8))),
+                        MeshMaterial3d(materials.add(StandardMaterial {
+                            base_color: color,
+                            ..default()
+                        })),
+                        Transform::default(),
+                    ))
+                    .id();
+                commands.entity(entity).add_child(placeholder);
+            } else {
+                commands.spawn((
+                    Mesh3d(meshes.add(Cuboid::new(1.0, 1.0, 1.0))),
+                    MeshMaterial3d(materials.add(StandardMaterial {
+                        base_color: color,
+                        ..default()
+                    })),
+                    Transform::from_translation(actor.position()).with_rotation(rotation),
+                    ActorHandle {
+                        name: actor.name.clone(),
+                    },
+                    ActorVisual,
+                ));
+            }
         }
     }
 }
@@ -508,7 +555,6 @@ fn ui_system(
                         layout
                             .actors
                             .push(make_new_actor(&actor_name, &entity_type));
-                        layout.actors_file_names.push(actor_name.clone());
                         state.selected_actor = Some(actor_name.clone());
                         state.dirty = true;
                         state.status =
@@ -677,32 +723,23 @@ fn next_actor_name_for_entity(layout: &LayoutDocument, entity_type: &str) -> Str
 }
 
 fn make_new_actor(actor_name: &str, entity_type: &str) -> ActorRecord {
+    let raw_xml = format!(
+        "<actor name=\"{name}\">\n\
+         \x20 <Entity><attributes><EntityType value=\"{et}\"/></attributes></Entity>\n\
+         \x20 <Prop name=\"Actor Specific\"><attributes>\n\
+         \x20   <Position value=\"0 0 0\"/>\n\
+         \x20   <Orientation value=\"0 0 0\"/>\n\
+         \x20 </attributes></Prop>\n\
+         </actor>",
+        name = actor_name,
+        et = entity_type,
+    );
     ActorRecord {
         name: actor_name.to_string(),
-        xml_root: ActorXml {
-            name: actor_name.to_string(),
-            contents: ActorContents {
-                entity: EntityBlock {
-                    attributes: EntityAttributes {
-                        entity_type: ValueAttribute {
-                            value: entity_type.to_string(),
-                        },
-                    },
-                },
-                actor_specific: ActorSpecific {
-                    _name: "Actor Specific".to_string(),
-                    attributes: ActorSpecificAttributes {
-                        position: ValueAttribute {
-                            value: "0 0 0".to_string(),
-                        },
-                        orientation: Some(ValueAttribute {
-                            value: "0 0 0".to_string(),
-                        }),
-                    },
-                },
-                editable: None,
-            },
-        },
+        entity_type: entity_type.to_lowercase(),
+        position: Vec3::ZERO,
+        orientation: Vec3::ZERO,
+        raw_xml,
     }
 }
 
@@ -714,7 +751,8 @@ fn load_named_layout(
     state: &mut EditorState,
 ) {
     config.set_layout(name.clone());
-    match LayoutDocument::load(&config.layout_dir) {
+    rb_game::oni2_loader::parsers::actor_xml::clear_xml_cache();
+    match LayoutDocument::load(&config.layout_dir, &config.layout_name, &config.entity_dir) {
         Ok(mut new_doc) => {
             new_doc.refresh_thumbnails(&config.entity_dir);
             *layout = new_doc;
@@ -758,7 +796,6 @@ fn save_as_layout(
 
 fn create_blank_layout(layout: &mut LayoutDocument, state: &mut EditorState) {
     layout.actors.clear();
-    layout.actors_file_names.clear();
     state.selected_actor = None;
     state.dirty = true;
     state.status = "New blank layout created in memory".to_string();
@@ -1095,93 +1132,66 @@ fn distance_point_to_ray(point: Vec3, ray_origin: Vec3, ray_dir: Vec3) -> f32 {
 #[derive(Clone)]
 struct ActorRecord {
     name: String,
-    xml_root: ActorXml,
+    /// Lowercase entity type name (e.g. "kno", "tctf").
+    entity_type: String,
+    /// Position in Bevy (right-handed) space.
+    position: Vec3,
+    /// Euler orientation in degrees XYZ, as stored in the ONI2 XML.
+    orientation: Vec3,
+    /// Full XML text of the actor file; updated in-place when position/orientation change.
+    raw_xml: String,
 }
 
 impl ActorRecord {
     fn entity_name(&self) -> String {
-        self.xml_root
-            .contents
-            .entity
-            .attributes
-            .entity_type
-            .value
-            .to_lowercase()
+        self.entity_type.clone()
     }
 
     fn position(&self) -> Vec3 {
-        parse_triplet(
-            &self
-                .xml_root
-                .contents
-                .actor_specific
-                .attributes
-                .position
-                .value,
-        )
-    }
-
-    fn set_position(&mut self, value: Vec3) {
-        self.xml_root
-            .contents
-            .actor_specific
-            .attributes
-            .position
-            .value = format!("{} {} {}", value.x, value.y, value.z);
+        self.position
     }
 
     fn rotation_radians(&self) -> Vec3 {
-        self.xml_root
-            .contents
-            .actor_specific
-            .attributes
-            .orientation
-            .as_ref()
-            .map(|o| parse_triplet(&o.value).to_radians())
-            .unwrap_or(Vec3::ZERO)
+        self.orientation * (std::f32::consts::PI / 180.0)
+    }
+
+    fn set_position(&mut self, value: Vec3) {
+        self.position = value;
+        // ONI2 uses left-handed coordinates: negate X and Z when writing back.
+        let oni2 = format!("{} {} {}", -value.x, value.y, -value.z);
+        self.raw_xml = set_or_insert_xml_attr(&self.raw_xml, "Position", &oni2);
     }
 
     fn set_rotation(&mut self, euler_xyz: (f32, f32, f32)) {
-        let degrees = Vec3::new(
+        let deg = Vec3::new(
             euler_xyz.0.to_degrees(),
             euler_xyz.1.to_degrees(),
             euler_xyz.2.to_degrees(),
         );
-        self.xml_root
-            .contents
-            .actor_specific
-            .attributes
-            .orientation
-            .get_or_insert_with(|| ValueAttribute {
-                value: "0 0 0".to_string(),
-            })
-            .value = format!("{} {} {}", degrees.x, degrees.y, degrees.z);
+        self.orientation = deg;
+        let s = format!("{} {} {}", deg.x, deg.y, deg.z);
+        self.raw_xml = set_or_insert_xml_attr(&self.raw_xml, "Orientation", &s);
     }
 }
 
-fn parse_triplet(input: &str) -> Vec3 {
-    let parts: Vec<f32> = input
-        .split_whitespace()
-        .filter_map(|v| v.parse::<f32>().ok())
-        .collect();
-    if parts.len() == 3 {
-        Vec3::new(parts[0], parts[1], parts[2])
+/// Replace the value="..." of a `<Tag value="..."/>` element in an XML string.
+/// If the tag is not present, inserts a line for it just before `</actor>`.
+/// This keeps the raw XML round-trippable while updating only what changed.
+fn set_or_insert_xml_attr(xml: &str, tag: &str, new_value: &str) -> String {
+    let search = format!("<{} value=\"", tag);
+    if let Some(start) = xml.find(&search) {
+        let val_start = start + search.len();
+        if let Some(end_offset) = xml[val_start..].find('"') {
+            let end = val_start + end_offset;
+            return format!("{}{}{}", &xml[..val_start], new_value, &xml[end..]);
+        }
+    }
+    // Tag not present — insert before closing </actor>.
+    let insert = format!("  <{} value=\"{}\"/>\n", tag, new_value);
+    if let Some(pos) = xml.rfind("</actor>") {
+        format!("{}{}{}", &xml[..pos], insert, &xml[pos..])
     } else {
-        Vec3::ZERO
-    }
-}
-
-trait Vec3DegExt {
-    fn to_radians(self) -> Vec3;
-}
-
-impl Vec3DegExt for Vec3 {
-    fn to_radians(self) -> Vec3 {
-        Vec3::new(
-            self.x.to_radians(),
-            self.y.to_radians(),
-            self.z.to_radians(),
-        )
+        format!("{}\n{}", xml, insert)
     }
 }
 
@@ -1197,6 +1207,29 @@ fn discover_layout_names(layout_root: &Path) -> Vec<String> {
         .collect()
 }
 
+/// Return every subdirectory name under `entity_dir` as an EntityTypeEntry, sorted.
+/// This is the full palette of placeable entity types regardless of which layout is loaded.
+fn discover_entity_types(entity_dir: &Path) -> Vec<EntityTypeEntry> {
+    let Ok(entries) = fs::read_dir(entity_dir) else {
+        return Vec::new();
+    };
+
+    let mut names: Vec<String> = entries
+        .flatten()
+        .filter(|e| e.path().is_dir())
+        .filter_map(|e| e.file_name().to_str().map(|s| s.to_string()))
+        .collect();
+    names.sort_by(|a, b| a.to_lowercase().cmp(&b.to_lowercase()));
+
+    names
+        .into_iter()
+        .map(|name| EntityTypeEntry {
+            entity_type: name,
+            thumbnail_path: None,
+        })
+        .collect()
+}
+
 fn parse_layout_actors(path: &Path) -> Result<Vec<String>> {
     let content = fs::read_to_string(path)?;
     let mut names = Vec::new();
@@ -1209,93 +1242,6 @@ fn parse_layout_actors(path: &Path) -> Result<Vec<String>> {
     }
     Ok(names)
 }
-
-fn parse_layout_et(path: &Path) -> Result<Vec<String>> {
-    let content = fs::read_to_string(path)?;
-    let mut names = HashSet::new();
-    for line in content.lines() {
-        let trimmed = line.trim();
-        if trimmed.starts_with("BASICENTITY") || trimmed.starts_with("ANIMATEDENTITY") {
-            let parts: Vec<&str> = trimmed.split_whitespace().collect();
-            if parts.len() >= 2 {
-                names.insert(parts[1].to_string());
-            }
-        }
-    }
-
-    let mut out: Vec<String> = names.into_iter().collect();
-    out.sort();
-    Ok(out)
-}
-
-fn load_actor_xml(path: &Path, actor_name: &str) -> Result<ActorRecord> {
-    let xml = fs::read_to_string(path)?;
-    let xml = xml
-        .lines()
-        .filter(|line| !line.trim_start().starts_with("<?xml") && !line.contains("<!DOCTYPE"))
-        .collect::<Vec<&str>>()
-        .join("\n");
-
-    let parsed: ActorXml =
-        from_str(&xml).with_context(|| format!("failed to parse {}", path.display()))?;
-    Ok(ActorRecord {
-        name: actor_name.to_string(),
-        xml_root: parsed,
-    })
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(rename = "actor")]
-struct ActorXml {
-    #[serde(rename = "@name")]
-    name: String,
-    contents: ActorContents,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-struct ActorContents {
-    #[serde(rename = "Entity")]
-    entity: EntityBlock,
-    #[serde(rename = "Prop")]
-    actor_specific: ActorSpecific,
-    #[serde(rename = "Editable")]
-    editable: Option<EditableBlock>,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-struct EntityBlock {
-    attributes: EntityAttributes,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-struct EntityAttributes {
-    #[serde(rename = "EntityType")]
-    entity_type: ValueAttribute,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-struct ActorSpecific {
-    #[serde(rename = "@name")]
-    _name: String,
-    attributes: ActorSpecificAttributes,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-struct ActorSpecificAttributes {
-    #[serde(rename = "Position")]
-    position: ValueAttribute,
-    #[serde(rename = "Orientation")]
-    orientation: Option<ValueAttribute>,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-struct ValueAttribute {
-    #[serde(rename = "@value")]
-    value: String,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-struct EditableBlock {}
 
 fn create_wireframe_grid(size: f32, count: u32) -> Mesh {
     use bevy::asset::RenderAssetUsages;

@@ -12,7 +12,7 @@ chrono.workspace = true
 uuid.workspace = true
 tokio.workspace = true
 
-bevy = "0.18"
+bevy = { version = "0.18", features = ["wav"] }
 avian3d = "0.5"
 rand = "0.9"
 crossbeam-channel = "0.5"
