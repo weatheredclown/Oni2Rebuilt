@@ -4,7 +4,7 @@ use bevy::asset::RenderAssetUsages;
 use bevy::input::mouse::{MouseMotion, MouseWheel};
 use bevy::mesh::skinning::SkinnedMeshInverseBindposes;
 use bevy::prelude::*;
-use bevy::render::camera::RenderTarget;
+use bevy::camera::RenderTarget;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat, TextureUsages};
 use bevy::render::view::screenshot::{Screenshot, save_to_disk};
 use bevy::window::PrimaryWindow;
@@ -992,10 +992,7 @@ fn thumbnail_background_generation_system(
     let preview_camera = commands
         .spawn((
             Camera3d::default(),
-            Camera {
-                target: RenderTarget::Image(image_handle.clone().into()),
-                ..default()
-            },
+            RenderTarget::Image(image_handle.clone().into()),
             Transform::from_translation(PREVIEW_ORIGIN + Vec3::new(0.0, 1.2, 4.0))
                 .looking_at(PREVIEW_ORIGIN + Vec3::new(0.0, 1.0, 0.0), Vec3::Y),
         ))

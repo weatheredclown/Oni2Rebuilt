@@ -540,7 +540,7 @@ pub fn spawn_layout_actor(
                         .iter()
                         .find(|s| s.name.eq_ignore_ascii_case(main_script))
                     {
-                        let mut exec = scroni::vm::ScriptExec::new(script_def.clone(), entity, 0.0);
+                        let mut exec = scroni::vm::ScriptExec::new(script_def.clone(), entity);
                         for s in &file.scripts {
                             exec.available_scripts.insert(s.name.clone(), s.clone());
                         }

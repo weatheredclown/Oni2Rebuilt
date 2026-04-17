@@ -440,7 +440,6 @@ pub struct ScrOniThread {
     pub loop_stack: Vec<LoopState>,
     pub call_stack: Vec<CallFrame>,
     pub blocking: Option<BlockingAction>,
-    pub start_time: f64,
     pub in_whenever: bool,
     pub whenever_timers: HashMap<String, f64>,
 }
@@ -450,7 +449,6 @@ impl ScrOniThread {
         thread_id: u32,
         parent_thread_id: Option<u32>,
         script: ScriptDef,
-        start_time: f64,
     ) -> Self {
         let mut variables = HashMap::new();
         init_variables(&mut variables, &script.variables);
@@ -465,16 +463,8 @@ impl ScrOniThread {
             loop_stack: Vec::new(),
             call_stack: Vec::new(),
             blocking: None,
-            start_time,
             in_whenever: false,
             whenever_timers: HashMap::new(),
-        }
-    }
-
-    pub fn clear_blocking(&mut self) {
-        self.blocking = None;
-        if self.state == ExecState::Blocked {
-            self.state = ExecState::Running;
         }
     }
 }
@@ -543,8 +533,6 @@ pub struct ScriptExec {
     pub current_light: Option<String>,
     /// Whether this script is actively evaluating ticks. Modifiable via SetUpdateState natively.
     pub active: bool,
-    /// Warned tracking cache preventing log flooding.
-    pub warned_unimplemented: std::collections::HashSet<String>,
     /// Number of frames this script has been alive. Used to delay first tick protecting hierarchy initialization natively.
     pub ticks_alive: u32,
 }
@@ -671,9 +659,9 @@ pub enum LoopState {
 }
 
 impl ScriptExec {
-    pub fn new(script: ScriptDef, owner: Entity, start_time: f64) -> Self {
+    pub fn new(script: ScriptDef, owner: Entity) -> Self {
         Self {
-            main_thread: ScrOniThread::new(0, None, script, start_time),
+            main_thread: ScrOniThread::new(0, None, script),
             child_threads: Vec::new(),
             next_thread_id: 1,
             available_scripts: HashMap::new(),
@@ -683,7 +671,6 @@ impl ScriptExec {
             owner,
             current_light: None,
             active: true,
-            warned_unimplemented: std::collections::HashSet::new(),
             ticks_alive: 0,
         }
     }

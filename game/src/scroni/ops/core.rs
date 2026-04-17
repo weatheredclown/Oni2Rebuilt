@@ -550,7 +550,7 @@ pub fn exec(ctx: &mut OpsCtx, stmt: &Stmt) -> bool {
             if let Some(new_script) = ctx.exec.resolve_script(&script_name, ctx.ctx) {
                 let new_tid = ctx.exec.next_thread_id;
                 ctx.exec.next_thread_id += 1;
-                let mut new_thread = ScrOniThread::new(new_tid, Some(ctx.tid), new_script, ctx.now);
+                let mut new_thread = ScrOniThread::new(new_tid, Some(ctx.tid), new_script);
                 for var_decl in &new_thread.script.variables {
                     if var_decl.is_parent {
                         continue;
@@ -576,7 +576,7 @@ pub fn exec(ctx: &mut OpsCtx, stmt: &Stmt) -> bool {
             if let Some(new_script) = ctx.exec.resolve_script(&script_name, ctx.ctx) {
                 let new_tid = ctx.exec.next_thread_id;
                 ctx.exec.next_thread_id += 1;
-                let mut new_thread = ScrOniThread::new(new_tid, Some(ctx.tid), new_script, ctx.now);
+                let mut new_thread = ScrOniThread::new(new_tid, Some(ctx.tid), new_script);
                 ctx.exec.child_threads.push(new_thread);
                 ctx.set_var(var.clone(), Value::Int(new_tid as i32));
             } else {
@@ -619,6 +619,25 @@ pub fn exec(ctx: &mut OpsCtx, stmt: &Stmt) -> bool {
                 action: *action,
                 arg: arg_val,
             });
+            true
+        }
+        Stmt::SetLightParameter { args } => {
+            if let Some(light_name_expr) = args.get(0) {
+                let name = ctx.eval_string(light_name_expr);
+                ctx.exec.current_light = Some(name);
+            }
+            true
+        }
+        Stmt::Intensity { args } => {
+            if let Some(intensity_expr) = args.get(0) {
+                let intensity = ctx.eval_float(intensity_expr);
+                if let Some(light_name) = &ctx.exec.current_light {
+                    ctx.sys_request(SysRequest::SetLightIntensity {
+                        light: light_name.clone(),
+                        intensity,
+                    });
+                }
+            }
             true
         }
         _ => false,
