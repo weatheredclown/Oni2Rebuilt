@@ -47,7 +47,7 @@ impl Default for CameraParameterSet {
             fov: 50.0,
             distance: 3.0,
             // Base polar defaults
-            focus_offset: [0.0, 1.4 - 2.0, 0.0],
+            focus_offset: [0.0, 1.4 - 1.0, 0.0],
             incline_offset: 0.0,
             incline_offset_running: 0.0,
             dead_zone_inner_radius: 0.0,
@@ -233,7 +233,7 @@ pub fn parse_camera_xml(dir: &str, filename: &str) -> Option<CameraParameterSet>
                     .collect();
                 if parts.len() >= 3 {
                     let v = space::to_bevy_space_pos(&parts);
-                    params.focus_offset = [v.x, v.y-2.0, v.z];
+                    params.focus_offset = [v.x, v.y - 1.0, v.z];
                 }
             }
             _ => {}
