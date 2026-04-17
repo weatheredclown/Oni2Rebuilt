@@ -311,15 +311,10 @@ pub fn parse_actor_xml(dir: &str, filename: &str, template_dir: &str) -> Option<
         }
     }
 
-    // If an entity type isn't explicitly defined, try to fall back to the filename or a generic name.
-    // Layout actors like 'actor_SpawnTrigger_01' might just have components without a base template.
+    // If an entity type isn't explicitly defined, fallback to the generic IconTrigger so it has a default 
+    // sprite in the layout editor instead of trying to load its literal instance name as a mesh folder.
     let entity_type = entity_type.unwrap_or_else(|| {
-        let base_name = filename.strip_suffix(".xml").unwrap_or(filename);
-        if base_name.starts_with("actor_") {
-            base_name.to_string()
-        } else {
-            "generic_trigger".to_string()
-        }
+        "IconTrigger".to_string()
     });
 
     // Extract FX block (e.g. <FX> ... </FX>)

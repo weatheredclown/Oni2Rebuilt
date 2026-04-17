@@ -20,7 +20,7 @@ fn main() -> Result<()> {
     let config = EditorConfig::from_args()?;
     let assets_root = config.assets_root.to_string_lossy().to_string();
     rb_game::set_assets_path(assets_root.clone());
-    rb_game::vfs::set_vfs(Box::new(rb_game::vfs::DiskVfs::new(assets_root)));
+    rb_game::vfs::set_vfs(Box::new(rb_game::vfs::DiskVfs::new(assets_root.clone())));
 
     let mut layout =
         LayoutDocument::load(&config.layout_dir, &config.layout_name, &config.entity_dir)
@@ -38,7 +38,10 @@ fn main() -> Result<()> {
         .insert_resource(ThumbnailGenerator::default())
         .insert_resource(EntityLibrary::default())
         .insert_resource(AnimRegistry::default())
-        .add_plugins(DefaultPlugins)
+        .add_plugins(DefaultPlugins.set(AssetPlugin {
+            file_path: assets_root.clone(),
+            ..default()
+        }))
         .add_plugins(EguiPlugin::default())
         .add_systems(Startup, setup)
         .add_systems(
@@ -48,6 +51,7 @@ fn main() -> Result<()> {
                 camera_orbit_system,
                 mouse_pick_system,
                 transform_edit_system,
+                apply_inspector_edits_system,
                 sync_actor_transforms,
                 regenerate_actor_meshes,
                 update_window_title_system,
@@ -95,7 +99,8 @@ impl EditorConfig {
             i += 1;
         }
 
-        let assets_root = path_root.context("missing --path <assets_root>")?;
+        let assets_root = std::fs::canonicalize(path_root.context("missing --path <assets_root>")?)
+            .context("failed to canonicalize absolute path for assets")?;
         let layout_root = assets_root.join("layout");
         let entity_dir = assets_root.join("entity");
 
@@ -152,6 +157,10 @@ struct EditorState {
     entity_filter: String,
     actor_filter: String,
     request_focus_selected: bool,
+    /// Inspector panel: pending position to apply to the selected actor's Transform.
+    pending_inspector_position: Option<Vec3>,
+    /// Inspector panel: pending orientation (degrees XYZ) to apply to the selected actor's Transform.
+    pending_inspector_orientation: Option<Vec3>,
 }
 
 #[derive(Default, Clone, Copy, PartialEq, Eq)]
@@ -183,6 +192,8 @@ struct LayoutDocument {
 struct EntityTypeEntry {
     entity_type: String,
     thumbnail_path: Option<PathBuf>,
+    thumbnail_handle: Option<Handle<Image>>,
+    texture_id: Option<egui::TextureId>,
 }
 
 #[derive(Resource, Default)]
@@ -472,7 +483,17 @@ fn ui_system(
     mut layout: ResMut<LayoutDocument>,
     mut picker: ResMut<LayoutPicker>,
     mut thumbs: ResMut<ThumbnailGenerator>,
+    asset_server: Res<AssetServer>,
 ) {
+    for entry in &mut layout.entity_types {
+        if entry.thumbnail_path.is_some() && entry.thumbnail_handle.is_none() {
+            let rel_path = format!("entity/{}/thumbnail.png", entry.entity_type);
+            let handle = asset_server.load(rel_path);
+            entry.texture_id = Some(contexts.add_image(bevy_egui::EguiTextureHandle::Strong(handle.clone())));
+            entry.thumbnail_handle = Some(handle);
+        }
+    }
+
     let Ok(ctx) = contexts.ctx_mut() else {
         return;
     };
@@ -552,10 +573,12 @@ fn ui_system(
                             state.entity_filter.clear();
                         }
                     });
-                    let filtered_entities: Vec<&EntityTypeEntry> = layout
+                    let filtered_entities: Vec<usize> = layout
                         .entity_types
                         .iter()
-                        .filter(|entry| matches_filter(&entry.entity_type, &state.entity_filter))
+                        .enumerate()
+                        .filter(|(_, entry)| matches_filter(&entry.entity_type, &state.entity_filter))
+                        .map(|(i, _)| i)
                         .collect();
                     ui.label(format!(
                         "{} / {} entries • {} thumbnails",
@@ -570,20 +593,37 @@ fn ui_system(
                             .num_columns(2)
                             .spacing([8.0, 8.0])
                             .show(ui, |ui| {
-                                for (i, entry) in filtered_entities.iter().enumerate() {
+                                for (i, idx) in filtered_entities.iter().enumerate() {
+                                    let entry = &mut layout.entity_types[*idx];
+                                    if entry.thumbnail_path.is_some() && entry.thumbnail_handle.is_none() {
+                                        let rel_path = format!("entity/{}/thumbnail.png", entry.entity_type);
+                                        entry.thumbnail_handle = Some(asset_server.load(rel_path));
+                                    }
                                     ui.group(|ui| {
                                         ui.set_min_size(egui::vec2(130.0, 130.0));
-                                        let label = if entry.thumbnail_path.is_some() {
-                                            format!("{}\nthumbnail.png", entry.entity_type)
-                                        } else {
-                                            format!("{}\n(generating)", entry.entity_type)
-                                        };
-                                        if ui
-                                            .add_sized([120.0, 120.0], egui::Button::new(label))
-                                            .clicked()
-                                        {
-                                            to_insert = Some(entry.entity_type.clone());
-                                        }
+                                        ui.vertical_centered(|ui| {
+                                            if let Some(texture_id) = &entry.texture_id {
+                                                let img = egui::Image::new(egui::load::SizedTexture::new(*texture_id, [100.0, 100.0]))
+                                                    .sense(egui::Sense::click());
+                                                if ui.add(img).clicked() {
+                                                    to_insert = Some(entry.entity_type.clone());
+                                                }
+                                                ui.label(&entry.entity_type);
+                                            } else {
+                                                let is_generating = entry.thumbnail_path.is_none();
+                                                let label = if is_generating {
+                                                    format!("{}\n(generating)", entry.entity_type)
+                                                } else {
+                                                    format!("{}\n(loading)", entry.entity_type)
+                                                };
+                                                if ui
+                                                    .add_sized([120.0, 120.0], egui::Button::new(label))
+                                                    .clicked()
+                                                {
+                                                    to_insert = Some(entry.entity_type.clone());
+                                                }
+                                            }
+                                        });
                                     });
                                     if i % 2 == 1 {
                                         ui.end_row();
@@ -681,6 +721,78 @@ fn ui_system(
                     }
                 }
             }
+        });
+
+    egui::SidePanel::right("inspector")
+        .resizable(true)
+        .default_width(230.0)
+        .show(ctx, |ui| {
+            ui.heading("Inspector");
+            ui.separator();
+
+            if let Some(selected_name) = state.selected_actor.clone() {
+                if let Some(actor) = layout.actors.iter().find(|a| a.name == selected_name) {
+                    ui.label(egui::RichText::new(&actor.name).strong());
+                    ui.label(format!("type: {}", actor.entity_type));
+                    ui.separator();
+
+                    // — Position —
+                    ui.label(egui::RichText::new("Position").underline());
+                    let mut pos = actor.position;
+                    let mut pos_changed = false;
+                    egui::Grid::new("pos_grid").num_columns(2).spacing([4.0, 4.0]).show(ui, |ui| {
+                        ui.label("X");
+                        pos_changed |= ui.add(egui::DragValue::new(&mut pos.x).speed(0.05)).changed();
+                        ui.end_row();
+                        ui.label("Y");
+                        pos_changed |= ui.add(egui::DragValue::new(&mut pos.y).speed(0.05)).changed();
+                        ui.end_row();
+                        ui.label("Z");
+                        pos_changed |= ui.add(egui::DragValue::new(&mut pos.z).speed(0.05)).changed();
+                        ui.end_row();
+                    });
+                    if pos_changed {
+                        state.pending_inspector_position = Some(pos);
+                    }
+
+                    ui.add_space(6.0);
+
+                    // — Orientation —
+                    ui.label(egui::RichText::new("Orientation (deg)").underline());
+                    let mut orient = actor.orientation;
+                    let mut rot_changed = false;
+                    egui::Grid::new("rot_grid").num_columns(2).spacing([4.0, 4.0]).show(ui, |ui| {
+                        ui.label("X");
+                        rot_changed |= ui.add(egui::DragValue::new(&mut orient.x).speed(0.5)).changed();
+                        ui.end_row();
+                        ui.label("Y");
+                        rot_changed |= ui.add(egui::DragValue::new(&mut orient.y).speed(0.5)).changed();
+                        ui.end_row();
+                        ui.label("Z");
+                        rot_changed |= ui.add(egui::DragValue::new(&mut orient.z).speed(0.5)).changed();
+                        ui.end_row();
+                    });
+                    if rot_changed {
+                        state.pending_inspector_orientation = Some(orient);
+                    }
+                } else {
+                    ui.label("(actor not found)");
+                }
+            } else {
+                ui.label("Nothing selected.");
+                ui.label("Click an actor in the\nviewport or select from\nthe actor list.");
+            }
+
+            ui.separator();
+            ui.add_space(4.0);
+            ui.label(egui::RichText::new("Keyboard").strong());
+            ui.label("[T] translate  [R] rotate");
+            ui.label("Arrows → X / Z axis");
+            ui.label("Q / E → Y axis / Z-roll");
+            ui.label("Shift → fine control");
+            ui.label("[F] focus camera");
+            ui.label("[B] toggle bounds");
+            ui.label("Ctrl+S save");
         });
 
     if state.show_load_dialog {
@@ -1167,7 +1279,7 @@ fn update_window_title_system(
         layout.thumbnail_count(),
         selected,
         if state.status.is_empty() {
-            "LMB select • RMB orbit • WASD pan • Wheel zoom • [T]rans: Arrows=XZ Q/E=Y • [R]ot: Arrows=YX Q/E=Z • Ctrl+S save • B bounds"
+            "LMB select • RMB orbit • WASD pan • Wheel zoom • [T]rans: hold Arrows=XZ Q/E=Y • [R]ot: hold Arrows=YX Q/E=Z • Shift=fine • Ctrl+S save"
         } else {
             state.status.as_str()
         }
@@ -1182,8 +1294,8 @@ fn camera_orbit_system(
     mut motion: MessageReader<MouseMotion>,
     mut contexts: EguiContexts,
     mut state: ResMut<EditorState>,
-    actors: Query<(&Transform, &ActorHandle)>,
-    mut query: Query<(&mut Transform, &mut OrbitCamera)>,
+    actors: Query<(&Transform, &ActorHandle), Without<OrbitCamera>>,
+    mut query: Query<(&mut Transform, &mut OrbitCamera), Without<ActorHandle>>,
 ) {
     let egui_wants_scroll = contexts
         .ctx_mut()
@@ -1310,11 +1422,24 @@ fn mouse_pick_system(
 
 fn transform_edit_system(
     keys: Res<ButtonInput<KeyCode>>,
+    time: Res<Time>,
+    mut contexts: EguiContexts,
     mut state: ResMut<EditorState>,
     mut actors: Query<(&mut Transform, &ActorHandle)>,
 ) {
+    // Don't steal arrow keys while an egui text field has keyboard focus.
+    let egui_wants_keys = contexts
+        .ctx_mut()
+        .ok()
+        .is_some_and(|ctx| ctx.wants_keyboard_input());
+    if egui_wants_keys {
+        return;
+    }
+
     let selected = state.selected_actor.clone();
     let mode = state.mode;
+    let dt = time.delta_secs();
+    let shift = keys.pressed(KeyCode::ShiftLeft) || keys.pressed(KeyCode::ShiftRight);
 
     for (mut tf, handle) in &mut actors {
         if !selected.as_ref().is_some_and(|n| n == &handle.name) {
@@ -1323,58 +1448,62 @@ fn transform_edit_system(
 
         match mode {
             EditMode::Transform => {
+                // Shift = fine (1 u/s), normal = coarse (8 u/s).
+                let speed = if shift { 1.0_f32 } else { 8.0_f32 };
                 let mut delta = Vec3::ZERO;
-                if keys.just_pressed(KeyCode::ArrowUp) {
+                if keys.pressed(KeyCode::ArrowUp) {
                     delta.z -= 1.0;
                 }
-                if keys.just_pressed(KeyCode::ArrowDown) {
+                if keys.pressed(KeyCode::ArrowDown) {
                     delta.z += 1.0;
                 }
-                if keys.just_pressed(KeyCode::ArrowLeft) {
+                if keys.pressed(KeyCode::ArrowLeft) {
                     delta.x -= 1.0;
                 }
-                if keys.just_pressed(KeyCode::ArrowRight) {
+                if keys.pressed(KeyCode::ArrowRight) {
                     delta.x += 1.0;
                 }
-                if keys.just_pressed(KeyCode::KeyQ) {
+                if keys.pressed(KeyCode::KeyQ) {
                     delta.y += 1.0;
                 }
-                if keys.just_pressed(KeyCode::KeyE) {
+                if keys.pressed(KeyCode::KeyE) {
                     delta.y -= 1.0;
                 }
                 if delta != Vec3::ZERO {
-                    tf.translation += delta;
+                    tf.translation += delta.normalize() * speed * dt;
                     state.dirty = true;
                 }
             }
             EditMode::Rotate => {
-                let step = 10f32.to_radians();
+                // Shift = fine (20 °/s), normal = coarse (90 °/s).
+                let speed = if shift {
+                    20f32.to_radians()
+                } else {
+                    90f32.to_radians()
+                };
                 let mut rotated = false;
-                // Left/Right: yaw around world Y
-                if keys.just_pressed(KeyCode::ArrowLeft) {
-                    tf.rotate_y(step);
+                if keys.pressed(KeyCode::ArrowLeft) {
+                    tf.rotate_y(speed * dt);
                     rotated = true;
                 }
-                if keys.just_pressed(KeyCode::ArrowRight) {
-                    tf.rotate_y(-step);
+                if keys.pressed(KeyCode::ArrowRight) {
+                    tf.rotate_y(-speed * dt);
                     rotated = true;
                 }
-                // Up/Down: pitch around local X
-                if keys.just_pressed(KeyCode::ArrowUp) {
-                    tf.rotate_local_x(step);
+                if keys.pressed(KeyCode::ArrowUp) {
+                    tf.rotate_local_x(speed * dt);
                     rotated = true;
                 }
-                if keys.just_pressed(KeyCode::ArrowDown) {
-                    tf.rotate_local_x(-step);
+                if keys.pressed(KeyCode::ArrowDown) {
+                    tf.rotate_local_x(-speed * dt);
                     rotated = true;
                 }
-                // Q/E: roll around local Z
-                if keys.just_pressed(KeyCode::KeyQ) {
-                    tf.rotate_local_z(step);
+                if keys.pressed(KeyCode::KeyQ) {
+                    tf.rotate_local_z(speed * dt);
                     rotated = true;
                 }
-                if keys.just_pressed(KeyCode::KeyE) {
-                    tf.rotate_local_z(-step);
+                if keys.pressed(KeyCode::KeyE) {
+                    tf.rotate_local_z(-speed * dt);
                     rotated = true;
                 }
                 if rotated {
@@ -1382,6 +1511,35 @@ fn transform_edit_system(
                 }
             }
         }
+    }
+}
+
+fn apply_inspector_edits_system(
+    mut state: ResMut<EditorState>,
+    mut actors: Query<(&mut Transform, &ActorHandle)>,
+) {
+    let pending_pos = state.pending_inspector_position.take();
+    let pending_orient = state.pending_inspector_orientation.take();
+
+    if pending_pos.is_none() && pending_orient.is_none() {
+        return;
+    }
+
+    let selected = state.selected_actor.clone();
+    for (mut tf, handle) in &mut actors {
+        if !selected.as_ref().is_some_and(|n| n == &handle.name) {
+            continue;
+        }
+        if let Some(pos) = pending_pos {
+            tf.translation = pos;
+            state.dirty = true;
+        }
+        if let Some(orient_deg) = pending_orient {
+            let r = orient_deg * (std::f32::consts::PI / 180.0);
+            tf.rotation = Quat::from_euler(EulerRot::XYZ, r.x, r.y, r.z);
+            state.dirty = true;
+        }
+        break;
     }
 }
 
@@ -1529,6 +1687,8 @@ fn discover_entity_types(entity_dir: &Path) -> Vec<EntityTypeEntry> {
         .map(|name| EntityTypeEntry {
             entity_type: name,
             thumbnail_path: None,
+            thumbnail_handle: None,
+            texture_id: None,
         })
         .collect()
 }
