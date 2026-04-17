@@ -11,6 +11,7 @@ use bevy::window::PrimaryWindow;
 use bevy_egui::{EguiContexts, EguiPlugin, EguiPrimaryContextPass, egui};
 use rb_game::oni2_loader::parsers::actor_xml::parse_actor_xml;
 use rb_game::oni2_loader::registries::{AnimRegistry, EntityLibrary};
+use rb_game::oni2_loader::utils::space;
 use std::collections::{HashMap, HashSet};
 use std::env;
 use std::fs;
@@ -249,7 +250,7 @@ impl LayoutDocument {
                     name: actor_name.clone(),
                     entity_type: parsed.entity_type.to_lowercase(),
                     position: parsed.position,
-                    orientation: parsed.orientation,
+                    orientation_o2: parsed.orientation_o2,
                     raw_xml,
                 });
             }
@@ -759,7 +760,7 @@ fn ui_system(
 
                     // — Orientation —
                     ui.label(egui::RichText::new("Orientation (deg)").underline());
-                    let mut orient = actor.orientation;
+                    let mut orient = actor.orientation_o2;
                     let mut rot_changed = false;
                     egui::Grid::new("rot_grid").num_columns(2).spacing([4.0, 4.0]).show(ui, |ui| {
                         ui.label("X");
@@ -952,7 +953,7 @@ fn make_new_actor(actor_name: &str, entity_type: &str) -> ActorRecord {
         name: actor_name.to_string(),
         entity_type: entity_type.to_lowercase(),
         position: Vec3::ZERO,
-        orientation: Vec3::ZERO,
+        orientation_o2: Vec3::ZERO,
         raw_xml,
     }
 }
@@ -1586,7 +1587,7 @@ struct ActorRecord {
     /// Position in Bevy (right-handed) space.
     position: Vec3,
     /// Euler orientation in degrees XYZ, as stored in the ONI2 XML.
-    orientation: Vec3,
+    orientation_o2: Vec3,
     /// Full XML text of the actor file; updated in-place when position/orientation change.
     raw_xml: String,
 }
@@ -1601,25 +1602,23 @@ impl ActorRecord {
     }
 
     fn rotation_radians(&self) -> Vec3 {
-        self.orientation * (std::f32::consts::PI / 180.0)
+        self.orientation_o2 * (std::f32::consts::PI / 180.0)
     }
 
     fn set_position(&mut self, value: Vec3) {
         self.position = value;
-        // ONI2 uses left-handed coordinates: negate X and Z when writing back.
-        let oni2 = format!("{} {} {}", -value.x, value.y, -value.z);
-        self.raw_xml = set_or_insert_xml_attr(&self.raw_xml, "Position", &oni2);
+        let oni2 = space::to_oni2_space_pos(value);
+        let oni2_str = format!("{} {} {}", oni2.x, oni2.y, oni2.z);
+        self.raw_xml = set_or_insert_xml_attr(&self.raw_xml, "Position", &oni2_str);
     }
 
     fn set_rotation(&mut self, euler_xyz: (f32, f32, f32)) {
-        let deg = Vec3::new(
-            euler_xyz.0.to_degrees(),
-            euler_xyz.1.to_degrees(),
-            euler_xyz.2.to_degrees(),
-        );
-        self.orientation = deg;
-        let s = format!("{} {} {}", deg.x, deg.y, deg.z);
-        self.raw_xml = set_or_insert_xml_attr(&self.raw_xml, "Orientation", &s);
+        let q = Quat::from_euler(EulerRot::XYZ, euler_xyz.0, euler_xyz.1, euler_xyz.2);
+        let deg = space::to_oni2_space_rot(q);
+
+        self.orientation_o2 = deg;
+        let str_val = format!("{} {} {}", deg.x, deg.y, deg.z);
+        self.raw_xml = set_or_insert_xml_attr(&self.raw_xml, "Orientation", &str_val);
     }
 }
 

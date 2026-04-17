@@ -29,12 +29,13 @@ pub fn clear_xml_cache() {
 use crate::oni2_loader::utils::parse::{
     extract_root_xml_attr, extract_xml_attr, extract_xml_base_attr, extract_xml_block, parse_vec3,
 };
+use crate::oni2_loader::utils::space;
 
 /// Parsed actor from a layout XML file.
 pub struct LayoutActor {
     pub entity_type: String,
     pub position: Vec3,
-    pub orientation: Vec3, // euler angles in degrees (rx, ry, rz)
+    pub orientation_o2: Vec3, // euler angles in degrees (rx, ry, rz)
     /// AnimatorType from Animator component (resolved through templates).
     pub animator_type: Option<String>,
     /// Whether this actor has a Creature component (animated character).
@@ -185,7 +186,7 @@ pub fn parse_actor_xml(dir: &str, filename: &str, template_dir: &str) -> Option<
     // Extract core actor properties from the raw content hierarchy
     let mut entity_type: Option<String> = None;
     let mut position = Vec3::ZERO;
-    let mut orientation = Vec3::ZERO;
+    let mut orientation_o2 = Vec3::ZERO;
     let mut updatestate: Option<String> = None;
     let mut spawn_later = false;
     let mut parent_actor: Option<String> = None;
@@ -211,7 +212,7 @@ pub fn parse_actor_xml(dir: &str, filename: &str, template_dir: &str) -> Option<
             position = v;
         }
         if let Some(v) = extract_xml_attr(content, "Orientation").and_then(|s| parse_vec3(&s)) {
-            orientation = v;
+            orientation_o2 = v;
         }
         if let Some(v) = extract_xml_attr(content, "ParentActor") {
             parent_actor = Some(v);
@@ -370,15 +371,14 @@ pub fn parse_actor_xml(dir: &str, filename: &str, template_dir: &str) -> Option<
         }
     }
 
-    // Convert from left-handed to right-handed: 180° Y rotation (negate X and Z)
-    let position = Vec3::new(-position.x, position.y, -position.z);
+    let position = space::to_bevy_space_pos(position);
 
     let has_fight_ai = fight_ai_block.is_some();
 
     Some(LayoutActor {
         entity_type,
         position,
-        orientation,
+        orientation_o2,
         animator_type,
         is_creature,
         is_player,

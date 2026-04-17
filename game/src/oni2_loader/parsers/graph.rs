@@ -7,6 +7,7 @@
  */
 use bevy::prelude::*;
 use crate::vfs;
+use crate::oni2_loader::utils::space;
 
 pub struct GraphPoint {
     pub position: Vec3,
@@ -99,7 +100,7 @@ fn parse_single_graph(dir: &str, name: &str) -> Option<LayoutGraph> {
                 }
                 
                 points.push(GraphPoint {
-                    position: Vec3::new(-x, y, -z), // Left-Handed to Right-Handed
+                    position: space::to_bevy_space_pos(Vec3::new(x, y, z)), // Left-Handed to Right-Handed
                     flags,
                     name: pt_name,
                 });

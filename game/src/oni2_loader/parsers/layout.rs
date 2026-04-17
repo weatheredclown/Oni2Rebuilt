@@ -6,6 +6,7 @@
  * Returns data structs consumed by layout_loader.rs to spawn level content.
  */
 use crate::oni2_loader::utils::parse::parse_vec3;
+use crate::oni2_loader::utils::space;
 use bevy::prelude::*;
 
 /// A parsed layout light entry.
@@ -276,7 +277,7 @@ pub fn parse_layout_paths(dir: &str) -> Vec<(String, Vec<Vec3>)> {
                     .collect();
                 if coords.len() >= 3 {
                     // Convert from left-handed to right-handed
-                    points.push(Vec3::new(-coords[0], coords[1], -coords[2]));
+                    points.push(space::to_bevy_space_pos(&coords[0..3]));
                 }
             }
 

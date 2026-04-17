@@ -11,6 +11,7 @@
 use super::*;
 use crate::oni2_loader::parsers::texture::decode_tex;
 use crate::oni2_loader::parsers::texture::load_tga_texture;
+use crate::oni2_loader::utils::space;
 
 pub struct LayoutPlayerInfo {
     pub entity: Entity,
@@ -345,10 +346,7 @@ pub fn spawn_layout_actor(
     let spawned_entity = if actor.is_creature {
         // Position already in Bevy coordinates (Z negated at parse time)
         let position = pos_override.unwrap_or(actor.position);
-        // 180° Y rotation flips X and Z rotation directions
-        let rotation = Quat::from_rotation_x(-actor.orientation.x.to_radians())
-            * Quat::from_rotation_y(actor.orientation.y.to_radians())
-            * Quat::from_rotation_z(-actor.orientation.z.to_radians());
+        let rotation = space::to_bevy_space_rot(actor.orientation_o2);
 
         if let Some(ref anim_type) = actor.animator_type {
             info!(
@@ -421,10 +419,7 @@ pub fn spawn_layout_actor(
     } else {
         // Static entity (BASICENTITY check) or trigger (has broadcast_radius)
         let position = pos_override.unwrap_or(actor.position);
-        // 180° Y rotation flips X and Z rotation directions
-        let rotation = Quat::from_rotation_x(-actor.orientation.x.to_radians())
-            * Quat::from_rotation_y(actor.orientation.y.to_radians())
-            * Quat::from_rotation_z(-actor.orientation.z.to_radians());
+        let rotation = space::to_bevy_space_rot(actor.orientation_o2);
 
         let entity = if is_basic {
             spawn_oni2_entity_with_rotation(
@@ -739,7 +734,7 @@ fn load_layout_lights(
                 continue;
             }
             let color = Color::srgb(light.color[0], light.color[1], light.color[2]);
-            let dir = Vec3::new(-light.direction[0], light.direction[1], -light.direction[2]);
+            let dir = space::to_bevy_space_pos(Vec3::new(light.direction[0], light.direction[1], light.direction[2]));
             if i < 2 {
                 // First two lights are directional
                 commands.spawn((
@@ -1111,7 +1106,7 @@ pub fn find_konoko_spawn(layout_dir: &str) -> Option<Vec3> {
             .unwrap_or(Vec3::ZERO);
 
         // Convert from left-handed to right-handed at parse boundary
-        let bevy_pos = Vec3::new(-position.x, position.y, -position.z);
+        let bevy_pos = space::to_bevy_space_pos(position);
         info!("Found Konoko spawn at {:?} → bevy {:?}", position, bevy_pos);
         return Some(bevy_pos);
     }

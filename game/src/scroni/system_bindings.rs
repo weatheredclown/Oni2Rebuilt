@@ -7,6 +7,7 @@
  */
 use crate::scroni::vm::*;
 use bevy::prelude::*;
+use crate::oni2_loader::utils::space;
 pub fn scroni_sys_event_observer(
     trigger: On<ScrOniSysEvent>,
     mut commands: Commands,
@@ -38,6 +39,7 @@ pub fn scroni_sys_event_observer(
             &mut Transform,
             Option<&mut avian3d::prelude::LinearVelocity>,
             Option<&mut avian3d::prelude::Position>,
+            Option<&mut avian3d::prelude::Rotation>,
         ), Without<crate::camera::components::CameraController>>,
         Query<&Children>,
         Query<&mut MeshMaterial3d<StandardMaterial>>,
@@ -286,7 +288,7 @@ pub fn scroni_sys_event_observer(
         }
         ScrOniSysEvent::CameraFollowActor(actor_ent) => {
             let actor_pos = transform_query.get(actor_ent)
-                .map(|(tf, _, _)| tf.translation)
+                .map(|(tf, _, _, _)| tf.translation)
                 .unwrap_or(Vec3::ZERO);
             for (_, mut controller, mut channel, _, _) in &mut camera_query {
                 info!("[CAM-SCRIPT] CameraFollowActor {:?} | snapping focus to {}", actor_ent, actor_pos);
@@ -353,8 +355,7 @@ pub fn scroni_sys_event_observer(
             for (ent, mut controller, _, seq_opt, cam_tf) in &mut camera_query {
                 controller.active_mode = crate::camera::components::ActiveCameraMode::Script;
                 let mut seq = seq_opt.cloned().unwrap_or_default();
-                // Map the point with X and Z inverted (Oni right-handed mapping vs Bevy)
-                let mapped_pt = Vec3::new(-pt.x, pt.y, -pt.z);
+                let mapped_pt = space::to_bevy_space_pos(pt);
                 info!("[CAM-SCRIPT] CameraTrackPoint {} (raw={}) | cam_pos={}", mapped_pt, pt, cam_tf.translation);
                 seq.tracked_target = Some(crate::camera::components::ScriptFocusTarget::Point(mapped_pt));
                 commands.entity(ent).insert(seq);
@@ -377,7 +378,7 @@ pub fn scroni_sys_event_observer(
             for (ent, mut controller, _, seq_opt, cam_tf) in &mut camera_query {
                 controller.active_mode = crate::camera::components::ActiveCameraMode::Script;
                 let mut seq = seq_opt.cloned().unwrap_or_default();
-                let mapped_pt = Vec3::new(-pt.x, pt.y, -pt.z);
+                let mapped_pt = space::to_bevy_space_pos(pt);
                 info!("[CAM-SCRIPT] CameraMoveToPoint {} (raw={}) over {:.2}s | cam_pos={}", mapped_pt, pt, dur, cam_tf.translation);
                 seq.move_target = Some(crate::camera::components::ScriptFocusTarget::Point(mapped_pt));
                 seq.move_duration = dur;
@@ -456,7 +457,7 @@ pub fn scroni_sys_event_observer(
             );
 
             // Scripts operate purely in ONI coordinates recursively natively. Translate down into Bevy spatial coordinates physically here.
-            let pos_opt = at.map(|p| Vec3::new(-p.x, p.y, -p.z));
+            let pos_opt = at.map(space::to_bevy_space_pos);
             let actor_name = name.clone().unwrap_or(script.clone());
 
             if let (Some(ctx), Some(paths)) = (layout_data.0.as_ref(), layout_data.1.as_ref()) {
@@ -541,9 +542,9 @@ pub fn scroni_sys_event_observer(
                 info!("VM: [{}] Requested TELEPORT on PLAYER! Raw coords: {:?}, face: {:?}", caller_name, to, face);
             }
 
-            if let Ok((mut transform, mut opt_vel, mut opt_phys_pos)) = transform_query.get_mut(target) {
+            if let Ok((mut transform, mut opt_vel, mut opt_phys_pos, mut opt_phys_rot)) = transform_query.get_mut(target) {
                 if let Some(pos) = to {
-                    let bevy_pos = Vec3::new(-pos.x, pos.y, -pos.z);
+                    let bevy_pos = space::to_bevy_space_pos(pos);
                     if player_query.get(target).is_ok() {
                         info!("VM: [{}] Translating PLAYER to mapped Bevy Coords: {:?}", caller_name, bevy_pos);
                     }
@@ -564,8 +565,12 @@ pub fn scroni_sys_event_observer(
                 if let Some(angles_y) = face {
                     let rad = angles_y.to_radians();
                     let current_rot = transform.rotation.to_euler(EulerRot::YXZ);
-                    transform.rotation =
-                        Quat::from_euler(EulerRot::YXZ, rad, current_rot.1, current_rot.2);
+                    let new_rot = Quat::from_euler(EulerRot::YXZ, rad, current_rot.1, current_rot.2);
+                    transform.rotation = new_rot;
+                    
+                    if let Some(ref mut phys_rot) = opt_phys_rot {
+                        phys_rot.0 = new_rot;
+                    }
                 }
 
                 if let Some(vel) = opt_vel.as_deref_mut() {

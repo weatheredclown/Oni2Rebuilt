@@ -22,6 +22,7 @@ use std::f32::consts::PI;
 
 use crate::oni2_loader::animation::Oni2AnimState;
 use crate::oni2_loader::components::{ActiveHeadIK, ControlHeadTask};
+use crate::oni2_loader::utils::space;
 
 // ---------------------------------------------------------------------------
 // Tuning constants (degrees → radians where applicable)
@@ -151,7 +152,7 @@ pub fn head_ik_system(
 
             ControlHeadTask::TrackPos(oni2_pos) => {
                 // Script vectors are in Oni2 left-handed space; convert to Bevy.
-                target_world_pos = Some(Vec3::new(-oni2_pos.x, oni2_pos.y, -oni2_pos.z));
+                target_world_pos = Some(space::to_bevy_space_pos(*oni2_pos));
             }
 
             ControlHeadTask::TrackClosest => {
@@ -221,11 +222,11 @@ pub fn head_ik_system(
 
         // IK world positions from bind-pose local offsets (Oni2 → Bevy coord flip)
         let neck_off_oni2 = Vec3::from(skel.local_offsets[neck_idx]);
-        let neck_off_bevy = Vec3::new(-neck_off_oni2.x, neck_off_oni2.y, -neck_off_oni2.z);
+        let neck_off_bevy = space::to_bevy_space_pos(neck_off_oni2);
         let ik_neck_pos   = spine_world_pos + spine_world_rot * neck_off_bevy;
 
         let head_off_oni2 = Vec3::from(skel.local_offsets[head_idx]);
-        let head_off_bevy = Vec3::new(-head_off_oni2.x, head_off_oni2.y, -head_off_oni2.z);
+        let head_off_bevy = space::to_bevy_space_pos(head_off_oni2);
         // Head is a child of neck, so use ik_rot (not spine_world_rot) for propagation
         let ik_head_pos   = ik_neck_pos + ik_rot * head_off_bevy;
 

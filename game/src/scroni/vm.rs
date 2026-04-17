@@ -14,6 +14,8 @@ use std::collections::HashMap;
 
 use bevy::prelude::*;
 
+use crate::oni2_loader::utils::space;
+
 use super::ast::*;
 use super::compiler::Compiler;
 
@@ -1451,7 +1453,7 @@ impl ScriptExec {
                         if let Some(Value::Actor(act)) = target {
                             if let Ok((_, tf, _)) = ctx.all_entities.get(act) {
                                 let p = tf.translation();
-                                return Value::Vector(Vec3::new(-p.x, p.y, -p.z));
+                                return Value::Vector(space::to_oni2_space_pos(p));
                             }
                         }
                         Value::None
@@ -1466,7 +1468,7 @@ impl ScriptExec {
                                 Value::Actor(act) => {
                                     if let Ok((_, tf, _)) = ctx.all_entities.get(act) {
                                         let p = tf.translation();
-                                        Some(Vec3::new(-p.x, p.y, -p.z))
+                                        Some(space::to_oni2_space_pos(p))
                                     } else {
                                         None
                                     }
@@ -1482,7 +1484,7 @@ impl ScriptExec {
                             if let Ok((_, my_tf, _)) = ctx.all_entities.get(self.owner) {
                                 p2 = p1;
                                 let my_p = my_tf.translation();
-                                p1 = Some(Vec3::new(-my_p.x, my_p.y, -my_p.z));
+                                p1 = Some(space::to_oni2_space_pos(my_p));
                             }
                         }
 
@@ -1964,7 +1966,7 @@ pub fn scroni_tick_system(
         for (tid, target, within, speed, duration) in gotos_to_resolve {
             let mut resolved_pos = None;
             if let Value::Vector(v) = target {
-                resolved_pos = Some(Vec3::new(-v.x, v.y, -v.z)); // Convert to Bevy coords
+                resolved_pos = Some(space::to_bevy_space_pos(v)); // Convert to Bevy coords
             } else if let Value::String(s) = target {
                 if let Some(nav) = &nav_graph_opt {
                     if let Some(idx) = nav.names.get(&s) {

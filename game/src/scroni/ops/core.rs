@@ -10,6 +10,7 @@ use crate::scroni::vm::{
     hash_name, init_variables, BlockingAction, CallFrame, ExecState, ScrOniThread,
     ScriptMessage, SysRequest, Value, LoopState,
 };
+use crate::oni2_loader::utils::space;
 use bevy::prelude::*;
 use super::OpsCtx;
 
@@ -301,7 +302,7 @@ pub fn exec(ctx: &mut OpsCtx, stmt: &Stmt) -> bool {
             for (k, v) in &eval_conds {
                 if k.to_lowercase() == "at" {
                     if let Value::Vector(vec) = v {
-                        my_pos = bevy::math::Vec3::new(-vec[0] as f32, vec[1] as f32, -vec[2] as f32);
+                        my_pos = space::to_bevy_space_pos(vec);
                     }
                 }
             }

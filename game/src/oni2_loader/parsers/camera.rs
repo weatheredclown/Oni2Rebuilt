@@ -7,6 +7,7 @@
  */
 use std::collections::HashMap;
 use bevy::prelude::info;
+use crate::oni2_loader::utils::space;
 
 #[derive(Debug, Clone)]
 pub struct CameraPackageDef {
@@ -230,7 +231,8 @@ pub fn parse_camera_xml(dir: &str, filename: &str) -> Option<CameraParameterSet>
                     .filter_map(|s| s.parse().ok())
                     .collect();
                 if parts.len() >= 3 {
-                    params.focus_offset = [parts[0], -parts[1], parts[2]];
+                    let v = space::to_bevy_space_pos(&parts);
+                    params.focus_offset = [v.x, v.y, v.z];
                 }
             }
             _ => {}

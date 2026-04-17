@@ -9,6 +9,7 @@
 use super::*;
 use crate::oni2_loader::parsers::texture::load_tga_texture;
 use crate::oni2_loader::utils::bone::compute_inverse_bind_poses;
+use crate::oni2_loader::utils::space;
 
 #[derive(Component)]
 pub struct CreatureRenderOffset {
@@ -173,6 +174,7 @@ pub fn moving_platform_system(
         &avian3d::prelude::ShapeHits,
     )>,
     platforms: Query<(&Transform, &avian3d::prelude::RigidBody)>,
+    parents: Query<&ChildOf>,
 ) {
     for (rider_entity, mut pos, mut rider_rot, mut rider, hits) in &mut riders {
         // Find first ground contact that is on a kinematic or static body (important for ScrOni mutated static props).
@@ -180,12 +182,22 @@ pub fn moving_platform_system(
             if hit.entity == rider_entity {
                 return None; // Skip self collisions!
             }
-            if let Ok((_, rb)) = platforms.get(hit.entity) {
-                if matches!(
-                    rb,
-                    avian3d::prelude::RigidBody::Kinematic | avian3d::prelude::RigidBody::Static
-                ) {
-                    return Some(hit.entity);
+            
+            let mut current = hit.entity;
+            loop {
+                if let Ok((_, rb)) = platforms.get(current) {
+                    if matches!(
+                        rb,
+                        avian3d::prelude::RigidBody::Kinematic | avian3d::prelude::RigidBody::Static
+                    ) {
+                        return Some(current);
+                    }
+                }
+                
+                if let Ok(parent) = parents.get(current) {
+                    current = parent.parent();
+                } else {
+                    break;
                 }
             }
             None
@@ -470,7 +482,7 @@ pub fn spawn_mod_file(
             positions: skel
                 .positions
                 .iter()
-                .map(|p| Vec3::new(-p[0], p[1], -p[2]))
+                .map(|p| space::to_bevy_space_pos(p))
                 .collect(),
             parent_indices: skel.parent_indices.clone(),
             names: skel.names.clone(),
@@ -707,7 +719,7 @@ pub fn load_oni2_entity_type(
         .map(|skel| {
             skel.positions
                 .iter()
-                .map(|p| Vec3::new(-p[0], p[1], -p[2]))
+                .map(|p| space::to_bevy_space_pos(p))
                 .collect()
         })
         .unwrap_or_default();
@@ -794,18 +806,18 @@ pub fn load_oni2_entity_type(
             if !m.bone_world_positions.is_empty() {
                 m.bone_world_positions
                     .iter()
-                    .map(|p| Vec3::new(-p[0], p[1], -p[2]))
+                    .map(|p| space::to_bevy_space_pos(p))
                     .collect()
             } else {
                 skel.positions
                     .iter()
-                    .map(|p| Vec3::new(-p[0], p[1], -p[2]))
+                    .map(|p| space::to_bevy_space_pos(p))
                     .collect()
             }
         } else {
             skel.positions
                 .iter()
-                .map(|p| Vec3::new(-p[0], p[1], -p[2]))
+                .map(|p| space::to_bevy_space_pos(p))
                 .collect()
         };
         crate::oni2_loader::spawn::Oni2DebugSkeleton {

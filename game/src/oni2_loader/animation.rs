@@ -7,6 +7,7 @@
  * ground_snap_system, and debug-draw systems for attack wedges / bounds / skeleton.
  */
 use super::*;
+use crate::oni2_loader::utils::space;
 
 /// System: advance CurveFollower phase, evaluate NURBS position, update Transform.
 pub fn curve_follower_system(
@@ -1124,7 +1125,7 @@ pub fn update_oni2_animation(
                     transform_query.get_mut(joint_entity)
                 {
                     // Convert from Oni2 coordinates to Bevy: negate X and Z
-                    let bevy_pos = Vec3::new(-pos.x, pos.y + y_offset, -pos.z);
+                    let bevy_pos = space::to_bevy_space_pos(Vec3::new(pos.x, pos.y + y_offset, pos.z));
                     // Conjugate rotation by 180° Y rotation: negate X and Z components
                     let bevy_rot = Quat::from_xyzw(-rot.x, rot.y, -rot.z, rot.w);
                     // Apply facing rotation (if model needs to be rotated)
@@ -1157,7 +1158,7 @@ pub fn update_oni2_animation(
         if let Some(mut ds) = debug_skel {
             ds.positions = bone_transforms
                 .iter()
-                .map(|(_, pos)| Vec3::new(-pos.x, pos.y, -pos.z))
+                .map(|(_, pos)| space::to_bevy_space_pos(pos))
                 .collect();
         }
     }
