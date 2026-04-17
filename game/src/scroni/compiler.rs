@@ -29,6 +29,7 @@ pub struct Compiler {
     tokens: Vec<Token>,
     pos: usize,
     pub errors: Vec<CompileError>,
+    pub current_inline_vars: Vec<VarDecl>,
 }
 
 impl Compiler {
@@ -40,6 +41,7 @@ impl Compiler {
             tokens,
             pos: 0,
             errors: Vec::new(),
+            current_inline_vars: Vec::new(),
         };
         let file = compiler.parse_file();
         if compiler.errors.is_empty() {
@@ -139,6 +141,7 @@ impl Compiler {
     }
 
     fn parse_script_def(&mut self) -> Option<ScriptDef> {
+        self.current_inline_vars.clear();
         self.advance(); // skip 'Script'
         let name = if self.code() == TokenCode::Identifier {
             let n = self.peek().text.clone();
@@ -188,9 +191,12 @@ impl Compiler {
 
         self.skip_if(TokenCode::End); // skip 'end'
 
+        let mut all_vars = variables;
+        all_vars.extend(self.current_inline_vars.drain(..));
+
         Some(ScriptDef {
             name,
-            variables,
+            variables: all_vars,
             whenever,
             sequence,
         })
@@ -331,6 +337,7 @@ impl Compiler {
             | TokenCode::Label
             | TokenCode::ActorList => {
                 if let Some(v) = self.parse_var_decl() {
+                    self.current_inline_vars.push(v.clone());
                     Stmt::InlineVarDecl(v)
                 } else {
                     Stmt::Unimplemented {
