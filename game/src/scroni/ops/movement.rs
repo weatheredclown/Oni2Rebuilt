@@ -40,9 +40,8 @@ pub fn exec(ctx: &mut OpsCtx, stmt: &Stmt) -> bool {
             true
         }
         Stmt::Patrol(expr) => {
-            let ent = ctx.eval(expr);
-            info!("VM: Patrol {:?} (unimplemented)", ent);
-            ctx.yield_thread();
+            let path_val = ctx.eval(expr);
+            ctx.block(BlockingAction::Patrol(path_val));
             true
         }
         Stmt::Follow(expr) => {

@@ -943,5 +943,14 @@ pub fn scroni_sys_event_observer(
                 entity_cmds.despawn();
             }
         }
+        ScrOniSysEvent::PlayerTaskBegin { timeout } => {
+            info!("VM: PlayerTaskBegin (timeout={:?})", timeout);
+        }
+        ScrOniSysEvent::PlayerTaskSuccessful => {
+            info!("VM: PlayerTaskSuccessful");
+        }
+        ScrOniSysEvent::PlayerTaskFailure => {
+            info!("VM: PlayerTaskFailure");
+        }
     }
 }

@@ -427,7 +427,31 @@ impl Compiler {
             TokenCode::MakeExplosion => self.parse_make_explosion(),
             TokenCode::Patrol => {
                 self.advance();
-                Stmt::Patrol(self.parse_expr())
+                self.skip_if(TokenCode::Path);
+                let path_expr = self.parse_expr();
+                // Consume optional patrol modifiers (speed <expr>, listen, start <expr>, etc.)
+                loop {
+                    match self.code() {
+                        TokenCode::Speed
+                        | TokenCode::Start
+                        | TokenCode::Stop
+                        | TokenCode::Pause
+                        | TokenCode::Look
+                        | TokenCode::Scan
+                        | TokenCode::Face
+                        | TokenCode::Direction => {
+                            self.advance();
+                            if is_expr_start(self.code()) {
+                                self.parse_expr();
+                            }
+                        }
+                        TokenCode::Listen => {
+                            self.advance();
+                        }
+                        _ => break,
+                    }
+                }
+                Stmt::Patrol(path_expr)
             }
             TokenCode::Follow => {
                 self.advance();
@@ -680,6 +704,24 @@ impl Compiler {
             TokenCode::DrawText => {
                 self.advance();
                 Stmt::DrawText(self.parse_expr())
+            }
+
+            TokenCode::PlayerTaskBegin => {
+                self.advance();
+                let timeout = if is_expr_start(self.code()) {
+                    Some(self.parse_expr())
+                } else {
+                    None
+                };
+                Stmt::PlayerTaskBegin(timeout)
+            }
+            TokenCode::PlayerTaskSuccessful => {
+                self.advance();
+                Stmt::PlayerTaskSuccessful
+            }
+            TokenCode::PlayerTaskFailure => {
+                self.advance();
+                Stmt::PlayerTaskFailure
             }
 
             _ => {

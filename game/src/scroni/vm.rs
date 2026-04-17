@@ -280,6 +280,11 @@ pub enum SysRequest {
         at: [f32; 3],
     },
     Destroy(Entity),
+    PlayerTaskBegin {
+        timeout: Option<f32>,
+    },
+    PlayerTaskSuccessful,
+    PlayerTaskFailure,
 }
 
 #[derive(Component)]
@@ -421,6 +426,11 @@ pub enum ScrOniSysEvent {
         at: [f32; 3],
     },
     Destroy(Entity),
+    PlayerTaskBegin {
+        timeout: Option<f32>,
+    },
+    PlayerTaskSuccessful,
+    PlayerTaskFailure,
 }
 
 #[derive(Debug, Clone)]
@@ -539,7 +549,6 @@ pub struct ScriptExec {
     pub ticks_alive: u32,
 }
 
-#[derive(Debug, Clone)]
 pub struct ScroniContext<'a, 'w_e, 's_e, 'w_t, 's_t> {
     pub all_entities: &'a Query<'w_e, 's_e, (Entity, &'static GlobalTransform, Option<&'static Name>)>,
     pub triggers: &'a Query<'w_t, 's_t, &'static BroadcastTrigger>,
@@ -548,6 +557,8 @@ pub struct ScroniContext<'a, 'w_e, 's_e, 'w_t, 's_t> {
     pub layout_dir: String,
     /// Per-entity status string: "alive", "dead", "fighting". Built each frame.
     pub actor_statuses: &'a std::collections::HashMap<Entity, String>,
+    /// Optional line-of-sight checker: (from, to, exclude_a, exclude_b) -> bool.
+    pub line_of_sight: Option<&'a dyn Fn(Vec3, Vec3, Entity, Entity) -> bool>,
 }
 
 impl<'a, 'w_e, 's_e, 'w_t, 's_t> ScroniContext<'a, 'w_e, 's_e, 'w_t, 's_t> {
@@ -1332,7 +1343,17 @@ impl ScriptExec {
                 }
                 Value::ActorList(ents, 0)
             }
-            Expr::Var(name) => self.get_var(tid, name),
+            Expr::Var(name) => {
+                if name.eq_ignore_ascii_case("facing") {
+                    let mut facing_deg = 0.0;
+                    if let Ok((_ent, tf, _)) = ctx.all_entities.get(self.owner) {
+                        facing_deg = space::to_oni2_space_rot(tf.compute_transform().rotation).y;
+                    }
+                    Value::Float(facing_deg)
+                } else {
+                    self.get_var(tid, name)
+                }
+            }
             Expr::Me => Value::Actor(self.owner),
             Expr::Player => {
                 if let Some(p) = ctx.player {
@@ -1740,6 +1761,29 @@ impl ScriptExec {
                             Value::None
                         }
                     }
+                    "lineofsight" => {
+                        // lineofsight(actor_a, actor_b) -> bool (1 if unobstructed)
+                        let a = args.get(0).map(|e| self.eval_expr(tid, e, now, ctx));
+                        let b = args.get(1).map(|e| self.eval_expr(tid, e, now, ctx));
+                        let resolve_pos = |val: &Value| -> Option<(Vec3, Entity)> {
+                            match val {
+                                Value::Actor(ent) => {
+                                    ctx.all_entities.get(*ent).ok().map(|(e, tf, _)| (tf.translation(), e))
+                                }
+                                _ => None,
+                            }
+                        };
+                        if let (Some(av), Some(bv)) = (a.as_ref(), b.as_ref()) {
+                            if let (Some((pos_a, ent_a)), Some((pos_b, ent_b))) =
+                                (resolve_pos(av), resolve_pos(bv))
+                            {
+                                if let Some(los_fn) = ctx.line_of_sight {
+                                    return Value::Int(if los_fn(pos_a, pos_b, ent_a, ent_b) { 1 } else { 0 });
+                                }
+                            }
+                        }
+                        Value::Int(0)
+                    }
                     _ => Value::None,
                 }
             }
@@ -1897,6 +1941,8 @@ pub fn scroni_tick_system(
     layout_context: Option<Res<crate::oni2_loader::environment::LayoutContext>>,
     mut health_query: Query<(Entity, &mut crate::combat::components::Health, Option<&crate::ai::components::AiFighter>)>,
     nav_graph_opt: Option<Res<crate::ai::navigation::NavGraph>>,
+    layout_paths: Option<Res<crate::oni2_loader::environment::LayoutPaths>>,
+    spatial_query: avian3d::prelude::SpatialQuery,
     mut injure_writer: MessageWriter<crate::combat::events::InjureMessage>,
 ) {
     let now = time.elapsed_secs_f64();
@@ -1931,6 +1977,17 @@ pub fn scroni_tick_system(
         }
         script.exec.ticks_alive += 1;
 
+        let los_checker = |from: Vec3, to: Vec3, exc_a: Entity, exc_b: Entity| -> bool {
+            let delta = to - from;
+            let dist = delta.length();
+            if dist < 0.01 {
+                return true;
+            }
+            let Ok(dir) = Dir3::new(delta / dist) else { return true; };
+            let filter = avian3d::prelude::SpatialQueryFilter::from_excluded_entities([exc_a, exc_b]);
+            spatial_query.cast_ray(from, dir, dist * 0.99, true, &filter).is_none()
+        };
+        let los_ref: &dyn Fn(Vec3, Vec3, Entity, Entity) -> bool = &los_checker;
         let mut ctx = ScroniContext {
             all_entities: &all_entities,
             triggers: &triggers,
@@ -1941,16 +1998,20 @@ pub fn scroni_tick_system(
                 .map(|c| c.layout_dir.clone())
                 .unwrap_or_default(),
             actor_statuses: &actor_statuses,
+            line_of_sight: Some(los_ref),
         };
         script.exec.tick(now, delta_time, &mut ctx);
 
         let is_done = script.exec.main_thread.state == ExecState::Done;
 
         let mut gotos_to_resolve = Vec::new();
+        let mut patrols_to_resolve = Vec::new();
         let mut waiting_for_path = Vec::new();
         for t in script.exec.all_threads_mut() {
             if let Some(BlockingAction::GotoPoint { target, within, speed, duration }) = t.blocking.clone() {
                 gotos_to_resolve.push((t.thread_id, target, within, speed, duration));
+            } else if let Some(BlockingAction::Patrol(path_val)) = t.blocking.clone() {
+                patrols_to_resolve.push((t.thread_id, path_val));
             } else if let Some(BlockingAction::WaitingForPath) = t.blocking.clone() {
                 waiting_for_path.push(t.thread_id);
             }
@@ -1962,7 +2023,28 @@ pub fn scroni_tick_system(
                 script.exec.tick_thread(tid, now, &mut ctx);
             }
         }
-        
+
+        for (tid, path_val) in patrols_to_resolve {
+            let path_name = path_val.as_string();
+            let waypoints = layout_paths
+                .as_ref()
+                .and_then(|lp| lp.curves.iter().find(|(n, _)| n.eq_ignore_ascii_case(&path_name)))
+                .map(|(_, pts)| pts.clone());
+            if let Some(pts) = waypoints {
+                commands.entity(entity).insert(crate::ai::navigation::ActorPathfollower {
+                    path: pts,
+                    current_wp: 0,
+                    speed_throttle: 1.0,
+                    within: None,
+                });
+                script.exec.get_thread_mut(tid).blocking = Some(BlockingAction::WaitingForPath);
+            } else {
+                warn!("patrol: path '{}' not found in LayoutPaths", path_name);
+                script.exec.clear_blocking(tid);
+                script.exec.tick_thread(tid, now, &mut ctx);
+            }
+        }
+
         for (tid, target, within, speed, duration) in gotos_to_resolve {
             let mut resolved_pos = None;
             if let Value::Vector(v) = target {
@@ -2207,6 +2289,15 @@ pub fn scroni_tick_system(
                 }
                 SysRequest::Destroy(ent) => {
                     commands.trigger(ScrOniSysEvent::Destroy(ent));
+                }
+                SysRequest::PlayerTaskBegin { timeout } => {
+                    commands.trigger(ScrOniSysEvent::PlayerTaskBegin { timeout });
+                }
+                SysRequest::PlayerTaskSuccessful => {
+                    commands.trigger(ScrOniSysEvent::PlayerTaskSuccessful);
+                }
+                SysRequest::PlayerTaskFailure => {
+                    commands.trigger(ScrOniSysEvent::PlayerTaskFailure);
                 }
             }
         }

@@ -641,6 +641,19 @@ pub fn exec(ctx: &mut OpsCtx, stmt: &Stmt) -> bool {
             }
             true
         }
+        Stmt::PlayerTaskBegin(timeout_expr) => {
+            let timeout = timeout_expr.as_ref().map(|e| ctx.eval_float(e));
+            ctx.sys_request(SysRequest::PlayerTaskBegin { timeout });
+            true
+        }
+        Stmt::PlayerTaskSuccessful => {
+            ctx.sys_request(SysRequest::PlayerTaskSuccessful);
+            true
+        }
+        Stmt::PlayerTaskFailure => {
+            ctx.sys_request(SysRequest::PlayerTaskFailure);
+            true
+        }
         _ => false,
     }
 }

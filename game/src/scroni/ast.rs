@@ -409,6 +409,13 @@ pub enum Stmt {
     /// `usepad`
     UsePad,
 
+    /// `PlayerTaskBegin [<expr>]` — presents player with a task objective (optional timeout)
+    PlayerTaskBegin(Option<Expr>),
+    /// `PlayerTaskSuccessful` — marks the current player task as completed
+    PlayerTaskSuccessful,
+    /// `PlayerTaskFailure` — marks the current player task as failed
+    PlayerTaskFailure,
+
     /// Catch-all for commands we parse but don't fully implement yet.
     /// Stores the command name and any trailing arguments.
     Unimplemented {
