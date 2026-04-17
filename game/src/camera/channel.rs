@@ -8,6 +8,7 @@
  * FocusHeadingZone and CameraBumpDirection enums are also defined here.
  */
 use bevy::prelude::*;
+use crate::oni2_loader::utils::space;
 
 /// Describes the heading direction of the focus actor relative to the camera heading.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -91,12 +92,14 @@ pub struct CameraChannel {
     
     pub spin_threshold_exceeded: bool,
     
-    // Active BSL Package Parameters (populated automatically by update_camera_channel)
+    // Active Camera Package Parameters (populated automatically by update_camera_channel)
     pub package_fov: f32,
     pub package_distance: f32,
     pub package_incline_offset: f32,
+    pub package_incline_offset_running: f32,
     pub package_inner_radius: f32,
     pub package_outer_radius: f32,
+    pub package_focus_offset: Vec3,
     pub package_spin_threshold: f32,
     pub package_zone_lerp_rates: [f32; 4],
     pub active_set_name: String,
@@ -119,8 +122,8 @@ impl Default for CameraChannel {
             current_focus_pos: Vec3::ZERO,
             previous_focus_pos: Vec3::ZERO,
             desired_focus_pos: Vec3::ZERO,
-            current_focus_offset: Vec3::ZERO,
-            desired_focus_offset: Vec3::ZERO,
+            current_focus_offset: Vec3::new(0.0, 1.4, 0.0),
+            desired_focus_offset: Vec3::new(0.0, 1.4, 0.0),
             
             current_azimuth: 0.0,
             current_incline: 0.0,
@@ -168,9 +171,11 @@ impl Default for CameraChannel {
             
             package_fov: 50.0,
             package_distance: 5.0,
-            package_incline_offset: 10.0_f32.to_radians(),
+            package_incline_offset: space::oni2_camera_incline_to_bevy(10.0_f32.to_radians()),
+            package_incline_offset_running: space::oni2_camera_incline_to_bevy(20.0_f32.to_radians()),
             package_inner_radius: 1.5,
             package_outer_radius: 4.0,
+            package_focus_offset: Vec3::new(0.0, 1.4, 0.0),
             package_spin_threshold: 63.0_f32.to_radians(),
             package_zone_lerp_rates: [2.0, 3.0, 3.0, 3.0],
             active_set_name: String::new(),

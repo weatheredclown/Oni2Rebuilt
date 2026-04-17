@@ -19,7 +19,8 @@ pub struct PlayerPlugin;
 
 impl Plugin for PlayerPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(
+        app.init_resource::<components::MenuTransitionInputCushion>()
+           .add_systems(
             Update,
             (
                 // 1. Raw hardware → InputState (movement physics path)

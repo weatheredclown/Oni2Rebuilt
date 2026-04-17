@@ -8,6 +8,7 @@
 use std::collections::HashMap;
 use bevy::prelude::info;
 use crate::oni2_loader::utils::space;
+use crate::oni2_loader::utils::parse::parse_f32;
 
 #[derive(Debug, Clone)]
 pub struct CameraPackageDef {
@@ -46,7 +47,7 @@ impl Default for CameraParameterSet {
             fov: 50.0,
             distance: 3.0,
             // Base polar defaults
-            focus_offset: [0.0, 1.4, 0.0],
+            focus_offset: [0.0, 1.4 - 2.0, 0.0],
             incline_offset: 0.0,
             incline_offset_running: 0.0,
             dead_zone_inner_radius: 0.0,
@@ -145,19 +146,19 @@ pub fn parse_camera_xml(dir: &str, filename: &str) -> Option<CameraParameterSet>
                 info!("File {} not found, using magic defaults.", filename);
                 params.name = "DEFAULT_FOLLOW".to_string();
                 params.incline_offset = 10.0_f32.to_radians(); 
-                params.incline_offset_running = -20.0_f32.to_radians(); 
-                params.dead_zone_inner_radius = -1.5;
-                params.dead_zone_outer_radius = -4.0;
+                params.incline_offset_running = 20.0_f32.to_radians(); 
+                params.dead_zone_inner_radius = 1.5;
+                params.dead_zone_outer_radius = 4.0;
                 params.lerp_rate_azimuth_zone1 = 2.0;
                 params.lerp_rate_azimuth_zone2 = 3.0;
                 params.lerp_rate_azimuth_zone3 = 3.0;
                 params.lerp_rate_azimuth_zone4 = 3.0;
-                params.spin_threshold = 2.4; 
+                params.spin_threshold = 45.0_f32.to_radians(); 
                 return Some(params);
             } else if filename == "DEFAULT_FIGHT.xml" {
                 info!("File {} not found, using magic defaults.", filename);
                 params.name = "DEFAULT_FIGHT".to_string();
-                params.incline_offset = -20.0_f32.to_radians();
+                params.incline_offset = 20.0_f32.to_radians();
                 params.inner_radius = 4.0;
                 params.outer_radius = 8.0;
                 return Some(params);
@@ -194,37 +195,37 @@ pub fn parse_camera_xml(dir: &str, filename: &str) -> Option<CameraParameterSet>
 
         match name {
             "Name" => params.name = value_str.to_string(),
-            "FOV" => params.fov = value_str.parse().unwrap_or(50.0),
-            "Distance" => params.distance = value_str.parse().unwrap_or(3.0),
-            "InclineOffset" => params.incline_offset = -value_str.parse().unwrap_or(0.0),
+            "FOV" => params.fov = parse_f32(value_str, 50.0),
+            "Distance" => params.distance = parse_f32(value_str, 3.0),
+            "InclineOffset" => params.incline_offset = space::oni2_camera_incline_to_bevy(parse_f32(value_str, 0.0)),
             "InclineOffsetRunning" => {
-                params.incline_offset_running = -value_str.parse().unwrap_or(0.0)
+                params.incline_offset_running = space::oni2_camera_incline_to_bevy(parse_f32(value_str, 0.0))
             }
             "DeadZoneInnerRadius" => {
-                params.dead_zone_inner_radius = value_str.parse().unwrap_or(0.0)
+                params.dead_zone_inner_radius = parse_f32(value_str, 0.0)
             }
             "DeadZoneOuterRadius" => {
-                params.dead_zone_outer_radius = value_str.parse().unwrap_or(0.0)
+                params.dead_zone_outer_radius = parse_f32(value_str, 0.0)
             }
             "LerpRateAzimuthZone1" => {
-                params.lerp_rate_azimuth_zone1 = value_str.parse().unwrap_or(0.0)
+                params.lerp_rate_azimuth_zone1 = parse_f32(value_str, 0.0)
             }
             "LerpRateAzimuthZone2" => {
-                params.lerp_rate_azimuth_zone2 = value_str.parse().unwrap_or(0.0)
+                params.lerp_rate_azimuth_zone2 = parse_f32(value_str, 0.0)
             }
             "LerpRateAzimuthZone3" => {
-                params.lerp_rate_azimuth_zone3 = value_str.parse().unwrap_or(0.0)
+                params.lerp_rate_azimuth_zone3 = parse_f32(value_str, 0.0)
             }
             "LerpRateAzimuthZone4" => {
-                params.lerp_rate_azimuth_zone4 = value_str.parse().unwrap_or(0.0)
+                params.lerp_rate_azimuth_zone4 = parse_f32(value_str, 0.0)
             }
             "LockHeadingUntilMove" => {
                 params.lock_heading_until_move =
                     value_str == "1" || value_str.eq_ignore_ascii_case("true")
             }
-            "SpinThreshold" => params.spin_threshold = value_str.parse().unwrap_or(0.0),
-            "InnerRadius" => params.inner_radius = value_str.parse().unwrap_or(0.0), // from fight schema
-            "OuterRadius" => params.outer_radius = value_str.parse().unwrap_or(0.0), // from fight schema
+            "SpinThreshold" => params.spin_threshold = parse_f32(value_str, 0.0),
+            "InnerRadius" => params.inner_radius = parse_f32(value_str, 0.0), // from fight schema
+            "OuterRadius" => params.outer_radius = parse_f32(value_str, 0.0), // from fight schema
             "FocusOffset" => {
                 let parts: Vec<f32> = value_str
                     .split_whitespace()
@@ -232,7 +233,7 @@ pub fn parse_camera_xml(dir: &str, filename: &str) -> Option<CameraParameterSet>
                     .collect();
                 if parts.len() >= 3 {
                     let v = space::to_bevy_space_pos(&parts);
-                    params.focus_offset = [v.x, v.y, v.z];
+                    params.focus_offset = [v.x, v.y-2.0, v.z];
                 }
             }
             _ => {}

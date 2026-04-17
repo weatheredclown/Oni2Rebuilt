@@ -51,6 +51,9 @@ pub fn polar_interpolation_system(
         // Smooth Incline
         channel.current_incline = channel.current_incline + (channel.desired_incline - channel.current_incline) * (incline_speed * dt).clamp(0.0, 1.0);
         
+        // Smooth Focus Tracking Interpolation
+        channel.current_focus_offset = channel.current_focus_offset.lerp(channel.desired_focus_offset, (6.0 * dt).clamp(0.0, 1.0));
+        
         // Target azimuth normalization
         // Spherical paths cross 180/-180 constantly, we must map them locally.
         let mut heading_diff = channel.desired_azimuth - channel.current_azimuth;
@@ -76,12 +79,16 @@ pub fn polar_interpolation_system(
 /// Computes the final Transform orientation and position from the interpolated spherical coordinates.
 pub fn apply_camera_transform(
     time: Res<Time>,
-    mut camera_query: Query<(&CameraController, &mut CameraChannel, &mut Transform)>,
+    mut camera_query: Query<(&CameraController, &mut CameraChannel, &mut Transform, &mut Projection)>,
     spatial_query: avian3d::prelude::SpatialQuery,
 ) {
     let dt = time.delta_secs();
     
-    for (controller, mut channel, mut cam_tf) in &mut camera_query {
+    for (controller, mut channel, mut cam_tf, mut projection) in &mut camera_query {
+        
+        if let Projection::Perspective(ref mut persp) = *projection {
+            persp.fov = channel.current_fov.to_radians();
+        }
         
         if let Some(script_tf) = channel.script_override_transform {
             cam_tf.translation = script_tf.translation;
@@ -109,6 +116,21 @@ pub fn apply_camera_transform(
         );
         
         let mut desired_pos = target_base + offset;
+
+        // DEBUG PRINT
+        if channel.is_moving && rand::random::<f32>() < 0.01 {
+            info!(
+                "[CAM-DEBUG] \n\
+                 total_incline: {:.3} rads ({:.1} deg)\n\
+                 dist: {:.2}m\n\
+                 focus_offset: {:?}\n\
+                 target_base: {:?}\n\
+                 offset: {:?}\n\
+                 cam_tf_translation: {:?}",
+                total_incline, total_incline.to_degrees(), dist,
+                channel.current_focus_offset, target_base, offset, cam_tf.translation
+            );
+        }
         
         // Environmental collision spherecast 
         let dir = desired_pos - target_base;
@@ -139,7 +161,7 @@ pub fn apply_camera_transform(
         cam_tf.translation = cam_tf.translation.lerp(desired_pos, t);
 
         // Lock looking at the target center
-        cam_tf.look_at(target_base + Vec3::Y * 0.5, Vec3::Y);
+        cam_tf.look_at(target_base, Vec3::Y);
 
         apply_camera_shake(&mut cam_tf, &mut channel, dt);
     }

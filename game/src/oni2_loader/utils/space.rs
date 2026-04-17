@@ -101,3 +101,10 @@ pub fn to_oni2_space_rot(q: Quat) -> Vec3 {
     let rads = to_oni2_space_rot_rad(q);
     Vec3::new(rads.x.to_degrees(), rads.y.to_degrees(), rads.z.to_degrees())
 }
+
+/// Converts an Oni2 spherical camera elevation/incline angle (in degrees) to Bevy's camera polar elevation (in radians).
+/// In Oni2 convention, incline offsets are stored directly in radians as positive elevation.
+#[inline]
+pub fn oni2_camera_incline_to_bevy(incline_rads: f32) -> f32 {
+    incline_rads
+}

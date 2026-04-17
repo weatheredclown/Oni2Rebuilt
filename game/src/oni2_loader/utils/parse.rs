@@ -68,6 +68,12 @@ pub fn parse_vec3(s: &str) -> Option<Vec3> {
     }
 }
 
+/// Helper to predictably extract an f32 from a string slice with a default value.
+#[inline]
+pub fn parse_f32(s: &str, default: f32) -> f32 {
+    s.parse::<f32>().unwrap_or(default)
+}
+
 /// Extract the entire content block enclosed by <tag ...> and </tag>.
 pub fn extract_xml_block(content: &str, tag: &str) -> Option<String> {
     let open_pattern = format!("<{}", tag);

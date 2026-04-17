@@ -2031,12 +2031,14 @@ pub fn scroni_tick_system(
                 .and_then(|lp| lp.curves.iter().find(|(n, _)| n.eq_ignore_ascii_case(&path_name)))
                 .map(|(_, pts)| pts.clone());
             if let Some(pts) = waypoints {
-                commands.entity(entity).insert(crate::ai::navigation::ActorPathfollower {
-                    path: pts,
-                    current_wp: 0,
-                    speed_throttle: 1.0,
-                    within: None,
-                });
+                if let Some(mut e_cmd) = commands.get_entity(entity).ok() {
+                    e_cmd.insert(crate::ai::navigation::ActorPathfollower {
+                        path: pts,
+                        current_wp: 0,
+                        speed_throttle: 1.0,
+                        within: None,
+                    });
+                }
                 script.exec.get_thread_mut(tid).blocking = Some(BlockingAction::WaitingForPath);
             } else {
                 warn!("patrol: path '{}' not found in LayoutPaths", path_name);
@@ -2065,12 +2067,14 @@ pub fn scroni_tick_system(
                 if let Some(nav) = &nav_graph_opt {
                     if let Some(path) = nav.find_path_to_point(transform.translation(), pos) {
                         let throttle = speed.unwrap_or(1.0);
-                        commands.entity(entity).insert(crate::ai::navigation::ActorPathfollower {
-                            path,
-                            current_wp: 0,
-                            speed_throttle: throttle,
-                            within,
-                        });
+                        if let Some(mut e_cmd) = commands.get_entity(entity).ok() {
+                            e_cmd.insert(crate::ai::navigation::ActorPathfollower {
+                                path,
+                                current_wp: 0,
+                                speed_throttle: throttle,
+                                within,
+                            });
+                        }
                         script.exec.get_thread_mut(tid).blocking = Some(BlockingAction::WaitingForPath);
                         continue;
                     }
@@ -2139,10 +2143,14 @@ pub fn scroni_tick_system(
                     });
                 }
                 SysRequest::SetFaction { actor, faction } => {
-                    commands.entity(actor).insert(crate::combat::faction::Faction(faction));
+                    if let Some(mut e_cmd) = commands.get_entity(actor).ok() {
+                        e_cmd.insert(crate::combat::faction::Faction(faction));
+                    }
                 }
                 SysRequest::Retreat { actor, target } => {
-                    commands.entity(actor).insert(crate::ai::components::ActorRetreating { avoid_target: target });
+                    if let Some(mut e_cmd) = commands.get_entity(actor).ok() {
+                        e_cmd.insert(crate::ai::components::ActorRetreating { avoid_target: target });
+                    }
                 }
                 SysRequest::CameraSetPackage(pkg_name) => {
                     commands.trigger(ScrOniSysEvent::CameraSetPackage(pkg_name));
@@ -2456,7 +2464,9 @@ pub fn cleanup_scroni_text(
     let now = time.elapsed_secs_f64();
     for (entity, text_element, _text) in &query {
         if now > text_element.expires_at {
-            commands.entity(entity).try_despawn();
+            if let Some(mut e_cmd) = commands.get_entity(entity).ok() {
+                e_cmd.try_despawn();
+            }
         }
     }
 }
@@ -2488,7 +2498,9 @@ pub fn audio_ramp_system(
             let current = vr.start_vol + (vr.end_vol - vr.start_vol) * t;
             sink.set_volume(bevy::audio::Volume::Linear(current));
             if t >= 1.0 {
-                commands.entity(entity).remove::<AudioVolumeRamp>();
+                if let Some(mut e_cmd) = commands.get_entity(entity).ok() {
+                    e_cmd.remove::<AudioVolumeRamp>();
+                }
             }
         }
         
@@ -2501,7 +2513,9 @@ pub fn audio_ramp_system(
             let current = pr.start_pitch + (pr.end_pitch - pr.start_pitch) * t;
             sink.set_speed(current);
             if t >= 1.0 {
-                commands.entity(entity).remove::<AudioPitchRamp>();
+                if let Some(mut e_cmd) = commands.get_entity(entity).ok() {
+                    e_cmd.remove::<AudioPitchRamp>();
+                }
             }
         }
     }
@@ -2575,7 +2589,9 @@ pub fn apply_shader_locals_system(
                         
                         let new_handle = materials.add(cloned_mat_val);
                         mesh_mat.0 = new_handle;
-                        commands.entity(child_entity).insert(ClonedShaderLocalMaterial);
+                        if let Some(mut e_cmd) = commands.get_entity(child_entity).ok() {
+                            e_cmd.insert(ClonedShaderLocalMaterial);
+                        }
                     }
                 } else {
                     // Already cloned, mutating in-place is instance-safe

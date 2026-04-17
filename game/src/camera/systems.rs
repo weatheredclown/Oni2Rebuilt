@@ -126,6 +126,8 @@ pub fn update_camera_channel(
                     channel.package_fov = params.fov;
                     channel.package_distance = params.distance;
                     channel.package_incline_offset = params.incline_offset;
+                    channel.package_incline_offset_running = params.incline_offset_running;
+                    channel.package_focus_offset = Vec3::from_array(params.focus_offset);
                     channel.package_spin_threshold = params.spin_threshold;
                     channel.package_zone_lerp_rates = [
                         params.lerp_rate_azimuth_zone1,
@@ -149,6 +151,10 @@ pub fn update_camera_channel(
         
         channel.previous_focus_pos = channel.current_focus_pos;
         channel.current_focus_pos = target_pos;
+        
+        // Let the general desired focus float back to the package default.
+        // Modes like targeting will overwrite this later in the frame if active.
+        channel.desired_focus_offset = channel.package_focus_offset;
         
         channel.previous_focus_azimuth = channel.current_focus_azimuth;
         // fighter.facing points toward the model's visual front (+Z in Oni2 convention).

@@ -148,7 +148,13 @@ pub fn pad_mapper_update_system(
     mouse: Res<ButtonInput<MouseButton>>,
     gamepads: Query<(Entity, &Gamepad)>,
     mut pad_mapper: ResMut<PadMapper>,
+    mut cushion: ResMut<super::components::MenuTransitionInputCushion>,
 ) {
+    if cushion.0 > 0.0 {
+        cushion.0 -= time.delta_secs();
+        return;
+    }
+
     let t = time.elapsed_secs();
     let mut frame = RawInputFrame {
         time: t,
@@ -449,9 +455,11 @@ pub fn clear_inputs_on_enter(
     mut mouse: ResMut<ButtonInput<MouseButton>>,
     mut keys: ResMut<ButtonInput<KeyCode>>,
     mut pad_mapper: ResMut<PadMapper>,
+    mut cushion: ResMut<super::components::MenuTransitionInputCushion>,
 ) {
     mouse.clear();
     keys.clear();
     pad_mapper.clear();
+    cushion.0 = 0.4;
 }
 

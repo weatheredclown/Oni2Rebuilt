@@ -7,6 +7,10 @@
  */
 use bevy::prelude::*;
 
+/// Resource used to ignore spurious hardware input clicks (like Menu selection) immediately after loading a level.
+#[derive(Resource, Default)]
+pub struct MenuTransitionInputCushion(pub f32);
+
 /// Marker component for the player entity.
 #[derive(Component)]
 pub struct Player;

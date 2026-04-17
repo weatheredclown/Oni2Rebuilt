@@ -17,6 +17,7 @@ pub fn follow_camera_system(
     // Only required to know zone thresholds natively if pulling from specific parameter sets...
     // For now we'll hardcode generic constants like the previous implementation
     keyboard: Res<ButtonInput<KeyCode>>,
+    velocity_query: Query<&avian3d::prelude::LinearVelocity>,
 ) {
     let dt = time.delta_secs();
 
@@ -48,7 +49,16 @@ pub fn follow_camera_system(
         // Auto-recover towards package defaults over time unless manually overridden
         let is_pitch_overridden = keyboard.pressed(KeyCode::ArrowUp) || keyboard.pressed(KeyCode::ArrowDown);
         if !is_pitch_overridden {
-            let package_incline = channel.package_incline_offset;
+            let mut interp = 0.0;
+            if let Ok(vel) = velocity_query.get(channel.focus_actor) {
+                let speed = Vec2::new(vel.x, vel.z).length();
+                // 1.0 m/s standing to 4.0 m/s full run
+                interp = ((speed - 1.0) / 3.0).clamp(0.0, 1.0);
+            }
+            
+            let package_incline = channel.package_incline_offset * (1.0 - interp) 
+                + channel.package_incline_offset_running * interp;
+                
             let recovery_speed = 1.5 * dt;
             channel.desired_incline += (package_incline - channel.desired_incline) * recovery_speed;
         }
