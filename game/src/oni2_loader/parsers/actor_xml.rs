@@ -84,6 +84,9 @@ pub struct LayoutActor {
     pub parent_actor: Option<String>,
     /// Joint name to parent this onto if the parent is skeletonized
     pub parent_bone: Option<String>,
+    /// Pre-loaded weapon name from the <Inventory><WeaponString> attribute
+    /// (resolved through the template chain).  Feeds PendingInventory at spawn.
+    pub weapon_string: Option<String>,
 }
 
 /// Resolve the full template chain for an actor XML file.
@@ -126,29 +129,17 @@ fn resolve_template_chain(path: &str, template_dir: &str) -> Vec<String> {
 
 /// Helper: Collect a single component's properties by merging the extracted blocks across the template hierarchy.
 /// Returns None if the component is never actually declared in the actor's specific templates (outside of components.xml).
-fn extract_component(chain: &[String], has_components_xml: bool, tag: &str) -> Option<String> {
-    // Determine if the component is actually declared by the actor/templates
-    let mut explicitly_declared = false;
-    for (i, content) in chain.iter().enumerate() {
-        if !(i == 0 && has_components_xml) {
-            let open_tag = format!("<{}", tag);
-            if content.contains(&open_tag) {
-                explicitly_declared = true;
-                break;
-            }
-        }
-    }
-
-    if !explicitly_declared {
-        return None;
-    }
-
-    // Merge the blocks from base to derived
+fn extract_component(chain: &[String], has_components: bool, tag: &str) -> Option<String> {
     let mut merged = String::new();
-    for content in chain {
+    let mut requested = !has_components;
+
+    for (i, content) in chain.iter().enumerate() {
+        let is_components_xml = has_components && i == 0;
         if let Some(block) = extract_xml_block(content, tag) {
+            if !is_components_xml {
+                requested = true;
+            }
             merged.push_str(&block);
-            merged.push_str("\n"); // Separate for extract_xml_attr safety
         }
     }
 
@@ -312,6 +303,18 @@ pub fn parse_actor_xml(dir: &str, filename: &str, template_dir: &str) -> Option<
         }
     }
 
+    // <Inventory><WeaponString value="PISTOL_STANDARD"/> — resolved through the
+    // template chain so derived actors (e.g. Konoko) inherit the parent's weapon.
+    let inventory_block = extract_component(&chain, has_components_xml, "Inventory");
+    let mut weapon_string: Option<String> = None;
+    if let Some(block) = inventory_block {
+        if let Some(w) = extract_xml_attr(&block, "WeaponString") {
+            if !w.is_empty() {
+                weapon_string = Some(w);
+            }
+        }
+    }
+
     // If an entity type isn't explicitly defined, fallback to the generic IconTrigger so it has a default 
     // sprite in the layout editor instead of trying to load its literal instance name as a mesh folder.
     let entity_type = entity_type.unwrap_or_else(|| {
@@ -406,5 +409,6 @@ pub fn parse_actor_xml(dir: &str, filename: &str, template_dir: &str) -> Option<
         destroy_time,
         parent_actor,
         parent_bone,
+        weapon_string,
     })
 }

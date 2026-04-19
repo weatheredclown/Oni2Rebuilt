@@ -30,8 +30,6 @@ pub fn extract_root_xml_attr(content: &str, attr: &str) -> Option<String> {
     Some(tag[attr_start..attr_end].to_string())
 }
 
-/// Extract value="..." from an XML attribute tag like <TagName value="..."/>
-/// Returns the last non-empty value found (most derived). If only empty values are found, returns None.
 pub fn extract_xml_attr(content: &str, tag: &str) -> Option<String> {
     let pattern = format!("<{}", tag);
     let mut last_valid = None;
@@ -39,11 +37,14 @@ pub fn extract_xml_attr(content: &str, tag: &str) -> Option<String> {
 
     while let Some(idx) = current.find(&pattern) {
         let after = &current[idx..];
-        if let Some(val_start_offset) = after.find("value=\"") {
+        let tag_end_offset = after.find('>').unwrap_or(after.len());
+        let tag_content = &after[..tag_end_offset];
+        
+        if let Some(val_start_offset) = tag_content.find("value=\"") {
             let val_start = val_start_offset + 7;
-            if let Some(val_end_offset) = after[val_start..].find('"') {
+            if let Some(val_end_offset) = tag_content[val_start..].find('"') {
                 let val_end = val_start + val_end_offset;
-                let val = &after[val_start..val_end];
+                let val = &tag_content[val_start..val_end];
                 if !val.is_empty() {
                     last_valid = Some(val.to_string());
                 }
