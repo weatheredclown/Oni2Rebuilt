@@ -1,7 +1,7 @@
 /*
  * statemachine/drivers/attack.rs — AttackDriver: per-attack action scheduler.
  *
- * Mirrors legacy aiAttackStateMachine (rb/src/aifight/attackstatemachine.cpp).
+ * Implements the per-attack action scheduler.
  * Each loaded `.atk` file becomes one `SmData<AttackDriver>` parsed via the
  * shared `parse_sm` skeleton.
  *

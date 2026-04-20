@@ -6,7 +6,7 @@
  * entry's `phase` threshold (ascending, once per play-cycle), the runtime
  * emits a SpawnFx event for every fx name in that entry.
  *
- * Mirrors rbAnimFXData + rbAnimFXDataNode from rb/src/animator/rbfx.{h,cpp}:
+ * Mirrors the legacy animation effects node system:
  *
  *     ANIM_FX {
  *         ANIMATION_INDEX  <int>       // (ignored in Rust — entries are

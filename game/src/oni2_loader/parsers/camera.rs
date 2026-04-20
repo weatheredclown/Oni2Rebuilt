@@ -67,7 +67,7 @@ impl Default for CameraParameterSet {
 /// Parses layout.campacknew into a dictionary of CameraPackageDefs
 pub fn parse_campacknew(dir: &str) -> HashMap<String, CameraPackageDef> {
     let mut packages = HashMap::new();
-    // Default magic package based on defaults present in cpp files.
+    // Default magic package based on legacy defaults.
     packages.insert(
         "DEFAULT_PACKAGE".to_string(),
         CameraPackageDef {

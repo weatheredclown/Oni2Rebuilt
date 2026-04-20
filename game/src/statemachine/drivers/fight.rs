@@ -1,7 +1,7 @@
 /*
  * statemachine/drivers/fight.rs — FightDriver: cooperative AI fight scheduler.
  *
- * Mirrors the legacy aiFightStateMachine (rb/src/aifight/statemachine.cpp).  This
+ * Implements the cooperative AI fight scheduler. This
  * machine runs once per AI fighter and decides high-level behavior — when to
  * occupy a strike position, when to throw an attack, when to back off, when
  * to coordinate with formation peers via the position/cookie system.

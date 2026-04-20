@@ -83,8 +83,7 @@ fn jump_index_for_substate(substate: i32) -> i32 {
 }
 
 /// Build the ONI2-style multi-stage animation schedule for a given jump
-/// substate.  Mirrors `ActionStartJump` + `StartRunningJumpAnimations` in
-/// `animator/action.cpp` — enqueues compress → spring → main (rate-matched to
+/// substate. Enqueues compress → spring → main (rate-matched to
 /// the jump trajectory) → land.
 ///
 /// The rate-match on the main (airborne) anim comes from the legacy formula:
@@ -200,7 +199,7 @@ fn build_jump_schedule(
 // ---------------------------------------------------------------------------
 
 /// Reject-list + override-list + anim dispatch for a StartAction.  Each arm
-/// mirrors the per-action handler in animator/action.cpp:
+/// mirrors the legacy per-action jump handler:
 ///   ActionStartSlide, ActionStartJump, ActionStartCrouch, ActionStartLedgeHang,
 ///   ActionStartEvade, ActionStartDrawWeapon, ActionStartFightStance,
 ///   ActionStartFall, ActionStartReact, ActionStartDie, ActionStartCustomAnim,
@@ -241,7 +240,7 @@ fn try_start_action(
             ap.flags &= !action_flags::OVERRIDELIST_JUMP;
             ap.flags |= action_flags::JUMPING;
 
-            // Set the JUMPING sub-flag first — matches animator/action.cpp.
+            // Set the JUMPING sub-flag first.
             match substate {
                 sub_state_0::JUMP_UP => ap.flags |= action_flags::STANDING_JUMP,
                 sub_state_0::JUMP_SOMERSAULT => ap.flags |= action_flags::DOUBLE_JUMPING,
@@ -852,7 +851,7 @@ pub fn play_die_system(
 
 /// Bridge from an animation-phase transition to a physics-level impulse.
 ///
-/// Legacy flow (animator.cpp + crmover/packet.cpp::UsePacketJump):
+/// Legacy jump execution flow:
 ///   1. User action sets crAnimActionPlayer::JumpIndex = N.
 ///   2. StartAction(ACT_JUMP, substate) queues compress/spring/main/fall on
 ///      the crAnimList.

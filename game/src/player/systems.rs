@@ -580,8 +580,7 @@ pub fn clear_inputs_on_enter(
 
 /// Consumes `JumpImpulseMessage` (emitted by the animator when SubState1
 /// transitions into JUMP_MAIN / JUMP_SOMERSAULT) and applies the computed
-/// velocity to the player's `LinearVelocity`.  Mirrors
-/// `mvrMoverComponent::UsePacketJump` from crmover/packet.cpp — it sets both
+/// velocity to the player's `LinearVelocity`.  It effectively sets both
 /// vertical and planar horizontal impulses derived from the .jump data
 /// (height, gravity_factor, length, heading_adjust).
 ///

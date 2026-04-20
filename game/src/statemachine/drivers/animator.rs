@@ -2,12 +2,12 @@
  * statemachine/drivers/animator.rs — AnimatorDriver: top-level character mode
  * orchestrator.
  *
- * Maps the C++ `ActionPlayer` flag-bitmask + `crMainActionEnums` + SubState1
- * hierarchy (rb/src/animator/action.h) onto a single-cursor FSM.  The cursor
+ * Maps the legacy action-player flag-bitmasks and substate
+ * hierarchy onto a single-cursor FSM.  The cursor
  * IS the character's high-level mode (Idle / Jump / Fall / Land / LedgeHang /
  * Crouch / Slide / Zipline / React / FightStance / DrawWeapon / Die / Pickup
  * / CustomAnim).  The 18 primary modes collapse to a similar set here —
- * overlapping flags in the C++ (crouched AND weapon-drawn, etc.) live on
+ * overlapping flags in the legacy engine (crouched AND weapon-drawn, etc.) live on
  * separate components, not in the FSM state.
  *
  * Underlying systems do the real work.  The jump system isn't an FSM — it's
@@ -77,7 +77,7 @@ pub enum AnimatorAction {
     /// Fire a named host event.  The host system routes these strings to
     /// whatever subsystem should react (jump impulse, slide-starter, etc).
     Broadcast(String),
-    /// Request the host to despawn this entity.  Mirrors the C++ animator's
+    /// Request the host to despawn this entity.  Mirrors the legacy animator's
     /// `GetParent().Destroy()` at death-anim completion — currently unused
     /// in the embedded FSM because the health component handles actor
     /// cleanup via its own timeout, but the vocabulary supports it so
@@ -380,8 +380,8 @@ if Timeout                    { Broadcast EndReact;           goto IDLE }
 ; timeout; the animator FSM just holds here so no further modes can fire.
 ; The `Destroy` action is available (see AnimatorAction::Destroy) and could
 ; be wired in via `if Timeout { Destroy }` for cases where anim-done should
-; trigger despawn directly — mirrors the commented-out C++
-; GetParent().Destroy() at death-anim phase >= 0.999.
+; trigger despawn directly — mirrors the commented-out legacy engine
+; behaviour of despawning at death-anim completion.
 "#;
 
 // ---------------------------------------------------------------------------

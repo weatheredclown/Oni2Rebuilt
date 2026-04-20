@@ -10,7 +10,7 @@
  *                                          InitialAmmo, WeaponType, AmmoType)
  * ConsumableItemType                     — mirrors invItemType (Usable,
  *                                          AutoUseOnPickup, effects)
- * ItemEffect enum                        — mirrors invItemEffect + rbitem.cpp
+ * ItemEffect enum                        — mirrors the legacy effect system
  *                                          (RestoreHealth / RestoreSuperMeter)
  * ItemSlot / WeaponSlot                  — stack-style slot entries
  * Pickup                                 — world-drop marker component
@@ -28,7 +28,7 @@ use std::sync::Arc;
 /// uses an item slot or an AutoUseOnPickup item is picked up.
 ///
 /// Rust enum replaces the original polymorphic `invItemEffect` hierarchy
-/// (rbitem.cpp).  New variants should map 1:1 to a new legacy subclass.
+/// class. New variants should map 1:1 to a new legacy subclass.
 #[derive(Debug, Clone)]
 pub enum ItemEffect {
     /// Restore `amount` HP to the target (RestoreHealth).  Clamped to max HP.
