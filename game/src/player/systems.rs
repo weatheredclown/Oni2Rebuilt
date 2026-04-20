@@ -440,7 +440,8 @@ pub fn player_movement_system(
             }
         }
 
-        if fighter.is_grounded {
+        let is_grounded = anim_state_opt.map_or(true, |s| s.is_grounded);
+        if is_grounded {
             fighter.jumps_remaining = fighter.max_jumps;
         }
 
@@ -636,10 +637,11 @@ pub fn jump_impulse_apply_system(
 /// every tick and is a no-op when there's nothing to reset.
 pub fn jump_gravity_reset_system(
     mut commands: Commands,
-    query: Query<(Entity, &Fighter, &GravityScale)>,
+    query: Query<(Entity, Option<&crate::oni2_loader::animation::Oni2AnimState>, &GravityScale)>,
 ) {
-    for (entity, fighter, scale) in &query {
-        if fighter.is_grounded && (scale.0 - 1.0).abs() > 0.01 {
+    for (entity, anim_state_opt, scale) in &query {
+        let is_grounded = anim_state_opt.map_or(true, |s| s.is_grounded);
+        if is_grounded && (scale.0 - 1.0).abs() > 0.01 {
             commands.entity(entity).insert(GravityScale(1.0));
         }
     }

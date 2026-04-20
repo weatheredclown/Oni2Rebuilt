@@ -1313,6 +1313,8 @@ pub fn spawn_oni2_entity_with_rotation(
                 ],
                 current_anim_id: None,
                 previous_anim_id: None,
+                is_grounded: true,
+                material_stood_on: None,
             });
 
         // Any actor with an animator also gets an ActionPlayer — it drives

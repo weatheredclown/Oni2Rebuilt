@@ -767,8 +767,20 @@ pub fn telemetry_combat_system(
 }
 
 /// Updates Fighter.is_grounded based on ShapeCaster ground detection.
-pub fn ground_detection_system(mut query: Query<(&mut Fighter, &ShapeHits)>) {
-    for (mut fighter, hits) in &mut query {
-        fighter.is_grounded = !hits.is_empty();
+pub fn ground_detection_system(
+    mut query: Query<(&mut crate::oni2_loader::animation::Oni2AnimState, &ShapeHits)>,
+    materials: Query<&crate::oni2_loader::components::MaterialType>,
+) {
+    for (mut anim_state, hits) in &mut query {
+        anim_state.is_grounded = !hits.is_empty();
+        if let Some(first_hit) = hits.first() {
+            if let Ok(material_type) = materials.get(first_hit.entity) {
+                anim_state.material_stood_on = Some(material_type.0.clone());
+            } else {
+                anim_state.material_stood_on = None;
+            }
+        } else {
+            anim_state.material_stood_on = None;
+        }
     }
 }

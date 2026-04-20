@@ -53,7 +53,7 @@ impl FsmRuntime {
 /// command values and map them onto FsmPacket bit-fields.
 pub fn build_fsm_packet(
     input: &InputState,
-    fighter: &Fighter,
+    is_grounded: bool,
     mapper: &PadMapper,
     fighter_state: Option<&crate::fight::components::FighterState>,
     inventory: Option<&crate::inventory::components::Inventory>,
@@ -63,7 +63,7 @@ pub fn build_fsm_packet(
 
     // ── Body / controller state flags ─────────────────────────────────────
 
-    if fighter.is_grounded {
+    if is_grounded {
         let speed = input.movement.length();
         if speed > 0.6 {
             ctrl |= ctrl_flags::RUNNING;
@@ -213,7 +213,7 @@ pub fn build_fsm_packet(
             | pad_flags::ACK_FORWARD_RIGHT)
         != 0
         && mapper.get("PADCMD_CHR_FWD") > 0.0
-        && fighter.is_grounded
+        && is_grounded
     {
         ctrl |= ctrl_flags::RUNNING;
     }
@@ -393,7 +393,7 @@ pub fn fsm_update_system(
         let (gated_input, is_critical_frame) =
             apply_timing_windows(&mut runtime, input, &anim_state);
 
-        let mut packet = build_fsm_packet(&gated_input, fighter, &pad_mapper, fighter_state_opt, inventory_opt);
+        let mut packet = build_fsm_packet(&gated_input, anim_state.is_grounded, &pad_mapper, fighter_state_opt, inventory_opt);
         if is_critical_frame {
             packet.ctrl_flags |= ctrl_flags::CRITICAL_FRAME;
         }

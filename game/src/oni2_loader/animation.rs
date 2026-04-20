@@ -277,6 +277,9 @@ pub struct Oni2AnimState {
     pub current_anim_id: Option<AnimId>,
     /// Previously playing animation ID to detect changes at runtime
     pub previous_anim_id: Option<AnimId>,
+    /// Physics/grounding state tracked for use by animation FX dispatch
+    pub is_grounded: bool,
+    pub material_stood_on: Option<String>,
 }
 
 /// Deterministic string hash used as animation identifier.
