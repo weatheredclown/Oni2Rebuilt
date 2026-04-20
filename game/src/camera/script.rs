@@ -5,13 +5,19 @@
  * ScrOni VM.  Evaluates a Catmull-Rom spline over ScriptCameraSequence control
  * points, interpolating position and focus toward ScriptFocusTarget over time.
  */
-use bevy::prelude::*;
 use super::channel::CameraChannel;
-use crate::camera::components::{ActiveCameraMode, CameraController, ScriptCameraSequence, ScriptFocusTarget};
+use crate::camera::components::{
+    ActiveCameraMode, CameraController, ScriptCameraSequence, ScriptFocusTarget,
+};
+use bevy::prelude::*;
 
 fn evaluate_catmull_rom(pts: &[Vec3], t: f32) -> Vec3 {
-    if pts.is_empty() { return Vec3::ZERO; }
-    if pts.len() == 1 { return pts[0]; }
+    if pts.is_empty() {
+        return Vec3::ZERO;
+    }
+    if pts.len() == 1 {
+        return pts[0];
+    }
 
     let segments = (pts.len() - 1) as f32;
     let scaled_t = t * segments;
@@ -26,15 +32,19 @@ fn evaluate_catmull_rom(pts: &[Vec3], t: f32) -> Vec3 {
     let p0 = if index == 0 { pts[0] } else { pts[index - 1] };
     let p1 = pts[index];
     let p2 = pts[index + 1];
-    let p3 = if index + 2 < pts.len() { pts[index + 2] } else { pts[index + 1] };
+    let p3 = if index + 2 < pts.len() {
+        pts[index + 2]
+    } else {
+        pts[index + 1]
+    };
 
     let t2 = local_t * local_t;
     let t3 = t2 * local_t;
 
-    0.5 * ((2.0 * p1) +
-           (-p0 + p2) * local_t +
-           (2.0 * p0 - 5.0 * p1 + 4.0 * p2 - p3) * t2 +
-           (-p0 + 3.0 * p1 - 3.0 * p2 + p3) * t3)
+    0.5 * ((2.0 * p1)
+        + (-p0 + p2) * local_t
+        + (2.0 * p0 - 5.0 * p1 + 4.0 * p2 - p3) * t2
+        + (-p0 + 3.0 * p1 - 3.0 * p2 + p3) * t3)
 }
 
 /// Calculates optimal desired azimuth, incline, and distance for the scripted camera state.
@@ -44,7 +54,7 @@ pub fn script_camera_system(
         &CameraController,
         &mut CameraChannel,
         Option<&mut ScriptCameraSequence>,
-        &Transform
+        &Transform,
     )>,
     transform_query: Query<&GlobalTransform>,
     layout_paths: Option<Res<crate::oni2_loader::environment::LayoutPaths>>,
@@ -59,7 +69,9 @@ pub fn script_camera_system(
         if Some(controller.active_mode) != *prev_mode {
             info!(
                 "[CAM-SCRIPT] Mode: {:?} → {:?} | cam_pos={}",
-                prev_mode.map(|m| format!("{:?}", m)).unwrap_or_else(|| "none".into()),
+                prev_mode
+                    .map(|m| format!("{:?}", m))
+                    .unwrap_or_else(|| "none".into()),
                 format!("{:?}", controller.active_mode),
                 cam_tf.translation
             );
@@ -130,7 +142,8 @@ pub fn script_camera_system(
                         );
                         seq.active_rail = Some(curve.1.clone());
                     } else {
-                        let available: Vec<&str> = lp.curves.iter().map(|(n, _)| n.as_str()).collect();
+                        let available: Vec<&str> =
+                            lp.curves.iter().map(|(n, _)| n.as_str()).collect();
                         warn!(
                             "[CAM-SCRIPT] Rail '{}' NOT found. Available curves: {:?}",
                             name, available
@@ -138,7 +151,10 @@ pub fn script_camera_system(
                         seq.active_rail_name = None; // stop trying
                     }
                 } else {
-                    warn!("[CAM-SCRIPT] Rail '{}' requested but LayoutPaths resource missing", name);
+                    warn!(
+                        "[CAM-SCRIPT] Rail '{}' requested but LayoutPaths resource missing",
+                        name
+                    );
                 }
             }
         }
@@ -165,7 +181,6 @@ pub fn script_camera_system(
                 tf.look_at(look_at_pos, Vec3::Y);
             }
             Some(tf)
-
         } else if seq.move_target.is_some() {
             seq.move_time_elapsed += dt;
 
@@ -186,12 +201,13 @@ pub fn script_camera_system(
                 let pos = start.lerp(target_pos, t);
                 let mut tf = Transform::from_translation(pos);
                 let forward = look_at_pos - pos;
-                if forward.length_squared() > 0.001 && forward.normalize().dot(Vec3::Y).abs() < 0.999 {
+                if forward.length_squared() > 0.001
+                    && forward.normalize().dot(Vec3::Y).abs() < 0.999
+                {
                     tf.look_at(look_at_pos, Vec3::Y);
                 }
                 tf
             })
-
         } else if seq.tracked_target.is_some() {
             // Track purely by looking (freeze in place)
             let mut tf = *cam_tf;

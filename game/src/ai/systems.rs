@@ -145,8 +145,7 @@ pub fn ai_decision_system(
                         && distance <= effective_attack_range
                     {
                         // Can't attack if already attacking or reacting
-                        if attack_state.active_attack.is_none()
-                        {
+                        if attack_state.active_attack.is_none() {
                             // Pick attack type: weighted toward punches (FSM proxy for now)
                             /*
                             let roll: f32 = rng.random_range(0.0..1.0);

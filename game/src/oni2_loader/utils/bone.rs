@@ -143,7 +143,7 @@ pub fn compute_animated_bone_transforms(
             };
 
             let local_rot = Quat::from_euler(EulerRot::YZX, euler_y, euler_z, euler_x);
-            
+
             let mut final_tx = tx + skel.local_offsets[i][0];
             let mut final_ty = ty + skel.local_offsets[i][1];
             let mut final_tz = tz + skel.local_offsets[i][2];

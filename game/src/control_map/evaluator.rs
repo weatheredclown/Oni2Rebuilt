@@ -23,9 +23,9 @@
  * ANALOG_DEBOUNCE: fires on the rising edge — axis was below min last frame, ≥ min this frame.
  */
 
-use std::collections::HashMap;
-use bevy::prelude::Resource;
 use super::types::*;
+use bevy::prelude::Resource;
+use std::collections::HashMap;
 
 // ---------------------------------------------------------------------------
 // RawInputFrame
@@ -58,7 +58,10 @@ pub struct RawInputFrame {
 
 impl RawInputFrame {
     pub fn button_pressed(&self, name: &str) -> bool {
-        self.buttons.get(name).map(|b| b.just_pressed).unwrap_or(false)
+        self.buttons
+            .get(name)
+            .map(|b| b.just_pressed)
+            .unwrap_or(false)
     }
     pub fn button_held(&self, name: &str) -> bool {
         self.buttons.get(name).map(|b| b.held).unwrap_or(false)
@@ -99,14 +102,12 @@ pub struct PadMapper {
     name_to_index: HashMap<String, usize>,
 
     // ── per-frame persistent state ──────────────────────────────────────────
-
     /// Analog values from the *previous* frame (for ANALOG_DEBOUNCE edge detection).
     analog_prev: HashMap<String, f32>,
     /// Most recent time each named button was `just_pressed`.
     button_press_time: HashMap<String, f32>,
 
     // ── output ──────────────────────────────────────────────────────────────
-
     /// Evaluated value per command index, updated by `update()`.
     pub values: Vec<f32>,
 }

@@ -6,6 +6,7 @@
  * the .ptx settings block and loads the referenced texture into Assets<Image>.
  * Stored in ParticleLibrary and instantiated by fx_system via SpawnPtx events.
  */
+use super::block_parser::BlockParser;
 use bevy::prelude::*;
 use std::collections::HashMap;
 
@@ -32,193 +33,116 @@ pub struct ParticleSystemDef {
     pub end_tile: u32,
 }
 
-// Very basic custom parser for .ptx format which is:
-// type: a
-// Particle {
-//   Key Value
-//   Key Value Value Value
-// }
 pub fn parse_ptx(
     content: &str,
     name: String,
     asset_server: &AssetServer,
     images: &mut Assets<Image>,
 ) -> Option<ParticleSystemDef> {
-    let mut texture = asset_server.add(Image::default()); // Placeholder
-    let mut position_var = Vec3::ZERO;
-    let mut radius_birth = Vec2::ZERO;
-    let mut life = 1.0;
-    let mut life_var = 0.0;
-    let mut velocity = Vec3::ZERO;
-    let mut velocity_var = Vec3::ZERO;
-    let mut velocity_damping = Vec3::ZERO;
-    let mut gravity = 0.0;
-    let mut color_birth = Color::WHITE;
-    let mut color_death = Color::WHITE;
-    let mut rate = 1.0;
-    let mut blend_set = 0;
-    let mut frame_rate = 0.0;
-    let mut grid_x = 1;
-    let mut grid_y = 1;
-    let mut start_tile = 0;
-    let mut end_tile = 0;
+    let mut def = ParticleSystemDef {
+        name,
+        texture: asset_server.add(Image::default()), // Placeholder
+        position_var: Vec3::ZERO,
+        radius_birth: Vec2::ZERO,
+        life: 1.0,
+        life_var: 0.0,
+        velocity: Vec3::ZERO,
+        velocity_var: Vec3::ZERO,
+        velocity_damping: Vec3::ZERO,
+        gravity: 0.0,
+        color_birth: Color::WHITE,
+        color_death: Color::WHITE,
+        rate: 1.0,
+        blend_set: 0,
+        frame_rate: 0.0,
+        grid_x: 1,
+        grid_y: 1,
+        start_tile: 0,
+        end_tile: 0,
+    };
 
-    for line in content.lines() {
-        let tokens: Vec<&str> = line.split_whitespace().collect();
-        if tokens.is_empty() {
-            continue;
-        }
+    let mut p = BlockParser::new(content);
 
-        match tokens[0] {
-            "TextureName" => {
-                if tokens.len() > 1 {
-                    let tex_name = tokens[1];
-                    if let Some((h, _)) = crate::oni2_loader::parsers::texture::load_tga_texture(
-                        "texture", tex_name, images,
-                    ) {
-                        texture = h;
-                    } else {
-                        texture = asset_server.load(format!("texture/{}.tga", tex_name));
-                    }
-                }
-            }
-            "PositionVar" => {
-                if tokens.len() > 3 {
-                    position_var = Vec3::new(
-                        tokens[1].parse().unwrap_or(0.0),
-                        tokens[2].parse().unwrap_or(0.0),
-                        tokens[3].parse().unwrap_or(0.0),
-                    );
-                }
-            }
-            "RadiusBirth" => {
-                if tokens.len() > 2 {
-                    radius_birth = Vec2::new(
-                        tokens[1].parse().unwrap_or(0.0),
-                        tokens[2].parse().unwrap_or(0.0),
-                    );
-                }
-            }
-            "Life" => {
-                if tokens.len() > 1 {
-                    life = tokens[1].parse().unwrap_or(1.0);
-                }
-            }
-            "LifeVar" => {
-                if tokens.len() > 1 {
-                    life_var = tokens[1].parse().unwrap_or(0.0);
-                }
-            }
-            "Velocity" => {
-                if tokens.len() > 3 {
-                    velocity = Vec3::new(
-                        tokens[1].parse().unwrap_or(0.0),
-                        tokens[2].parse().unwrap_or(0.0),
-                        tokens[3].parse().unwrap_or(0.0),
-                    );
-                }
-            }
-            "VelocityVar" => {
-                if tokens.len() > 3 {
-                    velocity_var = Vec3::new(
-                        tokens[1].parse().unwrap_or(0.0),
-                        tokens[2].parse().unwrap_or(0.0),
-                        tokens[3].parse().unwrap_or(0.0),
-                    );
-                }
-            }
-            "VelocityDamping" => {
-                if tokens.len() > 3 {
-                    velocity_damping = Vec3::new(
-                        tokens[1].parse().unwrap_or(0.0),
-                        tokens[2].parse().unwrap_or(0.0),
-                        tokens[3].parse().unwrap_or(0.0),
-                    );
-                }
-            }
-            "Gravity" => {
-                if tokens.len() > 1 {
-                    gravity = tokens[1].parse().unwrap_or(0.0);
-                }
-            }
-            "ColorBirth" => {
-                if tokens.len() > 4 {
-                    color_birth = Color::srgba(
-                        tokens[1].parse().unwrap_or(1.0),
-                        tokens[2].parse().unwrap_or(1.0),
-                        tokens[3].parse().unwrap_or(1.0),
-                        tokens[4].parse().unwrap_or(1.0),
-                    );
-                }
-            }
-            "ColorDeath" => {
-                if tokens.len() > 4 {
-                    color_death = Color::srgba(
-                        tokens[1].parse().unwrap_or(1.0),
-                        tokens[2].parse().unwrap_or(1.0),
-                        tokens[3].parse().unwrap_or(1.0),
-                        tokens[4].parse().unwrap_or(1.0),
-                    );
-                }
-            }
-            "Rate" => {
-                if tokens.len() > 1 {
-                    rate = tokens[1].parse().unwrap_or(1.0);
-                }
-            }
-            "BlendSet" => {
-                if tokens.len() > 1 {
-                    blend_set = tokens[1].parse().unwrap_or(0);
-                }
-            }
-            "FrameRate" => {
-                if tokens.len() > 1 {
-                    frame_rate = tokens[1].parse().unwrap_or(0.0);
-                }
-            }
-            "NumTextureTilesX" => {
-                if tokens.len() > 1 {
-                    grid_x = tokens[1].parse().unwrap_or(1);
-                }
-            }
-            "NumTextureTilesY" => {
-                if tokens.len() > 1 {
-                    grid_y = tokens[1].parse().unwrap_or(1);
-                }
-            }
-            "StartTextureTile" => {
-                if tokens.len() > 1 {
-                    start_tile = tokens[1].parse().unwrap_or(0);
-                }
-            }
-            "EndTextureTile" => {
-                if tokens.len() > 1 {
-                    end_tile = tokens[1].parse().unwrap_or(0);
-                }
-            }
-            _ => {}
+    // .ptx files usually start with `type: a\nParticle {\n...`
+    // We scan until we hit "Particle"
+    let mut found = false;
+    while !p.endblock() {
+        if p.start("Particle") {
+            found = true;
+            break;
+        } else {
+            p.next();
         }
     }
 
-    Some(ParticleSystemDef {
-        name,
-        texture,
-        position_var,
-        radius_birth,
-        life,
-        life_var,
-        velocity,
-        velocity_var,
-        velocity_damping,
-        gravity,
-        color_birth,
-        color_death,
-        rate,
-        blend_set,
-        frame_rate,
-        grid_x,
-        grid_y,
-        start_tile,
-        end_tile,
-    })
+    if !found {
+        return None;
+    }
+
+    // Now parse properties inside Particle { ... }
+    while !p.endblock() {
+        let key = p.peek().unwrap_or("").to_string();
+        match key.as_str() {
+            "TextureName" => {
+                if let Some(tex_name) = p.read_string_opt("TextureName") {
+                    if let Some((h, _)) = crate::oni2_loader::parsers::texture::load_tga_texture(
+                        "texture", &tex_name, images,
+                    ) {
+                        def.texture = h;
+                    } else {
+                        def.texture = asset_server.load(format!("texture/{}.tga", tex_name));
+                    }
+                }
+            }
+            "PositionVar" => def.position_var = p.read_vec3("PositionVar", def.position_var),
+            "RadiusBirth" => {
+                let vec = p.read_vec2("RadiusBirth", def.radius_birth);
+                def.radius_birth = vec;
+            }
+            "Life" => def.life = p.read_float("Life", def.life),
+            "LifeVar" => def.life_var = p.read_float("LifeVar", def.life_var),
+            "Velocity" => def.velocity = p.read_vec3("Velocity", def.velocity),
+            "VelocityVar" => def.velocity_var = p.read_vec3("VelocityVar", def.velocity_var),
+            "VelocityDamping" => {
+                def.velocity_damping = p.read_vec3("VelocityDamping", def.velocity_damping)
+            }
+            "Gravity" => def.gravity = p.read_float("Gravity", def.gravity),
+            "ColorBirth" => {
+                p.next(); // string match ColorBirth
+                let r = p.read_float_val(1.0);
+                let g = p.read_float_val(1.0);
+                let b = p.read_float_val(1.0);
+                let a = p.read_float_val(1.0);
+                def.color_birth = Color::srgba(r, g, b, a);
+            }
+            "ColorDeath" => {
+                p.next(); // string match ColorDeath
+                let r = p.read_float_val(1.0);
+                let g = p.read_float_val(1.0);
+                let b = p.read_float_val(1.0);
+                let a = p.read_float_val(1.0);
+                def.color_death = Color::srgba(r, g, b, a);
+            }
+            "Rate" => def.rate = p.read_float("Rate", def.rate),
+            "BlendSet" => def.blend_set = p.read_i32("BlendSet", def.blend_set),
+            "FrameRate" => def.frame_rate = p.read_float("FrameRate", def.frame_rate),
+            "NumTextureTilesX" => {
+                def.grid_x = p.read_i32("NumTextureTilesX", def.grid_x as i32) as u32
+            }
+            "NumTextureTilesY" => {
+                def.grid_y = p.read_i32("NumTextureTilesY", def.grid_y as i32) as u32
+            }
+            "StartTextureTile" => {
+                def.start_tile = p.read_i32("StartTextureTile", def.start_tile as i32) as u32
+            }
+            "EndTextureTile" => {
+                def.end_tile = p.read_i32("EndTextureTile", def.end_tile as i32) as u32
+            }
+            _ => {
+                p.next();
+            } // skip unknown fields gracefully
+        }
+    }
+
+    Some(def)
 }

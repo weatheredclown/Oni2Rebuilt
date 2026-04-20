@@ -155,12 +155,24 @@ pub fn free_camera_system(
     let right = Vec3::new(-cam.yaw.cos(), 0.0, cam.yaw.sin()).normalize();
     let mut velocity = Vec3::ZERO;
 
-    if keyboard.pressed(KeyCode::KeyS) { velocity += forward; }
-    if keyboard.pressed(KeyCode::KeyW) { velocity -= forward; }
-    if keyboard.pressed(KeyCode::KeyA) { velocity += right; }
-    if keyboard.pressed(KeyCode::KeyD) { velocity -= right; }
-    if keyboard.pressed(KeyCode::Space) { velocity += Vec3::Y; }
-    if keyboard.pressed(KeyCode::ControlLeft) { velocity -= Vec3::Y; }
+    if keyboard.pressed(KeyCode::KeyS) {
+        velocity += forward;
+    }
+    if keyboard.pressed(KeyCode::KeyW) {
+        velocity -= forward;
+    }
+    if keyboard.pressed(KeyCode::KeyA) {
+        velocity += right;
+    }
+    if keyboard.pressed(KeyCode::KeyD) {
+        velocity -= right;
+    }
+    if keyboard.pressed(KeyCode::Space) {
+        velocity += Vec3::Y;
+    }
+    if keyboard.pressed(KeyCode::ControlLeft) {
+        velocity -= Vec3::Y;
+    }
 
     if velocity.length_squared() > 0.0 {
         velocity = velocity.normalize() * speed * time.delta_secs();

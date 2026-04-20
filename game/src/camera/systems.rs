@@ -8,24 +8,31 @@
  * prototype_toggle_system: F2 shows/hides prototype overlay and HUD.
  * debug_render_camera_targets: draws gizmo spheres for focus/lens positions.
  */
-use bevy::prelude::*;
 use bevy::input::mouse::AccumulatedMouseScroll;
+use bevy::prelude::*;
 
+use super::channel::{CameraBumpDirection, CameraChannel};
 use super::components::{ActiveCameraMode, CameraController, PrototypeElement, PrototypeVisible};
-use super::channel::{CameraChannel, CameraBumpDirection};
 
 /// Toggle camera mode with Tab key or F5 (FreeCam).
 pub fn camera_mode_toggle_system(
     keyboard: Res<ButtonInput<KeyCode>>,
     mut commands: Commands,
     mut main_cam_query: Query<(&mut Camera, &Transform, &mut CameraController)>,
-    mut debug_cam_query: Query<(Entity, &mut Camera, &mut crate::camera::components::DebugFreeCamera), Without<CameraController>>,
+    mut debug_cam_query: Query<
+        (
+            Entity,
+            &mut Camera,
+            &mut crate::camera::components::DebugFreeCamera,
+        ),
+        Without<CameraController>,
+    >,
 ) {
     if keyboard.just_pressed(KeyCode::Tab) {
         for (_, _, mut controller) in &mut main_cam_query {
             controller.active_mode = match controller.active_mode {
                 ActiveCameraMode::GameTargeting => ActiveCameraMode::GameNavigation,
-                ActiveCameraMode::GameNavigation => ActiveCameraMode::GameFighting, 
+                ActiveCameraMode::GameNavigation => ActiveCameraMode::GameFighting,
                 ActiveCameraMode::GameFighting => ActiveCameraMode::GameNavigation,
                 _ => controller.active_mode,
             };
@@ -43,7 +50,8 @@ pub fn camera_mode_toggle_system(
                 let (yaw, pitch, _) = main_tf.rotation.to_euler(EulerRot::YXZ);
                 commands.spawn((
                     Camera3d::default(),
-                    Transform::from_translation(main_tf.translation).with_rotation(main_tf.rotation),
+                    Transform::from_translation(main_tf.translation)
+                        .with_rotation(main_tf.rotation),
                     crate::camera::components::DebugFreeCamera {
                         yaw,
                         pitch,
@@ -69,10 +77,14 @@ pub fn debug_render_camera_targets(
     for (channel, transform) in &camera_query {
         // Render where the camera is looking (yellow sphere)
         gizmos.sphere(channel.current_focus_pos, 0.2, Color::srgb(1.0, 1.0, 0.0));
-        
+
         // Render where the game thinks the camera's actual lens is (cyan sphere with axis)
         gizmos.sphere(transform.translation, 0.2, Color::srgb(0.0, 1.0, 1.0));
-        gizmos.ray(transform.translation, transform.forward() * 1.0, Color::srgb(0.0, 1.0, 1.0));
+        gizmos.ray(
+            transform.translation,
+            transform.forward() * 1.0,
+            Color::srgb(0.0, 1.0, 1.0),
+        );
     }
 }
 
@@ -97,7 +109,6 @@ pub fn update_camera_channel(
     let scroll_y = scroll.delta.y;
 
     for (controller, mut channel) in &mut camera_query {
-        
         let Ok((target_tf, fighter, input_opt)) = target_query.get(channel.focus_actor) else {
             continue;
         };
@@ -108,7 +119,7 @@ pub fn update_camera_channel(
         {
             if let Some(pkg) = pkgs.packages.get(&active_pkg.name) {
                 let is_combat = controller.active_mode == ActiveCameraMode::GameFighting;
-                
+
                 let set_name = if is_combat && !pkg.fighting.is_empty() {
                     &pkg.fighting
                 } else if !pkg.navigation.is_empty() {
@@ -122,7 +133,7 @@ pub fn update_camera_channel(
                         info!("Camera selected parameter set: {}", params.name);
                         channel.active_set_name = params.name.clone();
                     }
-                    
+
                     channel.package_fov = params.fov;
                     channel.package_distance = params.distance;
                     channel.package_incline_offset = params.incline_offset;
@@ -135,7 +146,7 @@ pub fn update_camera_channel(
                         params.lerp_rate_azimuth_zone3,
                         params.lerp_rate_azimuth_zone4,
                     ];
-                    
+
                     if is_combat {
                         channel.package_inner_radius = params.inner_radius;
                         channel.package_outer_radius = params.outer_radius;
@@ -148,21 +159,21 @@ pub fn update_camera_channel(
         }
 
         let target_pos = target_tf.translation;
-        
+
         channel.previous_focus_pos = channel.current_focus_pos;
         channel.current_focus_pos = target_pos;
-        
+
         // Let the general desired focus float back to the package default.
         // Modes like targeting will overwrite this later in the frame if active.
         channel.desired_focus_offset = channel.package_focus_offset;
-        
+
         channel.previous_focus_azimuth = channel.current_focus_azimuth;
         // fighter.facing points toward the model's visual front (+Z in Oni2 convention).
         // The camera must sit BEHIND that direction, so we negate before atan2.
         channel.current_focus_azimuth = (-fighter.facing.x).atan2(-fighter.facing.z);
-        
+
         channel.is_moving = input_opt.map_or(false, |i| i.movement.length_squared() > 0.01);
-        
+
         // Accumulate running time natively
         if channel.is_moving {
             channel.time_running += dt;

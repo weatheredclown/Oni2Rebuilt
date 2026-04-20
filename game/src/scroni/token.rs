@@ -593,7 +593,6 @@ pub fn keyword_table() -> std::collections::HashMap<String, TokenCode> {
         ("listen", Listen),
         ("location", Location),
         ("log", Log),
-
         ("look", Look),
         ("makeexplosion", MakeExplosion),
         ("loop", Loop),

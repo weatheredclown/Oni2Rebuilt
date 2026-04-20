@@ -29,15 +29,16 @@ impl FactionManager {
         if let Some(&status) = self.relations.get(&key1) {
             return status;
         }
-        
+
         let key2 = (f2.to_string(), f1.to_string());
         if let Some(&status) = self.relations.get(&key2) {
             return status;
         }
 
         // Hardcoded defaults commonly found in Oni levels
-        if (f1.eq_ignore_ascii_case("tctf") && f2.eq_ignore_ascii_case("syndicate")) ||
-           (f1.eq_ignore_ascii_case("syndicate") && f2.eq_ignore_ascii_case("tctf")) {
+        if (f1.eq_ignore_ascii_case("tctf") && f2.eq_ignore_ascii_case("syndicate"))
+            || (f1.eq_ignore_ascii_case("syndicate") && f2.eq_ignore_ascii_case("tctf"))
+        {
             return FactionStatus::Enemy;
         }
 

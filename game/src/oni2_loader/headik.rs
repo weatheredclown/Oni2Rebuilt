@@ -27,13 +27,20 @@ use crate::oni2_loader::utils::space;
 // ---------------------------------------------------------------------------
 // Tuning constants (degrees → radians where applicable)
 // ---------------------------------------------------------------------------
-const AZM_RANGE:    f32 = 80.0  * PI / 180.0; // horizontal look limit
-const INC_RANGE:    f32 = 45.0  * PI / 180.0; // vertical look limit
-const AZM_RATE:     f32 = 360.0 * PI / 180.0; // rad/s convergence speed
-const INC_RATE:     f32 = 180.0 * PI / 180.0; // rad/s convergence speed
-const BLEND_IN:     f32 = 2.0;  // blend weight gained per second
-const BLEND_OUT:    f32 = 2.0;  // blend weight lost per second
-const TRACK_HEAD_Y: f32 = 0.1;  // y-offset when looking at a tracked actor's head
+const AZM_RANGE: f32 = 80.0 * PI / 180.0; // horizontal look limit
+const INC_RANGE: f32 = 45.0 * PI / 180.0; // vertical look limit
+const AZM_RATE: f32 = 360.0 * PI / 180.0; // rad/s convergence speed
+const INC_RATE: f32 = 180.0 * PI / 180.0; // rad/s convergence speed
+const BLEND_IN: f32 = 2.0; // blend weight gained per second
+const BLEND_OUT: f32 = 2.0; // blend weight lost per second
+const TRACK_HEAD_Y: f32 = 0.1; // y-offset when looking at a tracked actor's head
+/// Max distance at which `TrackClosest` will acquire a new target.  Matches
+/// the typical `animHeadIKTuning::TrackClosestDist` from the shipped tuning.
+const TRACK_CLOSEST_DIST: f32 = 8.0;
+/// Hysteresis band: already-tracked targets retain lock up to this many
+/// meters beyond `TRACK_CLOSEST_DIST` before being dropped, preventing
+/// rapid flicker between near-equidistant creatures.
+const TRACK_CLOSEST_HYSTERESIS: f32 = 1.0;
 
 // ---------------------------------------------------------------------------
 // Component
@@ -48,6 +55,11 @@ pub struct HeadIKState {
     pub blend: f32,
     /// Accumulated time used by the Scan mode
     pub scan_elapsed: f32,
+    /// Last entity acquired by `TrackClosest`.  Persists so hysteresis can
+    /// prefer the current target over switching between near-equidistant
+    /// creatures every frame.  Cleared when the target leaves range or loses
+    /// its neck bone.  Mirrors `animHeadIK::ClosestActor`.
+    pub tracked_actor: Option<Entity>,
 }
 
 // ---------------------------------------------------------------------------
@@ -59,10 +71,16 @@ pub struct HeadIKState {
 fn clip(x: &mut f32, y: &mut f32, sx: f32, sy: f32) {
     let mut tx = 1.0_f32;
     let mut ty = 1.0_f32;
-    if *x < -sx      { tx = -sx / *x; }
-    else if *x > sx  { tx =  sx / *x; }
-    if *y < -sy      { ty = -sy / *y; }
-    else if *y > sy  { ty =  sy / *y; }
+    if *x < -sx {
+        tx = -sx / *x;
+    } else if *x > sx {
+        tx = sx / *x;
+    }
+    if *y < -sy {
+        ty = -sy / *y;
+    } else if *y > sy {
+        ty = sy / *y;
+    }
     let t = tx.min(ty);
     *x *= t;
     *y *= t;
@@ -71,7 +89,7 @@ fn clip(x: &mut f32, y: &mut f32, sx: f32, sy: f32) {
 /// Linear approach: move `current` toward `target` by at most `rate * dt`.
 fn approach(current: &mut f32, target: f32, rate: f32, dt: f32) {
     let delta = target - *current;
-    let step  = rate * dt;
+    let step = rate * dt;
     if delta.abs() <= step {
         *current = target;
     } else {
@@ -99,6 +117,7 @@ pub fn head_ik_setup_system(
 pub fn head_ik_system(
     time: Res<Time>,
     mut ik_query: Query<(
+        Entity,
         &ActiveHeadIK,
         &mut HeadIKState,
         &Oni2AnimState,
@@ -106,28 +125,47 @@ pub fn head_ik_system(
     )>,
     mut joint_tf_query: Query<&mut Transform>,
     target_query: Query<&GlobalTransform>,
+    // Candidates for TrackClosest: every entity with an animator + transform.
+    // The neck-bone gate is applied inside the arm; candidates without a neck
+    // are silently skipped (matches legacy animHeadIK::HasNeck filter).
+    neck_candidates: Query<(Entity, &Oni2AnimState, &GlobalTransform)>,
 ) {
     let dt = time.delta_secs();
 
-    for (ik, mut state, anim_state, entity_gtf) in &mut ik_query {
+    for (self_entity, ik, mut state, anim_state, entity_gtf) in &mut ik_query {
         let skel = &anim_state.skeleton;
 
         // ---- Find bone indices -------------------------------------------
-        let Some(spine_idx) = find_bone(&skel.names, &["spine_02", "spine_01", "spine"])
-        else { continue; };
-        let Some(neck_idx) = find_bone(&skel.names, &["neck_01", "neck"])
-        else { continue; };
-        let Some(head_idx) = find_bone(&skel.names, &["head"])
-        else { continue; };
+        let Some(spine_idx) = find_bone(&skel.names, &["spine_02", "spine_01", "spine"]) else {
+            continue;
+        };
+        let Some(neck_idx) = find_bone(&skel.names, &["neck_01", "neck"]) else {
+            continue;
+        };
+        let Some(head_idx) = find_bone(&skel.names, &["head"]) else {
+            continue;
+        };
 
-        let Some(&spine_ent) = anim_state.joint_entities.get(spine_idx) else { continue; };
-        let Some(&neck_ent)  = anim_state.joint_entities.get(neck_idx)  else { continue; };
-        let Some(&head_ent)  = anim_state.joint_entities.get(head_idx)  else { continue; };
+        let Some(&spine_ent) = anim_state.joint_entities.get(spine_idx) else {
+            continue;
+        };
+        let Some(&neck_ent) = anim_state.joint_entities.get(neck_idx) else {
+            continue;
+        };
+        let Some(&head_ent) = anim_state.joint_entities.get(head_idx) else {
+            continue;
+        };
 
         // ---- Read current joint world transforms (copy before any write) --
-        let Ok(spine_tf)    = joint_tf_query.get(spine_ent).map(|t| *t) else { continue; };
-        let Ok(neck_anim)   = joint_tf_query.get(neck_ent).map(|t| *t) else { continue; };
-        let Ok(head_anim)   = joint_tf_query.get(head_ent).map(|t| *t) else { continue; };
+        let Ok(spine_tf) = joint_tf_query.get(spine_ent).map(|t| *t) else {
+            continue;
+        };
+        let Ok(neck_anim) = joint_tf_query.get(neck_ent).map(|t| *t) else {
+            continue;
+        };
+        let Ok(head_anim) = joint_tf_query.get(head_ent).map(|t| *t) else {
+            continue;
+        };
 
         let spine_world_rot = spine_tf.rotation;
         let spine_world_pos = spine_tf.translation;
@@ -156,28 +194,105 @@ pub fn head_ik_system(
             }
 
             ControlHeadTask::TrackClosest => {
-                // Stub — would find the nearest creature with a neck bone.
-                // For now just blend out gracefully.
-                blend_out = true;
+                // Mirrors animHeadIK::TrackClosest — find the nearest other
+                // creature with a neck bone within TRACK_CLOSEST_DIST, with
+                // hysteresis so the lock doesn't flicker.  `self_gtf` already
+                // sourced from entity_gtf.
+                let self_pos = entity_gtf.translation();
+
+                // 1. Validate the existing lock, if any.  If still in range
+                //    (range + hysteresis) and still has a neck, tighten the
+                //    effective max-dist so only STRICTLY closer candidates
+                //    steal focus.
+                let mut effective_max = TRACK_CLOSEST_DIST;
+                let mut validated_current = false;
+                if let Some(current) = state.tracked_actor {
+                    if let Ok((_, cand_anim, cand_gtf)) = neck_candidates.get(current) {
+                        let dist = (cand_gtf.translation() - self_pos).length();
+                        let cap = TRACK_CLOSEST_DIST + TRACK_CLOSEST_HYSTERESIS;
+                        let has_neck =
+                            find_bone(&cand_anim.skeleton.names, &["neck_01", "neck"]).is_some();
+                        if dist <= cap && has_neck {
+                            effective_max = (dist - TRACK_CLOSEST_HYSTERESIS).max(0.0);
+                            validated_current = true;
+                        } else {
+                            state.tracked_actor = None;
+                        }
+                    } else {
+                        state.tracked_actor = None;
+                    }
+                }
+
+                // 2. Sweep every candidate for the closest valid one.
+                let mut best_ent: Option<Entity> = None;
+                let mut best_dist_sq = effective_max * effective_max;
+                if effective_max > 0.0 {
+                    for (cand_ent, cand_anim, cand_gtf) in &neck_candidates {
+                        if cand_ent == self_entity {
+                            continue;
+                        }
+                        let diff = cand_gtf.translation() - self_pos;
+                        let d2 = diff.length_squared();
+                        if d2 > best_dist_sq {
+                            continue;
+                        }
+                        if find_bone(&cand_anim.skeleton.names, &["neck_01", "neck"]).is_none() {
+                            continue;
+                        }
+                        best_dist_sq = d2;
+                        best_ent = Some(cand_ent);
+                    }
+                }
+
+                // 3. Adopt the new target, or fall back to the validated prior
+                //    lock if nothing closer was found.
+                let chosen = best_ent.or_else(|| {
+                    if validated_current {
+                        state.tracked_actor
+                    } else {
+                        None
+                    }
+                });
+
+                if let Some(target_ent) = chosen {
+                    if let Ok((_, cand_anim, cand_gtf)) = neck_candidates.get(target_ent) {
+                        // Aim at the head bone if we can find it — else head
+                        // height offset above the origin.
+                        let head_world = find_bone(&cand_anim.skeleton.names, &["head"])
+                            .and_then(|idx| cand_anim.joint_entities.get(idx).copied())
+                            .and_then(|head_ent| {
+                                joint_tf_query.get(head_ent).ok().map(|t| t.translation)
+                            });
+                        target_world_pos = Some(match head_world {
+                            Some(p) => p,
+                            None => cand_gtf.translation() + Vec3::Y * TRACK_HEAD_Y,
+                        });
+                        state.tracked_actor = Some(target_ent);
+                    } else {
+                        state.tracked_actor = None;
+                        blend_out = true;
+                    }
+                } else {
+                    state.tracked_actor = None;
+                    blend_out = true;
+                }
             }
 
             ControlHeadTask::Set { azimuth, incline } => {
                 // azimuth / incline are in degrees (matching Oni2 script convention).
                 // Build a world-space target along the actor's facing direction.
-                let az_rad  = azimuth  * PI / 180.0;
-                let inc_rad = incline  * PI / 180.0;
+                let az_rad = azimuth * PI / 180.0;
+                let inc_rad = incline * PI / 180.0;
                 let forward = entity_gtf.forward(); // Bevy -Z forward
-                let dir = Quat::from_rotation_y(az_rad)
-                        * Quat::from_rotation_x(-inc_rad)
-                        * forward;
+                let dir = Quat::from_rotation_y(az_rad) * Quat::from_rotation_x(-inc_rad) * forward;
                 target_world_pos = Some(entity_gtf.translation() + *dir * 5.0);
             }
 
             ControlHeadTask::Scan { range, period } => {
                 state.scan_elapsed += dt;
                 // range is in degrees, period in seconds (matching Oni2 script defaults)
-                let az_rad = (*range * PI / 180.0)
-                    * (state.scan_elapsed * 2.0 * PI / *period).sin();
+                let az_rad =
+                    (*range * PI / 180.0) * (state.scan_elapsed * 2.0 * PI / *period).sin();
                 let forward = entity_gtf.forward();
                 let dir = Quat::from_rotation_y(az_rad) * forward;
                 target_world_pos = Some(entity_gtf.translation() + *dir * 5.0);
@@ -190,7 +305,11 @@ pub fn head_ik_system(
             let local_target = spine_world_rot.inverse() * (world_target - spine_world_pos);
 
             let dist = local_target.length();
-            let mut inc = if dist > 0.001 { (local_target.y / dist).asin() } else { 0.0 };
+            let mut inc = if dist > 0.001 {
+                (local_target.y / dist).asin()
+            } else {
+                0.0
+            };
             // atan2(-x, -z): forward faces -Z in local space, so negate to get world azimuth
             let mut azm = f32::atan2(-local_target.x, -local_target.z);
 
@@ -215,7 +334,7 @@ pub fn head_ik_system(
         // neck: RotX(incline*0.5) then RotY(azimuth*0.5), shared with head bone.
         // In Bevy quaternion order (right-to-left): Ry * Rx = apply Rx first.
         let ik_local_rot = Quat::from_rotation_y(state.current_azimuth * 0.5)
-                         * Quat::from_rotation_x(state.current_incline * 0.5);
+            * Quat::from_rotation_x(state.current_incline * 0.5);
 
         // IK world rotation = spine_world_rot * ik_local_rot
         let ik_rot = spine_world_rot * ik_local_rot;
@@ -223,22 +342,22 @@ pub fn head_ik_system(
         // IK world positions from bind-pose local offsets (Oni2 → Bevy coord flip)
         let neck_off_oni2 = Vec3::from(skel.local_offsets[neck_idx]);
         let neck_off_bevy = space::to_bevy_space_pos(neck_off_oni2);
-        let ik_neck_pos   = spine_world_pos + spine_world_rot * neck_off_bevy;
+        let ik_neck_pos = spine_world_pos + spine_world_rot * neck_off_bevy;
 
         let head_off_oni2 = Vec3::from(skel.local_offsets[head_idx]);
         let head_off_bevy = space::to_bevy_space_pos(head_off_oni2);
         // Head is a child of neck, so use ik_rot (not spine_world_rot) for propagation
-        let ik_head_pos   = ik_neck_pos + ik_rot * head_off_bevy;
+        let ik_head_pos = ik_neck_pos + ik_rot * head_off_bevy;
 
         // ---- Blend animation ↔ IK and write back -------------------------
         let b = state.blend;
 
         if let Ok(mut neck_tf) = joint_tf_query.get_mut(neck_ent) {
-            neck_tf.rotation    = neck_anim.rotation.slerp(ik_rot, b);
+            neck_tf.rotation = neck_anim.rotation.slerp(ik_rot, b);
             neck_tf.translation = neck_anim.translation.lerp(ik_neck_pos, b);
         }
         if let Ok(mut head_tf) = joint_tf_query.get_mut(head_ent) {
-            head_tf.rotation    = head_anim.rotation.slerp(ik_rot, b);
+            head_tf.rotation = head_anim.rotation.slerp(ik_rot, b);
             head_tf.translation = head_anim.translation.lerp(ik_head_pos, b);
         }
     }

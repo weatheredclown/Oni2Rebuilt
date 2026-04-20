@@ -35,7 +35,6 @@ enum Token {
 // lifetime/borrow conflicts when the token is used in an error message alongside
 // self.pos (which would otherwise trigger E0502).
 
-
 fn tokenize(src: &str) -> Vec<Token> {
     let mut tokens = Vec::new();
     for line in src.lines() {
@@ -250,19 +249,25 @@ fn parse_input_block(cur: &mut Cursor) -> Result<InputBlock, String> {
                         let axis = cur.expect_word()?;
                         let min = cur.expect_float()?;
                         let max = cur.expect_float()?;
-                        block.constraints.push(Constraint::AnalogRange { axis, min, max });
+                        block
+                            .constraints
+                            .push(Constraint::AnalogRange { axis, min, max });
                     }
                     "ANALOG_DEBOUNCE" => {
                         let axis = cur.expect_word()?;
                         let min = cur.expect_float()?;
                         let max = cur.expect_float()?;
-                        block.constraints.push(Constraint::AnalogDebounce { axis, min, max });
+                        block
+                            .constraints
+                            .push(Constraint::AnalogDebounce { axis, min, max });
                     }
                     "ANALOG_SHAKE" => {
                         let axis = cur.expect_word()?;
                         let min = cur.expect_float()?;
                         let max = cur.expect_float()?;
-                        block.constraints.push(Constraint::AnalogShake { axis, min, max });
+                        block
+                            .constraints
+                            .push(Constraint::AnalogShake { axis, min, max });
                     }
                     "WINDOW_OF_OPPORTUNITY" => {
                         let t = cur.expect_float()?;

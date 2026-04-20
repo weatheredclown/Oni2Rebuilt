@@ -25,11 +25,15 @@ pub fn curve_follower_system(
         let phase_advance = if follower.speed_is_physical {
             let current_pos = follower.curve.get_curve_point(follower.phase);
             let epsilon = 0.001;
-            let delta_phase = if follower.speed > 0.0 { epsilon } else { -epsilon };
-            
+            let delta_phase = if follower.speed > 0.0 {
+                epsilon
+            } else {
+                -epsilon
+            };
+
             let mut lookahead_phase = (follower.phase + delta_phase).clamp(0.0, 1.0);
             let lookahead_pos = follower.curve.get_curve_point(lookahead_phase);
-            
+
             let dist = current_pos.distance(lookahead_pos);
             let phase_per_meter = if dist > 0.00001 {
                 (lookahead_phase - follower.phase).abs() / dist
@@ -327,11 +331,20 @@ impl Oni2AnimLibrary {
     }
 
     /// Set the active animation by pre-computed AnimId (zero-cost lookup).
+    ///
+    /// Resets every transient playback field to defaults (current_time=0.0,
+    /// speed_multiplier=1.0, etc.) — callers that want a non-default rate
+    /// MUST assign `state.speed_multiplier` explicitly after this returns.
+    /// This prevents leftover state (e.g. the jump schedule's rate-match on
+    /// VERTICAL_3) from carrying over into a subsequent locomotion anim that
+    /// doesn't set its own rate, making idle / walk / run play at the wrong
+    /// speed after a jump completes.
     pub fn play_id(&self, id: AnimId, state: &mut Oni2AnimState) -> bool {
         if let Some(anim) = self.anims.get(&id) {
             state.anim = anim.clone();
             state.current_time = 0.0;
             state.looping = anim.is_loop;
+            state.speed_multiplier = 1.0;
             state.last_rendered_time = -1.0; // force rebuild
             state.previous_anim_id = state.current_anim_id;
             state.current_anim_id = Some(id);
@@ -479,7 +492,7 @@ pub fn load_anim_library(
 
         let tune_atdt = format!("entity.tune/{}/{}.atdt", entity_name, anim_name);
         let base_atdt = format!("{}/{}.atdt", entity_dir, anim_name);
-        
+
         // Priority 1: entity.tune/kno/..
         // Priority 2: Entity/kno/..
         // Priority 3: fallback to prefix folder (e.g. if the mesh name differs from anim prefix)
@@ -499,13 +512,17 @@ pub fn load_anim_library(
         }
 
         if let Ok(atdt_data) = atdt_content {
-            anim.attack_data = Some(crate::oni2_loader::parsers::atdt::parse_atdt_content(&atdt_data));
+            anim.attack_data = Some(crate::oni2_loader::parsers::atdt::parse_atdt_content(
+                &atdt_data,
+            ));
         }
 
         if alias.starts_with("ANIMREACT_") {
             let rct_file = format!("{}/{}.rct", entity_dir, alias);
             if let Ok(rct_data) = crate::vfs::read_to_string("", &rct_file) {
-                anim.react_data = Some(crate::oni2_loader::parsers::rct::parse_rct_content(&rct_data));
+                anim.react_data = Some(crate::oni2_loader::parsers::rct::parse_rct_content(
+                    &rct_data,
+                ));
             } else if let Some(prefix) = anim_name.split('_').next() {
                 let mut parts: Vec<&str> = entity_dir.split('/').collect();
                 if let Some(last) = parts.last_mut() {
@@ -513,7 +530,9 @@ pub fn load_anim_library(
                 }
                 let fallback_rct = format!("{}/{}.rct", parts.join("/"), alias);
                 if let Ok(rct_data) = crate::vfs::read_to_string("", &fallback_rct) {
-                    anim.react_data = Some(crate::oni2_loader::parsers::rct::parse_rct_content(&rct_data));
+                    anim.react_data = Some(crate::oni2_loader::parsers::rct::parse_rct_content(
+                        &rct_data,
+                    ));
                 }
             }
         }
@@ -608,8 +627,6 @@ pub struct DebugBoundsVisible(pub bool);
 #[derive(Resource)]
 pub struct DebugSkeletonVisible(pub bool);
 
-
-
 /// Stores the parsed model for mesh rebuilding (point cloud toggle etc).
 #[derive(Component)]
 pub struct Oni2ModelData {
@@ -647,7 +664,9 @@ pub fn debug_draw_bounds(
     for (transform, bounds, anim_state, creature_offset) in &query {
         // Character physics centers are above ground by physics_center_height; their Oni bounds
         // are ground-relative, so subtract that to re-align. Level geometry has no correction.
-        let y_correction = creature_offset.map(|o| o.physics_center_height).unwrap_or(0.0);
+        let y_correction = creature_offset
+            .map(|o| o.physics_center_height)
+            .unwrap_or(0.0);
         let base_translation = transform.translation - Vec3::new(0.0, y_correction, 0.0);
 
         for sub in &bounds.sub_bounds {
@@ -672,7 +691,10 @@ pub fn debug_draw_bounds(
                     let (wa, wb) = if use_joint {
                         (joint_tf * va, joint_tf * vb)
                     } else {
-                        (base_translation + transform.rotation * va, base_translation + transform.rotation * vb)
+                        (
+                            base_translation + transform.rotation * va,
+                            base_translation + transform.rotation * vb,
+                        )
                     };
                     gizmos.line(wa, wb, color);
                 }
@@ -757,7 +779,7 @@ pub fn debug_draw_capsules(
     }
 }
 
-/// Draw wireframe layouts representing active tracking `CurveFollower` states, 
+/// Draw wireframe layouts representing active tracking `CurveFollower` states,
 /// as well as the overarching static `LayoutPaths` for unactivated curves.
 pub fn debug_draw_curves(
     query: Query<&CurveFollower>,
@@ -768,9 +790,9 @@ pub fn debug_draw_curves(
     if !visible.0 {
         return;
     }
-    
+
     let active_color = Color::srgb(1.0, 0.0, 1.0); // magenta
-    
+
     for follower in &query {
         let segments = 50;
         let mut prev_pos = follower.curve.get_curve_point(0.0);
@@ -780,28 +802,33 @@ pub fn debug_draw_curves(
             gizmos.line(prev_pos, current_pos, active_color);
             prev_pos = current_pos;
         }
-        
+
         // Draw the current phase position as a sphere
         let current_pos = follower.curve.get_curve_point(follower.phase);
         gizmos.sphere(Isometry3d::from_translation(current_pos), 1.0, Color::WHITE);
     }
-    
+
     // Draw all layout curves (unactivated or active in the base pool)
     let inactive_color = Color::srgb(1.0, 0.5, 0.0); // orange
     if let Some(paths) = layout_paths {
         for (_name, pts) in &paths.curves {
-            if pts.len() < 2 { continue; }
+            if pts.len() < 2 {
+                continue;
+            }
             let mut prev_pos = pts[0];
             for i in 1..pts.len() {
                 let current_pos = pts[i];
                 gizmos.line(prev_pos, current_pos, inactive_color);
                 prev_pos = current_pos;
             }
-            gizmos.sphere(Isometry3d::from_translation(pts[0]), 0.5, Color::srgb(1.0, 1.0, 0.0));
+            gizmos.sphere(
+                Isometry3d::from_translation(pts[0]),
+                0.5,
+                Color::srgb(1.0, 1.0, 0.0),
+            );
         }
     }
 }
-
 
 /// Toggle debug skeleton with F4.
 pub fn toggle_debug_skeleton(
@@ -887,7 +914,9 @@ pub fn debug_draw_attack_wedges(
             // debug!("debug_draw_attack_wedges: no attack_data for anim id={:?}", anim_state.current_anim_id);
             continue;
         };
-        let Some(strike) = &data.strike else { continue; };
+        let Some(strike) = &data.strike else {
+            continue;
+        };
 
         let frame = anim_state.current_time;
         let num_frames = anim_state.anim.num_frames as f32;
@@ -928,7 +957,9 @@ pub fn debug_draw_attack_wedges(
 
         // Draw inner and outer ring limits
         let draw_wedge_arc = |gizmos: &mut Gizmos, r: f32, color: Color| {
-            if r <= 0.01 { return; }
+            if r <= 0.01 {
+                return;
+            }
             let segments = 24;
             if full_circle {
                 // Draw a full horizontal ring
@@ -1125,7 +1156,8 @@ pub fn update_oni2_animation(
                     transform_query.get_mut(joint_entity)
                 {
                     // Convert from Oni2 coordinates to Bevy: negate X and Z
-                    let bevy_pos = space::to_bevy_space_pos(Vec3::new(pos.x, pos.y + y_offset, pos.z));
+                    let bevy_pos =
+                        space::to_bevy_space_pos(Vec3::new(pos.x, pos.y + y_offset, pos.z));
                     // Conjugate rotation by 180° Y rotation: negate X and Z components
                     let bevy_rot = Quat::from_xyzw(-rot.x, rot.y, -rot.z, rot.w);
                     // Apply facing rotation (if model needs to be rotated)

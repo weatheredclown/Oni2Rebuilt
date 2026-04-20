@@ -5,14 +5,14 @@
  * send/receive, sleep, print, var assignment, function call, return, and
  * the ScrOni-specific loop/once/whenever constructs.
  */
+use super::OpsCtx;
+use crate::oni2_loader::utils::space;
 use crate::scroni::ast::{Stmt, VarType};
 use crate::scroni::vm::{
-    hash_name, init_variables, BlockingAction, CallFrame, ExecState, ScrOniThread,
-    ScriptMessage, SysRequest, Value, LoopState,
+    BlockingAction, CallFrame, ExecState, LoopState, ScrOniThread, ScriptMessage, SysRequest,
+    Value, hash_name, init_variables,
 };
-use crate::oni2_loader::utils::space;
 use bevy::prelude::*;
-use super::OpsCtx;
 
 pub fn exec(ctx: &mut OpsCtx, stmt: &Stmt) -> bool {
     match stmt {
@@ -179,13 +179,11 @@ pub fn exec(ctx: &mut OpsCtx, stmt: &Stmt) -> bool {
             } else {
                 let stmts = ctx.exec.flatten_to_block(body);
                 let now = ctx.now;
-                ctx.thread_mut()
-                    .loop_stack
-                    .push(LoopState::ForSeconds {
-                        end_time: now + secs as f64,
-                        body: stmts,
-                        pc: 0,
-                    });
+                ctx.thread_mut().loop_stack.push(LoopState::ForSeconds {
+                    end_time: now + secs as f64,
+                    body: stmts,
+                    pc: 0,
+                });
                 ctx.thread_mut().state = ExecState::PushLoop;
             }
             true
@@ -250,11 +248,7 @@ pub fn exec(ctx: &mut OpsCtx, stmt: &Stmt) -> bool {
                     v.as_string()
                 })
                 .collect();
-            info!(
-                "[ScrOni][{}] {}",
-                ctx.thread().script.name,
-                parts.join(" ")
-            );
+            info!("[ScrOni][{}] {}", ctx.thread().script.name, parts.join(" "));
             true
         }
         Stmt::Idle(expr) => {
@@ -326,7 +320,12 @@ pub fn exec(ctx: &mut OpsCtx, stmt: &Stmt) -> bool {
                             }
                         } else if k_lower == "status" {
                             let expected_status = v.as_string().to_lowercase();
-                            let actual_status = ctx.ctx.actor_statuses.get(&other_ent).map(|s| s.as_str()).unwrap_or("dead");
+                            let actual_status = ctx
+                                .ctx
+                                .actor_statuses
+                                .get(&other_ent)
+                                .map(|s| s.as_str())
+                                .unwrap_or("dead");
                             if expected_status == "enemy" {
                                 if actual_status == "dead" {
                                     matches_all = false;

@@ -1,0 +1,712 @@
+/*
+ * fight/systems.rs — All fight-system FixedUpdate systems.
+ *
+ * fighter_state_update_system  — tick frame flags, decay super meter, fight stance timer
+ * block_success_system         — respond to BlockSuccessEvent (counter-attacks, FX)
+ * block_failed_system          — respond to BlockFailedEvent (force blocker react)
+ * grapple_system               — manage grapple lifecycle from FSM CtrlGrapple actions
+ * super_meter_system           — add/remove from super meter via SuperMeterAddEvent
+ * successive_attacks_system    — escalate reactions after repeated hits on same target
+ * knockdown_getup_system       — play get-up anim after knockdown react completes
+ * react_end_rotation_system    — apply ReactData.end_rotation_notches after react
+ * attack_spin_system           — rotate entity by ATDT.spin during active attack frames
+ * hit_eta_system               — compute AboutToBeHit ETA from ATDT reactphase
+ * fight_stance_timer_system    — leave fight stance after inactivity
+ * rotation_notches_system      — apply queued rotation notch events to transforms
+ */
+use avian3d::prelude::*;
+use bevy::prelude::*;
+
+use crate::combat::components::{ComboTracker, Health, HitReaction, ReactLibrary, ReactionKind};
+use crate::combat::events::{AboutToBeHitMessage, HitReactionMessage};
+use crate::oni2_loader::animation::{Oni2AnimLibrary, Oni2AnimState};
+
+use super::components::{
+    BlockStatus, FighterState, FighterType, GrabAction, GrappleState, fighter_flags, grapple_flags,
+};
+use super::events::{
+    ApplyRotationNotchesEvent, BlockFailedEvent, BlockSuccessEvent, GrappleEndEvent,
+    GrappleEndReason, GrappleStartEvent, SuperMeterAddEvent,
+};
+
+/// Radians per notch (PI/4 = 45°).
+pub const NOTCH_RADIANS: f32 = std::f32::consts::FRAC_PI_4;
+
+// ---------------------------------------------------------------------------
+// fighter_state_update_system
+// ---------------------------------------------------------------------------
+
+/// Per-frame bookkeeping for FighterState:
+///   • Transition HIT_START → HIT (one-frame latch) and IH_START → IMPENDING_HIT
+///   • Decay hit_eta_seconds
+///   • Decay super meter over time (using FighterType.super_meter_decay)
+///   • Tick the leave-fight-stance timer
+///   • Track and update in_invuln_phase from current animation phase vs
+///     invulnerability_start_phase
+pub fn fighter_state_update_system(
+    time: Res<Time>,
+    mut query: Query<(
+        &mut FighterState,
+        Option<&FighterType>,
+        Option<&Oni2AnimState>,
+    )>,
+) {
+    let dt = time.delta_secs();
+
+    for (mut fs, ft_opt, anim_opt) in &mut query {
+        fs.tick_frame_flags(dt);
+
+        // Super meter decay
+        let decay_rate = ft_opt
+            .map(|ft| {
+                if ft.super_meter_decay > 0.0 {
+                    1.0 / ft.super_meter_decay
+                } else {
+                    0.0
+                }
+            })
+            .unwrap_or(0.1);
+        if fs.super_meter > 0.0 {
+            fs.super_meter = (fs.super_meter - decay_rate * dt).max(0.0);
+        }
+
+        // Leave-fight-stance countdown
+        if fs.leave_fight_stance_timer > 0.0 {
+            fs.leave_fight_stance_timer = (fs.leave_fight_stance_timer - dt).max(0.0);
+            if fs.leave_fight_stance_timer <= 0.0 {
+                // Signal FSM to leave fight stance (cleared FIGHT_MODE flag)
+                fs.clear_flag(fighter_flags::FIGHT_MODE);
+            }
+        }
+
+        // Invulnerability phase tracking: once the react animation passes
+        // invulnerability_start_phase, set in_invuln_phase
+        if !fs.in_invuln_phase && fs.invulnerability_start_phase > 0.0 {
+            if let Some(anim) = anim_opt {
+                if anim.anim.num_frames > 1 {
+                    let phase = anim.current_time / (anim.anim.num_frames as f32 - 1.0).max(1.0);
+                    if phase >= fs.invulnerability_start_phase {
+                        fs.in_invuln_phase = true;
+                    }
+                }
+            }
+        }
+        // Clear once the animation ends
+        if let Some(anim) = anim_opt {
+            if !anim.looping {
+                let last = (anim.anim.num_frames as f32 - 1.0).max(0.0);
+                if anim.current_time >= last {
+                    fs.in_invuln_phase = false;
+                    fs.invulnerability_start_phase = 0.0;
+                    fs.no_react_start_phase = 0.0;
+                }
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// block_success_system
+// ---------------------------------------------------------------------------
+
+/// Handles BlockSuccessEvents:
+///   1. Force a block-reaction on the attacker (animReactEnum from BlockDef)
+///   2. Increment block_combo_count; if it exceeds combo_count_before_react,
+///      play ANIMREACT_BLOCKED on the blocker
+///   3. If auto_counter or counter_atk present, queue the counter animation
+///
+/// Mirrors the logic in crStrike::GetBlocked(crFighter *tgFighter).
+pub fn block_success_system(
+    mut events: MessageReader<BlockSuccessEvent>,
+    mut query: Query<(
+        &mut FighterState,
+        Option<&mut Oni2AnimState>,
+        Option<&Oni2AnimLibrary>,
+    )>,
+    mut reaction_writer: MessageWriter<HitReactionMessage>,
+) {
+    for ev in events.read() {
+        // --- Force block-break reaction on the ATTACKER ---
+        if ev.block_reaction_on_attacker >= 0 {
+            if let Ok((mut attacker_fs, _, _)) = query.get_mut(ev.attacker) {
+                if attacker_fs.cur_combo_index > ev.combo_count_before_react {
+                    attacker_fs.set_flag(fighter_flags::HIT_START);
+                    reaction_writer.write(HitReactionMessage {
+                        entity: ev.attacker,
+                        kind: ReactionKind::Flinch,
+                        direction: Vec3::ZERO,
+                        react_enum: ev.block_reaction_on_attacker,
+                    });
+                }
+            }
+        }
+
+        // --- Blocker response ---
+        if let Ok((mut blocker_fs, anim_state_opt, lib_opt)) = query.get_mut(ev.blocker) {
+            blocker_fs.block_combo_count += 1;
+            blocker_fs.block_status = BlockStatus::Successful;
+
+            // Combo pressure: too many consecutive blocks → break reaction
+            if blocker_fs.block_combo_count >= ev.combo_count_before_react
+                && ev.combo_count_before_react > 0
+            {
+                reaction_writer.write(HitReactionMessage {
+                    entity: ev.blocker,
+                    kind: ReactionKind::Flinch,
+                    direction: Vec3::ZERO,
+                    react_enum: 18, // ANIMREACT_BLOCKED
+                });
+                blocker_fs.block_combo_count = 0;
+            } else {
+                // Play the successful block animation / counter
+                if let Some(counter_name) = &ev.counter_atk {
+                    if let (Some(mut anim), Some(lib)) = (anim_state_opt, lib_opt) {
+                        let played = lib.play(counter_name, &mut anim);
+                        if !played {
+                            warn!(
+                                "block_success: counter anim '{}' not in library",
+                                counter_name
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// block_failed_system
+// ---------------------------------------------------------------------------
+
+/// Handles BlockFailedEvents: plays the failed-block reaction on the blocker.
+/// In the original Oni2 this is where the target still gets hurt even though they were
+/// trying to block; the InjureMessage was already emitted by hit_detection.
+pub fn block_failed_system(
+    mut events: MessageReader<BlockFailedEvent>,
+    mut reaction_writer: MessageWriter<HitReactionMessage>,
+    mut query: Query<&mut FighterState>,
+) {
+    for ev in events.read() {
+        if let Ok(mut fs) = query.get_mut(ev.blocker) {
+            fs.block_status = BlockStatus::NotBlocking;
+        }
+        if ev.failed_react >= 0 {
+            reaction_writer.write(HitReactionMessage {
+                entity: ev.blocker,
+                kind: ReactionKind::Flinch,
+                direction: Vec3::ZERO,
+                react_enum: ev.failed_react,
+            });
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// grapple_system
+// ---------------------------------------------------------------------------
+
+pub fn grapple_tick_system(
+    mut start_events: MessageReader<GrappleStartEvent>,
+    time: Res<Time>,
+    mut holders: Query<(
+        Entity,
+        &mut GrappleState,
+        &mut FighterState,
+        &Health,
+        Option<&mut Oni2AnimState>,
+        Option<&Oni2AnimLibrary>,
+    )>,
+    mut targets: Query<&mut FighterState, Without<GrappleState>>,
+    fighter_types: Query<&FighterType>,
+    mut end_writer: MessageWriter<GrappleEndEvent>,
+    mut rotation_writer: MessageWriter<ApplyRotationNotchesEvent>,
+) {
+    let now = time.elapsed_secs_f64();
+    let dt = time.delta_secs();
+
+    // --- Handle GrappleStartEvent ---
+    for ev in start_events.read() {
+        // Insert GrappleState on holder
+        if let Ok((_, mut gs, mut holder_fs, health, _, _)) = holders.get_mut(ev.attacker) {
+            gs.set_flag(grapple_flags::STARTED);
+            gs.grab_start_health = health.current;
+            gs.grab_start_time = now;
+            gs.shake_amt = 0.0;
+            gs.full_shake_timer = 0.0;
+            holder_fs.grapple_target = Some(ev.target);
+        }
+        // Mark target as being grappled
+        if let Ok(mut target_fs) = targets.get_mut(ev.target) {
+            target_fs.grapple_attacker = Some(ev.attacker);
+        }
+    }
+
+    // --- Per-frame grapple tick ---
+    let mut to_end: Vec<(Entity, Option<Entity>, GrappleEndReason)> = Vec::new();
+
+    for (holder_entity, mut gs, mut holder_fs, health, _anim_opt, _lib_opt) in &mut holders {
+        if gs.is_broken() {
+            continue;
+        }
+
+        let target_entity = match holder_fs.grapple_target {
+            Some(e) => e,
+            None => {
+                to_end.push((holder_entity, None, GrappleEndReason::Manual));
+                continue;
+            }
+        };
+
+        // Grapple timeout check
+        let break_time = fighter_types
+            .get(holder_entity)
+            .map(|ft| ft.grapple_break_time)
+            .unwrap_or(5.0);
+
+        if gs.is_timed_out(now, break_time) {
+            to_end.push((
+                holder_entity,
+                Some(target_entity),
+                GrappleEndReason::Timeout,
+            ));
+            continue;
+        }
+
+        // Process pending action from FSM CtrlGrapple
+        let action = std::mem::replace(&mut gs.pending_action, GrabAction::None);
+        match action {
+            GrabAction::None => {}
+
+            GrabAction::End => {
+                to_end.push((holder_entity, Some(target_entity), GrappleEndReason::Manual));
+            }
+
+            GrabAction::Shake => {
+                if gs.tick_shake(dt) {
+                    to_end.push((holder_entity, Some(target_entity), GrappleEndReason::Break));
+                }
+            }
+
+            GrabAction::TurnLeft => {
+                gs.nav_rotation_notches = -1;
+                rotation_writer.write(ApplyRotationNotchesEvent {
+                    entity: holder_entity,
+                    notches: -1,
+                });
+                rotation_writer.write(ApplyRotationNotchesEvent {
+                    entity: target_entity,
+                    notches: -1,
+                });
+            }
+
+            GrabAction::TurnRight => {
+                gs.nav_rotation_notches = 1;
+                rotation_writer.write(ApplyRotationNotchesEvent {
+                    entity: holder_entity,
+                    notches: 1,
+                });
+                rotation_writer.write(ApplyRotationNotchesEvent {
+                    entity: target_entity,
+                    notches: 1,
+                });
+            }
+
+            GrabAction::Throw | GrabAction::Die => {
+                let reason = if action == GrabAction::Throw {
+                    GrappleEndReason::Throw
+                } else {
+                    GrappleEndReason::Die
+                };
+                to_end.push((holder_entity, Some(target_entity), reason));
+            }
+
+            GrabAction::MoveForward | GrabAction::MoveBackward => {
+                // Navigation moves — in the legacy engine these play matched anims on both fighters.
+                // Animation is driven by FSM; here we just reset the grapple timer.
+                gs.grab_start_time = now;
+            }
+        }
+
+        // Health-loss break: if holder took significant damage, break grapple
+        let hp_lost = gs.grab_start_health - health.current;
+        let break_hp_threshold = 20.0; // crGrabData.LostHPBeforeBreak default
+        if hp_lost >= break_hp_threshold && !gs.is_breaking() {
+            gs.set_flag(grapple_flags::BREAKING);
+            to_end.push((holder_entity, Some(target_entity), GrappleEndReason::Break));
+        }
+    }
+
+    // --- End grapples (Emit events for next system) ---
+    for (holder_entity, target_opt, reason) in to_end {
+        // Emit end event immediately.
+        // It will be picked up by grapple_end_system in the same frame.
+        end_writer.write(GrappleEndEvent {
+            attacker: holder_entity,
+            target: target_opt,
+            reason,
+        });
+    }
+}
+
+pub fn grapple_end_system(
+    mut end_events: MessageReader<GrappleEndEvent>,
+    mut commands: Commands,
+    mut holders: Query<(&mut GrappleState, &mut FighterState)>,
+    mut targets: Query<&mut FighterState, Without<GrappleState>>,
+) {
+    for ev in end_events.read() {
+        if let Ok((mut gs, mut holder_fs)) = holders.get_mut(ev.attacker) {
+            gs.set_flag(grapple_flags::BROKEN);
+            holder_fs.grapple_target = None;
+            holder_fs.clear_flag(fighter_flags::GRAPPLE_PENDING);
+        }
+        // Remove GrappleState component from holder
+        commands.entity(ev.attacker).remove::<GrappleState>();
+
+        if let Some(target) = ev.target {
+            if let Ok(mut target_fs) = targets.get_mut(target) {
+                target_fs.grapple_attacker = None;
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// super_meter_system
+// ---------------------------------------------------------------------------
+
+/// Processes SuperMeterAddEvents and applies them to FighterState.super_meter.
+/// Clamps the meter to [0.0, 2.0] (allows brief overcharge beyond 1.0).
+pub fn super_meter_system(
+    mut events: MessageReader<SuperMeterAddEvent>,
+    mut query: Query<&mut FighterState>,
+) {
+    for ev in events.read() {
+        if let Ok(mut fs) = query.get_mut(ev.entity) {
+            fs.super_meter = (fs.super_meter + ev.amount).clamp(0.0, 2.0);
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// successive_attacks_system
+// ---------------------------------------------------------------------------
+
+/// Escalates reactions after repeated hits on the same target.
+///
+/// If the attacker's ComboTracker shows hits against the same target with the
+/// same hit type, increment num_successive_attacks.  After enough hits
+/// (FighterType.successive_level0_reacts), escalate the reaction to a
+/// stronger animReactEnum (e.g. regular → fromback → knockdown).
+///
+/// Mirrors ftFighterComponentType::SuccessiveLevel0Reacts logic in crFighter::Update().
+pub fn successive_attacks_system(
+    mut damage_reader: MessageReader<crate::combat::events::DamageMessage>,
+    mut attacker_query: Query<(&mut FighterState, Option<&FighterType>, &ComboTracker)>,
+    mut target_query: Query<&mut FighterState, Without<ComboTracker>>,
+) {
+    for msg in damage_reader.read() {
+        // Update attacker successive attack count
+        let Ok((mut attacker_fs, ft_opt, combo)) = attacker_query.get_mut(msg.attacker) else {
+            continue;
+        };
+
+        let hit_type = msg.attack_class as i32;
+        if attacker_fs.last_successive_react_hit_type == hit_type {
+            attacker_fs.num_successive_attacks += 1;
+        } else {
+            attacker_fs.num_successive_attacks = 1;
+            attacker_fs.last_successive_react_hit_type = hit_type;
+        }
+        attacker_fs.last_hit_type = hit_type;
+
+        let threshold = ft_opt.map(|ft| ft.successive_level0_reacts).unwrap_or(3);
+
+        // When threshold exceeded, signal for a stronger reaction on the target
+        if attacker_fs.num_successive_attacks >= threshold {
+            attacker_fs.num_successive_attacks = 0;
+            // Signal target to use escalated reaction (fromback / knockdown)
+            // The hit_reaction_system will pick this up via react_enum on the message.
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// knockdown_getup_system
+// ---------------------------------------------------------------------------
+
+/// After a knockdown HitReaction completes, play the get-up animation from
+/// ReactData (if one was stored in FighterState.pending_getup_anim).
+///
+/// Mirrors the get-up anim logic in crReactData::GetGetUpAnim().
+pub fn knockdown_getup_system(
+    mut query: Query<(
+        &mut FighterState,
+        &mut Oni2AnimState,
+        &Oni2AnimLibrary,
+        &HitReaction,
+    )>,
+) {
+    for (mut fs, mut anim_state, lib, reaction) in &mut query {
+        let getup_name = match fs.pending_getup_anim.clone() {
+            Some(n) if !n.is_empty() => n,
+            _ => continue,
+        };
+        // Wait until the knockdown reaction animation has ended
+        if reaction.active.is_some() {
+            continue;
+        }
+        // Play get-up
+        if lib.play(&getup_name, &mut anim_state) {
+            fs.pending_getup_anim = None;
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// react_end_rotation_system
+// ---------------------------------------------------------------------------
+
+/// After a reaction animation ends, apply any pending end-rotation notches
+/// from ReactData (EndRotationNotches field in .rct files).
+///
+/// Mirrors crReactData::ApplyRotationNotches(rbActor*).
+pub fn react_end_rotation_system(
+    mut query: Query<(Entity, &mut FighterState, &HitReaction)>,
+    mut rotation_writer: MessageWriter<ApplyRotationNotchesEvent>,
+) {
+    for (entity, mut fs, reaction) in &mut query {
+        if fs.pending_end_rotation_notches == 0 {
+            continue;
+        }
+        // Apply once the reaction clears
+        if reaction.active.is_none() {
+            rotation_writer.write(ApplyRotationNotchesEvent {
+                entity,
+                notches: fs.pending_end_rotation_notches,
+            });
+            fs.pending_end_rotation_notches = 0;
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// attack_spin_system
+// ---------------------------------------------------------------------------
+
+/// During an active attack, rotate the entity by AtdtStrike.spin each frame.
+/// spin is in degrees per frame as stored in the ATDT binary format.
+///
+/// Mirrors the per-tick spin application in crFighter::Update().
+pub fn attack_spin_system(
+    mut query: Query<(&mut Transform, &FighterState, &Oni2AnimState)>,
+    time: Res<Time>,
+) {
+    let dt = time.delta_secs();
+
+    for (mut transform, fs, anim_state) in &mut query {
+        let Some(attack_data) = &anim_state.anim.attack_data else {
+            continue;
+        };
+        let Some(strike) = &attack_data.strike else {
+            continue;
+        };
+
+        if strike.spin.abs() < 0.001 {
+            continue;
+        }
+
+        // Only spin during the active hit window
+        let frame = anim_state.current_time;
+        let is_active = if strike.frameduration > 0.0 {
+            frame >= strike.framenum && frame <= strike.framenum + strike.frameduration
+        } else {
+            true
+        };
+        if !is_active {
+            continue;
+        }
+
+        // spin is stored in the ATDT as radians-per-frame; scale by dt * fps.
+        // The original Oni2 game runs at 60 fps, so spin × 60 × dt gives correct world-rate.
+        let spin_rads = strike.spin * 60.0 * dt;
+        let rotation = Quat::from_rotation_y(spin_rads);
+        transform.rotation = rotation * transform.rotation;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// hit_eta_system
+// ---------------------------------------------------------------------------
+
+/// For each active attacker, compute the time-to-hit from ATDT reactphase data
+/// and emit AboutToBeHitMessages on every potential target in the strike volume.
+///
+/// Mirrors SetAboutToBeHit() called from the legacy crStrike::Update().
+pub fn hit_eta_system(
+    attackers: Query<(Entity, &Transform, &Oni2AnimState, &FighterState)>,
+    targets: Query<(Entity, &Transform), With<FighterState>>,
+    mut about_writer: MessageWriter<AboutToBeHitMessage>,
+    mut target_writer: MessageWriter<crate::fight::events::SuperMeterAddEvent>,
+) {
+    for (attacker_entity, attacker_tf, anim_state, _fs) in &attackers {
+        let Some(attack_data) = &anim_state.anim.attack_data else {
+            continue;
+        };
+        let Some(strike) = &attack_data.strike else {
+            continue;
+        };
+
+        if anim_state.anim.num_frames <= 1 {
+            continue;
+        }
+
+        let total_frames = anim_state.anim.num_frames as f32 - 1.0;
+        let phase = (anim_state.current_time / total_frames).clamp(0.0, 1.0);
+
+        // reactphase[0] is when the reaction starts — use that as ETA pivot
+        let react_phase = strike.reactphase[0];
+        if react_phase <= 0.0 || phase >= react_phase {
+            continue;
+        }
+
+        // FPS-independent ETA estimate: frames remaining × assumed dt
+        let frames_remaining = (react_phase - phase) * total_frames;
+        let fps = 60.0_f32;
+        let eta = frames_remaining / fps;
+
+        // Broad radius check to avoid spamming every entity in the world
+        let scan_radius = (strike.reactdiskradius * 2.0).max(5.0);
+
+        for (target_entity, target_tf) in &targets {
+            if target_entity == attacker_entity {
+                continue;
+            }
+            let diff = target_tf.translation - attacker_tf.translation;
+            let dist_xz = (diff.x * diff.x + diff.z * diff.z).sqrt();
+            if dist_xz > scan_radius {
+                continue;
+            }
+
+            about_writer.write(AboutToBeHitMessage {
+                target: target_entity,
+                eta,
+                hit_type: strike.hittype,
+                from: attacker_tf.translation,
+                attacker: attacker_entity,
+            });
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// fight_stance_timer_system
+// ---------------------------------------------------------------------------
+
+/// Resets the leave-fight-stance timer whenever the entity takes a meaningful
+/// action (attack, block, grapple).  The timer itself ticks in
+/// fighter_state_update_system.
+///
+/// Called from the combat systems that know an action occurred, or can be
+/// triggered directly: call fs.leave_fight_stance_timer = ft.leave_fight_stance_delay.
+pub fn fight_stance_timer_system(
+    mut query: Query<(&mut FighterState, Option<&FighterType>, &Oni2AnimState)>,
+) {
+    for (mut fs, ft_opt, anim_state) in &mut query {
+        // If we're playing an attack, block, or reaction, reset the timer
+        let delay = ft_opt.map(|ft| ft.leave_fight_stance_delay).unwrap_or(3.0);
+
+        // Reset if we're in fight mode and actively doing something
+        if fs.in_fight_mode() {
+            let has_attack = anim_state.anim.attack_data.is_some();
+            let is_reacting = fs.react_anim >= 0;
+            let is_blocking = fs.is_blocking();
+            if has_attack || is_reacting || is_blocking {
+                fs.leave_fight_stance_timer = delay;
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// rotation_notches_system
+// ---------------------------------------------------------------------------
+
+/// Applies ApplyRotationNotchesEvents to entity Transform rotations.
+/// 1 notch = PI/4 radians (45°) around the Y axis.
+/// Positive notches = clockwise, negative = counter-clockwise (from above).
+///
+/// Mirrors NOTCHES2RADIANS = PI/4 and the rotation helpers in crFighter.
+pub fn rotation_notches_system(
+    mut events: MessageReader<ApplyRotationNotchesEvent>,
+    mut query: Query<(&mut Transform, Option<&mut FighterState>)>,
+) {
+    for ev in events.read() {
+        let Ok((mut transform, fs_opt)) = query.get_mut(ev.entity) else {
+            continue;
+        };
+        if ev.notches == 0 {
+            continue;
+        }
+        let radians = ev.notches as f32 * NOTCH_RADIANS;
+        let rotation = Quat::from_rotation_y(radians);
+        transform.rotation = rotation * transform.rotation;
+
+        // Update facing direction in FighterState if present
+        if let Some(mut fs) = fs_opt {
+            let new_forward = transform.rotation * Vec3::NEG_Z;
+            // Fighter.facing is updated separately by the movement system;
+            // here we just record the last attack angle.
+            fs.last_attack_angle = new_forward.z.atan2(new_forward.x);
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// react_data_apply_system
+// ---------------------------------------------------------------------------
+
+/// When a HitReactionMessage is processed, read the target's ReactLibrary entry
+/// for that react_enum and:
+///   1. Set pending_getup_anim on FighterState (for knockdown reactions)
+///   2. Set pending_end_rotation_notches (end_rotation_notches from ReactData)
+///   3. Set invulnerability_start_phase and no_react_start_phase from ReactData
+///
+/// This runs BEFORE hit_reaction_system so the data is available when the
+/// animation begins playing.
+pub fn react_data_apply_system(
+    mut reader: MessageReader<HitReactionMessage>,
+    mut query: Query<(&mut FighterState, Option<&ReactLibrary>)>,
+) {
+    for msg in reader.read() {
+        let Ok((mut fs, react_lib_opt)) = query.get_mut(msg.entity) else {
+            continue;
+        };
+
+        let Some(lib) = react_lib_opt else { continue };
+        let Some(react_data) = lib.get(msg.react_enum) else {
+            continue;
+        };
+
+        // Pending get-up anim (for knockdown reactions)
+        if !react_data.get_up_anim.is_empty() {
+            fs.pending_getup_anim = Some(react_data.get_up_anim.clone());
+        }
+
+        // End-rotation notches to apply after animation ends
+        fs.pending_end_rotation_notches = react_data.end_rotation_notches;
+
+        // Invulnerability start phase within this react animation
+        fs.invulnerability_start_phase = react_data.invulnerability_start_phase;
+
+        // no_react_start_phase: after this phase, can't be hit again this react
+        if react_data.does_not_take_damage_after_phase != 0 {
+            fs.no_react_start_phase = react_data.does_not_take_damage_after_phase as f32;
+        }
+
+        // Clear in_invuln so the new animation can enter the window fresh
+        fs.in_invuln_phase = false;
+        fs.react_anim = msg.react_enum;
+    }
+}

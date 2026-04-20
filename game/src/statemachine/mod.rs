@@ -1,34 +1,36 @@
 /*
  * statemachine/mod.rs — StateMachinePlugin: player animation FSM.
  *
- * Loads player.fsm at Startup into PlayerFsmData (shared Arc).  Attaches
- * FsmRuntime to any newly spawned Player entity via insert_player_fsm.
+ * Loads player.fsm at Startup into PlayerFsmData (shared Arc<SmData<InputDriver>>).
+ * Attaches FsmRuntime to any newly spawned Player entity via insert_player_fsm.
  * fsm_update_system (in PlayerPlugin) evaluates input pad flags each frame
  * and drives ONI2 animation transitions.
  */
-pub mod parser;
+pub mod core;
+pub mod drivers;
 pub mod runtime;
 pub mod types;
 
 pub use runtime::{FsmRuntime, fsm_update_system};
-pub use types::FsmData;
 
 use bevy::prelude::*;
 use std::sync::Arc;
 
 use crate::player::components::Player;
 
+use core::SmData;
+use drivers::input::{INPUT_ACTION_PARSER, INPUT_EVENT_PARSER, InputDriver};
+use drivers::parse::parse_sm;
+
 /// Bevy resource wrapping the shared player FSM data.
 #[derive(Resource)]
-pub struct PlayerFsmData(pub Arc<FsmData>);
+pub struct PlayerFsmData(pub Arc<SmData<InputDriver>>);
 
 pub struct StateMachinePlugin;
 
 impl Plugin for StateMachinePlugin {
     fn build(&self, app: &mut App) {
-        // Load FSM data before any game state runs
         app.add_systems(Startup, load_player_fsm);
-        // Insert FsmRuntime on newly spawned player entities
         app.add_systems(Update, insert_player_fsm);
     }
 }
@@ -38,16 +40,21 @@ impl Plugin for StateMachinePlugin {
 // ---------------------------------------------------------------------------
 
 fn load_player_fsm(mut commands: Commands) {
-    match crate::vfs::read_to_string("Statemachine", "player.fsm") {
-        Ok(text) => match parser::parse_fsm(&text) {
-            Ok(data) => {
-                let n = data.states.len();
-                commands.insert_resource(PlayerFsmData(Arc::new(data)));
-                info!("FSM: player.fsm loaded — {} states", n);
-            }
-            Err(e) => error!("FSM: failed to parse player.fsm: {}", e),
-        },
-        Err(e) => error!("FSM: failed to read player.fsm: {}", e),
+    let text = match crate::vfs::read_to_string("Statemachine", "player.fsm") {
+        Ok(t) => t,
+        Err(e) => {
+            error!("FSM: failed to read player.fsm: {}", e);
+            return;
+        }
+    };
+
+    match parse_sm::<InputDriver>(&text, INPUT_EVENT_PARSER, INPUT_ACTION_PARSER) {
+        Ok(data) => {
+            let n = data.states.len();
+            commands.insert_resource(PlayerFsmData(Arc::new(data)));
+            info!("FSM: player.fsm loaded — {} states", n);
+        }
+        Err(e) => error!("FSM: failed to parse player.fsm: {}", e),
     }
 }
 
@@ -68,7 +75,7 @@ fn insert_player_fsm(
         info!("FSM: FsmRuntime attached to player {:?}", entity);
         spawned = true;
     }
-    
+
     if spawned {
         pad_mapper.clear();
     }

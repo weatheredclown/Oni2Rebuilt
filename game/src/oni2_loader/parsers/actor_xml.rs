@@ -140,10 +140,15 @@ fn extract_component(chain: &[String], has_components: bool, tag: &str) -> Optio
                 requested = true;
             }
             merged.push_str(&block);
+            merged.push_str("\n");
         }
     }
 
-    Some(merged)
+    if !requested || merged.is_empty() {
+        None
+    } else {
+        Some(merged)
+    }
 }
 
 trait OptionExt {
@@ -152,7 +157,8 @@ trait OptionExt {
 
 impl OptionExt for Option<String> {
     fn is_none_or_empty_hint(&self) -> bool {
-        self.as_deref().map_or(true, |v| v.eq_ignore_ascii_case("none"))
+        self.as_deref()
+            .map_or(true, |v| v.eq_ignore_ascii_case("none"))
     }
 }
 
@@ -315,11 +321,9 @@ pub fn parse_actor_xml(dir: &str, filename: &str, template_dir: &str) -> Option<
         }
     }
 
-    // If an entity type isn't explicitly defined, fallback to the generic IconTrigger so it has a default 
+    // If an entity type isn't explicitly defined, fallback to the generic IconTrigger so it has a default
     // sprite in the layout editor instead of trying to load its literal instance name as a mesh folder.
-    let entity_type = entity_type.unwrap_or_else(|| {
-        "IconTrigger".to_string()
-    });
+    let entity_type = entity_type.unwrap_or_else(|| "IconTrigger".to_string());
 
     // Extract FX block (e.g. <FX> ... </FX>)
     let mut fx_type: Option<String> = None;
@@ -331,12 +335,13 @@ pub fn parse_actor_xml(dir: &str, filename: &str, template_dir: &str) -> Option<
 
     let health_block = extract_component(&chain, has_components_xml, "Health");
     let mut max_hitpoints: Option<f32> = None;
-    let mut destroy_time: Option<f32> = None;    
+    let mut destroy_time: Option<f32> = None;
     if let Some(block) = health_block {
         if let Some(v) = extract_xml_attr(&block, "MaxHitPoints") {
             max_hitpoints = v.parse().ok();
         }
-        if let Some(v) = extract_xml_attr(&block, "DestroyTime") { // how many seconds to wait until destroying the dead actor
+        if let Some(v) = extract_xml_attr(&block, "DestroyTime") {
+            // how many seconds to wait until destroying the dead actor
             destroy_time = v.parse().ok();
         }
     }

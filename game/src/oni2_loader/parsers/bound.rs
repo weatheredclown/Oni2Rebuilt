@@ -44,7 +44,10 @@ pub fn parse_bound(content: &str) -> Oni2Bound {
                 let y: f32 = parts[2].parse().unwrap_or(0.0);
                 let z: f32 = parts[3].parse().unwrap_or(0.0);
                 // Lazily create a sub-bound for files with no "bound:" header.
-                current.get_or_insert_with(Oni2SubBound::default).vertices.push([x, y, z]);
+                current
+                    .get_or_insert_with(Oni2SubBound::default)
+                    .vertices
+                    .push([x, y, z]);
             }
         } else if trimmed.starts_with("centroid:") {
             let parts: Vec<&str> = trimmed.split_whitespace().collect();
@@ -69,7 +72,10 @@ pub fn parse_bound(content: &str) -> Oni2Bound {
                 let a: u32 = parts[1].parse().unwrap_or(0);
                 let b: u32 = parts[2].parse().unwrap_or(0);
                 // Edge normals may follow indices on the same line — we only need a, b.
-                current.get_or_insert_with(Oni2SubBound::default).edges.push([a, b]);
+                current
+                    .get_or_insert_with(Oni2SubBound::default)
+                    .edges
+                    .push([a, b]);
             }
         } else if trimmed.starts_with("quad ") {
             let parts: Vec<&str> = trimmed.split_whitespace().collect();
@@ -78,7 +84,10 @@ pub fn parse_bound(content: &str) -> Oni2Bound {
                 let b: u32 = parts[2].parse().unwrap_or(0);
                 let c: u32 = parts[3].parse().unwrap_or(0);
                 let d: u32 = parts[4].parse().unwrap_or(0);
-                current.get_or_insert_with(Oni2SubBound::default).quads.push([a, b, c, d]);
+                current
+                    .get_or_insert_with(Oni2SubBound::default)
+                    .quads
+                    .push([a, b, c, d]);
             }
         } else if trimmed.starts_with("tri ") {
             let parts: Vec<&str> = trimmed.split_whitespace().collect();
@@ -86,7 +95,10 @@ pub fn parse_bound(content: &str) -> Oni2Bound {
                 let a: u32 = parts[1].parse().unwrap_or(0);
                 let b: u32 = parts[2].parse().unwrap_or(0);
                 let c: u32 = parts[3].parse().unwrap_or(0);
-                current.get_or_insert_with(Oni2SubBound::default).tris.push([a, b, c]);
+                current
+                    .get_or_insert_with(Oni2SubBound::default)
+                    .tris
+                    .push([a, b, c]);
             }
         }
     }

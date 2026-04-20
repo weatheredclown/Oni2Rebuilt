@@ -1,14 +1,17 @@
 mod ai;
+mod animator;
 mod camera;
 mod combat;
 mod control_map;
 mod debug;
 mod door;
 mod explosion;
+mod fight;
 mod fight_vector;
 pub mod filesystem;
 mod fx_system;
 mod hud;
+mod inventory;
 pub mod menu;
 pub mod oni2_loader;
 mod player;
@@ -16,6 +19,7 @@ mod projectile_system;
 mod scroni;
 mod statemachine;
 pub mod telemetry;
+mod weapons;
 
 pub use filesystem::dave_vfs;
 pub use filesystem::vfs;

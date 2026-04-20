@@ -1212,7 +1212,10 @@ impl Compiler {
     fn parse_sound(&mut self) -> Stmt {
         self.advance(); // skip 'sound'
         let mut args = Vec::new();
-        while !self.at_end() && (is_expr_start(self.code()) || matches!(self.code(), TokenCode::Play | TokenCode::Stop)) {
+        while !self.at_end()
+            && (is_expr_start(self.code())
+                || matches!(self.code(), TokenCode::Play | TokenCode::Stop))
+        {
             if self.code() == TokenCode::Play {
                 self.advance();
                 args.push(Expr::StringLit("play".to_string()));
@@ -1233,19 +1236,26 @@ impl Compiler {
         let mut orientation = None;
         if self.skip_if(TokenCode::Identifier) {
             // Check if identifier is `orientation`
-            if self.tokens[self.pos - 1].text.eq_ignore_ascii_case("orientation") {
+            if self.tokens[self.pos - 1]
+                .text
+                .eq_ignore_ascii_case("orientation")
+            {
                 orientation = Some(self.parse_expr());
             }
         }
         self.skip_if(TokenCode::Identifier); // skip `at`
         let at = self.parse_expr();
-        Stmt::MakeExplosion { name, orientation, at }
+        Stmt::MakeExplosion {
+            name,
+            orientation,
+            at,
+        }
     }
 
     fn parse_hit(&mut self) -> Stmt {
         self.advance(); // skip 'hit'
         let expr1 = self.parse_expr();
-        
+
         let (hit_type, victim) = if self.code() == TokenCode::For || !is_expr_start(self.code()) {
             (Expr::StringLit("instant".to_string()), expr1)
         } else {
@@ -1257,7 +1267,11 @@ impl Compiler {
         } else {
             Expr::FloatLit(1.0)
         };
-        Stmt::Hit { hit_type, victim, damage }
+        Stmt::Hit {
+            hit_type,
+            victim,
+            damage,
+        }
     }
 
     fn parse_ambient_sound(&mut self) -> Stmt {
@@ -2073,7 +2087,11 @@ end
                     }
                     false
                 });
-                assert!(has_log_b2, "Log [b2] not found in AST. Sequence length: {}", script.sequence.len());
+                assert!(
+                    has_log_b2,
+                    "Log [b2] not found in AST. Sequence length: {}",
+                    script.sequence.len()
+                );
             }
             Err(e) => {
                 panic!("Compile errors: {:?}", e);
@@ -2081,4 +2099,3 @@ end
         }
     }
 }
-

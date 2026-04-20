@@ -14,10 +14,10 @@ use bevy::prelude::*;
 use std::collections::HashMap;
 use std::sync::{LazyLock, RwLock};
 
-pub static DEBUG_NAMES: LazyLock<RwLock<HashMap<Entity, String>>> = 
+pub static DEBUG_NAMES: LazyLock<RwLock<HashMap<Entity, String>>> =
     LazyLock::new(|| RwLock::new(HashMap::new()));
 
-pub static DEBUG_TYPES: LazyLock<RwLock<HashMap<Entity, String>>> = 
+pub static DEBUG_TYPES: LazyLock<RwLock<HashMap<Entity, String>>> =
     LazyLock::new(|| RwLock::new(HashMap::new()));
 
 pub struct DebugPlugin;
@@ -245,7 +245,12 @@ pub fn debug_name(entity: Entity) -> String {
     format!("{:?}", entity)
 }
 
-fn sync_debug_types(query: Query<(Entity, &crate::oni2_loader::components::BoundType), Changed<crate::oni2_loader::components::BoundType>>) {
+fn sync_debug_types(
+    query: Query<
+        (Entity, &crate::oni2_loader::components::BoundType),
+        Changed<crate::oni2_loader::components::BoundType>,
+    >,
+) {
     if let Ok(mut map) = DEBUG_TYPES.write() {
         for (entity, bt) in &query {
             map.insert(entity, bt.0.clone());

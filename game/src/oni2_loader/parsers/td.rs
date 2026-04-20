@@ -32,14 +32,22 @@ pub struct SoundBankDirectory {
 
 pub fn parse_td_file(content: &str) -> Option<TdProgram> {
     let mut lines = content.lines().filter_map(|l| {
-        let no_comment = if let Some(idx) = l.find("//") { &l[..idx] } else { l };
+        let no_comment = if let Some(idx) = l.find("//") {
+            &l[..idx]
+        } else {
+            l
+        };
         let trimmed = no_comment.trim();
-        if trimmed.is_empty() { None } else { Some(trimmed) }
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed)
+        }
     });
-    
+
     let mut program_name = String::new();
     let mut splits = Vec::new();
-    
+
     while let Some(line) = lines.next() {
         if line.starts_with("PROGRAM") {
             program_name = line.strip_prefix("PROGRAM").unwrap().trim().to_string();
@@ -51,10 +59,16 @@ pub fn parse_td_file(content: &str) -> Option<TdProgram> {
                         Some(n) => n.to_string(),
                         None => break,
                     };
-                    let vag_idx = lines.next().and_then(|l| l.parse::<usize>().ok()).unwrap_or(0);
-                    let parm_idx = lines.next().and_then(|l| l.parse::<usize>().ok()).unwrap_or(0);
+                    let vag_idx = lines
+                        .next()
+                        .and_then(|l| l.parse::<usize>().ok())
+                        .unwrap_or(0);
+                    let parm_idx = lines
+                        .next()
+                        .and_then(|l| l.parse::<usize>().ok())
+                        .unwrap_or(0);
                     let loop_val = lines.next().and_then(|l| l.parse::<u8>().ok()).unwrap_or(0);
-                    
+
                     splits.push(TdSplit {
                         name: split_name,
                         vag_index: vag_idx,
@@ -65,7 +79,7 @@ pub fn parse_td_file(content: &str) -> Option<TdProgram> {
             }
         }
     }
-    
+
     if program_name.is_empty() {
         None
     } else {
@@ -78,7 +92,7 @@ pub fn parse_td_file(content: &str) -> Option<TdProgram> {
 
 pub fn load_all_tds() -> SoundBankDirectory {
     let mut dir = SoundBankDirectory::default();
-    
+
     let search_dir = "Audio/banks";
     match crate::vfs::read_dir(search_dir) {
         Ok(entries) => {
@@ -88,11 +102,16 @@ pub fn load_all_tds() -> SoundBankDirectory {
                 if path.to_lowercase().ends_with(".td") {
                     if let Ok(content) = crate::vfs::read_to_string("", &path) {
                         if let Some(mut prog) = parse_td_file(&content) {
-                            let bank_base = std::path::Path::new(&path).file_stem().unwrap().to_string_lossy().to_string();
-                            
+                            let bank_base = std::path::Path::new(&path)
+                                .file_stem()
+                                .unwrap()
+                                .to_string_lossy()
+                                .to_string();
+
                             for split in prog.splits {
                                 let full_name = format!("{}:{}", prog.name, split.name);
-                                dir.sounds.insert(full_name, (bank_base.clone(), split.vag_index));
+                                dir.sounds
+                                    .insert(full_name, (bank_base.clone(), split.vag_index));
                             }
                             td_count += 1;
                         } else {
@@ -101,12 +120,18 @@ pub fn load_all_tds() -> SoundBankDirectory {
                     }
                 }
             }
-            info!("Loaded {} .td banks from VFS namespace '{}'", td_count, search_dir);
+            info!(
+                "Loaded {} .td banks from VFS namespace '{}'",
+                td_count, search_dir
+            );
         }
         Err(e) => {
-            warn!("Failed to read .td manifest directory at VFS path {}: {}", search_dir, e);
+            warn!(
+                "Failed to read .td manifest directory at VFS path {}: {}",
+                search_dir, e
+            );
         }
     }
-    
+
     dir
 }

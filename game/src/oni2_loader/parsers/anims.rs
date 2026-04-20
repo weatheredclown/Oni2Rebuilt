@@ -68,7 +68,10 @@ pub fn parse_anims_content(
 /// Parse an entity's .attacks file and return the standing forward combo chain.
 /// Entries are kept only when the anim filename contains `_comb_fwd_`, preserving
 /// file order.
-pub fn load_attack_data(entity_dir: &str, entity_name: &str) -> crate::combat::components::AttackData {
+pub fn load_attack_data(
+    entity_dir: &str,
+    entity_name: &str,
+) -> crate::combat::components::AttackData {
     let tune_path = format!("entity.tune/{}/{}.attacks", entity_name, entity_name);
     let entity_path = format!("{}/{}.attacks", entity_dir, entity_name);
 
@@ -93,8 +96,14 @@ pub fn load_attack_data(entity_dir: &str, entity_name: &str) -> crate::combat::c
         if trimmed.is_empty() || trimmed.starts_with(';') || trimmed.starts_with('#') {
             continue;
         }
-        if trimmed == "Anims {" { in_anims = true; continue; }
-        if trimmed == "}" { in_anims = false; continue; }
+        if trimmed == "Anims {" {
+            in_anims = true;
+            continue;
+        }
+        if trimmed == "}" {
+            in_anims = false;
+            continue;
+        }
         if in_anims {
             let parts: Vec<&str> = trimmed.split_whitespace().collect();
             if parts.len() >= 2 && parts[0].contains("_comb_fwd_") {
@@ -103,7 +112,11 @@ pub fn load_attack_data(entity_dir: &str, entity_name: &str) -> crate::combat::c
         }
     }
 
-    info!("AttackData for {}: {} forward combo entries", entity_name, forward_combo.len());
+    info!(
+        "AttackData for {}: {} forward combo entries",
+        entity_name,
+        forward_combo.len()
+    );
     crate::combat::components::AttackData { forward_combo }
 }
 

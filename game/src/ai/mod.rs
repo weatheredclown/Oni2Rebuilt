@@ -7,8 +7,8 @@
  * intent-derived velocity each tick.
  */
 pub mod components;
-pub mod systems;
 pub mod navigation;
+pub mod systems;
 
 use bevy::prelude::*;
 

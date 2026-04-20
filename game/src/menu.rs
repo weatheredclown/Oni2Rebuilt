@@ -568,7 +568,10 @@ fn scan_entities(filter_layout: Option<&str>) -> Vec<String> {
                 }
             }
         } else {
-            warn!("Could not read layout.et for '{}', showing all entities instead.", layout_name);
+            warn!(
+                "Could not read layout.et for '{}', showing all entities instead.",
+                layout_name
+            );
         }
     }
 
@@ -593,7 +596,7 @@ fn scan_entities(filter_layout: Option<&str>) -> Vec<String> {
 fn setup_entity_menu(
     mut commands: Commands,
     scroll_state: Res<MenuScrollState>,
-    selected_layout: Option<Res<SelectedLayout>>
+    selected_layout: Option<Res<SelectedLayout>>,
 ) {
     let entities = scan_entities(selected_layout.as_ref().map(|sl| sl.0.as_str()));
 

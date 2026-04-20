@@ -1,20 +1,18 @@
 use avian3d::prelude::*;
 use bevy::prelude::*;
 
-use crate::combat::events::InjureMessage;
 use crate::combat::components::Health;
+use crate::combat::events::InjureMessage;
 use crate::oni2_loader::registries::ExplosionRegistry;
 
 #[derive(Component)]
 pub struct ActiveExplosion {
     pub name: String,
     pub at: Vec3,
-    pub timer: f32, // Elapsed time since spawned
+    pub timer: f32,          // Elapsed time since spawned
     pub blast_duration: f32, // Track max lifetime from bounding definition
     pub spawn_source: Entity,
 }
-
-
 
 pub fn update_explosion_system(
     mut commands: Commands,
@@ -41,7 +39,7 @@ pub fn update_explosion_system(
                     parent: None,
                     start_active: true,
                 });
-                
+
                 // Fallback attempt to play as sound if it was an Sfx moniker
                 commands.trigger(crate::scroni::vm::ScrOniSysEvent::PlaySound {
                     script_entity: active.spawn_source,
@@ -57,11 +55,11 @@ pub fn update_explosion_system(
                 let max_radii = Vec3::from(ellipsoid.max_radii);
                 // Simplify ellipsoid bounding as sphere for now (using largest radius)
                 let radius = max_radii.max_element();
-                
+
                 for (t_ent, t_tf, t_health) in &targets {
                     let dist_sq = t_tf.translation.distance_squared(active.at);
                     if dist_sq < radius * radius {
-                        // Apply damage! For continuous, we scale by dt. 
+                        // Apply damage! For continuous, we scale by dt.
                         let dmg = if ellipsoid.continuous_damage {
                             ellipsoid.max_damage * dt
                         } else {

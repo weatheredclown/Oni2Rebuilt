@@ -7,7 +7,9 @@
  * function dispatching the statement variants it owns.
  */
 use crate::scroni::ast::Expr;
-use crate::scroni::vm::{ScriptExec, ScroniContext, Value, SysRequest, ScrOniThread, BlockingAction, ExecState};
+use crate::scroni::vm::{
+    BlockingAction, ExecState, ScrOniThread, ScriptExec, ScroniContext, SysRequest, Value,
+};
 
 pub mod animation;
 pub mod audio;

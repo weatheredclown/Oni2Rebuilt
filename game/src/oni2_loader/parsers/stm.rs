@@ -5,10 +5,10 @@
  * Decodes the container and produces an AudioSource for Bevy's audio system.
  * Registered as a Bevy asset loader so .stm files can be loaded via AssetServer.
  */
-use std::io::Cursor;
 use bevy::asset::{AssetLoader, LoadContext, io::Reader};
 use bevy::audio::AudioSource;
 use bevy::prelude::*;
+use std::io::Cursor;
 use std::sync::Arc;
 
 #[derive(Clone, Default, bevy::prelude::Reflect)]
@@ -28,10 +28,10 @@ impl AssetLoader for StmAssetLoader {
     ) -> Result<Self::Asset, Self::Error> {
         let mut bytes = Vec::new();
         reader.read_to_end(&mut bytes).await?;
-        
+
         let decoded = decode_stm(&bytes)?;
         let wav_bytes = create_wav_bytes(&decoded)?;
-        
+
         Ok(AudioSource {
             bytes: Arc::from(wav_bytes),
         })
@@ -55,7 +55,9 @@ pub struct StmDecoded {
     pub loop_end: Option<u32>,
 }
 
-pub fn decode_stm(data: &[u8]) -> Result<StmDecoded, Box<dyn std::error::Error + Send + Sync + 'static>> {
+pub fn decode_stm(
+    data: &[u8],
+) -> Result<StmDecoded, Box<dyn std::error::Error + Send + Sync + 'static>> {
     if data.len() < START_OFFSET {
         return Err("File too small to be STM".into());
     }
@@ -67,16 +69,17 @@ pub fn decode_stm(data: &[u8]) -> Result<StmDecoded, Box<dyn std::error::Error +
         _ => return Err("Not an STM/STMA file".into()),
     };
 
-    let read_u32 = |offset: usize| -> Result<u32, Box<dyn std::error::Error + Send + Sync + 'static>> {
-        if offset + 4 > data.len() {
-            return Err("Unexpected EOF while reading header".into());
-        }
-        Ok(if big_endian {
-            u32::from_be_bytes(data[offset..offset + 4].try_into().unwrap())
-        } else {
-            u32::from_le_bytes(data[offset..offset + 4].try_into().unwrap())
-        })
-    };
+    let read_u32 =
+        |offset: usize| -> Result<u32, Box<dyn std::error::Error + Send + Sync + 'static>> {
+            if offset + 4 > data.len() {
+                return Err("Unexpected EOF while reading header".into());
+            }
+            Ok(if big_endian {
+                u32::from_be_bytes(data[offset..offset + 4].try_into().unwrap())
+            } else {
+                u32::from_le_bytes(data[offset..offset + 4].try_into().unwrap())
+            })
+        };
 
     let interleave = read_u32(0x08)? as usize;
     let sample_rate = read_u32(0x0c)?;
@@ -134,7 +137,11 @@ pub fn decode_stm(data: &[u8]) -> Result<StmDecoded, Box<dyn std::error::Error +
         (true, 4) => {
             return Err("GC DSP STMA files are not supported yet".into());
         }
-        _ => return Err(format!("Unsupported STM encoding (bps={bps}, big_endian={big_endian})").into()),
+        _ => {
+            return Err(
+                format!("Unsupported STM encoding (bps={bps}, big_endian={big_endian})").into(),
+            );
+        }
     };
 
     Ok(StmDecoded {
@@ -146,7 +153,11 @@ pub fn decode_stm(data: &[u8]) -> Result<StmDecoded, Box<dyn std::error::Error +
     })
 }
 
-fn decode_pcm(data: &[u8], channels: usize, big_endian: bool) -> Result<Vec<i16>, Box<dyn std::error::Error + Send + Sync + 'static>> {
+fn decode_pcm(
+    data: &[u8],
+    channels: usize,
+    big_endian: bool,
+) -> Result<Vec<i16>, Box<dyn std::error::Error + Send + Sync + 'static>> {
     if data.len() % 2 != 0 {
         return Err("PCM data not aligned".into());
     }
@@ -165,7 +176,11 @@ fn decode_pcm(data: &[u8], channels: usize, big_endian: bool) -> Result<Vec<i16>
     Ok(samples)
 }
 
-fn decode_ima(data: &[u8], channels: usize, block_size: usize) -> Result<Vec<i16>, Box<dyn std::error::Error + Send + Sync + 'static>> {
+fn decode_ima(
+    data: &[u8],
+    channels: usize,
+    block_size: usize,
+) -> Result<Vec<i16>, Box<dyn std::error::Error + Send + Sync + 'static>> {
     if block_size < 4 {
         return Err("IMA block size too small".into());
     }
@@ -199,7 +214,9 @@ fn decode_ima(data: &[u8], channels: usize, block_size: usize) -> Result<Vec<i16
     Ok(interleaved)
 }
 
-fn decode_ima_block(block: &[u8]) -> Result<Vec<i16>, Box<dyn std::error::Error + Send + Sync + 'static>> {
+fn decode_ima_block(
+    block: &[u8],
+) -> Result<Vec<i16>, Box<dyn std::error::Error + Send + Sync + 'static>> {
     if block.len() < 4 {
         return Err("IMA block shorter than header".into());
     }

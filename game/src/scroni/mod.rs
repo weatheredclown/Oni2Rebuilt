@@ -8,11 +8,11 @@
  */
 pub mod ast;
 pub mod compiler;
+pub mod ops;
+pub mod system_bindings;
 pub mod token;
 pub mod tokenizer;
 pub mod vm;
-pub mod ops;
-pub mod system_bindings;
 
 use bevy::prelude::*;
 

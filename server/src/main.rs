@@ -20,8 +20,8 @@ use rb_shared::proto::telemetry::telemetry_service_server::{
     TelemetryService, TelemetryServiceServer,
 };
 use rb_shared::proto::telemetry::{
-    QueryRequest as GrpcQueryRequest, QueryResponse as GrpcQueryResponse,
-    SendEventsRequest, SendEventsResponse,
+    QueryRequest as GrpcQueryRequest, QueryResponse as GrpcQueryResponse, SendEventsRequest,
+    SendEventsResponse,
 };
 use serde::Deserialize;
 use tokio::sync::Mutex;

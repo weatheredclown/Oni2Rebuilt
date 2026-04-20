@@ -45,9 +45,18 @@ pub fn parse_audiopackages(content: &str) -> AudioPackagesDirectory {
                 if let Some(n) = current_nugget.take() {
                     current_pkg_nuggets.push(n);
                 }
-                dir.insert(name, AudioPackage { nuggets: std::mem::take(&mut current_pkg_nuggets) });
+                dir.insert(
+                    name,
+                    AudioPackage {
+                        nuggets: std::mem::take(&mut current_pkg_nuggets),
+                    },
+                );
             }
-            let name_str = line.strip_prefix("PACKAGE").unwrap().trim().trim_matches('"');
+            let name_str = line
+                .strip_prefix("PACKAGE")
+                .unwrap()
+                .trim()
+                .trim_matches('"');
             current_pkg_name = Some(name_str.to_string());
         } else if line == "NUGGET" {
             if let Some(n) = current_nugget.take() {
@@ -79,26 +88,67 @@ pub fn parse_audiopackages(content: &str) -> AudioPackagesDirectory {
                 let clean_val = value_str.trim_matches('"');
                 match key.as_str() {
                     "SOUND" => nugget.sound = clean_val.to_string(),
-                    "VOLUME" => if let Ok(v) = clean_val.parse() { nugget.volume = v },
-                    "PITCH" => if let Ok(v) = clean_val.parse() { nugget.pitch = v },
-                    "DELAY" => if let Ok(v) = clean_val.parse() { nugget.delay = v },
-                    "RANDOM_MIN_VOLUME" => if let Ok(v) = clean_val.parse() { nugget.random_min_volume = v },
-                    "RANDOM_MAX_VOLUME" => if let Ok(v) = clean_val.parse() { nugget.random_max_volume = v },
-                    "RANDOM_MIN_PITCH" => if let Ok(v) = clean_val.parse() { nugget.random_min_pitch = v },
-                    "RANDOM_MAX_PITCH" => if let Ok(v) = clean_val.parse() { nugget.random_max_pitch = v },
-                    "RANDOM_MIN_DELAY" => if let Ok(v) = clean_val.parse() { nugget.random_min_delay = v },
-                    "RANDOM_MAX_DELAY" => if let Ok(v) = clean_val.parse() { nugget.random_max_delay = v },
+                    "VOLUME" => {
+                        if let Ok(v) = clean_val.parse() {
+                            nugget.volume = v
+                        }
+                    }
+                    "PITCH" => {
+                        if let Ok(v) = clean_val.parse() {
+                            nugget.pitch = v
+                        }
+                    }
+                    "DELAY" => {
+                        if let Ok(v) = clean_val.parse() {
+                            nugget.delay = v
+                        }
+                    }
+                    "RANDOM_MIN_VOLUME" => {
+                        if let Ok(v) = clean_val.parse() {
+                            nugget.random_min_volume = v
+                        }
+                    }
+                    "RANDOM_MAX_VOLUME" => {
+                        if let Ok(v) = clean_val.parse() {
+                            nugget.random_max_volume = v
+                        }
+                    }
+                    "RANDOM_MIN_PITCH" => {
+                        if let Ok(v) = clean_val.parse() {
+                            nugget.random_min_pitch = v
+                        }
+                    }
+                    "RANDOM_MAX_PITCH" => {
+                        if let Ok(v) = clean_val.parse() {
+                            nugget.random_max_pitch = v
+                        }
+                    }
+                    "RANDOM_MIN_DELAY" => {
+                        if let Ok(v) = clean_val.parse() {
+                            nugget.random_min_delay = v
+                        }
+                    }
+                    "RANDOM_MAX_DELAY" => {
+                        if let Ok(v) = clean_val.parse() {
+                            nugget.random_max_delay = v
+                        }
+                    }
                     _ => {}
                 }
             }
         }
     }
-    
+
     if let Some(name) = current_pkg_name {
         if let Some(n) = current_nugget.take() {
             current_pkg_nuggets.push(n);
         }
-        dir.insert(name, AudioPackage { nuggets: current_pkg_nuggets });
+        dir.insert(
+            name,
+            AudioPackage {
+                nuggets: current_pkg_nuggets,
+            },
+        );
     }
 
     dir

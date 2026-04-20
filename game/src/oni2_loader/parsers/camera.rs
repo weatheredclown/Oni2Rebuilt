@@ -5,10 +5,10 @@
  * parameter set names.  CameraParameterSet: numeric tuning values (FOV, distance,
  * incline offset, lerp rates, dead zones) fed into CameraChannel each frame.
  */
-use std::collections::HashMap;
-use bevy::prelude::info;
-use crate::oni2_loader::utils::space;
 use crate::oni2_loader::utils::parse::parse_f32;
+use crate::oni2_loader::utils::space;
+use bevy::prelude::info;
+use std::collections::HashMap;
 
 #[derive(Debug, Clone)]
 pub struct CameraPackageDef {
@@ -145,15 +145,15 @@ pub fn parse_camera_xml(dir: &str, filename: &str) -> Option<CameraParameterSet>
             if filename == "DEFAULT_FOLLOW.xml" {
                 info!("File {} not found, using magic defaults.", filename);
                 params.name = "DEFAULT_FOLLOW".to_string();
-                params.incline_offset = 10.0_f32.to_radians(); 
-                params.incline_offset_running = 20.0_f32.to_radians(); 
+                params.incline_offset = 10.0_f32.to_radians();
+                params.incline_offset_running = 20.0_f32.to_radians();
                 params.dead_zone_inner_radius = 1.5;
                 params.dead_zone_outer_radius = 4.0;
                 params.lerp_rate_azimuth_zone1 = 2.0;
                 params.lerp_rate_azimuth_zone2 = 3.0;
                 params.lerp_rate_azimuth_zone3 = 3.0;
                 params.lerp_rate_azimuth_zone4 = 3.0;
-                params.spin_threshold = 45.0_f32.to_radians(); 
+                params.spin_threshold = 45.0_f32.to_radians();
                 return Some(params);
             } else if filename == "DEFAULT_FIGHT.xml" {
                 info!("File {} not found, using magic defaults.", filename);
@@ -197,28 +197,20 @@ pub fn parse_camera_xml(dir: &str, filename: &str) -> Option<CameraParameterSet>
             "Name" => params.name = value_str.to_string(),
             "FOV" => params.fov = parse_f32(value_str, 50.0),
             "Distance" => params.distance = parse_f32(value_str, 3.0),
-            "InclineOffset" => params.incline_offset = space::oni2_camera_incline_to_bevy(parse_f32(value_str, 0.0)),
+            "InclineOffset" => {
+                params.incline_offset =
+                    space::oni2_camera_incline_to_bevy(parse_f32(value_str, 0.0))
+            }
             "InclineOffsetRunning" => {
-                params.incline_offset_running = space::oni2_camera_incline_to_bevy(parse_f32(value_str, 0.0))
+                params.incline_offset_running =
+                    space::oni2_camera_incline_to_bevy(parse_f32(value_str, 0.0))
             }
-            "DeadZoneInnerRadius" => {
-                params.dead_zone_inner_radius = parse_f32(value_str, 0.0)
-            }
-            "DeadZoneOuterRadius" => {
-                params.dead_zone_outer_radius = parse_f32(value_str, 0.0)
-            }
-            "LerpRateAzimuthZone1" => {
-                params.lerp_rate_azimuth_zone1 = parse_f32(value_str, 0.0)
-            }
-            "LerpRateAzimuthZone2" => {
-                params.lerp_rate_azimuth_zone2 = parse_f32(value_str, 0.0)
-            }
-            "LerpRateAzimuthZone3" => {
-                params.lerp_rate_azimuth_zone3 = parse_f32(value_str, 0.0)
-            }
-            "LerpRateAzimuthZone4" => {
-                params.lerp_rate_azimuth_zone4 = parse_f32(value_str, 0.0)
-            }
+            "DeadZoneInnerRadius" => params.dead_zone_inner_radius = parse_f32(value_str, 0.0),
+            "DeadZoneOuterRadius" => params.dead_zone_outer_radius = parse_f32(value_str, 0.0),
+            "LerpRateAzimuthZone1" => params.lerp_rate_azimuth_zone1 = parse_f32(value_str, 0.0),
+            "LerpRateAzimuthZone2" => params.lerp_rate_azimuth_zone2 = parse_f32(value_str, 0.0),
+            "LerpRateAzimuthZone3" => params.lerp_rate_azimuth_zone3 = parse_f32(value_str, 0.0),
+            "LerpRateAzimuthZone4" => params.lerp_rate_azimuth_zone4 = parse_f32(value_str, 0.0),
             "LockHeadingUntilMove" => {
                 params.lock_heading_until_move =
                     value_str == "1" || value_str.eq_ignore_ascii_case("true")

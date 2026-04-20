@@ -247,7 +247,9 @@ pub fn setup_testentity_scene(
     mut anim_registry: ResMut<crate::oni2_loader::registries::AnimRegistry>,
     testent: Option<Res<TestEntityMode>>,
 ) {
-    let Some(testent) = testent else { return; };
+    let Some(testent) = testent else {
+        return;
+    };
     let entity_name = &testent.0;
     let entity_dir = format!("Entity/{}", entity_name);
 

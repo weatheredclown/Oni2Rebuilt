@@ -5,9 +5,9 @@
  * Bypasses CameraChannel entirely — directly writes Transform.  Active only when
  * a DebugFreeCamera entity exists (spawned by camera_mode_toggle_system on F5).
  */
-use bevy::prelude::*;
-use bevy::input::mouse::AccumulatedMouseMotion;
 use super::components::DebugFreeCamera;
+use bevy::input::mouse::AccumulatedMouseMotion;
+use bevy::prelude::*;
 
 /// Handles debug free-fly movement and rotation independently of the CameraChannel
 /// because it overrides Transform natively directly via WASD.

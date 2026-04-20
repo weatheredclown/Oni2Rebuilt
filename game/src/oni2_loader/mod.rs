@@ -15,17 +15,17 @@ pub mod formation;
 pub mod headik;
 pub mod layout_loader;
 pub mod parsers;
+pub mod physics;
 pub mod registries;
 pub mod spawn;
 pub mod testanim;
 pub mod utils;
-pub mod physics;
 
 pub use animation::*;
 pub use components::*;
+pub use environment::*;
 pub use formation::{free_camera_system, setup_formation_scene};
 pub use headik::{head_ik_setup_system, head_ik_system};
-pub use environment::*;
 pub use layout_loader::*;
 pub use registries::*;
 pub use spawn::*;
@@ -75,8 +75,7 @@ impl Plugin for Oni2LoaderPlugin {
             .add_systems(Startup, (load_global_registries, load_global_explosions))
             .add_systems(
                 PhysicsSchedule,
-                physics::octree_one_way_contact_system
-                    .in_set(NarrowPhaseSystems::Last),
+                physics::octree_one_way_contact_system.in_set(NarrowPhaseSystems::Last),
             )
             .add_systems(
                 Update,
@@ -97,10 +96,8 @@ impl Plugin for Oni2LoaderPlugin {
             .add_systems(
                 Update,
                 (
-                    scroni::vm::update_broadcast_triggers
-                        .before(scroni::vm::scroni_tick_system),
-                    scroni::vm::checkpoint_trigger_system
-                        .before(scroni::vm::scroni_tick_system),
+                    scroni::vm::update_broadcast_triggers.before(scroni::vm::scroni_tick_system),
+                    scroni::vm::checkpoint_trigger_system.before(scroni::vm::scroni_tick_system),
                     scroni::vm::scroni_tick_system,
                     scroni::vm::cleanup_scroni_text,
                     scroni::vm::update_screen_fade_system,

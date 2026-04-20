@@ -6,6 +6,9 @@
  * pad_flags / ctrl_flags / entity_flags: u64 bitmask constants matching
  * ONI2's PADCMD_* and CTRL_* enumerations used in transition rule evaluation.
  */
+/// Radians per rotation notch (PI/4 = 45°). Matches NOTCHES2RADIANS in ONI2.
+pub const NOTCH_RADIANS: f32 = std::f32::consts::FRAC_PI_4;
+
 /// Bit flags for pad commands — one bit per logical button/direction.
 /// u64 gives room for all ACK directional variants.
 pub mod pad_flags {
@@ -74,8 +77,6 @@ pub mod ctrl_flags {
     pub const ENEMY_IN_SLICE: u32 = 0x10000;
     pub const STARTING_CROUCH: u32 = 0x20000;
     pub const ENDING_CROUCH: u32 = 0x40000;
-    // Synthetic weapon-type flags (from HAS_WEAPON:TYPE in .fsm Packet args)
-    pub const HAS_WEAPON_PIPE: u32 = 0x80000;
 }
 
 /// Entity state flags used in Me() / Target() events.
@@ -98,6 +99,8 @@ pub struct FsmPacket {
     pub me_flags: u32,
     /// Target entity state flags for Target() events
     pub target_flags: u32,
+    /// Weapon name currently held (for dynamic HAS_WEAPON:* checks)
+    pub has_weapon: Option<String>,
 }
 
 /// A condition parsed from `Packet(ARG1, ARG2, ...)`.
@@ -110,6 +113,8 @@ pub struct PacketCondition {
     pub not_ctrl_flags: u32,
     /// If Some(n), packet.class_hit must equal n
     pub class_hit: Option<i32>,
+    pub has_weapon_name: Option<String>,
+    pub not_has_weapon_name: Option<String>,
 }
 
 /// An event/condition in a rule's guard.
@@ -135,15 +140,30 @@ pub enum FsmEvent {
 /// An action executed when a rule fires.
 #[derive(Clone, Debug)]
 pub enum FsmAction {
-    DoAttack { anim_name: String, rotation_notches: i32 },
-    DoBlock { anim_name: String },
+    DoAttack {
+        anim_name: String,
+        rotation_notches: i32,
+    },
+    DoBlock {
+        anim_name: String,
+    },
     DoCounter,
     DoTriggerAtk,
-    DoEvade { anim_name: String, mirror: bool },
-    CtrlGrapple { action: String },
+    DoEvade {
+        anim_name: String,
+        mirror: bool,
+    },
+    CtrlGrapple {
+        action: String,
+    },
     /// Interrupt the current attack and start a new one.
-    ChangeAttack { anim_name: String, rotation_notches: i32 },
-    CustomAnim { anim_name: String },
+    ChangeAttack {
+        anim_name: String,
+        rotation_notches: i32,
+    },
+    CustomAnim {
+        anim_name: String,
+    },
     /// Inline-evaluate another state's rules without transitioning first.
     /// The u32 is the resolved state index.
     Check(usize),
@@ -154,50 +174,8 @@ pub enum FsmAction {
     Display(String),
 }
 
-/// A single guarded rule: `if [!]event { actions; [goto state;] }`
-#[derive(Clone, Debug)]
-pub struct FsmRule {
-    pub event: FsmEvent,
-    /// When true the event result is inverted (`if !Event(...)`)
-    pub negated: bool,
-    pub actions: Vec<FsmAction>,
-    /// Resolved index into FsmData::states, or None if no goto.
-    pub goto_state: Option<usize>,
-}
-
-/// One state in the machine — a named list of rules evaluated top-to-bottom.
-#[derive(Clone, Debug)]
-pub struct FsmState {
-    pub name: String,
-    pub rules: Vec<FsmRule>,
-}
-
-/// Parsed, immutable FSM data shared (via Arc) across all entities using the same file.
-#[derive(Clone, Debug)]
-pub struct FsmData {
-    pub states: Vec<FsmState>,
-    pub state_index: std::collections::HashMap<String, usize>,
-}
-
-impl FsmData {
-    /// Default entry state.
-    pub fn initial_state_idx(&self) -> usize {
-        self.state_index
-            .get("ATTACK_START")
-            .copied()
-            .unwrap_or(0)
-    }
-
-    pub fn state_name(&self, idx: usize) -> &str {
-        self.states
-            .get(idx)
-            .map(|s| s.name.as_str())
-            .unwrap_or("<invalid>")
-    }
-}
-
 /// Outputs produced by one FSM update tick that the game systems should act on.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct FsmOutput {
     /// (animation_name, rotation_notches) — play this attack animation.
     pub attack_anim: Option<(String, i32)>,

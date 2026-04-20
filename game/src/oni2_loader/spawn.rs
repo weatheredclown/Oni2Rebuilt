@@ -182,18 +182,19 @@ pub fn moving_platform_system(
             if hit.entity == rider_entity {
                 return None; // Skip self collisions!
             }
-            
+
             let mut current = hit.entity;
             loop {
                 if let Ok((_, rb)) = platforms.get(current) {
                     if matches!(
                         rb,
-                        avian3d::prelude::RigidBody::Kinematic | avian3d::prelude::RigidBody::Static
+                        avian3d::prelude::RigidBody::Kinematic
+                            | avian3d::prelude::RigidBody::Static
                     ) {
                         return Some(current);
                     }
                 }
-                
+
                 if let Ok(parent) = parents.get(current) {
                     current = parent.parent();
                 } else {
@@ -262,24 +263,41 @@ pub fn creature_movement_anim_system(
         Option<&crate::oni2_loader::parsers::loco::LocomotionController>,
         Option<&crate::statemachine::runtime::FsmRuntime>,
         Option<&crate::combat::components::HitReaction>,
+        Option<&crate::animator::AnimSchedule>,
     )>,
 ) {
     const WALK_THRESHOLD: f32 = 0.5;
     const RUN_THRESHOLD: f32 = 3.0;
     const MAX_RUN_SPEED: f32 = 6.0;
 
-    for (library, mut anim_state, mut move_anim, vel, transform, loco_opt, fsm_opt, react_opt) in
-        &mut creatures
+    for (
+        library,
+        mut anim_state,
+        mut move_anim,
+        vel,
+        transform,
+        loco_opt,
+        fsm_opt,
+        react_opt,
+        schedule_opt,
+    ) in &mut creatures
     {
         // Block locomotion while an FSM-driven animation (attack, etc.) is playing.
         if let Some(fsm) = fsm_opt {
-            if fsm.active_anim.is_some() && !fsm.timed_out {
+            if fsm.ctx.active_anim.is_some() && !fsm.ctx.timed_out {
                 continue;
             }
         }
 
         // Block locomotion while a hit reaction animation is playing.
         if react_opt.map_or(false, |r| r.active.is_some()) {
+            continue;
+        }
+
+        // Block locomotion while an AnimSchedule is active (e.g. jump
+        // compress → spring → main → land) — it drives Oni2AnimState each
+        // tick and would otherwise be clobbered by the idle-gait lookup.
+        if schedule_opt.map_or(false, |s| !s.finished && !s.entries.is_empty()) {
             continue;
         }
 
@@ -508,6 +526,7 @@ pub fn spawn_mod_file(
         ec.insert(ds);
     }
 
+    let label_owned = label.to_string();
     let parent = ec
         .with_children(|parent| {
             for (mat_idx, mesh) in sub_meshes {
@@ -517,8 +536,12 @@ pub fn spawn_mod_file(
                     .cloned()
                     .unwrap_or_else(|| vec![fallback_mat.clone()]);
 
-                for pass_mat_handle in pass_handles {
+                for (pass_idx, pass_mat_handle) in pass_handles.into_iter().enumerate() {
                     parent.spawn((
+                        Name::new(format!(
+                            "{}::submesh_{}_pass_{}",
+                            label_owned, mat_idx, pass_idx
+                        )),
                         Mesh3d(mesh_handle.clone()),
                         MeshMaterial3d(pass_mat_handle),
                         Transform::default(),
@@ -678,7 +701,8 @@ pub fn load_oni2_entity_type(
 
         let mut was_world_space = false;
         if let (Some(model), Some(skel)) = (&mut m, &skeleton) {
-            if skel.positions.len() > 10 { // this is totally a hack, but a lot of the sophisticated characters have bone local meshes, but we seem to have to guess
+            if skel.positions.len() > 10 {
+                // this is totally a hack, but a lot of the sophisticated characters have bone local meshes, but we seem to have to guess
                 model.world_space_verts = false; // All multi-bone characters strictly map natively as bone-local!
             }
             was_world_space = model.world_space_verts;
@@ -792,13 +816,20 @@ pub fn load_oni2_entity_type(
 
     // Build debug bounds grouped by bone.
     let debug_bounds = crate::oni2_loader::animation::Oni2DebugBounds {
-        sub_bounds: bone_colliders.iter().map(|(bone_idx, sub)| {
-            crate::oni2_loader::animation::Oni2DebugSubBound {
-                bone_idx: *bone_idx,
-                vertices: sub.vertices.iter().map(|v| Vec3::new(v[0], v[1], v[2])).collect(),
-                edges: sub.edges.clone(),
-            }
-        }).collect(),
+        sub_bounds: bone_colliders
+            .iter()
+            .map(
+                |(bone_idx, sub)| crate::oni2_loader::animation::Oni2DebugSubBound {
+                    bone_idx: *bone_idx,
+                    vertices: sub
+                        .vertices
+                        .iter()
+                        .map(|v| Vec3::new(v[0], v[1], v[2]))
+                        .collect(),
+                    edges: sub.edges.clone(),
+                },
+            )
+            .collect(),
     };
 
     let debug_skeleton = skeleton.as_ref().map(|skel| {
@@ -1058,7 +1089,14 @@ pub fn spawn_oni2_entity_with_rotation(
             } else {
                 Collider::convex_hull(verts)
             };
-            collider.map(|c| (*bone_idx, c, sub.bound_type.clone(), sub.material_type.clone()))
+            collider.map(|c| {
+                (
+                    *bone_idx,
+                    c,
+                    sub.bound_type.clone(),
+                    sub.material_type.clone(),
+                )
+            })
         })
         .collect();
 
@@ -1098,9 +1136,17 @@ pub fn spawn_oni2_entity_with_rotation(
         let skel = ent_type.skeleton.as_ref().unwrap();
         let num_bones = skel.positions.len();
         let mut joints = Vec::with_capacity(num_bones);
-        for _ in 0..num_bones {
+        for i in 0..num_bones {
+            // Name each joint after its bone so the F11 debug scan lists
+            // "spine_02", "head", etc. instead of "<unnamed>".
+            let bone_name = skel
+                .names
+                .get(i)
+                .cloned()
+                .unwrap_or_else(|| format!("bone_{}", i));
             let joint = commands
                 .spawn((
+                    Name::new(format!("{}::{}", name, bone_name)),
                     Transform::IDENTITY,
                     GlobalTransform::default(),
                     Visibility::Hidden,
@@ -1147,13 +1193,19 @@ pub fn spawn_oni2_entity_with_rotation(
                 for (_, collider, bound_type, material_type) in built_colliders {
                     commands.entity(parent_entity).insert(collider);
                     if let Some(bt) = bound_type {
-                        commands.entity(parent_entity).insert(crate::oni2_loader::components::BoundType(bt.clone()));
+                        commands
+                            .entity(parent_entity)
+                            .insert(crate::oni2_loader::components::BoundType(bt.clone()));
                         if bt.to_lowercase() == "octree" {
-                            commands.entity(parent_entity).insert(crate::oni2_loader::components::OneWayOctreeBound);
+                            commands
+                                .entity(parent_entity)
+                                .insert(crate::oni2_loader::components::OneWayOctreeBound);
                         }
                     }
                     if let Some(mt) = material_type {
-                        commands.entity(parent_entity).insert(crate::oni2_loader::components::MaterialType(mt.clone()));
+                        commands
+                            .entity(parent_entity)
+                            .insert(crate::oni2_loader::components::MaterialType(mt.clone()));
                     }
                 }
             } else {
@@ -1165,30 +1217,49 @@ pub fn spawn_oni2_entity_with_rotation(
                         .unwrap_or(parent_entity);
                     commands.entity(target).insert(collider);
                     if let Some(bt) = bound_type {
-                        commands.entity(target).insert(crate::oni2_loader::components::BoundType(bt.clone()));
+                        commands
+                            .entity(target)
+                            .insert(crate::oni2_loader::components::BoundType(bt.clone()));
                         if bt.to_lowercase() == "octree" {
-                            commands.entity(target).insert(crate::oni2_loader::components::OneWayOctreeBound);
+                            commands
+                                .entity(target)
+                                .insert(crate::oni2_loader::components::OneWayOctreeBound);
                         }
                     }
                     if let Some(mt) = material_type {
-                        commands.entity(target).insert(crate::oni2_loader::components::MaterialType(mt.clone()));
+                        commands
+                            .entity(target)
+                            .insert(crate::oni2_loader::components::MaterialType(mt.clone()));
                     }
                 }
             }
         } else {
             // Static (case c): one child entity per sub-bound collider.
-            for (_, collider, bound_type, material_type) in built_colliders {
+            for (sub_idx, (_, collider, bound_type, material_type)) in
+                built_colliders.into_iter().enumerate()
+            {
                 let child = commands
-                    .spawn((Transform::IDENTITY, GlobalTransform::default(), collider))
+                    .spawn((
+                        Name::new(format!("{}::collider_{}", name, sub_idx)),
+                        Transform::IDENTITY,
+                        GlobalTransform::default(),
+                        collider,
+                    ))
                     .id();
                 if let Some(bt) = bound_type {
-                    commands.entity(child).insert(crate::oni2_loader::components::BoundType(bt.clone()));
+                    commands
+                        .entity(child)
+                        .insert(crate::oni2_loader::components::BoundType(bt.clone()));
                     if bt.to_lowercase() == "octree" {
-                        commands.entity(child).insert(crate::oni2_loader::components::OneWayOctreeBound);
+                        commands
+                            .entity(child)
+                            .insert(crate::oni2_loader::components::OneWayOctreeBound);
                     }
                 }
                 if let Some(mt) = material_type {
-                    commands.entity(child).insert(crate::oni2_loader::components::MaterialType(mt.clone()));
+                    commands
+                        .entity(child)
+                        .insert(crate::oni2_loader::components::MaterialType(mt.clone()));
                 }
                 commands.entity(parent_entity).add_child(child);
             }
@@ -1243,6 +1314,14 @@ pub fn spawn_oni2_entity_with_rotation(
                 current_anim_id: None,
                 previous_anim_id: None,
             });
+
+        // Any actor with an animator also gets an ActionPlayer — it drives
+        // high-level actions (jump/crouch/react/evade/etc.) and tracks substate
+        // transitions.  Mirrors the legacy invariant that ftFighterComponent +
+        // animAnimatorComponent always coexist.
+        commands
+            .entity(parent_entity)
+            .insert(crate::animator::ActionPlayer::default());
     }
 
     if let Some(ref lib) = ent_type.anim_library {
@@ -1273,6 +1352,7 @@ pub fn spawn_oni2_entity_with_rotation(
 
         for (pass_idx, pass_mat_handle) in pass_handles.into_iter().enumerate() {
             let mut mesh_ec = commands.spawn((
+                Name::new(format!("{}::submesh_{}_pass_{}", name, mat_idx, pass_idx)),
                 Mesh3d(mesh_handle.clone()),
                 MeshMaterial3d(pass_mat_handle),
                 Transform::default(),
@@ -1432,6 +1512,28 @@ pub fn spawn_oni2_creature(
             if !react_lib.entries.is_empty() {
                 commands.entity(entity).insert(react_lib);
             }
+        }
+    }
+
+    let tune_weap_file = format!("entity.tune/{}/{}.weap", anim_name, anim_name);
+    if let Ok(weap_content) = crate::vfs::read_to_string("", &tune_weap_file) {
+        let mounts = crate::oni2_loader::parsers::actor_weap::parse_actor_weap(&weap_content);
+        bevy::log::info!(
+            "Loaded weapon mounts for {}: {} weapons mounted.",
+            anim_name,
+            mounts.mounts.len()
+        );
+        commands.entity(entity).insert(mounts);
+    } else {
+        let base_weap_file = format!("{}/{}/{}.weap", entity_base, anim_name, anim_name);
+        if let Ok(weap_content) = crate::vfs::read_to_string("", &base_weap_file) {
+            let mounts = crate::oni2_loader::parsers::actor_weap::parse_actor_weap(&weap_content);
+            bevy::log::info!(
+                "Loaded weapon mounts for {}: {} weapons mounted.",
+                anim_name,
+                mounts.mounts.len()
+            );
+            commands.entity(entity).insert(mounts);
         }
     }
 

@@ -6,9 +6,9 @@
  * apply_camera_transform: converts the current polar values into a world-space
  * Transform (position = focus + spherical offset, looking_at focus point).
  */
-use bevy::prelude::*;
 use super::channel::CameraChannel;
 use super::components::CameraController;
+use bevy::prelude::*;
 
 /// Iterates `current_` polar values towards `desired_` polar values using mode-dependent lerp rates (if any).
 pub fn polar_interpolation_system(
@@ -20,40 +20,46 @@ pub fn polar_interpolation_system(
     let dt = time.delta_secs();
 
     for (_controller, mut channel) in &mut query {
-        
         // Script FOV override takes precedence over the package FOV
         channel.desired_fov = channel.script_fov_override.unwrap_or(channel.package_fov);
-        
+
         // Mode-specific lerp rates
         let fov_speed = 5.0;
         let dist_speed = 3.0;
         let incline_speed = 4.0;
-        
+
         let mut azimuth_speed = match channel.focus_heading_zone {
             super::channel::FocusHeadingZone::Zone1 => channel.package_zone_lerp_rates[0],
             super::channel::FocusHeadingZone::Zone2 => channel.package_zone_lerp_rates[1],
             super::channel::FocusHeadingZone::Zone3 => channel.package_zone_lerp_rates[2],
             super::channel::FocusHeadingZone::Zone4 => channel.package_zone_lerp_rates[3],
         };
-        
-        // If combat, we don't care about zone fallback usually, but this is a rough approximation 
+
+        // If combat, we don't care about zone fallback usually, but this is a rough approximation
         // fallback in case package zeros out azimuth_speed unintentionally.
         if azimuth_speed <= 0.01 {
             azimuth_speed = 3.0;
         }
 
         // Smooth FOV
-        channel.current_fov = channel.current_fov + (channel.desired_fov - channel.current_fov) * (fov_speed * dt).clamp(0.0, 1.0);
-        
+        channel.current_fov = channel.current_fov
+            + (channel.desired_fov - channel.current_fov) * (fov_speed * dt).clamp(0.0, 1.0);
+
         // Smooth Distance
-        channel.current_distance = channel.current_distance + (channel.desired_distance - channel.current_distance) * (dist_speed * dt).clamp(0.0, 1.0);
-        
+        channel.current_distance = channel.current_distance
+            + (channel.desired_distance - channel.current_distance)
+                * (dist_speed * dt).clamp(0.0, 1.0);
+
         // Smooth Incline
-        channel.current_incline = channel.current_incline + (channel.desired_incline - channel.current_incline) * (incline_speed * dt).clamp(0.0, 1.0);
-        
+        channel.current_incline = channel.current_incline
+            + (channel.desired_incline - channel.current_incline)
+                * (incline_speed * dt).clamp(0.0, 1.0);
+
         // Smooth Focus Tracking Interpolation
-        channel.current_focus_offset = channel.current_focus_offset.lerp(channel.desired_focus_offset, (6.0 * dt).clamp(0.0, 1.0));
-        
+        channel.current_focus_offset = channel
+            .current_focus_offset
+            .lerp(channel.desired_focus_offset, (6.0 * dt).clamp(0.0, 1.0));
+
         // Target azimuth normalization
         // Spherical paths cross 180/-180 constantly, we must map them locally.
         let mut heading_diff = channel.desired_azimuth - channel.current_azimuth;
@@ -68,9 +74,9 @@ pub fn polar_interpolation_system(
 
         // Optional sharp turn spin threshold (from channel)
         if channel.spin_threshold_exceeded {
-             channel.current_azimuth += heading_diff * (azimuth_speed * 1.5 * dt).clamp(0.0, 1.0);
+            channel.current_azimuth += heading_diff * (azimuth_speed * 1.5 * dt).clamp(0.0, 1.0);
         }
-        
+
         // Decay bump
         channel.bump_magnitude *= (1.0 - 4.0 * dt).max(0.0);
     }
@@ -79,42 +85,46 @@ pub fn polar_interpolation_system(
 /// Computes the final Transform orientation and position from the interpolated spherical coordinates.
 pub fn apply_camera_transform(
     time: Res<Time>,
-    mut camera_query: Query<(&CameraController, &mut CameraChannel, &mut Transform, &mut Projection)>,
+    mut camera_query: Query<(
+        &CameraController,
+        &mut CameraChannel,
+        &mut Transform,
+        &mut Projection,
+    )>,
     spatial_query: avian3d::prelude::SpatialQuery,
 ) {
     let dt = time.delta_secs();
-    
+
     for (controller, mut channel, mut cam_tf, mut projection) in &mut camera_query {
-        
         if let Projection::Perspective(ref mut persp) = *projection {
             persp.fov = channel.current_fov.to_radians();
         }
-        
+
         if let Some(script_tf) = channel.script_override_transform {
             cam_tf.translation = script_tf.translation;
             cam_tf.rotation = script_tf.rotation;
             apply_camera_shake(&mut cam_tf, &mut channel, dt);
             continue;
         }
-        
+
         let total_azimuth = channel.current_azimuth + channel.bump_magnitude;
         let total_incline = channel.current_incline;
-        
+
         let dist = channel.current_distance;
-        let pitch_cos = total_incline.cos().max(0.01); 
+        let pitch_cos = total_incline.cos().max(0.01);
         let pitch_sin = total_incline.sin();
         let yaw_sin = total_azimuth.sin();
         let yaw_cos = total_azimuth.cos();
-        
+
         // Add custom tracking focus offset dynamically updated by follow modes
         let target_base = channel.current_focus_pos + channel.current_focus_offset;
-        
+
         let offset = Vec3::new(
             pitch_cos * yaw_sin * dist,
             pitch_sin * dist,
-            pitch_cos * yaw_cos * dist, 
+            pitch_cos * yaw_cos * dist,
         );
-        
+
         let mut desired_pos = target_base + offset;
 
         // DEBUG PRINT
@@ -127,36 +137,38 @@ pub fn apply_camera_transform(
                  target_base: {:?}\n\
                  offset: {:?}\n\
                  cam_tf_translation: {:?}",
-                total_incline, total_incline.to_degrees(), dist,
-                channel.current_focus_offset, target_base, offset, cam_tf.translation
+                total_incline,
+                total_incline.to_degrees(),
+                dist,
+                channel.current_focus_offset,
+                target_base,
+                offset,
+                cam_tf.translation
             );
         }
-        
-        // Environmental collision spherecast 
+
+        // Environmental collision spherecast
         let dir = desired_pos - target_base;
         let cast_dist = dir.length();
         let cast_dir = Dir3::new(dir).unwrap_or(Dir3::Z);
 
         if cast_dist > 0.01 {
             // Exclude the player/focus entity so camera does not hit them
-            let filter = avian3d::prelude::SpatialQueryFilter::from_excluded_entities([channel.focus_actor]);
-            
+            let filter =
+                avian3d::prelude::SpatialQueryFilter::from_excluded_entities([channel.focus_actor]);
+
             // Ray cast to keep camera comfortably out of walls
-            if let Some(hit) = spatial_query.cast_ray(
-                target_base,
-                cast_dir,
-                cast_dist,
-                true,
-                &filter
-            ) {
-                // If hit, push camera closer across the vector 
+            if let Some(hit) =
+                spatial_query.cast_ray(target_base, cast_dir, cast_dist, true, &filter)
+            {
+                // If hit, push camera closer across the vector
                 desired_pos = target_base + cast_dir * (hit.distance * 0.85); // 0.85 to add buffer
                 channel.is_colliding = true;
             } else {
                 channel.is_colliding = false;
             }
         }
-        
+
         let t = (6.0 * dt).clamp(0.0, 1.0);
         cam_tf.translation = cam_tf.translation.lerp(desired_pos, t);
 

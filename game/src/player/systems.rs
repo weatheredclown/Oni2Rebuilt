@@ -54,7 +54,8 @@ pub fn keyboard_input_system(
         };
 
         // Attack inputs
-        input.attack = keyboard.just_pressed(KeyCode::Space) || mouse.just_pressed(MouseButton::Left);
+        input.attack =
+            keyboard.just_pressed(KeyCode::Space) || mouse.just_pressed(MouseButton::Left);
         input.attack_two = mouse.just_pressed(MouseButton::Right);
 
         // Other actions
@@ -216,32 +217,51 @@ pub fn pad_mapper_update_system(
     }
 
     // Movement / character analogs
-    let fwd  = if keyboard.pressed(KeyCode::KeyW) { 1.0_f32 } else { 0.0 };
-    let back = if keyboard.pressed(KeyCode::KeyS) { 1.0_f32 } else { 0.0 };
-    let left = if keyboard.pressed(KeyCode::KeyA) { 1.0_f32 } else { 0.0 };
-    let right= if keyboard.pressed(KeyCode::KeyD) { 1.0_f32 } else { 0.0 };
+    let fwd = if keyboard.pressed(KeyCode::KeyW) {
+        1.0_f32
+    } else {
+        0.0
+    };
+    let back = if keyboard.pressed(KeyCode::KeyS) {
+        1.0_f32
+    } else {
+        0.0
+    };
+    let left = if keyboard.pressed(KeyCode::KeyA) {
+        1.0_f32
+    } else {
+        0.0
+    };
+    let right = if keyboard.pressed(KeyCode::KeyD) {
+        1.0_f32
+    } else {
+        0.0
+    };
 
-    frame.set_analog("AnalogCharacterForward",  fwd);
+    frame.set_analog("AnalogCharacterForward", fwd);
     frame.set_analog("AnalogCharacterBackward", back);
-    frame.set_analog("AnalogCharacterLeft",     left);
-    frame.set_analog("AnalogCharacterRight",    right);
+    frame.set_analog("AnalogCharacterLeft", left);
+    frame.set_analog("AnalogCharacterRight", right);
 
     // D-pad / left stick cardinal analogs (same as WASD for keyboard)
-    frame.set_analog("Lup",    fwd);
-    frame.set_analog("Ldown",  back);
-    frame.set_analog("Lleft",  left);
+    frame.set_analog("Lup", fwd);
+    frame.set_analog("Ldown", back);
+    frame.set_analog("Lleft", left);
     frame.set_analog("Lright", right);
 
     // Left stick magnitude and direction angle
-    let lx = right - left;  // +right, −left
-    let ly = fwd - back;    // +forward, −backward
+    let lx = right - left; // +right, −left
+    let ly = fwd - back; // +forward, −backward
     let lmag = (lx * lx + ly * ly).sqrt().min(1.0);
     frame.set_analog("AnalogLmag", lmag);
     if lmag > 0.01 {
         // Direction: 0 = forward, increasing clockwise (matching PS2 convention)
         let angle = ly.atan2(lx); // simple 2D angle
         // Normalise to [0, 1] range as control.map uses ANALOG_RANGE on AnalogLdir
-        frame.set_analog("AnalogLdir", (angle + std::f32::consts::PI) / (2.0 * std::f32::consts::PI));
+        frame.set_analog(
+            "AnalogLdir",
+            (angle + std::f32::consts::PI) / (2.0 * std::f32::consts::PI),
+        );
     }
 
     // ── Gamepad (merges on top of keyboard) ──────────────────────────────
@@ -253,25 +273,28 @@ pub fn pad_mapper_update_system(
         let ry = gamepad.get(GamepadAxis::RightStickY).unwrap_or(0.0);
         const DEAD: f32 = 0.15;
 
-        let gfwd  = if ly >  DEAD { ly } else { 0.0 };
+        let gfwd = if ly > DEAD { ly } else { 0.0 };
         let gback = if ly < -DEAD { -ly } else { 0.0 };
         let gleft = if lx < -DEAD { -lx } else { 0.0 };
-        let gright= if lx >  DEAD { lx } else { 0.0 };
+        let gright = if lx > DEAD { lx } else { 0.0 };
 
         // Override with gamepad values when stick is active
         let gmag = (lx * lx + ly * ly).sqrt();
         if gmag > DEAD {
-            frame.set_analog("AnalogCharacterForward",  gfwd);
+            frame.set_analog("AnalogCharacterForward", gfwd);
             frame.set_analog("AnalogCharacterBackward", gback);
-            frame.set_analog("AnalogCharacterLeft",     gleft);
-            frame.set_analog("AnalogCharacterRight",    gright);
-            frame.set_analog("Lup",    gfwd);
-            frame.set_analog("Ldown",  gback);
-            frame.set_analog("Lleft",  gleft);
+            frame.set_analog("AnalogCharacterLeft", gleft);
+            frame.set_analog("AnalogCharacterRight", gright);
+            frame.set_analog("Lup", gfwd);
+            frame.set_analog("Ldown", gback);
+            frame.set_analog("Lleft", gleft);
             frame.set_analog("Lright", gright);
             frame.set_analog("AnalogLmag", gmag.min(1.0));
             let angle = ly.atan2(lx);
-            frame.set_analog("AnalogLdir", (angle + std::f32::consts::PI) / (2.0 * std::f32::consts::PI));
+            frame.set_analog(
+                "AnalogLdir",
+                (angle + std::f32::consts::PI) / (2.0 * std::f32::consts::PI),
+            );
         }
 
         // Right stick aim
@@ -279,29 +302,62 @@ pub fn pad_mapper_update_system(
         if rmag > DEAD {
             frame.set_analog("AnalogRmag", rmag.min(1.0));
             let angle = ry.atan2(rx);
-            frame.set_analog("AnalogRdir", (angle + std::f32::consts::PI) / (2.0 * std::f32::consts::PI));
+            frame.set_analog(
+                "AnalogRdir",
+                (angle + std::f32::consts::PI) / (2.0 * std::f32::consts::PI),
+            );
         }
 
         // Face buttons (South=cross, North=triangle, West=square, East=circle)
-        if gamepad.just_pressed(GamepadButton::North) { frame.press("Rup"); }
-        else if gamepad.pressed(GamepadButton::North) { frame.hold("Rup"); }
-        if gamepad.just_pressed(GamepadButton::South) { frame.press("Rdown"); }
-        else if gamepad.pressed(GamepadButton::South) { frame.hold("Rdown"); }
-        if gamepad.just_pressed(GamepadButton::East)  { frame.press("Rleft"); }
-        else if gamepad.pressed(GamepadButton::East)  { frame.hold("Rleft"); }
-        if gamepad.just_pressed(GamepadButton::West)  { frame.press("Rright"); }
-        else if gamepad.pressed(GamepadButton::West)  { frame.hold("Rright"); }
+        if gamepad.just_pressed(GamepadButton::North) {
+            frame.press("Rup");
+        } else if gamepad.pressed(GamepadButton::North) {
+            frame.hold("Rup");
+        }
+        if gamepad.just_pressed(GamepadButton::South) {
+            frame.press("Rdown");
+        } else if gamepad.pressed(GamepadButton::South) {
+            frame.hold("Rdown");
+        }
+        if gamepad.just_pressed(GamepadButton::East) {
+            frame.press("Rleft");
+        } else if gamepad.pressed(GamepadButton::East) {
+            frame.hold("Rleft");
+        }
+        if gamepad.just_pressed(GamepadButton::West) {
+            frame.press("Rright");
+        } else if gamepad.pressed(GamepadButton::West) {
+            frame.hold("Rright");
+        }
 
         // Shoulders / triggers
-        if gamepad.pressed(GamepadButton::LeftTrigger)  { frame.hold("L2"); }
-        if gamepad.just_pressed(GamepadButton::LeftTrigger) { frame.press("L2"); }
-        if gamepad.pressed(GamepadButton::RightTrigger2) { frame.hold("R2"); }
-        if gamepad.just_pressed(GamepadButton::RightTrigger2) { frame.press("R2"); }
-        if gamepad.pressed(GamepadButton::RightTrigger)  { frame.hold("R1"); }
-        if gamepad.just_pressed(GamepadButton::RightTrigger) { frame.press("R1"); }
-        if gamepad.pressed(GamepadButton::LeftTrigger2)  { frame.hold("L1"); }
-        if gamepad.just_pressed(GamepadButton::LeftTrigger2) { frame.press("L1"); }
-        if gamepad.just_pressed(GamepadButton::RightThumb) { frame.press("R3"); }
+        if gamepad.pressed(GamepadButton::LeftTrigger) {
+            frame.hold("L2");
+        }
+        if gamepad.just_pressed(GamepadButton::LeftTrigger) {
+            frame.press("L2");
+        }
+        if gamepad.pressed(GamepadButton::RightTrigger2) {
+            frame.hold("R2");
+        }
+        if gamepad.just_pressed(GamepadButton::RightTrigger2) {
+            frame.press("R2");
+        }
+        if gamepad.pressed(GamepadButton::RightTrigger) {
+            frame.hold("R1");
+        }
+        if gamepad.just_pressed(GamepadButton::RightTrigger) {
+            frame.press("R1");
+        }
+        if gamepad.pressed(GamepadButton::LeftTrigger2) {
+            frame.hold("L1");
+        }
+        if gamepad.just_pressed(GamepadButton::LeftTrigger2) {
+            frame.press("L1");
+        }
+        if gamepad.just_pressed(GamepadButton::RightThumb) {
+            frame.press("R3");
+        }
     }
 
     pad_mapper.update(&frame);
@@ -349,25 +405,33 @@ pub fn player_mouse_look_system(
 pub fn player_movement_system(
     mut query: Query<
         (
+            Entity,
             &InputState,
             &mut Transform,
             &mut LinearVelocity,
             &mut Fighter,
             Option<&crate::statemachine::runtime::FsmRuntime>,
+            Option<&crate::oni2_loader::animation::Oni2AnimState>,
         ),
         With<Player>,
     >,
     camera_query: Query<
         &Transform,
-        (With<crate::camera::components::CameraController>, Without<Player>),
+        (
+            With<crate::camera::components::CameraController>,
+            Without<Player>,
+        ),
     >,
+    mut start_action_writer: MessageWriter<crate::animator::StartActionMessage>,
 ) {
     let camera_tf_opt = camera_query.iter().next();
 
-    for (input, mut transform, mut velocity, mut fighter, fsm_opt) in &mut query {
+    for (entity, input, mut transform, mut velocity, mut fighter, fsm_opt, anim_state_opt) in
+        &mut query
+    {
         if let Some(fsm) = fsm_opt {
             // Lock movement and steering while an attack/block animation is actively playing
-            if fsm.active_anim.is_some() && !fsm.timed_out {
+            if fsm.ctx.active_anim.is_some() && !fsm.ctx.timed_out {
                 // Provide quick deceleration so running attacks don't slide wildly,
                 // but leave vertical velocity alone for gravity.
                 velocity.x *= 0.8;
@@ -381,13 +445,56 @@ pub fn player_movement_system(
         }
 
         if input.jump && fighter.jumps_remaining > 0 {
-            let impulse = if fighter.jumps_remaining == fighter.max_jumps {
-                JUMP_IMPULSE
-            } else {
-                DOUBLE_JUMP_IMPULSE
-            };
-            velocity.y = impulse;
+            let is_first_jump = fighter.jumps_remaining == fighter.max_jumps;
             fighter.jumps_remaining -= 1;
+
+            // Capsule / placeholder players have no Oni2AnimState — they can't
+            // run the animator jump schedule, so they get an instant hardcoded
+            // impulse and never hear back from the data-driven path.  Real
+            // creatures (Konoko, grunts) route entirely through the animator:
+            // StartActionMessage → AnimSchedule → JumpImpulseMessage →
+            // jump_impulse_apply_system, with kno.jump-derived vertical +
+            // gravity_factor.
+            let is_placeholder = anim_state_opt.is_none();
+            if is_placeholder {
+                velocity.y = if is_first_jump {
+                    JUMP_IMPULSE
+                } else {
+                    DOUBLE_JUMP_IMPULSE
+                };
+            }
+
+            // Drive the animator so the actual ONI2 jump animation plays (and
+            // for real creatures, delivers the data-driven impulse too).
+            // Capsules without an animator will see this StartActionMessage
+            // silently fail in action_start_system's query match; that's fine.
+            // Choose a substate based on movement intent: directional keys pick
+            // a running variant; stationary falls through to JUMP_UP.  The
+            // animator's jump_impulse_emit_system will translate the matching
+            // StartActionMessage into a JumpImpulseMessage sourced from the
+            // entity's JumpController (the loaded .jump file).
+            let substate = if !is_first_jump {
+                crate::animator::sub_state_0::JUMP_SOMERSAULT
+            } else if input.movement.length_squared() > 0.05 {
+                if input.movement.y < -0.1 {
+                    crate::animator::sub_state_0::JUMP_FORWARD
+                } else if input.movement.y > 0.1 {
+                    crate::animator::sub_state_0::JUMP_BACK
+                } else if input.movement.x > 0.1 {
+                    crate::animator::sub_state_0::JUMP_LEFT
+                } else if input.movement.x < -0.1 {
+                    crate::animator::sub_state_0::JUMP_RIGHT
+                } else {
+                    crate::animator::sub_state_0::JUMP_UP
+                }
+            } else {
+                crate::animator::sub_state_0::JUMP_UP
+            };
+            start_action_writer.write(crate::animator::StartActionMessage {
+                entity,
+                action: crate::animator::MainAction::Jump,
+                substate,
+            });
         }
 
         if input.movement.length_squared() < 0.001 {
@@ -402,7 +509,7 @@ pub fn player_movement_system(
             // The 3D model inherently faces local +Z (which is transform.back())
             let visual_front = transform.back().as_vec3();
             let visual_right = -transform.right().as_vec3(); // +X is left relative to +Z front, so right is -X
-            
+
             // W -> y=-1 -> go visual_front
             // S -> y=+1 -> go -visual_front
             // A -> x=+1 -> go -visual_right (left)
@@ -415,16 +522,20 @@ pub fn player_movement_system(
             let xz_fwd = Vec3::new(cam_fwd.x, 0.0, cam_fwd.z).normalize_or_zero();
             let xz_right = Vec3::new(cam_right.x, 0.0, cam_right.z).normalize_or_zero();
 
-            if input.movement.y < -0.1 { // W
+            if input.movement.y < -0.1 {
+                // W
                 travel += xz_fwd;
             }
-            if input.movement.y > 0.1 { // S
+            if input.movement.y > 0.1 {
+                // S
                 travel -= xz_fwd;
             }
-            if input.movement.x > 0.1 { // A
+            if input.movement.x > 0.1 {
+                // A
                 travel -= xz_right;
             }
-            if input.movement.x < -0.1 { // D
+            if input.movement.x < -0.1 {
+                // D
                 travel += xz_right;
             }
 
@@ -434,7 +545,7 @@ pub fn player_movement_system(
                 // Since visually the model faces local +Z, we must point local -Z OPPOSITE to travel
                 let target_rot = Transform::default().looking_to(-travel, Vec3::Y).rotation;
                 transform.rotation = transform.rotation.slerp(target_rot, 0.25);
-                
+
                 // The camera system tracks the character's visual face
                 fighter.facing = transform.back().as_vec3();
             }
@@ -463,3 +574,74 @@ pub fn clear_inputs_on_enter(
     cushion.0 = 0.4;
 }
 
+// ---------------------------------------------------------------------------
+// Jump impulse application
+// ---------------------------------------------------------------------------
+
+/// Consumes `JumpImpulseMessage` (emitted by the animator when SubState1
+/// transitions into JUMP_MAIN / JUMP_SOMERSAULT) and applies the computed
+/// velocity to the player's `LinearVelocity`.  Mirrors
+/// `mvrMoverComponent::UsePacketJump` from crmover/packet.cpp — it sets both
+/// vertical and planar horizontal impulses derived from the .jump data
+/// (height, gravity_factor, length, heading_adjust).
+///
+/// Vertical component: overwrites `velocity.y` directly so the jump reaches
+/// the scripted apex regardless of current downward velocity (falls reset).
+///
+/// Horizontal components: projected onto the entity's facing plane.
+///   • `forward` → along `fighter.facing` (XZ).
+///   • `lateral` → perpendicular to facing, +lateral = right (heading_adjust
+///     = +90° in the legacy encoding).
+///
+/// When the message carries nonzero horizontal components, the existing
+/// XZ velocity is replaced.  For vertical-only jumps (length=0 in kno.jump),
+/// XZ is left alone so the jumper keeps any running start.
+pub fn jump_impulse_apply_system(
+    mut reader: MessageReader<crate::animator::JumpImpulseMessage>,
+    mut commands: Commands,
+    mut query: Query<(&mut LinearVelocity, &Fighter)>,
+) {
+    for msg in reader.read() {
+        let Ok((mut vel, fighter)) = query.get_mut(msg.entity) else {
+            continue;
+        };
+
+        // Apply the jump's gravity scale so the airborne arc matches the
+        // kno.jump data (height 1.56m, factor 3.2 → total airtime 0.63s).
+        // Reset happens in `jump_gravity_reset_system` on next ground contact.
+        if (msg.gravity_factor - 1.0).abs() > 0.01 {
+            commands
+                .entity(msg.entity)
+                .insert(GravityScale(msg.gravity_factor));
+        }
+
+        vel.y = msg.vertical;
+
+        if msg.forward.abs() > 0.001 || msg.lateral.abs() > 0.001 {
+            let facing = {
+                let f = Vec3::new(fighter.facing.x, 0.0, fighter.facing.z);
+                f.normalize_or_zero()
+            };
+            if facing.length_squared() > 0.001 {
+                let right = facing.cross(Vec3::Y).normalize_or_zero();
+                let horiz = facing * msg.forward + right * msg.lateral;
+                vel.x = horiz.x;
+                vel.z = horiz.z;
+            }
+        }
+    }
+}
+
+/// Restore normal gravity once the jumper lands.  A `GravityScale` left in
+/// place after landing would make walking feel heavier than intended.  Runs
+/// every tick and is a no-op when there's nothing to reset.
+pub fn jump_gravity_reset_system(
+    mut commands: Commands,
+    query: Query<(Entity, &Fighter, &GravityScale)>,
+) {
+    for (entity, fighter, scale) in &query {
+        if fighter.is_grounded && (scale.0 - 1.0).abs() > 0.01 {
+            commands.entity(entity).insert(GravityScale(1.0));
+        }
+    }
+}

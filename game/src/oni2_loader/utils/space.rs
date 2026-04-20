@@ -17,40 +17,54 @@ pub trait IntoSpaceVec3 {
 
 impl IntoSpaceVec3 for Vec3 {
     #[inline]
-    fn into_space_vec3(self) -> Vec3 { self }
+    fn into_space_vec3(self) -> Vec3 {
+        self
+    }
 }
 
 impl IntoSpaceVec3 for [f32; 3] {
     #[inline]
-    fn into_space_vec3(self) -> Vec3 { Vec3::from_array(self) }
+    fn into_space_vec3(self) -> Vec3 {
+        Vec3::from_array(self)
+    }
 }
 
 impl IntoSpaceVec3 for &[f32; 3] {
     #[inline]
-    fn into_space_vec3(self) -> Vec3 { Vec3::from_array(*self) }
+    fn into_space_vec3(self) -> Vec3 {
+        Vec3::from_array(*self)
+    }
 }
 
 impl IntoSpaceVec3 for &Vec3 {
     #[inline]
-    fn into_space_vec3(self) -> Vec3 { *self }
+    fn into_space_vec3(self) -> Vec3 {
+        *self
+    }
 }
 
 impl IntoSpaceVec3 for &[f32] {
     #[inline]
-    fn into_space_vec3(self) -> Vec3 { Vec3::new(self[0], self[1], self[2]) }
+    fn into_space_vec3(self) -> Vec3 {
+        Vec3::new(self[0], self[1], self[2])
+    }
 }
 
 impl IntoSpaceVec3 for Vec<f32> {
     #[inline]
-    fn into_space_vec3(self) -> Vec3 { Vec3::new(self[0], self[1], self[2]) }
+    fn into_space_vec3(self) -> Vec3 {
+        Vec3::new(self[0], self[1], self[2])
+    }
 }
 
 impl IntoSpaceVec3 for &Vec<f32> {
     #[inline]
-    fn into_space_vec3(self) -> Vec3 { Vec3::new(self[0], self[1], self[2]) }
+    fn into_space_vec3(self) -> Vec3 {
+        Vec3::new(self[0], self[1], self[2])
+    }
 }
 
-/// Convert a position in Oni2 space (left-handed: +Z forward) 
+/// Convert a position in Oni2 space (left-handed: +Z forward)
 /// into Bevy space (right-handed: -Z forward).
 #[inline]
 pub fn to_bevy_space_pos<T: IntoSpaceVec3>(pt: T) -> Vec3 {
@@ -58,7 +72,7 @@ pub fn to_bevy_space_pos<T: IntoSpaceVec3>(pt: T) -> Vec3 {
     Vec3::new(-pos.x, pos.y, -pos.z)
 }
 
-/// Convert a position in Bevy space (right-handed: -Z forward) 
+/// Convert a position in Bevy space (right-handed: -Z forward)
 /// back to Oni2 space (left-handed: +Z forward) for export or script engine values.
 #[inline]
 pub fn to_oni2_space_pos<T: IntoSpaceVec3>(pt: T) -> Vec3 {
@@ -99,7 +113,11 @@ pub fn to_bevy_space_rot<T: IntoSpaceVec3>(yaw_pitch_roll_deg: T) -> Quat {
 #[inline]
 pub fn to_oni2_space_rot(q: Quat) -> Vec3 {
     let rads = to_oni2_space_rot_rad(q);
-    Vec3::new(rads.x.to_degrees(), rads.y.to_degrees(), rads.z.to_degrees())
+    Vec3::new(
+        rads.x.to_degrees(),
+        rads.y.to_degrees(),
+        rads.z.to_degrees(),
+    )
 }
 
 /// Converts an Oni2 spherical camera elevation/incline angle (in degrees) to Bevy's camera polar elevation (in radians).

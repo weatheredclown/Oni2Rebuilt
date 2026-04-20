@@ -14,8 +14,11 @@ use avian3d::prelude::*;
 use bevy::prelude::*;
 use rb_shared::events::CombatEvent;
 
+use crate::fight::components::{BlockLibrary, BlockStatus, FighterState};
+use crate::fight::events::{BlockFailedEvent, BlockSuccessEvent};
 use crate::oni2_loader::animation::{AnimId, Oni2AnimLibrary, Oni2AnimState};
 use crate::oni2_loader::parsers::rct::ANIMREACT_NAMES;
+use crate::projectile_system::SpawnProjectileEvent;
 use crate::telemetry::bridge::TelemetryChannel;
 
 use super::components::*;
@@ -30,7 +33,10 @@ const CAPSULE_HALF_HEIGHT: f32 = 1.0;
 
 /// Syncs the AttackState with the current running animation. Clears collision lists when a new animation plays.
 pub fn attack_sync_system(
-    mut query: Query<(&mut AttackState, &crate::oni2_loader::animation::Oni2AnimState)>,
+    mut query: Query<(
+        &mut AttackState,
+        &crate::oni2_loader::animation::Oni2AnimState,
+    )>,
 ) {
     for (mut attack_state, anim_state) in &mut query {
         if anim_state.current_anim_id != anim_state.previous_anim_id {
@@ -45,16 +51,39 @@ pub fn attack_sync_system(
 }
 
 /// Cylinder-slice overlap hit detection reading from `.atdt` files embedded in Oni2AnimState.
+/// Also checks FighterState + BlockLibrary to handle block interception:
+///   - Blocked hit → emits BlockSuccessEvent / BlockFailedEvent, zero damage
+///   - Unblocked hit → InjureMessage as normal
 pub fn hit_detection_system(
-    mut attackers: Query<(Entity, &Transform, &Fighter, &mut AttackState, &crate::oni2_loader::animation::Oni2AnimState)>,
-    mut targets: Query<(Entity, &Transform, &mut Health, &Fighter, Option<&ReactLibrary>)>,
+    mut commands: Commands,
+    mut attackers: Query<(
+        Entity,
+        &Transform,
+        &Fighter,
+        &mut AttackState,
+        &Oni2AnimState,
+    )>,
+    mut targets: Query<(
+        Entity,
+        &Transform,
+        &mut Health,
+        &Fighter,
+        Option<&ReactLibrary>,
+        Option<&FighterState>,
+        Option<&BlockLibrary>,
+        Option<&Oni2AnimState>,
+    )>,
     time: Res<Time>,
     mut damage_writer: MessageWriter<DamageMessage>,
     mut injure_writer: MessageWriter<InjureMessage>,
+    mut block_success_writer: MessageWriter<BlockSuccessEvent>,
+    mut block_failed_writer: MessageWriter<BlockFailedEvent>,
 ) {
     let now = time.elapsed_secs_f64();
 
-    for (attacker_entity, attacker_tf, attacker_fighter, mut attack_state, anim_state) in &mut attackers {
+    for (attacker_entity, attacker_tf, attacker_fighter, mut attack_state, anim_state) in
+        &mut attackers
+    {
         let Some(attack_data) = &anim_state.anim.attack_data else {
             continue;
         };
@@ -66,60 +95,127 @@ pub fn hit_detection_system(
             continue;
         }
 
-        // Hit window: framenum..framenum+frameduration are raw frame numbers matching current_time.
-        // (minradiusframe/maxradiusframe describe the disk-radius ramp-up, not the hit window.)
         let frame = anim_state.current_time;
         let is_active = if strike.frameduration > 0.0 {
             frame >= strike.framenum && frame <= strike.framenum + strike.frameduration
         } else {
-            // No explicit hit window — active throughout the animation.
             true
         };
         if !is_active {
             continue;
         }
 
-        // Fighter.facing is the canonical world-space facing direction for both player and AI.
-        // (player sets it from transform.forward(), AI sets it from dir_to_target)
+        let phase = if anim_state.anim.num_frames > 1 {
+            frame / (anim_state.anim.num_frames as f32 - 1.0).max(1.0)
+        } else {
+            0.0
+        };
+
+        // --- Weapon Fire ---
+        if strike.fire {
+            // Check if we haven't already fired this attack cycle
+            let active_attack = attack_state
+                .active_attack
+                .get_or_insert_with(ActiveAttack::default);
+            if !active_attack.has_fired_projectile {
+                commands.trigger(SpawnProjectileEvent {
+                    name: "default".to_string(), // Stubbed weapon name until Weapon loadouts are added
+                    position: attacker_tf.translation + Vec3::Y * 1.5,
+                    velocity: attacker_fighter.facing * 30.0,
+                    owner: attacker_entity,
+                    team: 0,
+                });
+                active_attack.has_fired_projectile = true;
+            }
+            continue; // Fire strikes don't process melee swept cylinders
+        }
+
         let attacker_forward = attacker_fighter.facing;
+        let active_attack = attack_state
+            .active_attack
+            .get_or_insert_with(ActiveAttack::default);
 
-        // Get or insert active attack (cleared by attack_sync_system on new anims)
-        let active_attack = attack_state.active_attack.get_or_insert_with(ActiveAttack::default);
-
-        for (target_entity, target_tf, mut health, target_fighter, react_lib) in &mut targets {
+        for (
+            target_entity,
+            target_tf,
+            mut health,
+            target_fighter,
+            react_lib,
+            target_fs_opt,
+            block_lib_opt,
+            target_anim_opt,
+        ) in &mut targets
+        {
             if target_entity == attacker_entity {
                 continue;
             }
-
             if active_attack.hit_entities.contains(&target_entity) {
                 continue;
             }
-
             if now < health.invulnerable_until {
                 continue;
             }
 
+            // Check FighterState phase-based invulnerability (crReactData.does_not_take_damage_after_phase)
+            if let Some(fs) = target_fs_opt {
+                if fs.in_invuln_phase {
+                    continue;
+                }
+                // no_react_start_phase: if set, damage only accepted before this phase
+                if fs.no_react_start_phase > 0.0 {
+                    if let Some(tanim) = target_anim_opt {
+                        if tanim.anim.num_frames > 1 {
+                            let tphase =
+                                tanim.current_time / (tanim.anim.num_frames as f32 - 1.0).max(1.0);
+                            if tphase >= fs.no_react_start_phase {
+                                continue;
+                            }
+                        }
+                    }
+                }
+            }
+
             let diff = target_tf.translation - attacker_tf.translation;
 
-            // XZ distance check
+            // XZ distance with Expanding Radius
+            let radius = if strike.use_expanding_radius {
+                let num_frames = anim_state.anim.num_frames as f32;
+                let min_phase = strike.minradiusframe / num_frames.max(1.0);
+                let max_phase = strike.maxradiusframe / num_frames.max(1.0);
+
+                if phase <= min_phase {
+                    strike.minreactdiskradius
+                } else if phase >= max_phase {
+                    strike.reactdiskradius
+                } else if max_phase > min_phase {
+                    let t = (phase - min_phase) / (max_phase - min_phase);
+                    strike.minreactdiskradius
+                        + t * (strike.reactdiskradius - strike.minreactdiskradius)
+                } else {
+                    strike.reactdiskradius
+                }
+            } else {
+                strike.reactdiskradius
+            };
+
             let dist_sq = diff.x * diff.x + diff.z * diff.z;
-            if dist_sq > strike.reactdiskradius * strike.reactdiskradius {
+            if dist_sq > radius * radius {
                 debug!(
                     "hit miss: dist {:.2} > radius {:.2}",
-                    dist_sq.sqrt(), strike.reactdiskradius
+                    dist_sq.sqrt(),
+                    radius
                 );
                 continue;
             }
 
-            // Height check: target's capsule Y extent must overlap the disk's world-space Y band.
-            // Disk is at attacker's feet + reactdiskheight, ±reactdiskheighttolerance.
-            // Test: [ReactDiskHeight ± Tolerance + attackerY] vs [tgtLoY, tgtHiY].
+            // Height band
             let attacker_feet_y = attacker_tf.translation.y - CAPSULE_CENTER_HEIGHT;
-            let disk_min_y = attacker_feet_y + strike.reactdiskheight - strike.reactdiskheighttolerance;
-            let disk_max_y = attacker_feet_y + strike.reactdiskheight + strike.reactdiskheighttolerance;
+            let disk_min_y =
+                attacker_feet_y + strike.reactdiskheight - strike.reactdiskheighttolerance;
+            let disk_max_y =
+                attacker_feet_y + strike.reactdiskheight + strike.reactdiskheighttolerance;
             let target_lo_y = target_tf.translation.y - CAPSULE_HALF_HEIGHT;
             let target_hi_y = target_tf.translation.y + CAPSULE_HALF_HEIGHT;
-
             if target_lo_y > disk_max_y || target_hi_y < disk_min_y {
                 debug!(
                     "hit miss: target Y [{:.2}, {:.2}] misses disk Y [{:.2}, {:.2}]",
@@ -128,21 +224,26 @@ pub fn hit_detection_system(
                 continue;
             }
 
-            // Slice angular check
+            // Angular slice with SweepHeading
+            let swept_heading = if strike.sweepheading != 0 {
+                let sweep_t = if strike.frameduration > 0.0 {
+                    ((frame - strike.framenum) / strike.frameduration).clamp(0.0, 1.0)
+                } else {
+                    1.0
+                };
+                sweep_t * strike.sliceheadingradiansb
+            } else {
+                strike.sliceheadingradiansb
+            };
+
             let dir_to_target = Vec3::new(diff.x, 0.0, diff.z).normalize_or_zero();
-
-            // sliceheadingradiansb offsets the slice center relative to the attacker's facing.
-            // Match the debug renderer: Oni negates the Y rotation so positive angles swing left (-X).
-            let slice_heading = Quat::from_rotation_y(-strike.sliceheadingradiansb) * attacker_forward;
-            let slice_heading_xz = Vec3::new(slice_heading.x, 0.0, slice_heading.z).normalize_or_zero();
-
+            let slice_heading = Quat::from_rotation_y(-swept_heading) * attacker_forward;
+            let slice_heading_xz =
+                Vec3::new(slice_heading.x, 0.0, slice_heading.z).normalize_or_zero();
             let dot = slice_heading_xz.dot(dir_to_target);
             let angle = dot.clamp(-1.0, 1.0).acos();
             let cross_y = slice_heading_xz.cross(dir_to_target).y;
-            // If cross_y > 0, target is to the right (+X), which represents a negative angle.
-            // If cross_y < 0, target is to the left (-X), which represents a positive angle.
             let signed_angle = if cross_y > 0.0 { -angle } else { angle };
-
             if signed_angle < strike.slicestartradians || signed_angle > strike.sliceendradians {
                 debug!(
                     "hit miss: angle {:.3}rad outside [{:.3}, {:.3}]",
@@ -151,17 +252,11 @@ pub fn hit_detection_system(
                 continue;
             }
 
-            // Hit confirmed!
+            // ── Hit confirmed ─────────────────────────────────────────────
+
             active_attack.hit_entities.push(target_entity);
 
-            let damage = attack_data.damage;
-            let was_blocked = false;
-
-            // Resolve react data from the target's ReactLibrary using reactanim0
-            // (reactanim[0] is the primary reaction; higher indices are alternatives for different states)
             let react_enum = strike.reactanim[0];
-            
-            // Map hittype to AttackClass for the event
             let attack_class = match strike.hittype {
                 0 | 1 | 2 => AttackClass::Punch,
                 3 | 4 | 5 => AttackClass::Kick,
@@ -169,14 +264,70 @@ pub fn hit_detection_system(
                 _ => AttackClass::Punch,
             };
 
-            if !was_blocked {
-                let knockback_dir = (target_tf.translation - attacker_tf.translation).normalize_or_zero();
+            // ── Block check ───────────────────────────────────────────────
+            // Determine current block animation phase on the target.
+            let block_result = block_lib_opt.and_then(|block_lib| {
+                let fs = target_fs_opt?;
+                if !fs.is_blocking() || fs.block_status == BlockStatus::NotBlocking {
+                    return None;
+                }
+                // Compute the current phase of the target's block animation.
+                let bphase = if let Some(tanim) = target_anim_opt {
+                    if tanim.anim.num_frames > 1 {
+                        tanim.current_time / (tanim.anim.num_frames as f32 - 1.0).max(1.0)
+                    } else {
+                        0.5 // assume mid-block if no frame data
+                    }
+                } else {
+                    0.5
+                };
+                block_lib.find_block(
+                    target_tf.translation,
+                    target_fighter.facing,
+                    attacker_tf.translation,
+                    bphase,
+                    strike.hittype,
+                )
+            });
+
+            if let Some((block_idx, block_def)) = block_result {
+                // ── Blocked ──────────────────────────────────────────────
+                block_success_writer.write(BlockSuccessEvent {
+                    attacker: attacker_entity,
+                    blocker: target_entity,
+                    block_index: block_idx,
+                    counter_atk: block_def.counter_atk.clone(),
+                    enemy_block_anim: block_def.enemy_block_anim,
+                    block_reaction_on_attacker: block_def.block_reaction_on_attacker,
+                    block_combo_count: target_fs_opt.map(|fs| fs.block_combo_count).unwrap_or(0),
+                    combo_count_before_react: block_def.combo_count_before_react,
+                });
+
+                // Zero-damage DamageMessage so combo/telemetry still fire
+                damage_writer.write(DamageMessage {
+                    attacker: attacker_entity,
+                    target: target_entity,
+                    damage: 0.0,
+                    was_blocked: true,
+                    attack_class,
+                    attack_strength: AttackStrength::Low,
+                });
+
+                info!(
+                    "Blocked [{:?} -> {:?}]: block_idx={} hittype={}",
+                    attacker_entity, target_entity, block_idx, strike.hittype
+                );
+            } else {
+                // ── Not blocked ───────────────────────────────────────────
+                let damage = attack_data.damage;
+                let knockback_dir =
+                    (target_tf.translation - attacker_tf.translation).normalize_or_zero();
 
                 injure_writer.write(InjureMessage {
                     target: target_entity,
                     attacker: Some(attacker_entity),
                     damage,
-                    hit_type: "strike".to_string(), // Represents melee strike
+                    hit_type: "strike".to_string(),
                     from: Some(attacker_tf.translation),
                     play_react: true,
                     disable_creature_detect: false,
@@ -185,26 +336,26 @@ pub fn hit_detection_system(
                     strike_react_enum: Some(react_enum),
                 });
 
+                damage_writer.write(DamageMessage {
+                    attacker: attacker_entity,
+                    target: target_entity,
+                    damage,
+                    was_blocked: false,
+                    attack_class,
+                    attack_strength: AttackStrength::High,
+                });
+
                 info!(
                     "Hit [{:?} -> {:?}]: damage={:.1} | react={} ({})",
                     attacker_entity,
                     target_entity,
                     damage,
                     react_enum,
-                    crate::oni2_loader::parsers::rct::ANIMREACT_NAMES
+                    ANIMREACT_NAMES
                         .get(react_enum.max(0) as usize)
                         .unwrap_or(&"?")
                 );
             }
-
-            damage_writer.write(DamageMessage {
-                attacker: attacker_entity,
-                target: target_entity,
-                damage: if was_blocked { 0.0 } else { damage },
-                was_blocked,
-                attack_class,
-                attack_strength: AttackStrength::High,
-            });
         }
     }
 }
@@ -256,13 +407,8 @@ pub fn injure_system(
     let now = time.elapsed_secs_f64();
 
     for msg in events.read() {
-        let Ok((
-            mut health,
-            mut fighter_opt,
-            mut transform_opt,
-            hit_reaction_opt,
-            anim_state_opt,
-        )) = query.get_mut(msg.target)
+        let Ok((mut health, mut fighter_opt, mut transform_opt, hit_reaction_opt, anim_state_opt)) =
+            query.get_mut(msg.target)
         else {
             continue;
         };
@@ -338,14 +484,14 @@ pub fn injure_system(
             if let Some(ref mut fighter) = fighter_opt {
                 if msg.play_react {
                     if let Some(ref mut tf) = transform_opt {
-                         let mut to_attacker = (from_pos - tf.translation).normalize_or_zero();
-                         to_attacker.y = 0.0;
-                         if to_attacker.length_squared() > 0.001 {
-                             if reacting_to_hit_from_behind {
-                                 to_attacker = -to_attacker;
-                             }
-                             fighter.facing = to_attacker;
-                         }
+                        let mut to_attacker = (from_pos - tf.translation).normalize_or_zero();
+                        to_attacker.y = 0.0;
+                        if to_attacker.length_squared() > 0.001 {
+                            if reacting_to_hit_from_behind {
+                                to_attacker = -to_attacker;
+                            }
+                            fighter.facing = to_attacker;
+                        }
                     }
                 }
             }
@@ -358,11 +504,11 @@ pub fn injure_system(
         if msg.play_react {
             let mut react_enum = msg.strike_react_enum.unwrap_or(0); // 0 = Generic Flinch
             if reacting_to_hit_from_behind {
-                 let react_strength = msg.attack_strength.unwrap_or(AttackStrength::Low);
-                 react_enum = match react_strength {
-                     AttackStrength::Low => 10,
-                     _ => 11,
-                 };
+                let react_strength = msg.attack_strength.unwrap_or(AttackStrength::Low);
+                react_enum = match react_strength {
+                    AttackStrength::Low => 10,
+                    _ => 11,
+                };
             }
 
             let kind = match react_enum {
@@ -383,11 +529,11 @@ pub fn injure_system(
                 direction: knockback_dir,
                 react_enum,
             });
-            
+
             // Queue scream sound! (using engine SFX pipeline)
             commands.trigger(crate::scroni::vm::ScrOniSysEvent::PlaySound {
-                script_entity: msg.target, // using the struck entity as originator
-                actor: None,               // implicit on same entity
+                script_entity: msg.target,  // using the struck entity as originator
+                actor: None,                // implicit on same entity
                 name: "scream".to_string(), // fallback label if actor is missing an exact mapping
             });
         }
@@ -411,7 +557,9 @@ pub fn hit_reaction_system(
 
     // Tick existing reactions — clear when react anim finishes, or fallback timer.
     for (mut reaction, _vel, anim_state_opt, _lib) in &mut query {
-        let Some(ref mut active) = reaction.active else { continue };
+        let Some(ref mut active) = reaction.active else {
+            continue;
+        };
 
         let mut done = false;
         if let Some(ref anim_state) = anim_state_opt {
@@ -537,10 +685,18 @@ pub fn death_cleanup_system(
                 if delay.0 <= 0.0 {
                     commands.entity(msg.entity).try_despawn();
                 } else {
-                    commands.entity(msg.entity).insert(DeathSequenceTimer(Timer::from_seconds(delay.0, TimerMode::Once)));
+                    commands
+                        .entity(msg.entity)
+                        .insert(DeathSequenceTimer(Timer::from_seconds(
+                            delay.0,
+                            TimerMode::Once,
+                        )));
                 }
             } else {
-                info!("Entity {} has no DestroyOnDeath component, despawning immediately", msg.entity);
+                info!(
+                    "Entity {} has no DestroyOnDeath component, despawning immediately",
+                    msg.entity
+                );
                 commands.entity(msg.entity).try_despawn();
             }
         }

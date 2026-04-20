@@ -19,7 +19,6 @@
 ///
 ///   Positional  — trigger has a target point offset; scored by flat distance.
 ///                 Best = closest target point.
-
 use bevy::prelude::*;
 
 pub struct FightVectorPlugin;

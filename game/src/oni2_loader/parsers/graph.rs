@@ -5,9 +5,9 @@
  * layout.graph.  parse_graph: reads the text format and builds a LayoutGraph.
  * Consumed by NavGraph (ai/navigation.rs) for A* pathfinding.
  */
-use bevy::prelude::*;
-use crate::vfs;
 use crate::oni2_loader::utils::space;
+use crate::vfs;
+use bevy::prelude::*;
 
 pub struct GraphPoint {
     pub position: Vec3,
@@ -34,46 +34,49 @@ pub fn parse_layout_graphs(dir: &str) -> Vec<LayoutGraph> {
         Ok(c) => c,
         Err(_) => return Vec::new(),
     };
-    
+
     let mut names = Vec::new();
-    let mut lines = content.lines().filter_map(|l| {
-        let s = l.trim();
-        if s.is_empty() { None } else { Some(s) }
-    }).skip(1); // skip the count
-    
+    let mut lines = content
+        .lines()
+        .filter_map(|l| {
+            let s = l.trim();
+            if s.is_empty() { None } else { Some(s) }
+        })
+        .skip(1); // skip the count
+
     for line in lines {
         names.push(line.to_string());
     }
-    
+
     let mut parsed = Vec::new();
     for name in names {
         if let Some(graph) = parse_single_graph(dir, &name) {
             parsed.push(graph);
         }
     }
-    
+
     parsed
 }
 
 fn parse_single_graph(dir: &str, name: &str) -> Option<LayoutGraph> {
     let content = vfs::read_to_string(dir, &format!("{}.graph", name)).ok()?;
-    
+
     let mut points = Vec::new();
     let mut edges = Vec::new();
-    
+
     let mut parsing_points = false;
     let mut parsing_edges = false;
-    
+
     for line in content.lines() {
         let trimmed = line.trim();
         if trimmed.is_empty() || trimmed == "{" || trimmed == "}" {
             continue;
         }
-        
+
         if trimmed.starts_with("PreCalcData") {
             break;
         }
-        
+
         if trimmed.starts_with("NumPoints") {
             parsing_points = true;
             parsing_edges = false;
@@ -84,7 +87,7 @@ fn parse_single_graph(dir: &str, name: &str) -> Option<LayoutGraph> {
             parsing_edges = true;
             continue;
         }
-        
+
         if parsing_points && trimmed.starts_with('{') {
             let inner = trimmed.trim_start_matches('{').trim_end_matches('}').trim();
             let parts: Vec<&str> = inner.split_whitespace().collect();
@@ -93,12 +96,12 @@ fn parse_single_graph(dir: &str, name: &str) -> Option<LayoutGraph> {
                 let y = parts[1].parse().unwrap_or(0.0);
                 let z = parts[2].parse().unwrap_or(0.0);
                 let flags = parts[4].parse().unwrap_or(0);
-                
+
                 let mut pt_name = String::new();
                 if parts.len() >= 6 {
                     pt_name = parts[5..].join(" ").trim_matches('"').to_string();
                 }
-                
+
                 points.push(GraphPoint {
                     position: space::to_bevy_space_pos(Vec3::new(x, y, z)), // Left-Handed to Right-Handed
                     flags,
@@ -106,7 +109,7 @@ fn parse_single_graph(dir: &str, name: &str) -> Option<LayoutGraph> {
                 });
             }
         }
-        
+
         if parsing_edges && trimmed.starts_with('{') {
             let inner = trimmed.trim_start_matches('{').trim_end_matches('}').trim();
             let parts: Vec<&str> = inner.split_whitespace().collect();
@@ -115,8 +118,12 @@ fn parse_single_graph(dir: &str, name: &str) -> Option<LayoutGraph> {
                 let b = parts[1].parse().unwrap_or(0);
                 let cost = parts[2].parse().unwrap_or(0.0);
                 let flags = parts[4].parse().unwrap_or(0);
-                let subgraph = if parts.len() >= 6 { parts[5].parse().unwrap_or(0) } else { 0 };
-                
+                let subgraph = if parts.len() >= 6 {
+                    parts[5].parse().unwrap_or(0)
+                } else {
+                    0
+                };
+
                 edges.push(GraphEdge {
                     a,
                     b,
@@ -127,7 +134,7 @@ fn parse_single_graph(dir: &str, name: &str) -> Option<LayoutGraph> {
             }
         }
     }
-    
+
     Some(LayoutGraph {
         name: name.to_string(),
         points,

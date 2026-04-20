@@ -5,10 +5,10 @@
  * Issues BlockingAction for timed moves and SysRequest variants that
  * system_bindings translates into Transform / LinearVelocity mutations.
  */
-use crate::scroni::ast::Stmt;
-use crate::scroni::vm::{ExecState, BlockingAction, SysRequest, Value};
-use bevy::prelude::*;
 use super::OpsCtx;
+use crate::scroni::ast::Stmt;
+use crate::scroni::vm::{BlockingAction, ExecState, SysRequest, Value};
+use bevy::prelude::*;
 
 pub fn exec(ctx: &mut OpsCtx, stmt: &Stmt) -> bool {
     match stmt {
@@ -48,9 +48,9 @@ pub fn exec(ctx: &mut OpsCtx, stmt: &Stmt) -> bool {
             let target = ctx.eval(expr);
             let targets = ctx.ctx.resolve_targets(&target);
             if !targets.is_empty() {
-                ctx.sys_request(SysRequest::FollowActor { 
-                    actor: ctx.exec.owner, 
-                    target: targets[0] 
+                ctx.sys_request(SysRequest::FollowActor {
+                    actor: ctx.exec.owner,
+                    target: targets[0],
                 });
             }
             ctx.yield_thread();

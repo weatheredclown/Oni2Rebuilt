@@ -63,11 +63,14 @@ pub fn load_layout(
     if !layout_paths.curves.is_empty() {
         info!("Layout: loaded {} path curves", layout_paths.curves.len());
     }
-    
+
     // Parse layout.graphs to construct the NavGraph
     let nav_graphs = crate::oni2_loader::parsers::graph::parse_layout_graphs(layout_path);
     let nav_graph = crate::ai::navigation::NavGraph::new(nav_graphs);
-    info!("Layout: generated NavGraph with {} points", nav_graph.points.len());
+    info!(
+        "Layout: generated NavGraph with {} points",
+        nav_graph.points.len()
+    );
     commands.insert_resource(nav_graph);
 
     // Insert LayoutPaths globally for dynamic spawned actors
@@ -374,7 +377,10 @@ pub fn spawn_layout_actor(
             if !actor.is_player {
                 // Non-player creature: attach AI + combat components
                 if actor.has_fight_ai {
-                    assets.commands.entity(entity).insert(crate::ai::components::AiFighter::default());
+                    assets
+                        .commands
+                        .entity(entity)
+                        .insert(crate::ai::components::AiFighter::default());
                 }
                 assets.commands.entity(entity).insert((
                     crate::combat::components::Enemy,
@@ -384,13 +390,26 @@ pub fn spawn_layout_actor(
                     crate::combat::components::Health::new(actor.max_hitpoints.unwrap_or(100.0)),
                 ));
                 if let Some(destroy_time) = actor.destroy_time {
-                    assets.commands.entity(entity).insert(crate::combat::components::DestroyOnDeath(destroy_time));
+                    assets
+                        .commands
+                        .entity(entity)
+                        .insert(crate::combat::components::DestroyOnDeath(destroy_time));
                 }
                 assets.commands.entity(entity).insert((
                     crate::combat::components::AttackState::default(),
                     crate::combat::components::ComboTracker::default(),
                     crate::combat::components::HitReaction::default(),
                     crate::combat::components::AboutToBeHit::default(),
+                ));
+                // High-fidelity fight bundle — mirrors what setup_scene puts
+                // on the player.  Every creature with a combat loadout needs
+                // these components so the fight pipeline (react_data_apply,
+                // block_success/failed, grapple, super meter, successive
+                // attacks, hit eta, fight stance timer) engages for AI too.
+                assets.commands.entity(entity).insert((
+                    crate::fight::components::FighterState::default(),
+                    crate::fight::components::FighterType::default(),
+                    crate::fight::components::BlockLibrary::default(),
                 ));
                 assets
                     .commands
@@ -410,6 +429,17 @@ pub fn spawn_layout_actor(
                     },
                 );
                 info!("Attached FX component to creature {}", actor.entity_type);
+            }
+            if let Some(ref w) = actor.weapon_string {
+                assets.commands.entity(entity).insert(
+                    crate::inventory::components::PendingInventory {
+                        weapon_string: w.clone(),
+                    },
+                );
+                info!(
+                    "Attached PendingInventory ({}) to creature {}",
+                    w, actor.entity_type
+                );
             }
 
             Some(entity)
@@ -619,7 +649,10 @@ pub fn spawn_layout_actor(
                     radius,
                     ..Default::default()
                 });
-            info!("Attached BroadcastTrigger (r={}) to {}", radius, actor.entity_type);
+            info!(
+                "Attached BroadcastTrigger (r={}) to {}",
+                radius, actor.entity_type
+            );
         }
 
         // Attach CheckpointTrigger if present
@@ -734,7 +767,11 @@ fn load_layout_lights(
                 continue;
             }
             let color = Color::srgb(light.color[0], light.color[1], light.color[2]);
-            let dir = space::to_bevy_space_pos(Vec3::new(light.direction[0], light.direction[1], light.direction[2]));
+            let dir = space::to_bevy_space_pos(Vec3::new(
+                light.direction[0],
+                light.direction[1],
+                light.direction[2],
+            ));
             if i < 2 {
                 // First two lights are directional
                 commands.spawn((

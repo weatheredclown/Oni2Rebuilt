@@ -39,7 +39,7 @@ pub fn extract_xml_attr(content: &str, tag: &str) -> Option<String> {
         let after = &current[idx..];
         let tag_end_offset = after.find('>').unwrap_or(after.len());
         let tag_content = &after[..tag_end_offset];
-        
+
         if let Some(val_start_offset) = tag_content.find("value=\"") {
             let val_start = val_start_offset + 7;
             if let Some(val_end_offset) = tag_content[val_start..].find('"') {

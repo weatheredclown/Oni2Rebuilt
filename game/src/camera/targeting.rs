@@ -4,9 +4,9 @@
  * targeting_camera_system runs when mode is GameTargeting.  Applies an
  * over-the-shoulder, zoomed-in view suitable for ranged weapon aiming.
  */
-use bevy::prelude::*;
 use super::channel::CameraChannel;
 use super::components::{ActiveCameraMode, CameraController};
+use bevy::prelude::*;
 
 /// Calculates optimal desired azimuth, incline, and distance for the targeting state.
 /// This applies an over-the-shoulder, zoomed-in view, matching sniper ADS behavior natively.
@@ -29,7 +29,7 @@ pub fn targeting_camera_system(
 
         // Force camera tightly behind character over the right shoulder.
         channel.desired_distance = 1.8;
-        
+
         // ADS zoom (FOV mapped strictly smaller natively)
         // We override the package default FOV actively
         channel.desired_fov = 25.0;

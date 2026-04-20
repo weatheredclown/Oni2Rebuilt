@@ -1,10 +1,10 @@
 use anyhow::{Context, Result};
 use bevy::app::AppExit;
 use bevy::asset::RenderAssetUsages;
+use bevy::camera::RenderTarget;
 use bevy::input::mouse::{MouseMotion, MouseWheel};
 use bevy::mesh::skinning::SkinnedMeshInverseBindposes;
 use bevy::prelude::*;
-use bevy::camera::RenderTarget;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat, TextureUsages};
 use bevy::render::view::screenshot::{Screenshot, save_to_disk};
 use bevy::window::PrimaryWindow;
@@ -490,7 +490,8 @@ fn ui_system(
         if entry.thumbnail_path.is_some() && entry.thumbnail_handle.is_none() {
             let rel_path = format!("entity/{}/thumbnail.png", entry.entity_type);
             let handle = asset_server.load(rel_path);
-            entry.texture_id = Some(contexts.add_image(bevy_egui::EguiTextureHandle::Strong(handle.clone())));
+            entry.texture_id =
+                Some(contexts.add_image(bevy_egui::EguiTextureHandle::Strong(handle.clone())));
             entry.thumbnail_handle = Some(handle);
         }
     }
@@ -578,7 +579,9 @@ fn ui_system(
                         .entity_types
                         .iter()
                         .enumerate()
-                        .filter(|(_, entry)| matches_filter(&entry.entity_type, &state.entity_filter))
+                        .filter(|(_, entry)| {
+                            matches_filter(&entry.entity_type, &state.entity_filter)
+                        })
                         .map(|(i, _)| i)
                         .collect();
                     ui.label(format!(
@@ -596,16 +599,24 @@ fn ui_system(
                             .show(ui, |ui| {
                                 for (i, idx) in filtered_entities.iter().enumerate() {
                                     let entry = &mut layout.entity_types[*idx];
-                                    if entry.thumbnail_path.is_some() && entry.thumbnail_handle.is_none() {
-                                        let rel_path = format!("entity/{}/thumbnail.png", entry.entity_type);
+                                    if entry.thumbnail_path.is_some()
+                                        && entry.thumbnail_handle.is_none()
+                                    {
+                                        let rel_path =
+                                            format!("entity/{}/thumbnail.png", entry.entity_type);
                                         entry.thumbnail_handle = Some(asset_server.load(rel_path));
                                     }
                                     ui.group(|ui| {
                                         ui.set_min_size(egui::vec2(130.0, 130.0));
                                         ui.vertical_centered(|ui| {
                                             if let Some(texture_id) = &entry.texture_id {
-                                                let img = egui::Image::new(egui::load::SizedTexture::new(*texture_id, [100.0, 100.0]))
-                                                    .sense(egui::Sense::click());
+                                                let img = egui::Image::new(
+                                                    egui::load::SizedTexture::new(
+                                                        *texture_id,
+                                                        [100.0, 100.0],
+                                                    ),
+                                                )
+                                                .sense(egui::Sense::click());
                                                 if ui.add(img).clicked() {
                                                     to_insert = Some(entry.entity_type.clone());
                                                 }
@@ -618,7 +629,10 @@ fn ui_system(
                                                     format!("{}\n(loading)", entry.entity_type)
                                                 };
                                                 if ui
-                                                    .add_sized([120.0, 120.0], egui::Button::new(label))
+                                                    .add_sized(
+                                                        [120.0, 120.0],
+                                                        egui::Button::new(label),
+                                                    )
                                                     .clicked()
                                                 {
                                                     to_insert = Some(entry.entity_type.clone());
@@ -741,17 +755,26 @@ fn ui_system(
                     ui.label(egui::RichText::new("Position").underline());
                     let mut pos = actor.position;
                     let mut pos_changed = false;
-                    egui::Grid::new("pos_grid").num_columns(2).spacing([4.0, 4.0]).show(ui, |ui| {
-                        ui.label("X");
-                        pos_changed |= ui.add(egui::DragValue::new(&mut pos.x).speed(0.05)).changed();
-                        ui.end_row();
-                        ui.label("Y");
-                        pos_changed |= ui.add(egui::DragValue::new(&mut pos.y).speed(0.05)).changed();
-                        ui.end_row();
-                        ui.label("Z");
-                        pos_changed |= ui.add(egui::DragValue::new(&mut pos.z).speed(0.05)).changed();
-                        ui.end_row();
-                    });
+                    egui::Grid::new("pos_grid")
+                        .num_columns(2)
+                        .spacing([4.0, 4.0])
+                        .show(ui, |ui| {
+                            ui.label("X");
+                            pos_changed |= ui
+                                .add(egui::DragValue::new(&mut pos.x).speed(0.05))
+                                .changed();
+                            ui.end_row();
+                            ui.label("Y");
+                            pos_changed |= ui
+                                .add(egui::DragValue::new(&mut pos.y).speed(0.05))
+                                .changed();
+                            ui.end_row();
+                            ui.label("Z");
+                            pos_changed |= ui
+                                .add(egui::DragValue::new(&mut pos.z).speed(0.05))
+                                .changed();
+                            ui.end_row();
+                        });
                     if pos_changed {
                         state.pending_inspector_position = Some(pos);
                     }
@@ -762,17 +785,26 @@ fn ui_system(
                     ui.label(egui::RichText::new("Orientation (deg)").underline());
                     let mut orient = actor.orientation_o2;
                     let mut rot_changed = false;
-                    egui::Grid::new("rot_grid").num_columns(2).spacing([4.0, 4.0]).show(ui, |ui| {
-                        ui.label("X");
-                        rot_changed |= ui.add(egui::DragValue::new(&mut orient.x).speed(0.5)).changed();
-                        ui.end_row();
-                        ui.label("Y");
-                        rot_changed |= ui.add(egui::DragValue::new(&mut orient.y).speed(0.5)).changed();
-                        ui.end_row();
-                        ui.label("Z");
-                        rot_changed |= ui.add(egui::DragValue::new(&mut orient.z).speed(0.5)).changed();
-                        ui.end_row();
-                    });
+                    egui::Grid::new("rot_grid")
+                        .num_columns(2)
+                        .spacing([4.0, 4.0])
+                        .show(ui, |ui| {
+                            ui.label("X");
+                            rot_changed |= ui
+                                .add(egui::DragValue::new(&mut orient.x).speed(0.5))
+                                .changed();
+                            ui.end_row();
+                            ui.label("Y");
+                            rot_changed |= ui
+                                .add(egui::DragValue::new(&mut orient.y).speed(0.5))
+                                .changed();
+                            ui.end_row();
+                            ui.label("Z");
+                            rot_changed |= ui
+                                .add(egui::DragValue::new(&mut orient.z).speed(0.5))
+                                .changed();
+                            ui.end_row();
+                        });
                     if rot_changed {
                         state.pending_inspector_orientation = Some(orient);
                     }

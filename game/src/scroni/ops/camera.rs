@@ -5,9 +5,9 @@
  * camera-mode overrides.  Issues SysRequest::CameraReset / CameraScript
  * which system_bindings forwards to CameraController.
  */
+use super::OpsCtx;
 use crate::scroni::ast::Stmt;
 use crate::scroni::vm::{SysRequest, Value};
-use super::OpsCtx;
 
 pub fn exec(ctx: &mut OpsCtx, stmt: &Stmt) -> bool {
     match stmt {

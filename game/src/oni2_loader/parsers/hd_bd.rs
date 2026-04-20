@@ -5,7 +5,7 @@
  * parse_hd: reads the .HD header file for a DAVE audio bank and returns the
  * list of embedded subsongs used to seek into the corresponding .BD stream.
  */
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 use std::io::Cursor;
 
 #[derive(Debug, Clone)]
@@ -33,21 +33,27 @@ fn read_u32le(data: &[u8], offset: usize) -> Result<u32> {
     if offset + 4 > data.len() {
         bail!("Unexpected EOF reading u32 at 0x{:x}", offset);
     }
-    Ok(u32::from_le_bytes(data[offset..offset + 4].try_into().unwrap()))
+    Ok(u32::from_le_bytes(
+        data[offset..offset + 4].try_into().unwrap(),
+    ))
 }
 
 fn read_s32le(data: &[u8], offset: usize) -> Result<i32> {
     if offset + 4 > data.len() {
         bail!("Unexpected EOF reading i32 at 0x{:x}", offset);
     }
-    Ok(i32::from_le_bytes(data[offset..offset + 4].try_into().unwrap()))
+    Ok(i32::from_le_bytes(
+        data[offset..offset + 4].try_into().unwrap(),
+    ))
 }
 
 fn read_u16le(data: &[u8], offset: usize) -> Result<u16> {
     if offset + 2 > data.len() {
         bail!("Unexpected EOF reading u16 at 0x{:x}", offset);
     }
-    Ok(u16::from_le_bytes(data[offset..offset + 2].try_into().unwrap()))
+    Ok(u16::from_le_bytes(
+        data[offset..offset + 2].try_into().unwrap(),
+    ))
 }
 
 fn read_u8(data: &[u8], offset: usize) -> Result<u8> {
@@ -112,22 +118,27 @@ pub fn parse_hd(sf: &[u8]) -> Result<HdHeader> {
     let mut subsongs = Vec::new();
     for target in 1..=total_subsongs {
         let target_subsong = target as usize;
-        let info_offset_rel = read_u32le(sf, vagi_offset + 0x10 + 0x04 * (target_subsong - 1))? as usize;
+        let info_offset_rel =
+            read_u32le(sf, vagi_offset + 0x10 + 0x04 * (target_subsong - 1))? as usize;
         let info_offset = vagi_offset + info_offset_rel;
 
         let stream_offset = read_u32le(sf, info_offset)?;
         let sample_rate = read_u16le(sf, info_offset + 0x04)?;
         let flags = read_u8(sf, info_offset + 0x06)?;
-        
+
         let next_offset = if target_subsong == total_subsongs as usize {
             bd_size
         } else {
-            let next_info_rel = read_u32le(sf, vagi_offset + 0x10 + 0x04 * target_subsong)? as usize;
+            let next_info_rel =
+                read_u32le(sf, vagi_offset + 0x10 + 0x04 * target_subsong)? as usize;
             read_u32le(sf, vagi_offset + next_info_rel)?
         };
 
         if next_offset < stream_offset {
-            bail!("Invalid next_offset < stream_offset for subsong {}", target_subsong);
+            bail!(
+                "Invalid next_offset < stream_offset for subsong {}",
+                target_subsong
+            );
         }
         let stream_size = next_offset - stream_offset;
         let channels = 1;
@@ -162,10 +173,10 @@ pub fn decode_psx_adpcm(data: &[u8], expected_samples: u32) -> Result<Vec<i16>> 
     let mut out = Vec::with_capacity((data.len() / 16) * 28);
     let f0: [i32; 5] = [0, 60, 115, 98, 122];
     let f1: [i32; 5] = [0, 0, -52, -55, -60];
-    
+
     let mut hist1: i32 = 0;
     let mut hist2: i32 = 0;
-    
+
     for chunk in data.chunks_exact(16) {
         let shift_filter = chunk[0];
         let shift = (shift_filter & 0x0F) as i32;
@@ -173,34 +184,34 @@ pub fn decode_psx_adpcm(data: &[u8], expected_samples: u32) -> Result<Vec<i16>> 
         if filter_idx >= 5 {
             filter_idx = 0;
         }
-        
+
         let f0_val = f0[filter_idx];
         let f1_val = f1[filter_idx];
-        
+
         for i in 0..14 {
             let byte = chunk[2 + i];
-            
+
             let mut nibble1 = (byte & 0x0F) as i8;
-            nibble1 = (nibble1 << 4) >> 4; 
-            
+            nibble1 = (nibble1 << 4) >> 4;
+
             let mut nibble2 = (byte >> 4) as i8;
-            nibble2 = (nibble2 << 4) >> 4; 
-            
+            nibble2 = (nibble2 << 4) >> 4;
+
             for &nibble in &[nibble1, nibble2] {
                 let mut sample = (nibble as i32) << 12;
                 sample >>= shift;
-                
+
                 let p = sample + ((f0_val * hist1 + f1_val * hist2 + 32) >> 6);
                 let p = p.clamp(-32768, 32767);
-                
+
                 hist2 = hist1;
                 hist1 = p;
-                
+
                 out.push(p as i16);
             }
         }
     }
-    
+
     out.truncate(expected_samples as usize);
     Ok(out)
 }

@@ -5,9 +5,9 @@
  * Issues BlockingAction::GotoCurvePhase to pause the script thread until
  * the entity reaches the specified curve phase.
  */
-use crate::scroni::ast::Stmt;
-use crate::scroni::vm::{ExecState, BlockingAction};
 use super::OpsCtx;
+use crate::scroni::ast::Stmt;
+use crate::scroni::vm::{BlockingAction, ExecState};
 
 pub fn exec(ctx: &mut OpsCtx, stmt: &Stmt) -> bool {
     match stmt {

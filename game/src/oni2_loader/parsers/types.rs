@@ -166,6 +166,10 @@ pub struct Oni2Animation {
     pub frames: Vec<Vec<f32>>, // frames[frame_idx][channel_idx]
     pub attack_data: Option<crate::oni2_loader::parsers::atdt::AtdtData>,
     pub react_data: Option<crate::oni2_loader::parsers::rct::ReactData>,
+    /// Phase-triggered FX entries loaded from ANIM_FX blocks (rbAnimFXData).
+    /// Each entry fires its fx list once when the animation's normalized phase
+    /// crosses `phase` (ascending).  Reset when a new anim id starts playing.
+    pub anim_fx: Vec<crate::animator::AnimFxEntry>,
 }
 
 // === Parsed .expl explosion data ===

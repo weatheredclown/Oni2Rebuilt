@@ -10,23 +10,27 @@
  * the Konoko entity, and spawns the camera rig.
  */
 mod ai;
+mod animator;
 mod camera;
 mod combat;
 mod control_map;
 mod debug;
+mod door;
 mod explosion;
+mod fight;
+mod fight_vector;
 mod filesystem;
 mod fx_system;
 mod hud;
+mod inventory;
 mod menu;
 mod oni2_loader;
 mod player;
 mod projectile_system;
 mod scroni;
-mod door;
-mod fight_vector;
 mod statemachine;
 mod telemetry;
+mod weapons;
 pub use filesystem::dave_vfs;
 pub use filesystem::vfs;
 
@@ -35,9 +39,9 @@ use bevy::diagnostic::FrameTimeDiagnosticsPlugin;
 use bevy::log::LogPlugin;
 use bevy::prelude::*;
 use uuid::Uuid;
-    
-use camera::components::{CameraController, PrototypeElement};
+
 use camera::channel::CameraChannel;
+use camera::components::{CameraController, PrototypeElement};
 use combat::components::*;
 use menu::{AppState, InGameEntity, SelectedLayout};
 use oni2_loader::TestAnimMode;
@@ -100,10 +104,18 @@ fn main() {
     }
 
     let cli_layout = args.windows(2).find_map(|w| {
-        if w[0] == "--layout" { Some(w[1].clone()) } else { None }
+        if w[0] == "--layout" {
+            Some(w[1].clone())
+        } else {
+            None
+        }
     });
     let cli_testanim = args.windows(2).find_map(|w| {
-        if w[0] == "--testanim" || w[0] == "--animtest" { Some(w[1].clone()) } else { None }
+        if w[0] == "--testanim" || w[0] == "--animtest" {
+            Some(w[1].clone())
+        } else {
+            None
+        }
     });
     let cli_testentity = args
         .iter()
@@ -150,18 +162,21 @@ fn main() {
     // --- App setup ---
     let mut app = App::new();
 
-    app.add_plugins(DefaultPlugins.set(WindowPlugin {
-        primary_window: Some(Window {
-            title: "rb-reborn".to_string(),
-            ..default()
-        }),
-        ..default()
-    })
-    .set(LogPlugin {
-        filter: "info,bevy_ecs=trace,wgpu_core=warn,wgpu_hal=warn,rb_game=debug".into(),
-        level: bevy::log::Level::DEBUG,
-        ..default()
-    }))
+    app.add_plugins(
+        DefaultPlugins
+            .set(WindowPlugin {
+                primary_window: Some(Window {
+                    title: "rb-reborn".to_string(),
+                    ..default()
+                }),
+                ..default()
+            })
+            .set(LogPlugin {
+                filter: "info,bevy_ecs=trace,wgpu_core=warn,wgpu_hal=warn,rb_game=debug".into(),
+                level: bevy::log::Level::DEBUG,
+                ..default()
+            }),
+    )
     .insert_resource(Time::<Fixed>::from_hz(60.0))
     .add_plugins(PhysicsPlugins::default())
     .add_plugins(avian3d::debug_render::PhysicsDebugPlugin)
@@ -170,6 +185,8 @@ fn main() {
     .add_plugins(telemetry::TelemetryPlugin)
     .add_plugins(menu::MenuPlugin)
     .add_plugins(combat::CombatPlugin)
+    .add_plugins(fight::FightPlugin)
+    .add_plugins(animator::AnimatorPlugin)
     .add_plugins(control_map::ControlMapPlugin)
     .add_plugins(fight_vector::FightVectorPlugin)
     .add_plugins(statemachine::StateMachinePlugin)
@@ -179,6 +196,8 @@ fn main() {
     .add_plugins(hud::HudPlugin)
     .add_plugins(fx_system::FxPlugin)
     .add_plugins(projectile_system::ProjectilePlugin)
+    .add_plugins(weapons::WeaponPlugin)
+    .add_plugins(inventory::InventoryPlugin)
     .add_plugins(oni2_loader::Oni2LoaderPlugin)
     .add_plugins(scroni::ScroniPlugin)
     .add_plugins(door::DoorPlugin)
@@ -217,14 +236,9 @@ fn main() {
         Update,
         oni2_loader::free_camera_system
             .run_if(resource_exists::<FormationMode>)
-            .run_if(in_state(AppState::InGame))
+            .run_if(in_state(AppState::InGame)),
     )
-    .add_systems(
-        Update,
-        (
-            explosion::update_explosion_system,
-        )
-    );
+    .add_systems(Update, (explosion::update_explosion_system,));
 
     if let Some(layout_name) = &cli_layout {
         app.insert_resource(SelectedLayout(layout_name.clone()));
@@ -374,6 +388,9 @@ fn setup_scene(
             ComboTracker::default(),
             HitReaction::default(),
             AboutToBeHit::default(),
+            fight::components::FighterState::default(),
+            fight::components::FighterType::default(),
+            fight::components::BlockLibrary::default(),
         ));
         pi.entity
     } else {
@@ -448,6 +465,9 @@ pub fn spawn_fallback_player(
                 ComboTracker::default(),
                 HitReaction::default(),
                 AboutToBeHit::default(),
+                fight::components::FighterState::default(),
+                fight::components::FighterType::default(),
+                fight::components::BlockLibrary::default(),
             ),
         ))
         .with_children(|parent| {

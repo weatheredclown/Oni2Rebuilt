@@ -5,10 +5,10 @@
  * Issues SysRequest::TriggerAttack resolved by system_bindings into an
  * AttackMessage on the relevant fighter entity.
  */
-use crate::scroni::ast::Stmt;
-use bevy::prelude::*;
-use crate::scroni::vm::{SysRequest, Value};
 use super::OpsCtx;
+use crate::scroni::ast::Stmt;
+use crate::scroni::vm::{SysRequest, Value};
+use bevy::prelude::*;
 
 pub fn exec(ctx: &mut OpsCtx, stmt: &Stmt) -> bool {
     match stmt {
@@ -34,24 +34,22 @@ pub fn exec(ctx: &mut OpsCtx, stmt: &Stmt) -> bool {
             true
         }
         Stmt::Fight(opt_expr) => {
-            let target_ent = opt_expr.as_ref().map(|expr| {
-                match ctx.eval(expr) {
-                    Value::Actor(act) => act,
-                    Value::Int(_) | Value::String(_) => {
-                        let evaluated_val = ctx.eval(expr);
-                        let targets = ctx.ctx.resolve_targets(&evaluated_val);
-                        if !targets.is_empty() {
-                            targets[0]
-                        } else {
-                            Entity::PLACEHOLDER
-                        }
+            let target_ent = opt_expr.as_ref().map(|expr| match ctx.eval(expr) {
+                Value::Actor(act) => act,
+                Value::Int(_) | Value::String(_) => {
+                    let evaluated_val = ctx.eval(expr);
+                    let targets = ctx.ctx.resolve_targets(&evaluated_val);
+                    if !targets.is_empty() {
+                        targets[0]
+                    } else {
+                        Entity::PLACEHOLDER
                     }
-                    _ => Entity::PLACEHOLDER,
                 }
+                _ => Entity::PLACEHOLDER,
             });
-            ctx.sys_request(SysRequest::TriggerFight { 
-                actor: ctx.exec.owner, 
-                target: target_ent 
+            ctx.sys_request(SysRequest::TriggerFight {
+                actor: ctx.exec.owner,
+                target: target_ent,
             });
             ctx.thread_mut().state = crate::scroni::vm::ExecState::Yielded;
             true
@@ -61,7 +59,11 @@ pub fn exec(ctx: &mut OpsCtx, stmt: &Stmt) -> bool {
             ctx.thread_mut().state = crate::scroni::vm::ExecState::Yielded;
             true
         }
-        Stmt::Hit { hit_type, victim, damage } => {
+        Stmt::Hit {
+            hit_type,
+            victim,
+            damage,
+        } => {
             let eval_hit_type = ctx.eval_string(hit_type);
             let eval_victim = ctx.eval(victim);
             let eval_damage = ctx.eval_float(damage);
@@ -78,10 +80,17 @@ pub fn exec(ctx: &mut OpsCtx, stmt: &Stmt) -> bool {
             ctx.thread_mut().state = crate::scroni::vm::ExecState::Yielded;
             true
         }
-        Stmt::MakeExplosion { name, orientation, at } => {
+        Stmt::MakeExplosion {
+            name,
+            orientation,
+            at,
+        } => {
             let name_val = ctx.eval_string(name);
             let at_val = ctx.eval_vec3(at);
-            let ori_val = orientation.as_ref().map(|o| ctx.eval_vec3(o)).unwrap_or([0.0;3]);
+            let ori_val = orientation
+                .as_ref()
+                .map(|o| ctx.eval_vec3(o))
+                .unwrap_or([0.0; 3]);
 
             ctx.sys_request(crate::scroni::vm::SysRequest::MakeExplosion {
                 name: name_val,
@@ -93,20 +102,18 @@ pub fn exec(ctx: &mut OpsCtx, stmt: &Stmt) -> bool {
             true
         }
         Stmt::Retreat(opt_expr) => {
-            let target_ent = opt_expr.as_ref().map(|expr| {
-                match ctx.eval(expr) {
-                    Value::Actor(act) => act,
-                    Value::Int(_) | Value::String(_) => {
-                        let evaluated_val = ctx.eval(expr);
-                        let targets = ctx.ctx.resolve_targets(&evaluated_val);
-                        if !targets.is_empty() {
-                            targets[0]
-                        } else {
-                            Entity::PLACEHOLDER
-                        }
+            let target_ent = opt_expr.as_ref().map(|expr| match ctx.eval(expr) {
+                Value::Actor(act) => act,
+                Value::Int(_) | Value::String(_) => {
+                    let evaluated_val = ctx.eval(expr);
+                    let targets = ctx.ctx.resolve_targets(&evaluated_val);
+                    if !targets.is_empty() {
+                        targets[0]
+                    } else {
+                        Entity::PLACEHOLDER
                     }
-                    _ => Entity::PLACEHOLDER,
                 }
+                _ => Entity::PLACEHOLDER,
             });
             ctx.sys_request(SysRequest::Retreat {
                 actor: ctx.exec.owner,

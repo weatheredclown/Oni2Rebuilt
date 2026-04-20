@@ -56,12 +56,11 @@ impl Default for ActiveCameraMode {
 pub struct CameraController {
     pub active_mode: ActiveCameraMode,
     pub next_mode: Option<ActiveCameraMode>,
-    
+
     // Smooth transition tracking between states
     pub transition_time: f32,
     pub transition_time_remaining: f32,
-    
-    
+
     // Sub-mode memory
 
     // Global parameters tracked natively over the manager
@@ -88,21 +87,21 @@ pub enum ScriptFocusTarget {
 #[derive(Component, Default, Clone, Debug)]
 pub struct ScriptCameraSequence {
     // Spatial Rail (from LayoutPaths via CameraMoveAlongRail)
-    pub active_rail: Option<Vec<Vec3>>,      // Extracted spline path
-    pub rail_start_pos: Option<Vec3>,        // Original camera position before spline start
+    pub active_rail: Option<Vec<Vec3>>, // Extracted spline path
+    pub rail_start_pos: Option<Vec3>,   // Original camera position before spline start
     pub active_rail_name: Option<String>,
     pub rail_duration: f32,
     pub rail_time_elapsed: f32,
-    
+
     // Smooth Look-At Tracker (CameraTrackActor / CameraTrackPoint)
     pub tracked_target: Option<ScriptFocusTarget>,
-    
+
     // Explicit Camera Positions over time (CameraMoveToPoint / CameraMoveToActor)
     pub move_start: Option<Vec3>,
     pub move_target: Option<ScriptFocusTarget>,
     pub move_duration: f32,
     pub move_time_elapsed: f32,
-    
+
     pub fov_start: Option<f32>,
     pub fov_target: Option<f32>,
     pub fov_duration: f32,

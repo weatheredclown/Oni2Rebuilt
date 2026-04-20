@@ -9,12 +9,12 @@
  */
 pub mod channel;
 pub mod components;
-pub mod systems;
-pub mod polar;
-pub mod follow;
 pub mod fight;
+pub mod follow;
 pub mod freecam;
+pub mod polar;
 pub mod script;
+pub mod systems;
 pub mod targeting;
 
 use bevy::prelude::*;
@@ -31,23 +31,19 @@ impl Plugin for CameraPlugin {
                     systems::prototype_toggle_system,
                     systems::debug_render_camera_targets,
                     systems::update_camera_channel,
-                    
                     // Mode-specific evaluators (all read from & write to channel)
                     follow::follow_camera_system.after(systems::update_camera_channel),
                     fight::fight_camera_system.after(systems::update_camera_channel),
                     script::script_camera_system.after(systems::update_camera_channel),
                     targeting::targeting_camera_system.after(systems::update_camera_channel),
-                    
                     // Final interpolators
                     polar::polar_interpolation_system
                         .after(follow::follow_camera_system)
                         .after(fight::fight_camera_system)
                         .after(script::script_camera_system)
                         .after(targeting::targeting_camera_system),
-                        
-                    // Transform modifiers 
+                    // Transform modifiers
                     polar::apply_camera_transform.after(polar::polar_interpolation_system),
-                    
                     freecam::freecam_system.after(systems::update_camera_channel), // Bypasses channel completely
                 ),
             );

@@ -114,9 +114,8 @@ pub struct AttackState {
 #[derive(Default)]
 pub struct ActiveAttack {
     pub hit_entities: Vec<Entity>,
+    pub has_fired_projectile: bool,
 }
-
-
 
 // === Combo Tracker ===
 

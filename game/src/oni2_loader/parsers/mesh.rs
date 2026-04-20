@@ -39,9 +39,16 @@ pub fn build_meshes_by_material(model: &Oni2Model) -> Vec<(usize, Mesh)> {
             let mut strip_verts: Vec<u32> = Vec::new();
             for &adj_idx in strip {
                 let default_adj = crate::oni2_loader::parsers::types::Oni2Adjunct {
-                    vertex_idx: 0, normal_idx: 0, color_idx: 0, tex1_idx: -1, bone_idx: 0
+                    vertex_idx: 0,
+                    normal_idx: 0,
+                    color_idx: 0,
+                    tex1_idx: -1,
+                    bone_idx: 0,
                 };
-                let adj = packet.adjuncts.get(adj_idx as usize).unwrap_or(&default_adj);
+                let adj = packet
+                    .adjuncts
+                    .get(adj_idx as usize)
+                    .unwrap_or(&default_adj);
 
                 let raw_pos = model
                     .vertices
@@ -212,9 +219,16 @@ pub fn build_skinned_meshes_by_material(
             let mut strip_verts: Vec<u32> = Vec::new();
             for &adj_idx in strip {
                 let default_adj = crate::oni2_loader::parsers::types::Oni2Adjunct {
-                    vertex_idx: 0, normal_idx: 0, color_idx: 0, tex1_idx: -1, bone_idx: 0
+                    vertex_idx: 0,
+                    normal_idx: 0,
+                    color_idx: 0,
+                    tex1_idx: -1,
+                    bone_idx: 0,
                 };
-                let adj = packet.adjuncts.get(adj_idx as usize).unwrap_or(&default_adj);
+                let adj = packet
+                    .adjuncts
+                    .get(adj_idx as usize)
+                    .unwrap_or(&default_adj);
 
                 let raw_pos = model
                     .vertices

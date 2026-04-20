@@ -11,62 +11,62 @@ use bevy::prelude::*;
 /// Reaction animation name table, indexed by animReactEnum integer value.
 /// Index == animReactEnum integer value stored in .atdt reactanim* fields.
 pub const ANIMREACT_NAMES: &[&str] = &[
-    "ANIMREACT_REGULAR",            // 0
-    "ANIMREACT_FIGHTSTANCE",        // 1
-    "ANIMREACT_FROMBACK",           // 2
-    "ANIMREACT_GRAPPLE_SHOT",       // 3
-    "ANIMREACT_KNOCKDOWN",          // 4
-    "ANIMREACT_GRAPPLE",            // 5
-    "ANIMREACT_GENERAL_SLOT_0",     // 6
-    "ANIMREACT_GENERAL_SLOT_1",     // 7
-    "ANIMREACT_GENERAL_SLOT_2",     // 8
-    "ANIMREACT_GENERAL_SLOT_3",     // 9
-    "ANIMREACT_GENERAL_SLOT_4",     // 10
-    "ANIMREACT_GENERAL_SLOT_5",     // 11
-    "ANIMREACT_GENERAL_SLOT_6",     // 12
-    "ANIMREACT_GENERAL_SLOT_7",     // 13
-    "ANIMREACT_GENERAL_SLOT_8",     // 14
-    "ANIMREACT_GENERAL_SLOT_9",     // 15
-    "ANIMREACT_GENERAL_SLOT_10",    // 16
-    "ANIMREACT_GENERAL_SLOT_11",    // 17
-    "ANIMREACT_BLOCKED",            // 18
-    "ANIMREACT_ATK_ATTACK_1_MASH",  // 19
-    "ANIMREACT_ATK_ATTACK_1_SKILL", // 20
-    "ANIMREACT_ATK_ATTACK_2_MASH",  // 21
-    "ANIMREACT_ATK_ATTACK_2_SKILL", // 22
-    "ANIMREACT_ATK_CROUCHING",      // 23
-    "ANIMREACT_ATK_STANDING_JUMP",  // 24
-    "ANIMREACT_ATK_RUNNING_JUMP",   // 25
-    "ANIMREACT_ATK_RUNNING_ATTACK", // 26
-    "ANIMREACT_ATK_GRAPPLE",        // 27
-    "ANIMREACT_ATK_SWEEP",          // 28
-    "ANIMREACT_ATK_SWEEP_CHRYSALIS",// 29
-    "ANIMREACT_GA_SLOT_0",          // 30
-    "ANIMREACT_GA_SLOT_1",          // 31
-    "ANIMREACT_GA_SLOT_2",          // 32
-    "ANIMREACT_GA_SLOT_3",          // 33
-    "ANIMREACT_GA_SLOT_4",          // 34
-    "ANIMREACT_GA_SLOT_5",          // 35
-    "ANIMREACT_GA_SLOT_6",          // 36
-    "ANIMREACT_GA_SLOT_7",          // 37
-    "ANIMREACT_COUNTER_SLOT_0",     // 38
-    "ANIMREACT_COUNTER_SLOT_1",     // 39
-    "ANIMREACT_COUNTER_SLOT_2",     // 40
-    "ANIMREACT_COUNTER_SLOT_3",     // 41
-    "ANIMREACT_COUNTER_SLOT_4",     // 42
-    "ANIMREACT_COUNTER_SLOT_5",     // 43
-    "ANIMREACT_COUNTER_SLOT_6",     // 44
-    "ANIMREACT_COUNTER_SLOT_7",     // 45
-    "ANIMREACT_WALL",               // 46
-    "ANIMREACT_WALL_GETUP",         // 47
-    "ANIMREACT_CRANESTRUGGLE",      // 48
-    "ANIMREACT_FROMBACK_STAND_SFT", // 49
-    "ANIMREACT_FROMBACK_STAND_MED", // 50
-    "ANIMREACT_FROMBACK_STAND_HRD", // 51
-    "ANIMREACT_FROMBACK_RUN_SFT",   // 52
-    "ANIMREACT_FROMBACK_RUN_MED",   // 53
-    "ANIMREACT_FROMBACK_RUN_HRD",   // 54
-    "ANIMREACT_FROM_ABOVE",         // 55
+    "ANIMREACT_REGULAR",             // 0
+    "ANIMREACT_FIGHTSTANCE",         // 1
+    "ANIMREACT_FROMBACK",            // 2
+    "ANIMREACT_GRAPPLE_SHOT",        // 3
+    "ANIMREACT_KNOCKDOWN",           // 4
+    "ANIMREACT_GRAPPLE",             // 5
+    "ANIMREACT_GENERAL_SLOT_0",      // 6
+    "ANIMREACT_GENERAL_SLOT_1",      // 7
+    "ANIMREACT_GENERAL_SLOT_2",      // 8
+    "ANIMREACT_GENERAL_SLOT_3",      // 9
+    "ANIMREACT_GENERAL_SLOT_4",      // 10
+    "ANIMREACT_GENERAL_SLOT_5",      // 11
+    "ANIMREACT_GENERAL_SLOT_6",      // 12
+    "ANIMREACT_GENERAL_SLOT_7",      // 13
+    "ANIMREACT_GENERAL_SLOT_8",      // 14
+    "ANIMREACT_GENERAL_SLOT_9",      // 15
+    "ANIMREACT_GENERAL_SLOT_10",     // 16
+    "ANIMREACT_GENERAL_SLOT_11",     // 17
+    "ANIMREACT_BLOCKED",             // 18
+    "ANIMREACT_ATK_ATTACK_1_MASH",   // 19
+    "ANIMREACT_ATK_ATTACK_1_SKILL",  // 20
+    "ANIMREACT_ATK_ATTACK_2_MASH",   // 21
+    "ANIMREACT_ATK_ATTACK_2_SKILL",  // 22
+    "ANIMREACT_ATK_CROUCHING",       // 23
+    "ANIMREACT_ATK_STANDING_JUMP",   // 24
+    "ANIMREACT_ATK_RUNNING_JUMP",    // 25
+    "ANIMREACT_ATK_RUNNING_ATTACK",  // 26
+    "ANIMREACT_ATK_GRAPPLE",         // 27
+    "ANIMREACT_ATK_SWEEP",           // 28
+    "ANIMREACT_ATK_SWEEP_CHRYSALIS", // 29
+    "ANIMREACT_GA_SLOT_0",           // 30
+    "ANIMREACT_GA_SLOT_1",           // 31
+    "ANIMREACT_GA_SLOT_2",           // 32
+    "ANIMREACT_GA_SLOT_3",           // 33
+    "ANIMREACT_GA_SLOT_4",           // 34
+    "ANIMREACT_GA_SLOT_5",           // 35
+    "ANIMREACT_GA_SLOT_6",           // 36
+    "ANIMREACT_GA_SLOT_7",           // 37
+    "ANIMREACT_COUNTER_SLOT_0",      // 38
+    "ANIMREACT_COUNTER_SLOT_1",      // 39
+    "ANIMREACT_COUNTER_SLOT_2",      // 40
+    "ANIMREACT_COUNTER_SLOT_3",      // 41
+    "ANIMREACT_COUNTER_SLOT_4",      // 42
+    "ANIMREACT_COUNTER_SLOT_5",      // 43
+    "ANIMREACT_COUNTER_SLOT_6",      // 44
+    "ANIMREACT_COUNTER_SLOT_7",      // 45
+    "ANIMREACT_WALL",                // 46
+    "ANIMREACT_WALL_GETUP",          // 47
+    "ANIMREACT_CRANESTRUGGLE",       // 48
+    "ANIMREACT_FROMBACK_STAND_SFT",  // 49
+    "ANIMREACT_FROMBACK_STAND_MED",  // 50
+    "ANIMREACT_FROMBACK_STAND_HRD",  // 51
+    "ANIMREACT_FROMBACK_RUN_SFT",    // 52
+    "ANIMREACT_FROMBACK_RUN_MED",    // 53
+    "ANIMREACT_FROMBACK_RUN_HRD",    // 54
+    "ANIMREACT_FROM_ABOVE",          // 55
 ];
 
 /// Load all .rct files for an entity into a Vec indexed by animReactEnum integer.
@@ -85,7 +85,12 @@ pub fn load_react_library(entity_name: &str) -> crate::combat::components::React
         }
     }
 
-    info!("ReactLibrary for {}: {}/{} reacts loaded", entity_name, loaded, ANIMREACT_NAMES.len());
+    info!(
+        "ReactLibrary for {}: {}/{} reacts loaded",
+        entity_name,
+        loaded,
+        ANIMREACT_NAMES.len()
+    );
     crate::combat::components::ReactLibrary { entries }
 }
 
@@ -119,10 +124,14 @@ pub fn parse_rct_content(content: &str) -> ReactData {
 
         match key {
             "SoundPackage" => data.sound_package = val.to_string(),
-            "InvulnerabilityStartPhase" => data.invulnerability_start_phase = val.parse().unwrap_or(0.0),
+            "InvulnerabilityStartPhase" => {
+                data.invulnerability_start_phase = val.parse().unwrap_or(0.0)
+            }
             "GetUpAnim" => data.get_up_anim = val.replace("\"", ""),
             "EndRotationNotches" => data.end_rotation_notches = val.parse().unwrap_or(0),
-            "DoesNotTakeDamageAfterPhase" => data.does_not_take_damage_after_phase = val.parse().unwrap_or(0),
+            "DoesNotTakeDamageAfterPhase" => {
+                data.does_not_take_damage_after_phase = val.parse().unwrap_or(0)
+            }
             "CanFollowWithWallReact" => data.can_follow_with_wall_react = val.parse().unwrap_or(0),
             "SoundFrame" => data.sound_frame = val.parse().unwrap_or(0),
             _ => {}

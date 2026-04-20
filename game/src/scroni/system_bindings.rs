@@ -5,9 +5,9 @@
  * SpawnEntity, PlaySound, PlayFx, CameraScript, ScreenFade, TriggerLayout, etc.
  * Acts as the bridge between the pure-Rust scripting VM and Bevy ECS world mutations.
  */
+use crate::oni2_loader::utils::space;
 use crate::scroni::vm::*;
 use bevy::prelude::*;
-use crate::oni2_loader::utils::space;
 pub fn scroni_sys_event_observer(
     trigger: On<ScrOniSysEvent>,
     mut commands: Commands,
@@ -35,23 +35,46 @@ pub fn scroni_sys_event_observer(
     mut ai_target_query: Query<&mut crate::ai::components::AiFighter>,
     explosion_registry: Res<crate::oni2_loader::registries::ExplosionRegistry>,
     misc_queries: (
-        Query<(
-            &mut Transform,
-            Option<&mut avian3d::prelude::LinearVelocity>,
-            Option<&mut avian3d::prelude::Position>,
-            Option<&mut avian3d::prelude::Rotation>,
-        ), Without<crate::camera::components::CameraController>>,
+        Query<
+            (
+                &mut Transform,
+                Option<&mut avian3d::prelude::LinearVelocity>,
+                Option<&mut avian3d::prelude::Position>,
+                Option<&mut avian3d::prelude::Rotation>,
+            ),
+            Without<crate::camera::components::CameraController>,
+        >,
         Query<&Children>,
         Query<&mut MeshMaterial3d<StandardMaterial>>,
-        Query<(Entity, &mut crate::camera::components::CameraController, &mut crate::camera::channel::CameraChannel, Option<&crate::camera::components::ScriptCameraSequence>, &Transform)>,
+        Query<(
+            Entity,
+            &mut crate::camera::components::CameraController,
+            &mut crate::camera::channel::CameraChannel,
+            Option<&crate::camera::components::ScriptCameraSequence>,
+            &Transform,
+        )>,
         Query<(&Name, Option<&mut PointLight>, Option<&mut SpotLight>)>,
-        Query<(Entity, &mut ScrOniScript, Option<&Name>, Option<&mut ShaderLocals>)>,
+        Query<(
+            Entity,
+            &mut ScrOniScript,
+            Option<&Name>,
+            Option<&mut ShaderLocals>,
+        )>,
         Query<(), With<crate::player::components::Player>>,
         Query<(Entity, &ActiveAmbientSound)>,
     ),
 ) {
     let ev = (*trigger).clone();
-    let (mut transform_query, children_query, mut materials_query, mut camera_query, mut lights_query, mut script_query, player_query, ambient_sound_query) = misc_queries;
+    let (
+        mut transform_query,
+        children_query,
+        mut materials_query,
+        mut camera_query,
+        mut lights_query,
+        mut script_query,
+        player_query,
+        ambient_sound_query,
+    ) = misc_queries;
     let (
         mut materials,
         mut meshes,
@@ -65,19 +88,23 @@ pub fn scroni_sys_event_observer(
         mut td_directory,
         mut audio_packages,
     ) = assets;
-    
+
     if td_directory.is_none() {
         *td_directory = Some(crate::oni2_loader::parsers::td::load_all_tds());
     }
 
     if audio_packages.is_none() {
         if let Ok(content) = crate::vfs::read_to_string("Audio", "rb.audiopackages") {
-            *audio_packages = Some(crate::oni2_loader::parsers::audiopackages::parse_audiopackages(&content));
+            *audio_packages =
+                Some(crate::oni2_loader::parsers::audiopackages::parse_audiopackages(&content));
         } else {
             let assets_path = crate::get_assets_path();
-            let pkgs_path = std::path::Path::new(assets_path).join("Audio").join("rb.audiopackages");
+            let pkgs_path = std::path::Path::new(assets_path)
+                .join("Audio")
+                .join("rb.audiopackages");
             if let Ok(content) = std::fs::read_to_string(&pkgs_path) {
-                *audio_packages = Some(crate::oni2_loader::parsers::audiopackages::parse_audiopackages(&content));
+                *audio_packages =
+                    Some(crate::oni2_loader::parsers::audiopackages::parse_audiopackages(&content));
             } else {
                 warn!("Failed to load Audio/rb.audiopackages, audio package lookups will fail.");
                 *audio_packages = Some(std::collections::HashMap::new());
@@ -87,7 +114,10 @@ pub fn scroni_sys_event_observer(
 
     match ev {
         ScrOniSysEvent::SetFullScreenColor { color, duration } => {
-            let start_color = screen_fade.as_ref().map(|s| s.current_color).unwrap_or(Vec3::ONE);
+            let start_color = screen_fade
+                .as_ref()
+                .map(|s| s.current_color)
+                .unwrap_or(Vec3::ONE);
             commands.insert_resource(ScreenFadeState {
                 current_color: start_color,
                 start_color,
@@ -96,7 +126,12 @@ pub fn scroni_sys_event_observer(
                 duration,
             });
         }
-        ScrOniSysEvent::MakeExplosion { script_entity, name, orientation, at } => {
+        ScrOniSysEvent::MakeExplosion {
+            script_entity,
+            name,
+            orientation,
+            at,
+        } => {
             info!("MakeExplosion requested: {} at {:?}", name, at);
             if let Some(def) = explosion_registry.explosions.get(&name.to_lowercase()) {
                 let position = Vec3::new(at[0], at[1], at[2]);
@@ -106,7 +141,11 @@ pub fn scroni_sys_event_observer(
                         name: name.clone(),
                         at: position,
                         timer: 0.0,
-                        blast_duration: def.ellipsoid.as_ref().map(|e| e.blast_duration).unwrap_or(1.0),
+                        blast_duration: def
+                            .ellipsoid
+                            .as_ref()
+                            .map(|e| e.blast_duration)
+                            .unwrap_or(1.0),
                         spawn_source: script_entity, // Store who requested it
                     },
                     Transform::from_translation(position),
@@ -121,7 +160,7 @@ pub fn scroni_sys_event_observer(
                             parent: None,
                             start_active: true,
                         });
-                        
+
                         commands.trigger(ScrOniSysEvent::PlaySound {
                             script_entity,
                             actor: None,
@@ -133,7 +172,11 @@ pub fn scroni_sys_event_observer(
                 warn!("MakeExplosion {} not found in ExplosionRegistry", name);
             }
         }
-        ScrOniSysEvent::PlaySound { script_entity, actor, name } => {
+        ScrOniSysEvent::PlaySound {
+            script_entity,
+            actor,
+            name,
+        } => {
             let mut resolved_name = name.clone();
             let mut final_volume = 1.0;
             let mut final_pitch = 1.0;
@@ -145,29 +188,36 @@ pub fn scroni_sys_event_observer(
                         let mut rng = rand::rng();
                         let idx = rng.random_range(0..pkg.nuggets.len());
                         let nugget = &pkg.nuggets[idx];
-                        
+
                         resolved_name = nugget.sound.clone();
-                        final_volume = nugget.volume * rng.random_range(nugget.random_min_volume..=nugget.random_max_volume);
-                        final_pitch = nugget.pitch * rng.random_range(nugget.random_min_pitch..=nugget.random_max_pitch);
+                        final_volume = nugget.volume
+                            * rng.random_range(nugget.random_min_volume..=nugget.random_max_volume);
+                        final_pitch = nugget.pitch
+                            * rng.random_range(nugget.random_min_pitch..=nugget.random_max_pitch);
                     } else {
                         warn!("Audio package `{}` found, but it has no nuggets.", name);
                     }
                 } else {
-                    warn!("Audio package `{}` not found in rb.audiopackages (falling back to direct .td lookup)", name);
+                    warn!(
+                        "Audio package `{}` not found in rb.audiopackages (falling back to direct .td lookup)",
+                        name
+                    );
                 }
             }
 
             if let Some(dir) = td_directory.as_ref() {
-                if let Some((_, v)) = dir.sounds.iter().find(|(k, _)| k.eq_ignore_ascii_case(&resolved_name)) {
+                if let Some((_, v)) = dir
+                    .sounds
+                    .iter()
+                    .find(|(k, _)| k.eq_ignore_ascii_case(&resolved_name))
+                {
                     let bank_name = &v.0;
                     let vag_index = v.1;
                     let hd_name = format!("{}.hd", bank_name);
                     let bd_name = format!("{}.bd", bank_name);
-                    
-                    let hd_paths = [
-                        hd_name.clone(),
-                    ];
-                    
+
+                    let hd_paths = [hd_name.clone()];
+
                     let mut hd_bytes_opt = None;
                     for p in &hd_paths {
                         if let Ok(b) = crate::vfs::read("", p) {
@@ -175,20 +225,21 @@ pub fn scroni_sys_event_observer(
                             break;
                         }
                     }
-                    
+
                     if let Some(hd_bytes) = hd_bytes_opt {
-                        if let Ok(header) = crate::oni2_loader::parsers::hd_bd::parse_hd(&hd_bytes) {
+                        if let Ok(header) = crate::oni2_loader::parsers::hd_bd::parse_hd(&hd_bytes)
+                        {
                             // Find the target subsong (1-indexed but vag_index is 0-indexed)
                             // Wait, the user said NUMVAGS 13, and the split has vag_index 12.
                             // The HD subsongs are usually accessed 1..=total_subsongs.
                             // So we need vag_index + 1
                             let target_index = vag_index + 1;
-                            if let Some(subsong) = header.subsongs.iter().find(|s| s.index == target_index) {
-                                let bd_paths = [
-                                    bd_name.clone(),
-                                    format!("Audio/banks/{}", bd_name),
-                                ];
-                                
+                            if let Some(subsong) =
+                                header.subsongs.iter().find(|s| s.index == target_index)
+                            {
+                                let bd_paths =
+                                    [bd_name.clone(), format!("Audio/banks/{}", bd_name)];
+
                                 let mut bd_bytes_opt = None;
                                 for p in &bd_paths {
                                     if let Ok(b) = crate::vfs::read("", p) {
@@ -196,24 +247,42 @@ pub fn scroni_sys_event_observer(
                                         break;
                                     }
                                 }
-                                
+
                                 if let Some(bd_bytes) = bd_bytes_opt {
                                     let start = subsong.stream_offset as usize;
                                     let end = start + subsong.stream_size as usize;
                                     if end <= bd_bytes.len() {
                                         let payload = &bd_bytes[start..end];
-                                        if let Ok(pcm) = crate::oni2_loader::parsers::hd_bd::decode_psx_adpcm(payload, subsong.num_samples) {
-                                            if let Ok(wav) = crate::oni2_loader::parsers::hd_bd::create_wav_bytes(&pcm, subsong.sample_rate, subsong.channels) {
-                                                let source_handle = audio_sources.add(bevy::audio::AudioSource {
-                                                    bytes: std::sync::Arc::from(wav),
-                                                });
-                                                
+                                        if let Ok(pcm) =
+                                            crate::oni2_loader::parsers::hd_bd::decode_psx_adpcm(
+                                                payload,
+                                                subsong.num_samples,
+                                            )
+                                        {
+                                            if let Ok(wav) =
+                                                crate::oni2_loader::parsers::hd_bd::create_wav_bytes(
+                                                    &pcm,
+                                                    subsong.sample_rate,
+                                                    subsong.channels,
+                                                )
+                                            {
+                                                let source_handle =
+                                                    audio_sources.add(bevy::audio::AudioSource {
+                                                        bytes: std::sync::Arc::from(wav),
+                                                    });
+
                                                 // 2D Ambient Playback Requested
                                                 commands.spawn((
                                                     bevy::audio::AudioPlayer(source_handle),
                                                     bevy::audio::PlaybackSettings {
-                                                        mode: if subsong.loop_flag { bevy::audio::PlaybackMode::Loop } else { bevy::audio::PlaybackMode::Despawn },
-                                                        volume: bevy::audio::Volume::Linear(final_volume),
+                                                        mode: if subsong.loop_flag {
+                                                            bevy::audio::PlaybackMode::Loop
+                                                        } else {
+                                                            bevy::audio::PlaybackMode::Despawn
+                                                        },
+                                                        volume: bevy::audio::Volume::Linear(
+                                                            final_volume,
+                                                        ),
                                                         speed: final_pitch,
                                                         ..Default::default()
                                                     },
@@ -237,7 +306,10 @@ pub fn scroni_sys_event_observer(
                     }
                 } else {
                     if resolved_name != name {
-                        warn!("Sound `{}` (resolved from package `{}`) not found in .td manifest directory.", resolved_name, name);
+                        warn!(
+                            "Sound `{}` (resolved from package `{}`) not found in .td manifest directory.",
+                            resolved_name, name
+                        );
                     } else {
                         warn!("Sound `{}` not found in .td manifest directory.", name);
                     }
@@ -276,33 +348,43 @@ pub fn scroni_sys_event_observer(
         ScrOniSysEvent::CameraSetPackage(pkg_name) => {
             if let Some(mut active_pkg) = active_camera_package {
                 if active_pkg.name != pkg_name {
-                    info!("Changing active camera package from {} to {}", active_pkg.name, pkg_name);
+                    info!(
+                        "Changing active camera package from {} to {}",
+                        active_pkg.name, pkg_name
+                    );
                     active_pkg.name = pkg_name;
                 }
             } else {
                 warn!("CameraSetPackage called but no ActiveCameraPackage resource found.");
             }
             for (_cam_ent, mut controller, _, _, _) in &mut camera_query {
-                controller.active_mode = crate::camera::components::ActiveCameraMode::GameNavigation;
+                controller.active_mode =
+                    crate::camera::components::ActiveCameraMode::GameNavigation;
             }
         }
         ScrOniSysEvent::CameraFollowActor(actor_ent) => {
-            let actor_pos = transform_query.get(actor_ent)
+            let actor_pos = transform_query
+                .get(actor_ent)
                 .map(|(tf, _, _, _)| tf.translation)
                 .unwrap_or(Vec3::ZERO);
             for (_, mut controller, mut channel, _, _) in &mut camera_query {
-                info!("[CAM-SCRIPT] CameraFollowActor {:?} | snapping focus to {}", actor_ent, actor_pos);
+                info!(
+                    "[CAM-SCRIPT] CameraFollowActor {:?} | snapping focus to {}",
+                    actor_ent, actor_pos
+                );
                 channel.focus_actor = actor_ent;
                 channel.current_focus_pos = actor_pos;
                 channel.previous_focus_pos = actor_pos;
                 channel.script_override_transform = None;
-                controller.active_mode = crate::camera::components::ActiveCameraMode::GameNavigation;
+                controller.active_mode =
+                    crate::camera::components::ActiveCameraMode::GameNavigation;
             }
         }
         ScrOniSysEvent::CameraReset => {
             for (_, mut controller, mut channel, _, cam_tf) in &mut camera_query {
                 info!("[CAM-SCRIPT] CameraReset | cam_pos={}", cam_tf.translation);
-                controller.active_mode = crate::camera::components::ActiveCameraMode::GameNavigation;
+                controller.active_mode =
+                    crate::camera::components::ActiveCameraMode::GameNavigation;
                 channel.script_override_transform = None;
             }
         }
@@ -345,9 +427,14 @@ pub fn scroni_sys_event_observer(
             for (ent, mut controller, mut channel, seq_opt, cam_tf) in &mut camera_query {
                 controller.active_mode = crate::camera::components::ActiveCameraMode::Script;
                 channel.focus_actor = actor_ent;
-                info!("[CAM-SCRIPT] CameraTrackActor {:?} | cam_pos={}", actor_ent, cam_tf.translation);
+                info!(
+                    "[CAM-SCRIPT] CameraTrackActor {:?} | cam_pos={}",
+                    actor_ent, cam_tf.translation
+                );
                 let mut seq = seq_opt.cloned().unwrap_or_default();
-                seq.tracked_target = Some(crate::camera::components::ScriptFocusTarget::Actor(actor_ent));
+                seq.tracked_target = Some(crate::camera::components::ScriptFocusTarget::Actor(
+                    actor_ent,
+                ));
                 commands.entity(ent).insert(seq);
             }
         }
@@ -356,8 +443,13 @@ pub fn scroni_sys_event_observer(
                 controller.active_mode = crate::camera::components::ActiveCameraMode::Script;
                 let mut seq = seq_opt.cloned().unwrap_or_default();
                 let mapped_pt = space::to_bevy_space_pos(pt);
-                info!("[CAM-SCRIPT] CameraTrackPoint {} (raw={}) | cam_pos={}", mapped_pt, pt, cam_tf.translation);
-                seq.tracked_target = Some(crate::camera::components::ScriptFocusTarget::Point(mapped_pt));
+                info!(
+                    "[CAM-SCRIPT] CameraTrackPoint {} (raw={}) | cam_pos={}",
+                    mapped_pt, pt, cam_tf.translation
+                );
+                seq.tracked_target = Some(crate::camera::components::ScriptFocusTarget::Point(
+                    mapped_pt,
+                ));
                 commands.entity(ent).insert(seq);
             }
         }
@@ -365,9 +457,14 @@ pub fn scroni_sys_event_observer(
             for (ent, mut controller, mut channel, seq_opt, cam_tf) in &mut camera_query {
                 controller.active_mode = crate::camera::components::ActiveCameraMode::Script;
                 channel.focus_actor = actor_ent;
-                info!("[CAM-SCRIPT] CameraMoveToActor {:?} over {:.2}s | cam_pos={}", actor_ent, dur, cam_tf.translation);
+                info!(
+                    "[CAM-SCRIPT] CameraMoveToActor {:?} over {:.2}s | cam_pos={}",
+                    actor_ent, dur, cam_tf.translation
+                );
                 let mut seq = seq_opt.cloned().unwrap_or_default();
-                seq.move_target = Some(crate::camera::components::ScriptFocusTarget::Actor(actor_ent));
+                seq.move_target = Some(crate::camera::components::ScriptFocusTarget::Actor(
+                    actor_ent,
+                ));
                 seq.move_duration = dur;
                 seq.move_time_elapsed = 0.0;
                 seq.move_start = None; // lazily captured from camera position on first script tick
@@ -379,8 +476,13 @@ pub fn scroni_sys_event_observer(
                 controller.active_mode = crate::camera::components::ActiveCameraMode::Script;
                 let mut seq = seq_opt.cloned().unwrap_or_default();
                 let mapped_pt = space::to_bevy_space_pos(pt);
-                info!("[CAM-SCRIPT] CameraMoveToPoint {} (raw={}) over {:.2}s | cam_pos={}", mapped_pt, pt, dur, cam_tf.translation);
-                seq.move_target = Some(crate::camera::components::ScriptFocusTarget::Point(mapped_pt));
+                info!(
+                    "[CAM-SCRIPT] CameraMoveToPoint {} (raw={}) over {:.2}s | cam_pos={}",
+                    mapped_pt, pt, dur, cam_tf.translation
+                );
+                seq.move_target = Some(crate::camera::components::ScriptFocusTarget::Point(
+                    mapped_pt,
+                ));
                 seq.move_duration = dur;
                 seq.move_time_elapsed = 0.0;
                 seq.move_start = None; // lazily captured from camera position on first script tick
@@ -390,7 +492,10 @@ pub fn scroni_sys_event_observer(
         ScrOniSysEvent::CameraMoveAlongRail(rail, dur) => {
             for (ent, mut controller, _, seq_opt, cam_tf) in &mut camera_query {
                 controller.active_mode = crate::camera::components::ActiveCameraMode::Script;
-                info!("[CAM-SCRIPT] CameraMoveAlongRail '{}' over {:.2}s | cam_pos={}", rail, dur, cam_tf.translation);
+                info!(
+                    "[CAM-SCRIPT] CameraMoveAlongRail '{}' over {:.2}s | cam_pos={}",
+                    rail, dur, cam_tf.translation
+                );
                 let mut seq = seq_opt.cloned().unwrap_or_default();
                 seq.active_rail_name = Some(rail.clone());
                 seq.active_rail = None; // force re-resolve in case layout changed
@@ -537,16 +642,24 @@ pub fn scroni_sys_event_observer(
             if let Ok((_, script, _, _)) = script_query.get(script_entity) {
                 caller_name = script.exec.main_thread.script.name.clone();
             }
-            
+
             if player_query.get(target).is_ok() {
-                info!("VM: [{}] Requested TELEPORT on PLAYER! Raw coords: {:?}, face: {:?}", caller_name, to, face);
+                info!(
+                    "VM: [{}] Requested TELEPORT on PLAYER! Raw coords: {:?}, face: {:?}",
+                    caller_name, to, face
+                );
             }
 
-            if let Ok((mut transform, mut opt_vel, mut opt_phys_pos, mut opt_phys_rot)) = transform_query.get_mut(target) {
+            if let Ok((mut transform, mut opt_vel, mut opt_phys_pos, mut opt_phys_rot)) =
+                transform_query.get_mut(target)
+            {
                 if let Some(pos) = to {
                     let bevy_pos = space::to_bevy_space_pos(pos);
                     if player_query.get(target).is_ok() {
-                        info!("VM: [{}] Translating PLAYER to mapped Bevy Coords: {:?}", caller_name, bevy_pos);
+                        info!(
+                            "VM: [{}] Translating PLAYER to mapped Bevy Coords: {:?}",
+                            caller_name, bevy_pos
+                        );
                     }
                     transform.translation = bevy_pos;
                     // Also update Avian3D's authoritative Position so the physics engine
@@ -565,9 +678,10 @@ pub fn scroni_sys_event_observer(
                 if let Some(angles_y) = face {
                     let rad = angles_y.to_radians();
                     let current_rot = transform.rotation.to_euler(EulerRot::YXZ);
-                    let new_rot = Quat::from_euler(EulerRot::YXZ, rad, current_rot.1, current_rot.2);
+                    let new_rot =
+                        Quat::from_euler(EulerRot::YXZ, rad, current_rot.1, current_rot.2);
                     transform.rotation = new_rot;
-                    
+
                     if let Some(ref mut phys_rot) = opt_phys_rot {
                         phys_rot.0 = new_rot;
                     }
@@ -639,12 +753,14 @@ pub fn scroni_sys_event_observer(
         }
         ScrOniSysEvent::FollowActor { actor, target } => {
             // [AUDIT]: Prototype leakage. `ActorFollower` is a hacky prototype component used for steering.
-            // "Follow" simply paths closely to the target but does not engage in combat. 
+            // "Follow" simply paths closely to the target but does not engage in combat.
             // We assign an active ActorFollower pointing directly to the target.
-            commands.entity(actor).insert(crate::ai::components::ActorFollower {
-                target,
-                within: 3.0,
-            });
+            commands
+                .entity(actor)
+                .insert(crate::ai::components::ActorFollower {
+                    target,
+                    within: 3.0,
+                });
             info!("VM: AI {:?} ordered to Follow {:?}", actor, target);
         }
         ScrOniSysEvent::SetLightIntensity {
@@ -751,10 +867,12 @@ pub fn scroni_sys_event_observer(
             if file_name.starts_with("Stream:") {
                 let mut stream_name = file_name.replace("Stream:", "");
                 stream_name.push_str(".stm");
-                
+
                 if let Ok(bytes) = crate::vfs::read("", &stream_name) {
                     if let Ok(decoded) = crate::oni2_loader::parsers::stm::decode_stm(&bytes) {
-                        if let Ok(wav) = crate::oni2_loader::parsers::stm::create_wav_bytes(&decoded) {
+                        if let Ok(wav) =
+                            crate::oni2_loader::parsers::stm::create_wav_bytes(&decoded)
+                        {
                             source_handle = Some(audio_sources.add(bevy::audio::AudioSource {
                                 bytes: std::sync::Arc::from(wav),
                             }));
@@ -771,23 +889,36 @@ pub fn scroni_sys_event_observer(
                 let mut resolved_name = file_name.clone();
                 let mut p_vol = 1.0;
                 let mut p_pitch = 1.0;
-                
+
                 if let Some(pkgs) = audio_packages.as_ref() {
-                    if let Some((_, pkg)) = pkgs.iter().find(|(k, _)| k.eq_ignore_ascii_case(&resolved_name)) {
+                    if let Some((_, pkg)) = pkgs
+                        .iter()
+                        .find(|(k, _)| k.eq_ignore_ascii_case(&resolved_name))
+                    {
                         if !pkg.nuggets.is_empty() {
                             use rand::Rng;
                             let mut rng = rand::rng();
                             let idx = rng.random_range(0..pkg.nuggets.len());
                             let nugget = &pkg.nuggets[idx];
                             resolved_name = nugget.sound.clone();
-                            p_vol = nugget.volume * rng.random_range(nugget.random_min_volume..=nugget.random_max_volume);
-                            p_pitch = nugget.pitch * rng.random_range(nugget.random_min_pitch..=nugget.random_max_pitch);
+                            p_vol = nugget.volume
+                                * rng.random_range(
+                                    nugget.random_min_volume..=nugget.random_max_volume,
+                                );
+                            p_pitch = nugget.pitch
+                                * rng.random_range(
+                                    nugget.random_min_pitch..=nugget.random_max_pitch,
+                                );
                         }
                     }
                 }
-                
+
                 if let Some(dir) = td_directory.as_ref() {
-                    if let Some((_, v)) = dir.sounds.iter().find(|(k, _)| k.eq_ignore_ascii_case(&resolved_name)) {
+                    if let Some((_, v)) = dir
+                        .sounds
+                        .iter()
+                        .find(|(k, _)| k.eq_ignore_ascii_case(&resolved_name))
+                    {
                         let bank_name = &v.0;
                         let vag_index = v.1;
                         let hd_name = format!("{}.hd", bank_name);
@@ -801,10 +932,15 @@ pub fn scroni_sys_event_observer(
                             }
                         }
                         if let Some(hd_bytes) = hd_bytes_opt {
-                            if let Ok(header) = crate::oni2_loader::parsers::hd_bd::parse_hd(&hd_bytes) {
+                            if let Ok(header) =
+                                crate::oni2_loader::parsers::hd_bd::parse_hd(&hd_bytes)
+                            {
                                 let target_index = vag_index + 1;
-                                if let Some(subsong) = header.subsongs.iter().find(|s| s.index == target_index) {
-                                    let bd_paths = [bd_name.clone(), format!("Audio/banks/{}", bd_name)];
+                                if let Some(subsong) =
+                                    header.subsongs.iter().find(|s| s.index == target_index)
+                                {
+                                    let bd_paths =
+                                        [bd_name.clone(), format!("Audio/banks/{}", bd_name)];
                                     let mut bd_bytes_opt = None;
                                     for p in &bd_paths {
                                         if let Ok(b) = crate::vfs::read("", p) {
@@ -817,7 +953,12 @@ pub fn scroni_sys_event_observer(
                                         let end = start + subsong.stream_size as usize;
                                         if end <= bd_bytes.len() {
                                             let payload = &bd_bytes[start..end];
-                                            if let Ok(pcm) = crate::oni2_loader::parsers::hd_bd::decode_psx_adpcm(payload, subsong.num_samples) {
+                                            if let Ok(pcm) =
+                                                crate::oni2_loader::parsers::hd_bd::decode_psx_adpcm(
+                                                    payload,
+                                                    subsong.num_samples,
+                                                )
+                                            {
                                                 if let Ok(wav) = crate::oni2_loader::parsers::hd_bd::create_wav_bytes(&pcm, subsong.sample_rate, subsong.channels) {
                                                     source_handle = Some(audio_sources.add(bevy::audio::AudioSource {
                                                         bytes: std::sync::Arc::from(wav),
@@ -864,8 +1005,7 @@ pub fn scroni_sys_event_observer(
             }
             if let Some(p) = pitch {
                 settings = settings.with_speed(p);
-            }
-            else if let Some((start_pitch, _, _)) = pitch_ramp {
+            } else if let Some((start_pitch, _, _)) = pitch_ramp {
                 settings = settings.with_speed(start_pitch);
             }
 
@@ -929,7 +1069,10 @@ pub fn scroni_sys_event_observer(
                 }
             }
         }
-        ScrOniSysEvent::AmbientSoundStop { script_entity: _, handle } => {
+        ScrOniSysEvent::AmbientSoundStop {
+            script_entity: _,
+            handle,
+        } => {
             for (entity, active_sound) in &ambient_sound_query {
                 if active_sound.handle == handle {
                     info!("VM: Despawning AmbientSound handle {}", handle);
@@ -938,7 +1081,10 @@ pub fn scroni_sys_event_observer(
             }
         }
         ScrOniSysEvent::Destroy(target) => {
-            info!("VM: Received native script request to permanently despawn {:?}", target);
+            info!(
+                "VM: Received native script request to permanently despawn {:?}",
+                target
+            );
             if let Ok(mut entity_cmds) = commands.get_entity(target) {
                 entity_cmds.despawn();
             }

@@ -6,6 +6,7 @@
  * reaction animation index.  parse_atdt returns a Vec<AtdtStrike> consumed by
  * attack_sync_system and hit_detection_system.
  */
+use super::block_parser::BlockParser;
 use bevy::prelude::*;
 
 #[derive(Debug, Clone, Reflect)]
@@ -23,6 +24,13 @@ pub struct AtdtStrike {
     pub sliceendradians: f32,
     pub sliceheadingradiansb: f32,
     pub sweepheading: i32,
+    pub use_expanding_radius: bool,
+    pub minradiusphase: f32,
+    pub maxradiusphase: f32,
+    pub fire: bool,
+    pub can_redirect: bool,
+    pub end_rotation_notches: i32,
+    pub stop_track_frame: f32,
     pub hittype: u8,
     pub guardtype: u8,
     pub sound: i32,
@@ -38,24 +46,15 @@ pub struct AtdtStrike {
     pub react_speed: [[f32; 4]; 4],
 
     // --- Combo-linking timing windows ---
-    // Field layout (from the .atdt binary format):
-    //   AtkNoQueueThreshold      = before this phase: input is ignored entirely
-    //   AtkBeginRedirectThreshold= redirect-window open (earliest branch point)
-    //   AtkEndRedirectThreshold  = CRITICAL_FRAME queue window opens
-    //   Opp2CritStart            = CRITICAL_FRAME condition becomes true (branch fires)
-    //   Opp2DoCritStart          = critical "do" threshold (fires queued input immediately)
-    //   AtkEndRedirectLimit      = CRITICAL_FRAME window closes
-    //   Opp3QStart               = queue window for 3rd opportunity
-    //   Opp3DoStart              = execute window for 3rd opportunity
-    pub opp2_q_start: f32,           // AtkNoQueueThreshold
-    pub opp2_begin_redirect: f32,    // AtkBeginRedirectThreshold
-    pub opp2_do_start: f32,          // AtkEndRedirectThreshold: CRITICAL_FRAME queue opens
-    pub opp2_crit_start: f32,        // Opp2CritStart: CRITICAL_FRAME fires
-    pub opp2_do_crit_start: f32,     // Opp2DoCritStart
-    pub opp2_do_end: f32,            // AtkEndRedirectLimit: CRITICAL_FRAME window closes
-    pub opp3_q_start: f32,           // Opp3QStart
-    pub opp3_do_start: f32,          // Opp3DoStart
-    pub queue_next_attack: bool,     // if false, don't queue input at all
+    pub opp2_q_start: f32,
+    pub opp2_begin_redirect: f32,
+    pub opp2_do_start: f32,
+    pub opp2_crit_start: f32,
+    pub opp2_do_crit_start: f32,
+    pub opp2_do_end: f32,
+    pub opp3_q_start: f32,
+    pub opp3_do_start: f32,
+    pub queue_next_attack: bool,
 }
 
 impl Default for AtdtStrike {
@@ -74,6 +73,13 @@ impl Default for AtdtStrike {
             sliceendradians: 0.0,
             sliceheadingradiansb: 0.0,
             sweepheading: 0,
+            use_expanding_radius: false,
+            minradiusphase: 0.0,
+            maxradiusphase: 1.0,
+            fire: false,
+            can_redirect: false,
+            end_rotation_notches: 0,
+            stop_track_frame: 0.0,
             hittype: 0,
             guardtype: 0,
             sound: 0,
@@ -87,7 +93,6 @@ impl Default for AtdtStrike {
             reactanim: [0; 4],
             react_sliderphase: [[0.0; 4]; 4],
             react_speed: [[0.0; 4]; 4],
-            // Default values for combo-linking timing windows
             opp2_q_start: 0.0,
             opp2_begin_redirect: 0.0,
             opp2_do_start: 0.75,
@@ -106,97 +111,223 @@ pub struct AtdtData {
     pub strike: Option<AtdtStrike>,
     pub damage: f32,
     pub block_reaction: i32,
-    /// guardtype from the AttackData-level field (0=normal, 2=unblockable, etc.)
     pub guardtype: u8,
 }
 
 pub fn parse_atdt_content(content: &str) -> AtdtData {
     let mut data = AtdtData::default();
-    let mut current_strike = AtdtStrike::default();
-    let mut in_strike = false;
+    let mut p = BlockParser::new(content);
 
-    for line in content.lines() {
-        let trimmed = line.trim();
-        if trimmed.is_empty() || trimmed.starts_with('#') || trimmed.starts_with("//") {
-            continue;
+    // Some files might be wrapped in `{` immediately
+    if p.peek() == Some("{") {
+        p.next();
+    }
+
+    loop {
+        let peek = p.peek();
+        if peek.is_none() {
+            break;
         }
 
-        if trimmed.starts_with("Strike") && trimmed.contains("{") {
-            in_strike = true;
-            continue;
-        }
+        let key = peek.unwrap().to_lowercase();
+        let actual_key = peek.unwrap().to_string();
 
-        // We only care about closing the AttackData block, which has damage at the end usually
-        // But let's just parse globally if `in_strike` is true or false
-        let parts: Vec<&str> = trimmed.split_whitespace().collect();
-        if parts.is_empty() {
-            continue;
-        }
-
-        let key = parts[0].to_lowercase();
-        let val = if parts.len() > 1 { parts[1] } else { "" };
-
-        if in_strike {
-            if key == "}" {
-                in_strike = false;
-                data.strike = Some(current_strike.clone());
-                continue;
+        match key.as_str() {
+            "strike" => {
+                p.next(); // Consume "strike"
+                if p.start_anonymous() {
+                    let mut strike = AtdtStrike::default();
+                    while !p.endblock() {
+                        let inner_key = p.peek().unwrap_or("").to_lowercase();
+                        let a_key = p.peek().unwrap_or("").to_string();
+                        match inner_key.as_str() {
+                            "framenum" => strike.framenum = p.read_float(&a_key, strike.framenum),
+                            "frameduration" => {
+                                strike.frameduration = p.read_float(&a_key, strike.frameduration)
+                            }
+                            "reactdiskradius" => {
+                                strike.reactdiskradius =
+                                    p.read_float(&a_key, strike.reactdiskradius)
+                            }
+                            "minreactdiskradius" => {
+                                strike.minreactdiskradius =
+                                    p.read_float(&a_key, strike.minreactdiskradius)
+                            }
+                            "reactdiskheight" => {
+                                strike.reactdiskheight =
+                                    p.read_float(&a_key, strike.reactdiskheight)
+                            }
+                            "reactdiskheighttolerance" => {
+                                strike.reactdiskheighttolerance =
+                                    p.read_float(&a_key, strike.reactdiskheighttolerance)
+                            }
+                            "minradiusframe" => {
+                                strike.minradiusframe = p.read_float(&a_key, strike.minradiusframe)
+                            }
+                            "maxradiusframe" => {
+                                strike.maxradiusframe = p.read_float(&a_key, strike.maxradiusframe)
+                            }
+                            "slicestartradians" => {
+                                strike.slicestartradians =
+                                    p.read_float(&a_key, strike.slicestartradians)
+                            }
+                            "sliceendradians" => {
+                                strike.sliceendradians =
+                                    p.read_float(&a_key, strike.sliceendradians)
+                            }
+                            "sliceheadingradiansb" => {
+                                strike.sliceheadingradiansb =
+                                    p.read_float(&a_key, strike.sliceheadingradiansb)
+                            }
+                            "sweepheading" => {
+                                strike.sweepheading = p.read_i32(&a_key, strike.sweepheading)
+                            }
+                            "useexpandingradius" => {
+                                strike.use_expanding_radius = p.read_i32(
+                                    &a_key,
+                                    if strike.use_expanding_radius { 1 } else { 0 },
+                                ) != 0
+                            }
+                            "minradiusphase" => {
+                                strike.minradiusphase = p.read_float(&a_key, strike.minradiusphase)
+                            }
+                            "maxradiusphase" => {
+                                strike.maxradiusphase = p.read_float(&a_key, strike.maxradiusphase)
+                            }
+                            "fire" => {
+                                strike.fire =
+                                    p.read_i32(&a_key, if strike.fire { 1 } else { 0 }) != 0
+                            }
+                            "canredirect" => {
+                                strike.can_redirect =
+                                    p.read_i32(&a_key, if strike.can_redirect { 1 } else { 0 }) != 0
+                            }
+                            "endrotationnotches" => {
+                                strike.end_rotation_notches =
+                                    p.read_i32(&a_key, strike.end_rotation_notches)
+                            }
+                            "stoptrackframe" => {
+                                strike.stop_track_frame =
+                                    p.read_float(&a_key, strike.stop_track_frame)
+                            }
+                            "hittype" => {
+                                strike.hittype = p.read_i32(&a_key, strike.hittype as i32) as u8
+                            }
+                            "sliderphase0" => {
+                                strike.sliderphase[0] = p.read_float(&a_key, strike.sliderphase[0])
+                            }
+                            "sliderphase1" => {
+                                strike.sliderphase[1] = p.read_float(&a_key, strike.sliderphase[1])
+                            }
+                            "sliderphase2" => {
+                                strike.sliderphase[2] = p.read_float(&a_key, strike.sliderphase[2])
+                            }
+                            "sliderphase3" => {
+                                strike.sliderphase[3] = p.read_float(&a_key, strike.sliderphase[3])
+                            }
+                            "hitspeed0" => {
+                                strike.hitspeed[0] = p.read_float(&a_key, strike.hitspeed[0])
+                            }
+                            "hitspeed1" => {
+                                strike.hitspeed[1] = p.read_float(&a_key, strike.hitspeed[1])
+                            }
+                            "hitspeed2" => {
+                                strike.hitspeed[2] = p.read_float(&a_key, strike.hitspeed[2])
+                            }
+                            "hitspeed3" => {
+                                strike.hitspeed[3] = p.read_float(&a_key, strike.hitspeed[3])
+                            }
+                            "reactphase0" => {
+                                strike.reactphase[0] = p.read_float(&a_key, strike.reactphase[0])
+                            }
+                            "reactphase1" => {
+                                strike.reactphase[1] = p.read_float(&a_key, strike.reactphase[1])
+                            }
+                            "reactphase2" => {
+                                strike.reactphase[2] = p.read_float(&a_key, strike.reactphase[2])
+                            }
+                            "reactphase3" => {
+                                strike.reactphase[3] = p.read_float(&a_key, strike.reactphase[3])
+                            }
+                            "reactdistance0" => {
+                                strike.reactdistance[0] =
+                                    p.read_float(&a_key, strike.reactdistance[0])
+                            }
+                            "reactdistance1" => {
+                                strike.reactdistance[1] =
+                                    p.read_float(&a_key, strike.reactdistance[1])
+                            }
+                            "reactdistance2" => {
+                                strike.reactdistance[2] =
+                                    p.read_float(&a_key, strike.reactdistance[2])
+                            }
+                            "reactdistance3" => {
+                                strike.reactdistance[3] =
+                                    p.read_float(&a_key, strike.reactdistance[3])
+                            }
+                            "reactanim0" => {
+                                strike.reactanim[0] = p.read_i32(&a_key, strike.reactanim[0])
+                            }
+                            "reactanim1" => {
+                                strike.reactanim[1] = p.read_i32(&a_key, strike.reactanim[1])
+                            }
+                            "reactanim2" => {
+                                strike.reactanim[2] = p.read_i32(&a_key, strike.reactanim[2])
+                            }
+                            "reactanim3" => {
+                                strike.reactanim[3] = p.read_i32(&a_key, strike.reactanim[3])
+                            }
+                            "atknoqueuethreshold" => {
+                                strike.opp2_q_start = p.read_float(&a_key, strike.opp2_q_start)
+                            }
+                            "atkbeginredirectthreshold" => {
+                                strike.opp2_begin_redirect =
+                                    p.read_float(&a_key, strike.opp2_begin_redirect)
+                            }
+                            "atkendredirectthreshold" => {
+                                strike.opp2_do_start = p.read_float(&a_key, strike.opp2_do_start)
+                            }
+                            "opp2critstart" => {
+                                strike.opp2_crit_start =
+                                    p.read_float(&a_key, strike.opp2_crit_start)
+                            }
+                            "opp2docritstart" => {
+                                strike.opp2_do_crit_start =
+                                    p.read_float(&a_key, strike.opp2_do_crit_start)
+                            }
+                            "atkendredirectlimit" => {
+                                strike.opp2_do_end = p.read_float(&a_key, strike.opp2_do_end)
+                            }
+                            "opp3qstart" => {
+                                strike.opp3_q_start = p.read_float(&a_key, strike.opp3_q_start)
+                            }
+                            "opp3dostart" => {
+                                strike.opp3_do_start = p.read_float(&a_key, strike.opp3_do_start)
+                            }
+                            "queuenextattack" => {
+                                strike.queue_next_attack = p
+                                    .read_i32(&a_key, if strike.queue_next_attack { 1 } else { 0 })
+                                    != 0
+                            }
+                            "blockreaction" => {
+                                data.block_reaction = p.read_i32(&a_key, data.block_reaction)
+                            }
+                            _ => {
+                                p.next();
+                            }
+                        }
+                    }
+                    data.strike = Some(strike);
+                }
             }
-
-            match key.as_str() {
-                "framenum" => current_strike.framenum = val.parse().unwrap_or(0.0),
-                "frameduration" => current_strike.frameduration = val.parse().unwrap_or(0.0),
-                "reactdiskradius" => current_strike.reactdiskradius = val.parse::<f32>().unwrap_or(0.0),
-                "minreactdiskradius" => current_strike.minreactdiskradius = val.parse::<f32>().unwrap_or(0.0),
-                "reactdiskheight" => current_strike.reactdiskheight = val.parse::<f32>().unwrap_or(1.0),
-                "reactdiskheighttolerance" => current_strike.reactdiskheighttolerance = val.parse::<f32>().unwrap_or(0.1),
-                "minradiusframe" => current_strike.minradiusframe = val.parse().unwrap_or(0.0),
-                "maxradiusframe" => current_strike.maxradiusframe = val.parse().unwrap_or(0.0),
-                "slicestartradians" => current_strike.slicestartradians = val.parse().unwrap_or(0.0),
-                "sliceendradians" => current_strike.sliceendradians = val.parse().unwrap_or(0.0),
-                "sliceheadingradiansb" => current_strike.sliceheadingradiansb = val.parse().unwrap_or(0.0),
-                "hittype" => current_strike.hittype = val.parse().unwrap_or(0),
-                "sliderphase0" => current_strike.sliderphase[0] = val.parse().unwrap_or(0.0),
-                "sliderphase1" => current_strike.sliderphase[1] = val.parse().unwrap_or(0.0),
-                "sliderphase2" => current_strike.sliderphase[2] = val.parse().unwrap_or(0.0),
-                "sliderphase3" => current_strike.sliderphase[3] = val.parse().unwrap_or(0.0),
-                "hitspeed0" => current_strike.hitspeed[0] = val.parse().unwrap_or(0.0),
-                "hitspeed1" => current_strike.hitspeed[1] = val.parse().unwrap_or(0.0),
-                "hitspeed2" => current_strike.hitspeed[2] = val.parse().unwrap_or(0.0),
-                "hitspeed3" => current_strike.hitspeed[3] = val.parse().unwrap_or(0.0),
-                // React phase array
-                "reactphase0" => current_strike.reactphase[0] = val.parse().unwrap_or(0.0),
-                "reactphase1" => current_strike.reactphase[1] = val.parse().unwrap_or(0.0),
-                "reactphase2" => current_strike.reactphase[2] = val.parse().unwrap_or(0.0),
-                "reactphase3" => current_strike.reactphase[3] = val.parse().unwrap_or(0.0),
-                // React distance
-                "reactdistance0" => current_strike.reactdistance[0] = val.parse::<f32>().unwrap_or(0.0),
-                "reactdistance1" => current_strike.reactdistance[1] = val.parse::<f32>().unwrap_or(0.0),
-                "reactdistance2" => current_strike.reactdistance[2] = val.parse::<f32>().unwrap_or(0.0),
-                "reactdistance3" => current_strike.reactdistance[3] = val.parse::<f32>().unwrap_or(0.0),
-                "reactanim0" => current_strike.reactanim[0] = val.parse().unwrap_or(0),
-                "reactanim1" => current_strike.reactanim[1] = val.parse().unwrap_or(0),
-                "reactanim2" => current_strike.reactanim[2] = val.parse().unwrap_or(0),
-                "reactanim3" => current_strike.reactanim[3] = val.parse().unwrap_or(0),
-                // Combo timing windows
-                "atknoqueuethreshold"      => current_strike.opp2_q_start        = val.parse().unwrap_or(0.0),
-                "atkbeginredirectthreshold"=> current_strike.opp2_begin_redirect  = val.parse().unwrap_or(0.0),
-                "atkendredirectthreshold"  => current_strike.opp2_do_start        = val.parse().unwrap_or(0.75),
-                "opp2critstart"            => current_strike.opp2_crit_start      = val.parse().unwrap_or(0.75),
-                "opp2docritstart"          => current_strike.opp2_do_crit_start   = val.parse().unwrap_or(0.75),
-                "atkendredirectlimit"      => current_strike.opp2_do_end          = val.parse().unwrap_or(0.95),
-                "opp3qstart"               => current_strike.opp3_q_start         = val.parse().unwrap_or(0.975),
-                "opp3dostart"              => current_strike.opp3_do_start         = val.parse().unwrap_or(1.0),
-                "queuenextattack"          => current_strike.queue_next_attack     = val.parse::<i32>().unwrap_or(1) != 0,
-                "blockreaction"            => data.block_reaction                 = val.parse().unwrap_or(0),
-                _ => {}
+            "damage" => data.damage = p.read_float(&actual_key, data.damage),
+            "blockreaction" => data.block_reaction = p.read_i32(&actual_key, data.block_reaction),
+            "guardtype" => data.guardtype = p.read_i32(&actual_key, data.guardtype as i32) as u8,
+            "}" => {
+                p.next();
             }
-        } else {
-            match key.as_str() {
-                "damage"        => data.damage         = val.parse().unwrap_or(0.0),
-                "blockreaction" => data.block_reaction = val.parse().unwrap_or(0),
-                "guardtype"     => data.guardtype       = val.parse().unwrap_or(0),
-                _ => {}
+            _ => {
+                p.next();
             }
         }
     }

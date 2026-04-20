@@ -20,8 +20,8 @@ pub mod types;
 
 pub use evaluator::{PadMapper, RawInputFrame};
 
-use bevy::prelude::*;
 use crate::filesystem::vfs;
+use bevy::prelude::*;
 
 pub struct ControlMapPlugin;
 

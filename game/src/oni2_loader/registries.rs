@@ -10,16 +10,22 @@
 use bevy::prelude::*;
 use std::collections::HashMap;
 
+use crate::inventory::components::{ItemRegistry, WeaponItemRegistry};
 use crate::oni2_loader::Oni2AnimLibrary;
 use crate::oni2_loader::Oni2DebugBounds;
 use crate::oni2_loader::Oni2Skeleton;
-use crate::oni2_loader::parsers::expl::parse_expl;
+use crate::oni2_loader::parsers::ammo::parse_ammo_content;
 use crate::oni2_loader::parsers::effect::{EffectDef, parse_effect};
+use crate::oni2_loader::parsers::expl::parse_expl;
+use crate::oni2_loader::parsers::inventory::parse_inventory_content;
 use crate::oni2_loader::parsers::particle::{ParticleSystemDef, parse_ptx};
 use crate::oni2_loader::parsers::projectile::{ProjectileDef, parse_projectile};
 use crate::oni2_loader::parsers::settings::parse_settings;
+use crate::oni2_loader::parsers::weap::parse_weap_content;
 use crate::vfs;
+use crate::weapons::components::{AmmoRegistry, WeaponRegistry};
 use bevy::mesh::skinning::SkinnedMeshInverseBindposes;
+use std::sync::Arc;
 
 #[derive(Component, Clone, Default, Debug)]
 pub struct TextureUVAnimator {
@@ -92,6 +98,10 @@ pub fn load_global_registries(
     mut proj_lib: ResMut<ProjLibrary>,
     mut fx_lib: ResMut<FxLibrary>,
     mut ptx_lib: ResMut<ParticleLibrary>,
+    mut weap_lib: ResMut<WeaponRegistry>,
+    mut ammo_lib: ResMut<AmmoRegistry>,
+    mut item_lib: ResMut<ItemRegistry>,
+    mut weapon_item_lib: ResMut<WeaponItemRegistry>,
 ) {
     // 1. Load rb.proj
     if let Ok(content) = vfs::read_to_string("Settings", "rb.proj") {
@@ -148,6 +158,52 @@ pub fn load_global_registries(
         }
     } else {
         warn!("Could not find Settings/rb.fx in VFS.");
+    }
+
+    // 3. Load rb.ammo (must precede rb.weap so weapons can resolve ammo refs).
+    if let Ok(content) = vfs::read_to_string("Settings", "rb.ammo") {
+        let ammos = parse_ammo_content(&content);
+        for (name, ammo) in ammos {
+            ammo_lib.types.insert(name, ammo);
+        }
+        info!(
+            "Loaded {} ammo types from Settings/rb.ammo",
+            ammo_lib.types.len()
+        );
+    } else {
+        warn!("Could not find Settings/rb.ammo in VFS.");
+    }
+
+    // 4. Load rb.weap
+    if let Ok(content) = vfs::read_to_string("Settings", "rb.weap") {
+        let weapons = parse_weap_content(&content);
+        for (name, weapon) in weapons {
+            weap_lib.types.insert(name.to_lowercase(), weapon);
+        }
+        info!(
+            "Loaded {} weapons from Settings/rb.weap",
+            weap_lib.types.len()
+        );
+    } else {
+        warn!("Could not find Settings/rb.weap in VFS.");
+    }
+
+    // 5. Load rb.inventory
+    if let Ok(content) = vfs::read_to_string("Settings", "rb.inventory") {
+        let (items, weapons) = parse_inventory_content(&content);
+        for (name, item) in items {
+            item_lib.types.insert(name, Arc::new(item));
+        }
+        for (name, weapon) in weapons {
+            weapon_item_lib.types.insert(name, Arc::new(weapon));
+        }
+        info!(
+            "Loaded {} items and {} weapon items from Settings/rb.inventory",
+            item_lib.types.len(),
+            weapon_item_lib.types.len()
+        );
+    } else {
+        warn!("Could not find Settings/rb.inventory in VFS.");
     }
 }
 
@@ -208,6 +264,9 @@ pub fn load_global_explosions(mut reg: ResMut<ExplosionRegistry>) {
     } else {
         warn!("Could not find Settings/rb.expl in VFS!");
     }
-    
-    info!("Loaded {} global basic explosions from Settings/rb.expl", reg.explosions.len());
+
+    info!(
+        "Loaded {} global basic explosions from Settings/rb.expl",
+        reg.explosions.len()
+    );
 }
