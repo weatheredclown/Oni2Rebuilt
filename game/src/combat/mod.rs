@@ -58,12 +58,13 @@ impl Plugin for CombatPlugin {
             .add_message::<events::AboutToBeHitMessage>()
             .add_message::<events::HitReactionMessage>()
             .add_message::<events::InjureMessage>()
+            .add_message::<events::StrikeConnectedEvent>()
             .add_systems(
                 FixedUpdate,
                 (
                     systems::ground_detection_system,
-                    systems::attack_sync_system,
                     systems::hit_detection_system,
+                    systems::process_strike_connections_system,
                     systems::about_to_be_hit_system,
                     systems::injure_system,
                     systems::hit_reaction_system,
@@ -72,8 +73,17 @@ impl Plugin for CombatPlugin {
                     systems::telemetry_combat_system,
                     systems::death_cleanup_system,
                     systems::death_timer_system,
+                    systems::fighter_rotation_sync_system,
                 )
                     .chain()
+                    .run_if(in_state(AppState::InGame)),
+            )
+            .add_systems(
+                Update,
+                systems::attack_sync_system
+                    .after(crate::statemachine::fsm_update_system)
+                    .after(crate::statemachine::animator_update_system)
+                    .after(crate::oni2_loader::animation::update_oni2_animation)
                     .run_if(in_state(AppState::InGame)),
             );
     }

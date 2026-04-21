@@ -2045,7 +2045,8 @@ end
 
     #[test]
     fn test_compile_konoko_oni() {
-        let path = r#"..\oni2\zips\assets\layout\M03_A01_Blast_Chambers\Scripts\konoko.oni"#;
+        crate::set_assets_path("../../oni2/zips/assets");
+        let path = format!("{}/layout/M03_A01_Blast_Chambers/Scripts/konoko.oni", crate::get_assets_path());
         let content = std::fs::read_to_string(path).unwrap();
         match Compiler::compile(&content) {
             Ok(_) => println!("COMPILE SUCCESS"),

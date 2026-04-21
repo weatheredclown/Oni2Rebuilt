@@ -15,7 +15,7 @@ use bevy::prelude::*;
 use rb_shared::events::CombatEvent;
 
 use crate::fight::components::{BlockLibrary, BlockStatus, FighterState};
-use crate::fight::events::{BlockFailedEvent, BlockSuccessEvent};
+use crate::fight::events::{ApplyRotationNotchesEvent, BlockFailedEvent, BlockSuccessEvent};
 use crate::oni2_loader::animation::{AnimId, Oni2AnimLibrary, Oni2AnimState};
 use crate::oni2_loader::parsers::rct::ANIMREACT_NAMES;
 use crate::projectile_system::SpawnProjectileEvent;
@@ -34,17 +34,56 @@ const CAPSULE_HALF_HEIGHT: f32 = 1.0;
 /// Syncs the AttackState with the current running animation. Clears collision lists when a new animation plays.
 pub fn attack_sync_system(
     mut query: Query<(
+        Entity,
         &mut AttackState,
         &crate::oni2_loader::animation::Oni2AnimState,
+        Option<&crate::oni2_loader::animation::Oni2AnimLibrary>,
     )>,
+    mut rotation_writer: MessageWriter<ApplyRotationNotchesEvent>,
 ) {
-    for (mut attack_state, anim_state) in &mut query {
-        if anim_state.current_anim_id != anim_state.previous_anim_id {
-            // New animation started! Clear the hit list.
+    for (entity, mut attack_state, anim_state, lib_opt) in &mut query {
+        // One-tick pulse set by `play_id` and cleared in Last — see
+        // Oni2AnimState doc.  Using `current != previous` here would be
+        // broken: `previous_anim_id` never gets reset after play_id runs,
+        // so that comparison stays TRUE for the full duration of the new
+        // anim and fires the end-rotation-notches event every frame.
+        if anim_state.anim_just_started {
+            let prev_anim_name = lib_opt
+                .and_then(|lib| anim_state.previous_anim_id.and_then(|id| lib.debug_names.get(&id)))
+                .map(|s| s.as_str())
+                .unwrap_or("UNKNOWN");
+
+            // New animation started!
             if let Some(ref mut active) = attack_state.active_attack {
+                // Apply end_rotation_notches from the PREVIOUS attack if any
+                if active.end_rotation_notches != 0 {
+                    rotation_writer.write(ApplyRotationNotchesEvent {
+                        entity,
+                        notches: active.end_rotation_notches,
+                    });
+                }
+                active.end_rotation_notches = 0;
                 active.hit_entities.clear();
+                active.has_fired_projectile = false;
+
+                // Grab ATDT end rotation notches for the newly started animation
+                if let Some(data) = &anim_state.anim.attack_data {
+                    if let Some(strike) = &data.strike {
+                        active.end_rotation_notches = strike.end_rotation_notches;
+                    } else {
+                        active.end_rotation_notches = 0;
+                    }
+                } else {
+                    active.end_rotation_notches = 0;
+                }
             } else {
-                attack_state.active_attack = Some(ActiveAttack::default());
+                let mut new_active = ActiveAttack::default();
+                if let Some(data) = &anim_state.anim.attack_data {
+                    if let Some(strike) = &data.strike {
+                        new_active.end_rotation_notches = strike.end_rotation_notches;
+                    }
+                }
+                attack_state.active_attack = Some(new_active);
             }
         }
     }
@@ -78,6 +117,7 @@ pub fn hit_detection_system(
     mut injure_writer: MessageWriter<InjureMessage>,
     mut block_success_writer: MessageWriter<BlockSuccessEvent>,
     mut block_failed_writer: MessageWriter<BlockFailedEvent>,
+    mut strike_connected_writer: MessageWriter<StrikeConnectedEvent>,
 ) {
     let now = time.elapsed_secs_f64();
 
@@ -175,7 +215,25 @@ pub fn hit_detection_system(
                 }
             }
 
-            let diff = target_tf.translation - attacker_tf.translation;
+            // Angular slice with SweepHeading
+            let swept_heading = if strike.sweepheading != 0 {
+                let sweep_t = if strike.frameduration > 0.0 {
+                    ((frame - strike.framenum) / strike.frameduration).clamp(0.0, 1.0)
+                } else {
+                    1.0
+                };
+                sweep_t * strike.sliceheadingradiansb
+            } else {
+                strike.sliceheadingradiansb
+            };
+
+            let slice_heading = Quat::from_rotation_y(swept_heading) * attacker_forward;
+            let slice_heading_xz =
+                Vec3::new(slice_heading.x, 0.0, slice_heading.z).normalize_or_zero();
+
+            // Shift origin backward by vanishingpoint
+            let shifted_origin = attacker_tf.translation - slice_heading_xz * strike.vanishingpoint;
+            let diff = target_tf.translation - shifted_origin;
 
             // XZ distance with Expanding Radius
             let radius = if strike.use_expanding_radius {
@@ -208,6 +266,16 @@ pub fn hit_detection_system(
                 continue;
             }
 
+            // Reject if inside the vanishing point inner cut
+            if dist_sq < strike.vanishingpoint * strike.vanishingpoint {
+                debug!(
+                    "hit miss: dist {:.2} < vanishing point {:.2}",
+                    dist_sq.sqrt(),
+                    strike.vanishingpoint
+                );
+                continue;
+            }
+
             // Height band
             let attacker_feet_y = attacker_tf.translation.y - CAPSULE_CENTER_HEIGHT;
             let disk_min_y =
@@ -224,26 +292,11 @@ pub fn hit_detection_system(
                 continue;
             }
 
-            // Angular slice with SweepHeading
-            let swept_heading = if strike.sweepheading != 0 {
-                let sweep_t = if strike.frameduration > 0.0 {
-                    ((frame - strike.framenum) / strike.frameduration).clamp(0.0, 1.0)
-                } else {
-                    1.0
-                };
-                sweep_t * strike.sliceheadingradiansb
-            } else {
-                strike.sliceheadingradiansb
-            };
-
             let dir_to_target = Vec3::new(diff.x, 0.0, diff.z).normalize_or_zero();
-            let slice_heading = Quat::from_rotation_y(-swept_heading) * attacker_forward;
-            let slice_heading_xz =
-                Vec3::new(slice_heading.x, 0.0, slice_heading.z).normalize_or_zero();
             let dot = slice_heading_xz.dot(dir_to_target);
             let angle = dot.clamp(-1.0, 1.0).acos();
             let cross_y = slice_heading_xz.cross(dir_to_target).y;
-            let signed_angle = if cross_y > 0.0 { -angle } else { angle };
+            let signed_angle = if cross_y > 0.0 { angle } else { -angle };
             if signed_angle < strike.slicestartradians || signed_angle > strike.sliceendradians {
                 debug!(
                     "hit miss: angle {:.3}rad outside [{:.3}, {:.3}]",
@@ -257,12 +310,22 @@ pub fn hit_detection_system(
             active_attack.hit_entities.push(target_entity);
 
             let react_enum = strike.reactanim[0];
-            let attack_class = match strike.hittype {
+            // Prefer ATDT-declared classification; fall back to hittype
+            // heuristic when a given ATDT hasn't been authored with the
+            // classes set.  The three ATDT fields are optional — we keep
+            // the fallback so attacks still land, but once every ATDT in
+            // the game has its classes filled in, the hittype fallback
+            // can be removed and `attack_class` just reads the ATDT.
+            let atdt_attack_class = attack_data.attack_class;
+            let atdt_strength = attack_data.strength_class;
+            let atdt_target = attack_data.target_class;
+            let attack_class = atdt_attack_class.unwrap_or(match strike.hittype {
                 0 | 1 | 2 => AttackClass::Punch,
                 3 | 4 | 5 => AttackClass::Kick,
                 6 | 7 | 8 => AttackClass::Grab,
                 _ => AttackClass::Punch,
-            };
+            });
+            let attack_strength = atdt_strength.unwrap_or(AttackStrength::High);
 
             // ── Block check ───────────────────────────────────────────────
             // Determine current block animation phase on the target.
@@ -332,7 +395,8 @@ pub fn hit_detection_system(
                     play_react: true,
                     disable_creature_detect: false,
                     attack_class: Some(attack_class),
-                    attack_strength: Some(AttackStrength::High),
+                    attack_strength: Some(attack_strength),
+                    attack_target: atdt_target,
                     strike_react_enum: Some(react_enum),
                 });
 
@@ -342,7 +406,13 @@ pub fn hit_detection_system(
                     damage,
                     was_blocked: false,
                     attack_class,
-                    attack_strength: AttackStrength::High,
+                    attack_strength,
+                });
+
+                strike_connected_writer.write(StrikeConnectedEvent {
+                    attacker: attacker_entity,
+                    target: target_entity,
+                    headingnotlockedtotarget: strike.headingnotlockedtotarget,
                 });
 
                 info!(
@@ -355,6 +425,22 @@ pub fn hit_detection_system(
                         .get(react_enum.max(0) as usize)
                         .unwrap_or(&"?")
                 );
+            }
+        }
+    }
+}
+
+pub fn process_strike_connections_system(
+    mut events: MessageReader<StrikeConnectedEvent>,
+    mut fs_query: Query<&mut FighterState>,
+) {
+    for ev in events.read() {
+        if let Ok(mut fs) = fs_query.get_mut(ev.attacker) {
+            fs.strike_target = Some(ev.target);
+            if ev.headingnotlockedtotarget {
+                fs.clear_st_after_first_use = true;
+            } else {
+                fs.clear_st_after_first_use = false;
             }
         }
     }
@@ -399,16 +485,24 @@ pub fn injure_system(
         Option<&mut Transform>,
         Option<&HitReaction>,
         Option<&Oni2AnimState>,
+        Option<&crate::fight::FighterType>,
     )>,
     time: Res<Time>,
     mut reaction_writer: MessageWriter<HitReactionMessage>,
     mut commands: Commands,
+    fx_registry: Res<crate::fight::AttackFxRegistry>,
 ) {
     let now = time.elapsed_secs_f64();
 
     for msg in events.read() {
-        let Ok((mut health, mut fighter_opt, mut transform_opt, hit_reaction_opt, anim_state_opt)) =
-            query.get_mut(msg.target)
+        let Ok((
+            mut health,
+            mut fighter_opt,
+            mut transform_opt,
+            hit_reaction_opt,
+            anim_state_opt,
+            fighter_type_opt,
+        )) = query.get_mut(msg.target)
         else {
             continue;
         };
@@ -530,12 +624,31 @@ pub fn injure_system(
                 react_enum,
             });
 
-            // Queue scream sound! (using engine SFX pipeline)
-            commands.trigger(crate::scroni::vm::ScrOniSysEvent::PlaySound {
+            // Queue scream sound! (routed through fx_system's audio dispatch).
+            commands.trigger(crate::fx_system::PlaySound {
                 script_entity: msg.target,  // using the struck entity as originator
                 actor: None,                // implicit on same entity
                 name: "scream".to_string(), // fallback label if actor is missing an exact mapping
             });
+
+            // FX-table impact lookup.  Target's FighterType (if present)
+            // picks the per-character table; fall back to "default".
+            // All three classifications (target/strength/class) must be
+            // present — when any is `None` we skip, matching the legacy
+            // "THE FOLLOWING ATDT FILES NEED TO HAVE TargetClass,
+            // StrengthClass, and/or AttackClass SETUP" diagnostic
+            // (rb/src/fight/attackdata.cpp:258).
+            if let (Some(class), Some(strength), Some(target)) =
+                (msg.attack_class, msg.attack_strength, msg.attack_target)
+            {
+                let table_name: &str = fighter_type_opt
+                    .map(|ft| ft.name.as_str())
+                    .unwrap_or("default");
+                let hit_pos = transform_opt.as_ref().map(|tf| tf.translation);
+                if let Some(fx) = fx_registry.lookup(table_name, target, strength, class) {
+                    fx.dispatch(&mut commands, hit_pos, Some(msg.target), msg.target);
+                }
+            }
         }
     }
 }
@@ -766,7 +879,6 @@ pub fn telemetry_combat_system(
     }
 }
 
-/// Updates Fighter.is_grounded based on ShapeCaster ground detection.
 pub fn ground_detection_system(
     mut query: Query<(&mut crate::oni2_loader::animation::Oni2AnimState, &ShapeHits)>,
     materials: Query<&crate::oni2_loader::components::MaterialType>,
@@ -781,6 +893,37 @@ pub fn ground_detection_system(
             }
         } else {
             anim_state.material_stood_on = None;
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// fighter_rotation_sync_system
+// ---------------------------------------------------------------------------
+
+/// Central authority for rotating characters. Ensures that `Fighter.facing` is the 
+/// single source of truth for the entity's Y-axis orientation, applying it to both 
+/// the visual `Transform` and Avian's physics `Rotation` component to prevent the 
+/// physics engine from reverting rotation changes made in FixedUpdate.
+pub fn fighter_rotation_sync_system(
+    mut query: Query<(
+        Entity,
+        &crate::combat::components::Fighter, 
+        &mut Transform, 
+        Option<&mut avian3d::prelude::Rotation>
+    )>
+) {
+    for (entity, fighter, mut transform, mut rot_opt) in &mut query {
+        if fighter.facing.length_squared() > 0.001 {
+            // We use Y-up coordinates, but the model inherently faces local +Z 
+            // (so it looks backwards natively). We must rotate such that its 
+            // local +Z points ALONG fighter.facing.
+            let target_rot = Quat::from_rotation_arc(Vec3::Z, fighter.facing.normalize());
+            transform.rotation = target_rot;
+            
+            if let Some(mut phys_rot) = rot_opt {
+                phys_rot.0 = target_rot;
+            }
         }
     }
 }

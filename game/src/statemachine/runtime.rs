@@ -14,11 +14,14 @@ use super::core::{SmData, SmRuntime};
 use super::drivers::input::{InputCtx, InputDriver};
 use super::types::*;
 use super::types::{ctrl_flags, pad_flags};
-use crate::combat::components::Fighter;
+use crate::combat::components::{Fighter, Health};
+use crate::combat::events::DamageMessage;
+use std::collections::HashSet;
 use crate::control_map::PadMapper;
 use crate::fight_vector::{FightVectorTrigger, facing_within, find_fight_trigger_vector};
 use crate::oni2_loader::{Oni2AnimLibrary, Oni2AnimState};
 use crate::player::components::{InputState, Player};
+use crate::statemachine::drivers::animator::AnimatorCtx;
 
 // ---------------------------------------------------------------------------
 // FsmRuntime — per-entity state-machine runtime
@@ -350,7 +353,7 @@ pub fn fsm_update_system(
         (
             &mut FsmRuntime,
             &InputState,
-            &Fighter,
+            &mut Fighter,
             &mut Oni2AnimState,
             &Oni2AnimLibrary,
             &GlobalTransform,
@@ -365,7 +368,7 @@ pub fn fsm_update_system(
     for (
         mut runtime,
         input,
-        fighter,
+        mut fighter,
         mut anim_state,
         anim_lib,
         gtf,
@@ -381,11 +384,11 @@ pub fn fsm_update_system(
             runtime.ctx.timed_out = true;
         }
 
-        // Drop any queued combo input the moment a new animation kicks in
-        // (stale input from the previous attack mustn't persist).
-        if anim_state.current_anim_id != anim_state.previous_anim_id
-            && anim_state.previous_anim_id.is_some()
-        {
+        // Drop any queued combo input the moment a new animation kicks
+        // in (stale input from the previous attack mustn't persist).
+        // `anim_just_started` is a one-tick pulse — see Oni2AnimState
+        // doc for why we don't use `current != previous` here.
+        if anim_state.anim_just_started && anim_state.previous_anim_id.is_some() {
             runtime.ctx.queued_attack = false;
             runtime.ctx.queued_attack_two = false;
         }
@@ -434,7 +437,7 @@ pub fn fsm_update_system(
             if *rotation_notches != 0 {
                 use super::types::NOTCH_RADIANS;
                 let rads = *rotation_notches as f32 * NOTCH_RADIANS;
-                transform.rotation = Quat::from_rotation_y(rads) * transform.rotation;
+                fighter.facing = Quat::from_rotation_y(rads) * fighter.facing;
             }
         } else if let Some(anim_name) = &output.block_anim {
             info!("FSM: DoBlock → '{}'", anim_name);
@@ -449,6 +452,124 @@ pub fn fsm_update_system(
             if !anim_lib.play(anim_name, &mut anim_state) {
                 warn!("FSM: custom anim NOT in library: '{}'", anim_name);
             }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// AnimatorRuntime — parallel orchestration FSM loop
+// ---------------------------------------------------------------------------
+
+#[derive(Message, Debug, Clone)]
+pub struct AnimatorBroadcastEvent {
+    pub entity: Entity,
+    pub payload: String,
+}
+
+#[derive(Component)]
+pub struct AnimatorRuntime {
+    pub sm: SmRuntime<crate::statemachine::drivers::animator::AnimatorDriver>,
+    pub ctx: AnimatorCtx,
+    pub previous_grounded: bool,
+    /// Last tick's active pad commands.  Used to derive the edge-triggered
+    /// `pressed_pad_cmds` set (commands that transitioned off→on this tick).
+    pub previous_pad_cmds: std::collections::HashSet<String>,
+}
+
+impl AnimatorRuntime {
+    pub fn new(data: Arc<SmData<crate::statemachine::drivers::animator::AnimatorDriver>>) -> Self {
+        let initial = data.index_of_or_zero("IDLE");
+        AnimatorRuntime {
+            sm: SmRuntime::new(data, initial),
+            ctx: AnimatorCtx::default(),
+            previous_grounded: true,
+            previous_pad_cmds: std::collections::HashSet::new(),
+        }
+    }
+}
+
+/// Tick the top-level orchestration machine (AnimatorDriver) for every player.
+pub fn animator_update_system(
+    time: Res<Time>,
+    pad_mapper: Res<PadMapper>,
+    mut damage_reader: MessageReader<DamageMessage>,
+    mut query: Query<(
+        Entity,
+        &mut AnimatorRuntime,
+        Option<&Oni2AnimState>,
+        Option<&Health>,
+        Option<&crate::animator::components::ActionPlayer>,
+    )>,
+    mut event_writer: MessageWriter<AnimatorBroadcastEvent>,
+) {
+    let dt = time.delta_secs();
+
+    // Collect who was damaged this frame
+    let mut damaged_entities = HashSet::new();
+    for msg in damage_reader.read() {
+        damaged_entities.insert(msg.target);
+    }
+
+    // Collect active PadCmds from the unified active PadMapper
+    let active_pad_cmds: HashSet<String> = pad_mapper.active_commands().into_iter().collect();
+
+    for (entity, mut runtime, anim_state_opt, health_opt, ap_opt) in &mut query {
+        runtime.sm.advance_clock(dt);
+
+        let is_grounded = anim_state_opt.map_or(true, |s| s.is_grounded); // Fallback to grounded
+        let ground_regained = is_grounded && !runtime.previous_grounded;
+        let ground_lost = !is_grounded && runtime.previous_grounded;
+        runtime.previous_grounded = is_grounded;
+
+        // Edge-triggered: commands that were NOT active last tick but ARE
+        // active this tick.  Drives the FSM's `PadPressed(...)` events so
+        // a held button doesn't re-fire one-shot rules (jump / evade /
+        // slide) each tick and stomp the in-progress schedule.
+        let pressed_pad_cmds: std::collections::HashSet<String> = active_pad_cmds
+            .difference(&runtime.previous_pad_cmds)
+            .cloned()
+            .collect();
+        runtime.previous_pad_cmds = active_pad_cmds.clone();
+
+        runtime.ctx.active_pad_cmds = active_pad_cmds.clone();
+        runtime.ctx.pressed_pad_cmds = pressed_pad_cmds;
+        runtime.ctx.jumps_available = ap_opt.map_or(false, |a| a.jumps_remaining > 0);
+        runtime.ctx.ground_lost_this_tick = ground_lost;
+        runtime.ctx.ground_regained_this_tick = ground_regained;
+        
+        runtime.ctx.damage_this_tick = damaged_entities.contains(&entity);
+        runtime.ctx.health_zero = health_opt.map(|h| h.current <= 0.0).unwrap_or(false);
+        // Only non-looping anims can "complete".  A looping anim (e.g. the
+        // JUMP float now that build_jump_schedule marks MAIN with_hold())
+        // would otherwise fire Timeout once per anim length while airborne
+        // — spuriously sending the FSM into FALL mid-jump-loop.  Match the
+        // legacy `IsPlaying()` semantics: loops never finish.
+        runtime.ctx.mode_anim_done = anim_state_opt.map_or(false, |s| {
+            !s.looping && s.current_time >= (s.anim.num_frames as f32 - 1.0).max(0.0)
+        });
+        
+        runtime.ctx.current_mode = runtime.sm.data.state_name(runtime.sm.current_state).to_string();
+
+        let runtime = runtime.into_inner();
+        let prev_state_idx = runtime.sm.current_state;
+
+        let output = runtime.sm.tick(&mut runtime.ctx);
+        
+        let new_state_idx = runtime.sm.current_state;
+        if prev_state_idx != new_state_idx {
+            bevy::log::info!(
+                "Entity {:?} Animator GOTO: {} -> {}",
+                entity,
+                runtime.sm.data.state_name(prev_state_idx),
+                runtime.sm.data.state_name(new_state_idx)
+            );
+        }
+        
+        for broadcast in output.broadcasts {
+            event_writer.write(AnimatorBroadcastEvent {
+                entity,
+                payload: broadcast,
+            });
         }
     }
 }

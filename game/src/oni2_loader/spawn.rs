@@ -1313,17 +1313,27 @@ pub fn spawn_oni2_entity_with_rotation(
                 ],
                 current_anim_id: None,
                 previous_anim_id: None,
+                anim_just_started: false,
                 is_grounded: true,
                 material_stood_on: None,
+                root_offset_this_frame: Vec3::ZERO,
+                root_offset_prev_frame: Vec3::ZERO,
             });
 
         // Any actor with an animator also gets an ActionPlayer — it drives
         // high-level actions (jump/crouch/react/evade/etc.) and tracks substate
         // transitions.  Mirrors the legacy invariant that ftFighterComponent +
-        // animAnimatorComponent always coexist.
-        commands
-            .entity(parent_entity)
-            .insert(crate::animator::ActionPlayer::default());
+        // animAnimatorComponent always coexist.  Also attach the
+        // `ActiveAction` + `AnimSchedule` components that the new
+        // polymorphic-action pipeline queries require — without them the
+        // first StartActionMessage (e.g. the player's very first jump)
+        // would silently miss the dispatch query because commands-based
+        // lazy insertion doesn't flush until the end of the stage.
+        commands.entity(parent_entity).insert((
+            crate::animator::ActionPlayer::default(),
+            crate::animator::ActiveAction::default(),
+            crate::animator::AnimSchedule::default(),
+        ));
     }
 
     if let Some(ref lib) = ent_type.anim_library {

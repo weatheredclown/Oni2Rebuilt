@@ -13,8 +13,6 @@ use uuid::Uuid;
 #[derive(Component)]
 pub struct Fighter {
     pub facing: Vec3,
-    pub jumps_remaining: u8,
-    pub max_jumps: u8,
     pub throttle: f32, // Generic locomotion speed requested (0.0 to 1.0+)
     pub material_stood_on: Option<String>,
 }
@@ -23,8 +21,6 @@ impl Default for Fighter {
     fn default() -> Self {
         Self {
             facing: Vec3::NEG_Z,
-            jumps_remaining: 2,
-            max_jumps: 2,
             throttle: 0.0,
             material_stood_on: None,
         }
@@ -115,6 +111,7 @@ pub struct AttackState {
 pub struct ActiveAttack {
     pub hit_entities: Vec<Entity>,
     pub has_fired_projectile: bool,
+    pub end_rotation_notches: i32,
 }
 
 // === Combo Tracker ===

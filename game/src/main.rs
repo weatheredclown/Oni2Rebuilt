@@ -55,12 +55,22 @@ pub fn get_assets_path() -> &'static str {
     ASSETS_PATH
         .get()
         .map(|s| s.as_str())
-        .unwrap_or("oni2/zips/assets")
+        .unwrap_or("../oni2/zips/assets")
 }
 
 pub fn get_assets_dat() -> &'static str {
     ASSETS_DAT.get().map(|s| s.as_str()).unwrap_or("RB.DAT")
 }
+
+pub fn set_assets_path(path: impl Into<String>) {
+    let _ = ASSETS_PATH.set(path.into());
+}
+
+pub fn set_assets_dat(path: impl Into<String>) {
+    let _ = ASSETS_DAT.set(path.into());
+}
+
+
 
 /// Resource indicating sandbox mode (flat ground + model, no layout).
 #[derive(Resource)]

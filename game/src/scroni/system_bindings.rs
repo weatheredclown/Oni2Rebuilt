@@ -161,7 +161,7 @@ pub fn scroni_sys_event_observer(
                             start_active: true,
                         });
 
-                        commands.trigger(ScrOniSysEvent::PlaySound {
+                        commands.trigger(crate::fx_system::PlaySound {
                             script_entity,
                             actor: None,
                             name: fx.fx_type.clone(),
@@ -172,150 +172,10 @@ pub fn scroni_sys_event_observer(
                 warn!("MakeExplosion {} not found in ExplosionRegistry", name);
             }
         }
-        ScrOniSysEvent::PlaySound {
-            script_entity,
-            actor,
-            name,
-        } => {
-            let mut resolved_name = name.clone();
-            let mut final_volume = 1.0;
-            let mut final_pitch = 1.0;
-
-            if let Some(pkgs) = audio_packages.as_ref() {
-                if let Some((_, pkg)) = pkgs.iter().find(|(k, _)| k.eq_ignore_ascii_case(&name)) {
-                    if !pkg.nuggets.is_empty() {
-                        use rand::Rng;
-                        let mut rng = rand::rng();
-                        let idx = rng.random_range(0..pkg.nuggets.len());
-                        let nugget = &pkg.nuggets[idx];
-
-                        resolved_name = nugget.sound.clone();
-                        final_volume = nugget.volume
-                            * rng.random_range(nugget.random_min_volume..=nugget.random_max_volume);
-                        final_pitch = nugget.pitch
-                            * rng.random_range(nugget.random_min_pitch..=nugget.random_max_pitch);
-                    } else {
-                        warn!("Audio package `{}` found, but it has no nuggets.", name);
-                    }
-                } else {
-                    warn!(
-                        "Audio package `{}` not found in rb.audiopackages (falling back to direct .td lookup)",
-                        name
-                    );
-                }
-            }
-
-            if let Some(dir) = td_directory.as_ref() {
-                if let Some((_, v)) = dir
-                    .sounds
-                    .iter()
-                    .find(|(k, _)| k.eq_ignore_ascii_case(&resolved_name))
-                {
-                    let bank_name = &v.0;
-                    let vag_index = v.1;
-                    let hd_name = format!("{}.hd", bank_name);
-                    let bd_name = format!("{}.bd", bank_name);
-
-                    let hd_paths = [hd_name.clone()];
-
-                    let mut hd_bytes_opt = None;
-                    for p in &hd_paths {
-                        if let Ok(b) = crate::vfs::read("", p) {
-                            hd_bytes_opt = Some(b);
-                            break;
-                        }
-                    }
-
-                    if let Some(hd_bytes) = hd_bytes_opt {
-                        if let Ok(header) = crate::oni2_loader::parsers::hd_bd::parse_hd(&hd_bytes)
-                        {
-                            // Find the target subsong (1-indexed but vag_index is 0-indexed)
-                            // Wait, the user said NUMVAGS 13, and the split has vag_index 12.
-                            // The HD subsongs are usually accessed 1..=total_subsongs.
-                            // So we need vag_index + 1
-                            let target_index = vag_index + 1;
-                            if let Some(subsong) =
-                                header.subsongs.iter().find(|s| s.index == target_index)
-                            {
-                                let bd_paths =
-                                    [bd_name.clone(), format!("Audio/banks/{}", bd_name)];
-
-                                let mut bd_bytes_opt = None;
-                                for p in &bd_paths {
-                                    if let Ok(b) = crate::vfs::read("", p) {
-                                        bd_bytes_opt = Some(b);
-                                        break;
-                                    }
-                                }
-
-                                if let Some(bd_bytes) = bd_bytes_opt {
-                                    let start = subsong.stream_offset as usize;
-                                    let end = start + subsong.stream_size as usize;
-                                    if end <= bd_bytes.len() {
-                                        let payload = &bd_bytes[start..end];
-                                        if let Ok(pcm) =
-                                            crate::oni2_loader::parsers::hd_bd::decode_psx_adpcm(
-                                                payload,
-                                                subsong.num_samples,
-                                            )
-                                        {
-                                            if let Ok(wav) =
-                                                crate::oni2_loader::parsers::hd_bd::create_wav_bytes(
-                                                    &pcm,
-                                                    subsong.sample_rate,
-                                                    subsong.channels,
-                                                )
-                                            {
-                                                let source_handle =
-                                                    audio_sources.add(bevy::audio::AudioSource {
-                                                        bytes: std::sync::Arc::from(wav),
-                                                    });
-
-                                                // 2D Ambient Playback Requested
-                                                commands.spawn((
-                                                    bevy::audio::AudioPlayer(source_handle),
-                                                    bevy::audio::PlaybackSettings {
-                                                        mode: if subsong.loop_flag {
-                                                            bevy::audio::PlaybackMode::Loop
-                                                        } else {
-                                                            bevy::audio::PlaybackMode::Despawn
-                                                        },
-                                                        volume: bevy::audio::Volume::Linear(
-                                                            final_volume,
-                                                        ),
-                                                        speed: final_pitch,
-                                                        ..Default::default()
-                                                    },
-                                                ));
-                                            }
-                                        }
-                                    } else {
-                                        warn!("Subsong payload overflows BD file.");
-                                    }
-                                } else {
-                                    warn!("BD file not found in VFS: {}", bd_name);
-                                }
-                            } else {
-                                warn!("Subsong {} not found in HD header.", target_index);
-                            }
-                        } else {
-                            warn!("Failed to parse HD header for {}", hd_name);
-                        }
-                    } else {
-                        warn!("HD file not found in VFS: {}", hd_name);
-                    }
-                } else {
-                    if resolved_name != name {
-                        warn!(
-                            "Sound `{}` (resolved from package `{}`) not found in .td manifest directory.",
-                            resolved_name, name
-                        );
-                    } else {
-                        warn!("Sound `{}` not found in .td manifest directory.", name);
-                    }
-                }
-            }
-        }
+        // PlaySound moved to `fx_system::PlaySound` — see handler there.
+        // Script-initiated playback is routed through the VM's fan-out to
+        // the new event, and any direct ScrOniSysEvent::PlaySound variant
+        // has been removed.
         ScrOniSysEvent::At(x, y) => {
             scroni_text_state.current_x = x;
             scroni_text_state.current_y = y;

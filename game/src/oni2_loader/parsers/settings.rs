@@ -265,7 +265,9 @@ mod tests {
 
     #[test]
     fn test_parse_rb_proj_and_fx() {
-        let proj_content = std::fs::read_to_string("../oni2/zips/assets/Settings/rb.proj").unwrap();
+        crate::set_assets_path("../../oni2/zips/assets");
+        let proj_path = format!("{}/Settings/rb.proj", crate::get_assets_path());
+        let proj_content = std::fs::read_to_string(proj_path).unwrap();
         let proj_defs = parse_settings(&proj_content);
         println!("Parsed {} projectiles.", proj_defs.len());
         if let Some(def) = proj_defs.first() {
@@ -273,7 +275,8 @@ mod tests {
             println!("{:#?}", def.block);
         }
 
-        let fx_content = std::fs::read_to_string("../oni2/zips/assets/Settings/rb.fx").unwrap();
+        let fx_path = format!("{}/Settings/rb.fx", crate::get_assets_path());
+        let fx_content = std::fs::read_to_string(fx_path).unwrap();
         let fx_defs = parse_settings(&fx_content);
         println!("Parsed {} fx definitions.", fx_defs.len());
         if let Some(def) = fx_defs.first() {

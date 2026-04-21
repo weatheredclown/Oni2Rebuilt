@@ -17,7 +17,7 @@
 use avian3d::prelude::*;
 use bevy::prelude::*;
 
-use crate::combat::components::{ComboTracker, Health, HitReaction, ReactLibrary, ReactionKind};
+use crate::combat::components::{ComboTracker, Health, HitReaction, ReactLibrary, ReactionKind, Fighter};
 use crate::combat::events::{AboutToBeHitMessage, HitReactionMessage};
 use crate::oni2_loader::animation::{Oni2AnimLibrary, Oni2AnimState};
 
@@ -500,12 +500,12 @@ pub fn react_end_rotation_system(
 ///
 /// Mirrors the per-tick spin application in crFighter::Update().
 pub fn attack_spin_system(
-    mut query: Query<(&mut Transform, &FighterState, &Oni2AnimState)>,
+    mut query: Query<(&mut Transform, &FighterState, &Oni2AnimState, &mut crate::combat::components::Fighter)>,
     time: Res<Time>,
 ) {
     let dt = time.delta_secs();
 
-    for (mut transform, fs, anim_state) in &mut query {
+    for (mut transform, fs, anim_state, mut fighter) in &mut query {
         let Some(attack_data) = &anim_state.anim.attack_data else {
             continue;
         };
@@ -532,7 +532,57 @@ pub fn attack_spin_system(
         // The original Oni2 game runs at 60 fps, so spin × 60 × dt gives correct world-rate.
         let spin_rads = strike.spin * 60.0 * dt;
         let rotation = Quat::from_rotation_y(spin_rads);
-        transform.rotation = rotation * transform.rotation;
+        fighter.facing = rotation * fighter.facing;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// update_fighter_strike_facing_system
+// ---------------------------------------------------------------------------
+
+/// Forces a fighter to face their registered strike_target while an attack
+/// animation is active, ensuring proper locked orientations during combos.
+pub fn update_fighter_strike_facing_system(
+    mut transform_query: Query<&mut Transform>,
+    mut attackers: Query<(
+        Entity,
+        &mut Fighter,
+        &mut FighterState,
+        Option<&Oni2AnimState>,
+    )>,
+) {
+    for (entity, mut fighter, mut fs, anim_opt) in &mut attackers {
+        let Some(target_entity) = fs.strike_target else {
+            continue;
+        };
+
+        if let Some(anim) = anim_opt {
+            if !fs.is_attacking(anim) {
+                fs.strike_target = None;
+                continue;
+            }
+        } else {
+            fs.strike_target = None;
+            continue;
+        }
+
+        let Ok(target_tf) = transform_query.get(target_entity) else {
+            fs.strike_target = None;
+            continue;
+        };
+        let target_pos = target_tf.translation;
+
+        if let Ok(mut attacker_tf) = transform_query.get_mut(entity) {
+            let mut dir = target_pos - attacker_tf.translation;
+            dir.y = 0.0;
+            if dir.length_squared() > 0.001 {
+                fighter.facing = dir.normalize();
+            }
+        }
+
+        if fs.clear_st_after_first_use {
+            fs.strike_target = None;
+        }
     }
 }
 
@@ -630,6 +680,155 @@ pub fn fight_stance_timer_system(
 }
 
 // ---------------------------------------------------------------------------
+// fight_stance_entry_system + fight_stance_exit_system + sync
+// ---------------------------------------------------------------------------
+//
+// Fight stance is a POSE MODE that's orthogonal to locomotion — the
+// character pushes into a combat-ready stance that stays on while they
+// can still walk, run, jump, etc.  Legacy engine models it as
+// `ACT_FLAG_FIGHTSTANCE` on the action player, driven by:
+//   • Enter triggers: attack pressed / damaged / fight-mode pad cmd held.
+//   • Exit trigger: `leave_fight_stance_delay` seconds of combat idle.
+//
+// We reproduce this with three cooperating systems:
+//
+//   1. fight_stance_entry_system — detects the enter triggers and emits
+//      `StartActionMessage(FightStance, TRANSITION_FIGHTSTANCE_START)`.
+//      `try_start_action` plays STAND_TO_FIGHT and sets `FIGHTSTANCE`
+//      on the action player.
+//   2. fight_stance_exit_system — when `leave_fight_stance_timer` hits 0
+//      and we're currently in stance, emits
+//      `StartActionMessage(FightStance, TRANSITION_FIGHTSTANCE_END)`.
+//      The handler plays FIGHT_TO_STAND and clears the flag.
+//   3. fight_stance_sync_system — mirrors `ActionPlayer.FIGHTSTANCE` onto
+//      `FighterState.flags::FIGHT_MODE` so the rest of the fight code
+//      (which queries `fs.in_fight_mode()`) sees the real state without
+//      having to couple to the animator component directly.
+
+use crate::animator::components::{ActionPlayer, action_flags as ap_flags, sub_state_0};
+use crate::animator::events::StartActionMessage;
+use crate::combat::events::DamageMessage;
+use crate::control_map::PadMapper;
+use crate::player::components::InputState;
+
+/// Emits `StartActionMessage(FightStance, START)` on any entity that meets an
+/// enter trigger and isn't already in stance.  Once the animator starts the
+/// transition the FIGHTSTANCE flag goes on; that suppresses re-triggering
+/// until something leaves stance again (this is a one-shot per entry).
+pub fn fight_stance_entry_system(
+    mut writer: MessageWriter<StartActionMessage>,
+    mut damage_reader: MessageReader<DamageMessage>,
+    pad_mapper: Option<Res<PadMapper>>,
+    mut query: Query<(
+        Entity,
+        &mut FighterState,
+        Option<&FighterType>,
+        Option<&ActionPlayer>,
+        Option<&InputState>,
+    )>,
+) {
+    use std::collections::HashSet;
+    // Gather entities that were damaged this tick — cheap to collect once.
+    let damaged: HashSet<Entity> = damage_reader.read().map(|m| m.target).collect();
+
+    // Read pad-mode input once — the player entity shares this with all AI,
+    // but AI entities lack InputState and won't trigger via this path.
+    let pad_fight_mode = pad_mapper
+        .as_ref()
+        .map(|p| p.get("PADCMD_WEAPON_FIGHT_MODE") > 0.0 || p.get("PADCMD_WEAPON_LOCKON") > 0.0)
+        .unwrap_or(false);
+
+    for (entity, mut fs, ft_opt, ap_opt, input_opt) in &mut query {
+        // Already in stance?  Nothing to trigger.  The sync system keeps
+        // FighterState.FIGHT_MODE aligned with the animator's FIGHTSTANCE
+        // flag, so this check is authoritative.
+        if fs.in_fight_mode() {
+            continue;
+        }
+
+        // Skip entities that can't enter stance at all (dead / no animator).
+        let Some(ap) = ap_opt else {
+            continue;
+        };
+        if ap.check_flags(ap_flags::DEAD) {
+            continue;
+        }
+
+        // Trigger set.  Any one of these flips the enter flag.
+        let attack_input = input_opt
+            .map(|i| i.attack || i.attack_two)
+            .unwrap_or(false);
+        let was_damaged = damaged.contains(&entity);
+        let triggered = attack_input || pad_fight_mode || was_damaged;
+        if !triggered {
+            continue;
+        }
+
+        writer.write(StartActionMessage {
+            entity,
+            action: crate::animator::components::MainAction::FightStance,
+            substate: sub_state_0::TRANSITION_FIGHTSTANCE_START,
+        });
+
+        // Seed the leave-stance timer so the exit system has something to
+        // tick down.  Without this the exit would fire immediately on the
+        // next tick (timer at 0).
+        let delay = ft_opt.map(|ft| ft.leave_fight_stance_delay).unwrap_or(3.0);
+        fs.leave_fight_stance_timer = delay;
+    }
+}
+
+/// Emits `StartActionMessage(FightStance, END)` when the inactivity timer
+/// expires on an entity that's currently in stance.  The actual countdown
+/// happens in `fighter_state_update_system`; this one just fires the edge.
+pub fn fight_stance_exit_system(
+    mut writer: MessageWriter<StartActionMessage>,
+    query: Query<(Entity, &FighterState, Option<&ActionPlayer>)>,
+    mut was_timed_out: Local<bevy::ecs::entity::EntityHashMap<bool>>,
+) {
+    for (entity, fs, ap_opt) in &query {
+        let Some(ap) = ap_opt else {
+            continue;
+        };
+        // Only fire when the animator FLAG says we're in stance — the exit
+        // anim is meaningless otherwise.  `in_fight_mode()` reads the synced
+        // FighterState mirror which tracks the animator flag.
+        if !ap.check_flags(ap_flags::FIGHTSTANCE) {
+            was_timed_out.insert(entity, false);
+            continue;
+        }
+
+        let timed_out = fs.leave_fight_stance_timer <= 0.0;
+        let prev = was_timed_out.get(&entity).copied().unwrap_or(false);
+        was_timed_out.insert(entity, timed_out);
+
+        // Edge-trigger: fire exactly once when the timer crosses 0.
+        if timed_out && !prev {
+            writer.write(StartActionMessage {
+                entity,
+                action: crate::animator::components::MainAction::FightStance,
+                substate: sub_state_0::TRANSITION_FIGHTSTANCE_END,
+            });
+        }
+    }
+}
+
+/// Mirror the animator's FIGHTSTANCE flag onto `FighterState.flags::FIGHT_MODE`
+/// so existing fight-side queries (`fs.in_fight_mode()`, `fs.has_flag(FIGHT_MODE)`)
+/// see the real stance state without reaching into animator components.
+pub fn fight_stance_sync_system(
+    mut query: Query<(&mut FighterState, &ActionPlayer)>,
+) {
+    for (mut fs, ap) in &mut query {
+        let animator_in_stance = ap.check_flags(ap_flags::FIGHTSTANCE);
+        let fs_in_stance = fs.has_flag(fighter_flags::FIGHT_MODE);
+        if animator_in_stance != fs_in_stance {
+            fs.set_flag_val(fighter_flags::FIGHT_MODE, animator_in_stance);
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // rotation_notches_system
 // ---------------------------------------------------------------------------
 
@@ -640,10 +839,10 @@ pub fn fight_stance_timer_system(
 /// Mirrors NOTCHES2RADIANS = PI/4 and the rotation helpers in crFighter.
 pub fn rotation_notches_system(
     mut events: MessageReader<ApplyRotationNotchesEvent>,
-    mut query: Query<(&mut Transform, Option<&mut FighterState>)>,
+    mut query: Query<(&mut Transform, Option<&mut FighterState>, Option<&mut Fighter>)>,
 ) {
     for ev in events.read() {
-        let Ok((mut transform, fs_opt)) = query.get_mut(ev.entity) else {
+        let Ok((mut transform, fs_opt, fighter_opt)) = query.get_mut(ev.entity) else {
             continue;
         };
         if ev.notches == 0 {
@@ -651,13 +850,19 @@ pub fn rotation_notches_system(
         }
         let radians = ev.notches as f32 * NOTCH_RADIANS;
         let rotation = Quat::from_rotation_y(radians);
-        transform.rotation = rotation * transform.rotation;
+        
+        let new_forward = if let Some(mut fighter) = fighter_opt {
+            // Because we have fighter_rotation_sync_system, we only mutate 
+            // Fighter.facing here so it can natively propagate to Avian and Transform
+            fighter.facing = rotation * fighter.facing;
+            fighter.facing
+        } else {
+            transform.rotation = rotation * transform.rotation;
+            transform.rotation * Vec3::Z
+        };
 
         // Update facing direction in FighterState if present
         if let Some(mut fs) = fs_opt {
-            let new_forward = transform.rotation * Vec3::NEG_Z;
-            // Fighter.facing is updated separately by the movement system;
-            // here we just record the last attack angle.
             fs.last_attack_angle = new_forward.z.atan2(new_forward.x);
         }
     }

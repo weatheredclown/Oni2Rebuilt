@@ -18,7 +18,7 @@ use super::components::*;
 const MOVE_SPEED: f32 = 6.0;
 const MOUSE_SENSITIVITY: f32 = 0.003;
 const JUMP_IMPULSE: f32 = 8.0;
-const DOUBLE_JUMP_IMPULSE: f32 = 7.0;
+
 
 // ---------------------------------------------------------------------------
 // Keyboard / mouse input backend
@@ -386,8 +386,7 @@ pub fn player_mouse_look_system(
         input.yaw_delta = yaw;
 
         if input.blocking {
-            transform.rotate_y(yaw);
-            fighter.facing = transform.back().as_vec3();
+            fighter.facing = Quat::from_rotation_y(yaw) * fighter.facing;
         } else {
             if let Some(mut channel) = camera_query.iter_mut().next() {
                 channel.desired_azimuth += yaw;
@@ -441,61 +440,13 @@ pub fn player_movement_system(
         }
 
         let is_grounded = anim_state_opt.map_or(true, |s| s.is_grounded);
-        if is_grounded {
-            fighter.jumps_remaining = fighter.max_jumps;
-        }
-
-        if input.jump && fighter.jumps_remaining > 0 {
-            let is_first_jump = fighter.jumps_remaining == fighter.max_jumps;
-            fighter.jumps_remaining -= 1;
-
-            // Capsule / placeholder players have no Oni2AnimState — they can't
-            // run the animator jump schedule, so they get an instant hardcoded
-            // impulse and never hear back from the data-driven path.  Real
-            // creatures (Konoko, grunts) route entirely through the animator:
-            // StartActionMessage → AnimSchedule → JumpImpulseMessage →
-            // jump_impulse_apply_system, with kno.jump-derived vertical +
-            // gravity_factor.
-            let is_placeholder = anim_state_opt.is_none();
-            if is_placeholder {
-                velocity.y = if is_first_jump {
-                    JUMP_IMPULSE
-                } else {
-                    DOUBLE_JUMP_IMPULSE
-                };
+        // Debug/Placeholder players have no Animator/Oni2AnimState — they can't
+        // run the data-driven jump schedule, so they get an instant hardcoded impulse.
+        let is_placeholder = anim_state_opt.is_none();
+        if is_placeholder {
+            if input.jump && is_grounded {
+                velocity.y = JUMP_IMPULSE;
             }
-
-            // Drive the animator so the actual ONI2 jump animation plays (and
-            // for real creatures, delivers the data-driven impulse too).
-            // Capsules without an animator will see this StartActionMessage
-            // silently fail in action_start_system's query match; that's fine.
-            // Choose a substate based on movement intent: directional keys pick
-            // a running variant; stationary falls through to JUMP_UP.  The
-            // animator's jump_impulse_emit_system will translate the matching
-            // StartActionMessage into a JumpImpulseMessage sourced from the
-            // entity's JumpController (the loaded .jump file).
-            let substate = if !is_first_jump {
-                crate::animator::sub_state_0::JUMP_SOMERSAULT
-            } else if input.movement.length_squared() > 0.05 {
-                if input.movement.y < -0.1 {
-                    crate::animator::sub_state_0::JUMP_FORWARD
-                } else if input.movement.y > 0.1 {
-                    crate::animator::sub_state_0::JUMP_BACK
-                } else if input.movement.x > 0.1 {
-                    crate::animator::sub_state_0::JUMP_LEFT
-                } else if input.movement.x < -0.1 {
-                    crate::animator::sub_state_0::JUMP_RIGHT
-                } else {
-                    crate::animator::sub_state_0::JUMP_UP
-                }
-            } else {
-                crate::animator::sub_state_0::JUMP_UP
-            };
-            start_action_writer.write(crate::animator::StartActionMessage {
-                entity,
-                action: crate::animator::MainAction::Jump,
-                substate,
-            });
         }
 
         if input.movement.length_squared() < 0.001 {
@@ -545,14 +496,14 @@ pub fn player_movement_system(
             if travel.length_squared() > 0.001 {
                 // Since visually the model faces local +Z, we must point local -Z OPPOSITE to travel
                 let target_rot = Transform::default().looking_to(-travel, Vec3::Y).rotation;
-                transform.rotation = transform.rotation.slerp(target_rot, 0.25);
-
-                // The camera system tracks the character's visual face
-                fighter.facing = transform.back().as_vec3();
+                
+                let current_rot = Quat::from_rotation_arc(Vec3::Z, fighter.facing.normalize_or_zero());
+                let new_rot = current_rot.slerp(target_rot, 0.25);
+                fighter.facing = new_rot * Vec3::Z;
             }
         } else {
-            let visual_front = transform.back().as_vec3();
-            let visual_right = -transform.right().as_vec3();
+            let visual_front = fighter.facing;
+            let visual_right = Vec3::new(visual_front.z, 0.0, visual_front.x);
             travel = (visual_front * -input.movement.y + visual_right * -input.movement.x)
                 .normalize_or_zero();
         }
@@ -573,76 +524,4 @@ pub fn clear_inputs_on_enter(
     keys.clear();
     pad_mapper.clear();
     cushion.0 = 0.4;
-}
-
-// ---------------------------------------------------------------------------
-// Jump impulse application
-// ---------------------------------------------------------------------------
-
-/// Consumes `JumpImpulseMessage` (emitted by the animator when SubState1
-/// transitions into JUMP_MAIN / JUMP_SOMERSAULT) and applies the computed
-/// velocity to the player's `LinearVelocity`.  It effectively sets both
-/// vertical and planar horizontal impulses derived from the .jump data
-/// (height, gravity_factor, length, heading_adjust).
-///
-/// Vertical component: overwrites `velocity.y` directly so the jump reaches
-/// the scripted apex regardless of current downward velocity (falls reset).
-///
-/// Horizontal components: projected onto the entity's facing plane.
-///   • `forward` → along `fighter.facing` (XZ).
-///   • `lateral` → perpendicular to facing, +lateral = right (heading_adjust
-///     = +90° in the legacy encoding).
-///
-/// When the message carries nonzero horizontal components, the existing
-/// XZ velocity is replaced.  For vertical-only jumps (length=0 in kno.jump),
-/// XZ is left alone so the jumper keeps any running start.
-pub fn jump_impulse_apply_system(
-    mut reader: MessageReader<crate::animator::JumpImpulseMessage>,
-    mut commands: Commands,
-    mut query: Query<(&mut LinearVelocity, &Fighter)>,
-) {
-    for msg in reader.read() {
-        let Ok((mut vel, fighter)) = query.get_mut(msg.entity) else {
-            continue;
-        };
-
-        // Apply the jump's gravity scale so the airborne arc matches the
-        // kno.jump data (height 1.56m, factor 3.2 → total airtime 0.63s).
-        // Reset happens in `jump_gravity_reset_system` on next ground contact.
-        if (msg.gravity_factor - 1.0).abs() > 0.01 {
-            commands
-                .entity(msg.entity)
-                .insert(GravityScale(msg.gravity_factor));
-        }
-
-        vel.y = msg.vertical;
-
-        if msg.forward.abs() > 0.001 || msg.lateral.abs() > 0.001 {
-            let facing = {
-                let f = Vec3::new(fighter.facing.x, 0.0, fighter.facing.z);
-                f.normalize_or_zero()
-            };
-            if facing.length_squared() > 0.001 {
-                let right = facing.cross(Vec3::Y).normalize_or_zero();
-                let horiz = facing * msg.forward + right * msg.lateral;
-                vel.x = horiz.x;
-                vel.z = horiz.z;
-            }
-        }
-    }
-}
-
-/// Restore normal gravity once the jumper lands.  A `GravityScale` left in
-/// place after landing would make walking feel heavier than intended.  Runs
-/// every tick and is a no-op when there's nothing to reset.
-pub fn jump_gravity_reset_system(
-    mut commands: Commands,
-    query: Query<(Entity, Option<&crate::oni2_loader::animation::Oni2AnimState>, &GravityScale)>,
-) {
-    for (entity, anim_state_opt, scale) in &query {
-        let is_grounded = anim_state_opt.map_or(true, |s| s.is_grounded);
-        if is_grounded && (scale.0 - 1.0).abs() > 0.01 {
-            commands.entity(entity).insert(GravityScale(1.0));
-        }
-    }
 }

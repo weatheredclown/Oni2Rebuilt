@@ -11,7 +11,7 @@ pub mod drivers;
 pub mod runtime;
 pub mod types;
 
-pub use runtime::{FsmRuntime, fsm_update_system};
+pub use runtime::{FsmRuntime, fsm_update_system, AnimatorRuntime, animator_update_system, AnimatorBroadcastEvent};
 
 use bevy::prelude::*;
 use std::sync::Arc;
@@ -26,11 +26,16 @@ use drivers::parse::parse_sm;
 #[derive(Resource)]
 pub struct PlayerFsmData(pub Arc<SmData<InputDriver>>);
 
+/// Bevy resource wrapping the top-level embedded orchestration FSM data.
+#[derive(Resource)]
+pub struct PlayerAnimatorData(pub Arc<SmData<crate::statemachine::drivers::animator::AnimatorDriver>>);
+
 pub struct StateMachinePlugin;
 
 impl Plugin for StateMachinePlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Startup, load_player_fsm);
+        app.add_message::<AnimatorBroadcastEvent>();
+        app.add_systems(Startup, (load_player_fsm, load_animator_fsm));
         app.add_systems(Update, insert_player_fsm);
     }
 }
@@ -38,6 +43,17 @@ impl Plugin for StateMachinePlugin {
 // ---------------------------------------------------------------------------
 // Systems
 // ---------------------------------------------------------------------------
+
+fn load_animator_fsm(mut commands: Commands) {
+    match crate::statemachine::drivers::animator::load_embedded_arc() {
+        Ok(data) => {
+            let n = data.states.len();
+            commands.insert_resource(PlayerAnimatorData(data));
+            info!("FSM: embedded animator FSM loaded — {} states", n);
+        }
+        Err(e) => error!("FSM: failed to parse embedded animator FSM: {}", e),
+    }
+}
 
 fn load_player_fsm(mut commands: Commands) {
     let text = match crate::vfs::read_to_string("Statemachine", "player.fsm") {
@@ -62,17 +78,23 @@ fn load_player_fsm(mut commands: Commands) {
 fn insert_player_fsm(
     query: Query<Entity, Added<Player>>,
     fsm_res: Option<Res<PlayerFsmData>>,
+    animator_res: Option<Res<PlayerAnimatorData>>,
     mut pad_mapper: ResMut<crate::control_map::PadMapper>,
     mut commands: Commands,
 ) {
-    let Some(fsm) = fsm_res else { return };
+    let fsm_opt = fsm_res.map(|r| r.0.clone());
+    let animator_opt = animator_res.map(|r| r.0.clone());
 
     let mut spawned = false;
     for entity in &query {
-        commands
-            .entity(entity)
-            .insert(FsmRuntime::new(fsm.0.clone()));
-        info!("FSM: FsmRuntime attached to player {:?}", entity);
+        let mut ec = commands.entity(entity);
+        if let Some(fsm) = fsm_opt.clone() {
+            ec.insert(FsmRuntime::new(fsm));
+        }
+        if let Some(animator) = animator_opt.clone() {
+            ec.insert(AnimatorRuntime::new(animator));
+        }
+        info!("FSM: FsmRuntimes attached to player {:?}", entity);
         spawned = true;
     }
 

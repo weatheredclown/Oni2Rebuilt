@@ -170,6 +170,10 @@ pub struct Oni2Animation {
     /// Each entry fires its fx list once when the animation's normalized phase
     /// crosses `phase` (ascending).  Reset when a new anim id starts playing.
     pub anim_fx: Vec<crate::animator::AnimFxEntry>,
+    /// Root-motion conditioning from the sibling `.gait` file, if present.
+    /// Drives the `strip_root_xz` decision during playback — see animation.rs.
+    /// `None` = no .gait file existed; we fall back to a loop-based heuristic.
+    pub gait_normalize: Option<crate::oni2_loader::parsers::gait::GaitNormalize>,
 }
 
 // === Parsed .expl explosion data ===

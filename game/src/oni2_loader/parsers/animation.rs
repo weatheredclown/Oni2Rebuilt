@@ -101,6 +101,7 @@ fn parse_anim_ani0(data: &[u8]) -> Option<Oni2Animation> {
         attack_data: None,
         react_data: None,
         anim_fx: Vec::new(),
+        gait_normalize: None,
     })
 }
 
@@ -145,6 +146,7 @@ fn parse_anim_ani1(data: &[u8]) -> Option<Oni2Animation> {
         attack_data: None,
         react_data: None,
         anim_fx: Vec::new(),
+        gait_normalize: None,
     })
 }
 

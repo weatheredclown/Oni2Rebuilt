@@ -122,6 +122,8 @@ pub struct FighterState {
     // --- Targeting ---
     /// Current strike lock-on target.
     pub strike_target: Option<Entity>,
+    /// Flags whether strike_target should be cleared on the next frame.
+    pub clear_st_after_first_use: bool,
     /// Entity this fighter is grappling (attacker role).
     pub grapple_target: Option<Entity>,
     /// Entity that is grappling this fighter (victim role).
@@ -195,6 +197,13 @@ pub struct FighterState {
     pub pending_getup_anim: Option<String>,
     /// End-rotation notches to apply once the current react finishes.
     pub pending_end_rotation_notches: i32,
+
+    // --- Per-attack hit log (for HasHitClass) ---
+    /// FighterType.creature_class values of every target the current/most-
+    /// recent attack has landed on.  Mirrors `crAttack::TargetsHit`.
+    /// `record_attack_hit` appends; `reset_attack_hits` clears at attack
+    /// start.  Used by `has_hit_class` for combo-class predicates.
+    pub attack_hit_classes: Vec<u32>,
 }
 
 impl Default for FighterState {
@@ -208,6 +217,7 @@ impl Default for FighterState {
             block_start_time: 0.0,
             block_combo_count: 0,
             strike_target: None,
+            clear_st_after_first_use: false,
             grapple_target: None,
             grapple_attacker: None,
             super_meter: 0.0,
@@ -236,6 +246,7 @@ impl Default for FighterState {
             anim_control_block: None,
             pending_getup_anim: None,
             pending_end_rotation_notches: 0,
+            attack_hit_classes: Vec::new(),
         }
     }
 }
@@ -270,6 +281,116 @@ impl FighterState {
     pub fn in_fight_mode(&self) -> bool {
         self.has_flag(fighter_flags::FIGHT_MODE)
     }
+
+    // -----------------------------------------------------------------------
+    // C++ crFighter predicate ports
+    //
+    // The legacy IsAttacking / IsBlockQueued / HasHitClass had direct access
+    // to the fighter's anim list.  In our ECS the equivalent state lives on
+    // separate components, so each predicate takes only the data it actually
+    // needs — keeps these callable from any system without per-call queries.
+    // -----------------------------------------------------------------------
+
+    /// True when an attack animation is actively playing at full speed and
+    /// we're not currently in a block.  Mirrors `crFighter::IsAttacking`
+    /// (rb/src/fight/fighter.cpp:542) — the C++ checks `channel.scale == 1.0
+    /// && !paused && !IsBlocking()`; we apply the same gates against
+    /// `Oni2AnimState`.  Caller passes the entity's active anim state.
+    pub fn is_attacking(
+        &self,
+        anim: &crate::oni2_loader::animation::Oni2AnimState,
+    ) -> bool {
+        if self.is_blocking() {
+            return false;
+        }
+        if anim.paused {
+            return false;
+        }
+        if anim.anim.attack_data.is_none() {
+            return false;
+        }
+        anim.speed_multiplier >= 0.999
+    }
+
+    /// True when the player has requested a block (button held) but the
+    /// block animation hasn't yet started — i.e. the block is "queued"
+    /// awaiting a permitting state.  Mirrors `crFighter::IsBlockQueued`
+    /// (rb/src/fight/fighter.cpp:1037), adapted for our pipeline: the C++
+    /// scans `AnimList` for a queued block record, but we don't push blocks
+    /// onto `AnimSchedule`, so we infer "queued" from request-vs-active.
+    pub fn is_block_queued(&self) -> bool {
+        self.block_held && self.cur_block < 0
+    }
+
+    /// True iff the current/most-recent attack has landed on a target
+    /// whose `FighterType.creature_class` includes `cls`.  Mirrors
+    /// `crFighter::HasHitClass` (rb/src/fight/fighter.cpp:520) which
+    /// forwards to `crAttack::HasHitClass` (attack.cpp:166) — that walks
+    /// the attack's `TargetsHit` array and tests each target's class.
+    /// Update via `record_attack_hit` (on hit landing) and clear via
+    /// `reset_attack_hits` (on attack start).
+    pub fn has_hit_class(&self, cls: u32) -> bool {
+        self.attack_hit_classes.iter().any(|&c| c == cls)
+    }
+
+    /// Record a hit landing during the current attack — appends the target's
+    /// creature_class to the per-attack hit log.  Idempotent: duplicate
+    /// classes only land once.
+    pub fn record_attack_hit(&mut self, target_class: u32) {
+        if !self.attack_hit_classes.contains(&target_class) {
+            self.attack_hit_classes.push(target_class);
+        }
+    }
+
+    /// Clear the per-attack hit log.  Call when a new attack starts so the
+    /// next `has_hit_class` query reflects only the new attack's targets.
+    pub fn reset_attack_hits(&mut self) {
+        self.attack_hit_classes.clear();
+    }
+}
+
+#[cfg(test)]
+mod predicate_tests {
+    use super::*;
+
+    #[test]
+    fn block_queued_only_when_held_and_not_active() {
+        let mut s = FighterState::default();
+        assert!(!s.is_block_queued(), "default — not held, not blocking");
+        s.block_held = true;
+        assert!(s.is_block_queued(), "held, not started yet → queued");
+        s.cur_block = 0;
+        assert!(
+            !s.is_block_queued(),
+            "held but block now active → no longer queued"
+        );
+    }
+
+    #[test]
+    fn hit_class_log_is_idempotent() {
+        let mut s = FighterState::default();
+        assert!(!s.has_hit_class(7));
+        s.record_attack_hit(7);
+        s.record_attack_hit(7);
+        s.record_attack_hit(11);
+        assert!(s.has_hit_class(7));
+        assert!(s.has_hit_class(11));
+        assert_eq!(s.attack_hit_classes.len(), 2, "duplicates dropped");
+        s.reset_attack_hits();
+        assert!(!s.has_hit_class(7));
+        assert!(s.attack_hit_classes.is_empty());
+    }
+
+    // is_attacking() takes Oni2AnimState which has many fields wired through
+    // the asset pipeline; covering it here would pull in mock infrastructure
+    // that isn't worth the test for this small predicate.  The body is
+    // straight boolean composition over already-tested fields.
+}
+
+// Trailing brace to close the impl block; the test mod above moved it from
+// its original position.  Keeping the impl block closed here preserves the
+// original layout for downstream items in this file.
+impl FighterState {
 
     /// Tick the per-frame state transitions:
     /// - HIT_START → HIT (set for one frame then clear)

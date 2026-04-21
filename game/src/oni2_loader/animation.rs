@@ -275,11 +275,60 @@ pub struct Oni2AnimState {
     pub current_frame: Vec<f32>,
     /// Currently playing animation ID for efficient comparison
     pub current_anim_id: Option<AnimId>,
-    /// Previously playing animation ID to detect changes at runtime
+    /// The anim ID that was playing JUST BEFORE the most recent `play_id`
+    /// call — historical signal only.  Do NOT use `current != previous` to
+    /// detect a transition: that comparison stays TRUE for the entire
+    /// duration of the current anim (there's nothing to reset `previous`).
+    /// Consumers wanting a one-shot "a new anim just started" edge should
+    /// read `anim_just_started` instead.
     pub previous_anim_id: Option<AnimId>,
+    /// One-tick edge flag: set to `true` by `play_id` when a new anim
+    /// begins, cleared back to `false` by `reset_anim_transition_edges`
+    /// which runs at the very end of each frame.  Consumers read this
+    /// inside their normal Update/FixedUpdate systems and observe a
+    /// clean single-tick pulse per anim transition.
+    pub anim_just_started: bool,
     /// Physics/grounding state tracked for use by animation FX dispatch
     pub is_grounded: bool,
     pub material_stood_on: Option<String>,
+
+    // --- Captured root motion ---------------------------------------------
+    //
+    // When the playback system strips root XZ translation from channel data
+    // (gait Normalize=2, or the loop-heuristic fallback for looping anims),
+    // the discarded translation represents the animation's intended root
+    // motion — what the character's root bone WOULD have been displaced by
+    // this frame if we let the anim drive movement directly.  We currently
+    // drive character movement via Avian velocity instead, so stripping is
+    // the right call visually; but discarding the value loses useful data
+    // like "how far forward does this lunge animation want me to go".
+    //
+    // Instead of throwing it away, the playback system stashes it here so
+    // gameplay code can fish it out when it wants to:
+    //
+    //   • `root_offset_this_frame` — this frame's raw channel-space root
+    //     XZ offset relative to the skeleton rest pose (Y is always 0, we
+    //     never strip vertical).
+    //   • `root_offset_prev_frame` — last tick's value, so consumers can
+    //     compute a per-frame delta without re-reading the channel buffer.
+    //
+    // Both are `Vec3::ZERO` when no stripping happened (or when an anim
+    // lacks root translation channels entirely).
+    /// Raw root XZ translation discarded from this frame's channel data.
+    pub root_offset_this_frame: Vec3,
+    /// Previous tick's `root_offset_this_frame` — subtract to get a delta.
+    pub root_offset_prev_frame: Vec3,
+}
+
+impl Oni2AnimState {
+    /// Per-frame delta of the stripped root XZ translation.  Useful as a
+    /// "this animation wants to move me by this much this tick" signal —
+    /// e.g. a running lunge attack could feed this into Avian velocity so
+    /// the character travels with the animation.  Returns `Vec3::ZERO`
+    /// when the anim doesn't strip root translation or just started.
+    pub fn root_motion_delta(&self) -> Vec3 {
+        self.root_offset_this_frame - self.root_offset_prev_frame
+    }
 }
 
 /// Deterministic string hash used as animation identifier.
@@ -351,6 +400,10 @@ impl Oni2AnimLibrary {
             state.last_rendered_time = -1.0; // force rebuild
             state.previous_anim_id = state.current_anim_id;
             state.current_anim_id = Some(id);
+            // Set the one-shot transition edge so consumer systems see a
+            // single-tick pulse this frame.  `reset_anim_transition_edges`
+            // clears it at the end of the frame.
+            state.anim_just_started = true;
 
             // Resize current_frame to match animation channel count
             let num_channels = anim.num_channels as usize;
@@ -493,27 +546,55 @@ pub fn load_anim_library(
             }
         };
 
+        // Sibling `.gait` file — tiny text file next to the `.anim` that
+        // declares the root-motion conditioning mode.  Mirrors the load
+        // path in rb/src/animator/animatortype.cpp:695.  Looked up with
+        // the same fallback-to-prefix-dir strategy as the .anim above.
+        let gait_file = format!("{}/{}.gait", entity_dir, anim_name);
+        let mut gait_content = crate::vfs::read_to_string("", &gait_file).ok();
+        if gait_content.is_none() {
+            if let Some(prefix) = anim_name.split('_').next() {
+                let mut parts: Vec<&str> = entity_dir.split('/').collect();
+                if let Some(last) = parts.last_mut() {
+                    *last = prefix;
+                }
+                let fallback_gait = format!("{}/{}.gait", parts.join("/"), anim_name);
+                gait_content = crate::vfs::read_to_string("", &fallback_gait).ok();
+            }
+        }
+        if let Some(gc) = gait_content {
+            if let Some(gait) =
+                crate::oni2_loader::parsers::gait::parse_gait(&gc, &gait_file)
+            {
+                anim.gait_normalize = Some(gait.normalize);
+            }
+        }
+
         let tune_atdt = format!("entity.tune/{}/{}.atdt", entity_name, anim_name);
         let base_atdt = format!("{}/{}.atdt", entity_dir, anim_name);
 
         // Priority 1: entity.tune/kno/..
         // Priority 2: Entity/kno/..
         // Priority 3: fallback to prefix folder (e.g. if the mesh name differs from anim prefix)
+        let mut loaded_from = tune_atdt.clone();
         let mut atdt_content = crate::vfs::read_to_string("", &tune_atdt);
         if atdt_content.is_err() {
+            loaded_from = base_atdt.clone();
             atdt_content = crate::vfs::read_to_string("", &base_atdt);
         }
         if atdt_content.is_err() {
             if let Some(prefix) = anim_name.split('_').next() {
                 let fallback_tune = format!("entity.tune/{}/{}.atdt", prefix, anim_name);
+                loaded_from = fallback_tune.clone();
                 atdt_content = crate::vfs::read_to_string("", &fallback_tune);
                 if atdt_content.is_err() {
                     let fallback_base = format!("Entity/{}/{}.atdt", prefix, anim_name);
+                    loaded_from = fallback_base.clone();
                     atdt_content = crate::vfs::read_to_string("", &fallback_base);
                 }
             }
         }
-
+        
         if let Ok(atdt_data) = atdt_content {
             anim.attack_data = Some(crate::oni2_loader::parsers::atdt::parse_atdt_content(
                 &atdt_data,
@@ -945,7 +1026,27 @@ pub fn debug_draw_attack_wedges(
         // Character physics capsule centers are hardcoded to ground + 1.1m.
         // Oni combat definitions evaluate height (reactdiskheight) originating from the ground floor.
         let base_translation = transform.translation - Vec3::new(0.0, 1.1, 0.0);
-        let center = base_translation + Vec3::Y * strike.reactdiskheight;
+
+        // Compute swept heading up to the current frame
+        let swept_heading = if strike.sweepheading != 0 {
+            let sweep_t = if strike.frameduration > 0.0 {
+                ((frame - strike.framenum) / strike.frameduration).clamp(0.0, 1.0)
+            } else {
+                1.0
+            };
+            sweep_t * strike.sliceheadingradiansb
+        } else {
+            strike.sliceheadingradiansb
+        };
+
+        let attacker_forward = transform.rotation * Vec3::NEG_Z;
+        let slice_heading = Quat::from_rotation_y(swept_heading) * attacker_forward;
+        let slice_heading_xz =
+            Vec3::new(slice_heading.x, 0.0, slice_heading.z).normalize_or_zero();
+
+        // Shift origin backward by vanishingpoint
+        let center = base_translation + Vec3::Y * strike.reactdiskheight - slice_heading_xz * strike.vanishingpoint;
+
         let radius = strike.reactdiskradius;
         if radius <= 0.01 {
             continue;
@@ -958,8 +1059,8 @@ pub fn debug_draw_attack_wedges(
         let sweep = end_rad - start_rad;
         let full_circle = sweep.abs() < 1e-4 || sweep.abs() >= std::f32::consts::TAU * 0.99;
 
-        // Draw inner and outer ring limits
-        let draw_wedge_arc = |gizmos: &mut Gizmos, r: f32, color: Color| {
+        // Draw an arc at a specific radius
+        let mut draw_wedge_arc = |gizmos: &mut Gizmos, r: f32, color: Color| {
             if r <= 0.01 {
                 return;
             }
@@ -977,14 +1078,12 @@ pub fn debug_draw_attack_wedges(
             } else {
                 let angle_step = sweep / segments as f32;
                 let get_point = |angle: f32| -> Vec3 {
-                    // Oni2 angles rotate around +Z (not Bevy's -Z forward); negate to match.
-                    let local_dir = Quat::from_rotation_y(-angle) * Vec3::Z;
+                    // Match the runtime dot-product logic: the angle spans from slice_heading.
+                    let total_angle = swept_heading + angle;
+                    let local_dir = Quat::from_rotation_y(total_angle) * Vec3::NEG_Z;
                     center + (transform.rotation * local_dir) * r
                 };
                 let pt_start = get_point(start_rad);
-                let pt_end = get_point(end_rad);
-                gizmos.line(center, pt_start, color);
-                gizmos.line(center, pt_end, color);
                 let mut prev_pt = pt_start;
                 for i in 1..=segments {
                     let angle = start_rad + angle_step * i as f32;
@@ -995,9 +1094,31 @@ pub fn debug_draw_attack_wedges(
             }
         };
 
+        let inner_r = strike.vanishingpoint.max(0.0);
+
+        // Draw outer arc
         draw_wedge_arc(&mut gizmos, radius, draw_color);
-        if strike.minreactdiskradius > 0.01 {
-            draw_wedge_arc(&mut gizmos, strike.minreactdiskradius, draw_color);
+
+        // Draw inner arc boundary if it exists
+        if inner_r > 0.01 {
+            draw_wedge_arc(&mut gizmos, inner_r, Color::srgba(0.0, 1.0, 1.0, 0.8)); // Cyan for inner cut
+        }
+
+        // Draw connecting side walls if not a full circle
+        if !full_circle {
+            let get_point = |angle: f32, r: f32| -> Vec3 {
+                let total_angle = swept_heading + angle;
+                let local_dir = Quat::from_rotation_y(total_angle) * Vec3::NEG_Z;
+                center + (transform.rotation * local_dir) * r
+            };
+            
+            let outer_start = get_point(start_rad, radius);
+            let outer_end = get_point(end_rad, radius);
+            let inner_start = if inner_r > 0.01 { get_point(start_rad, inner_r) } else { center };
+            let inner_end = if inner_r > 0.01 { get_point(end_rad, inner_r) } else { center };
+            
+            gizmos.line(inner_start, outer_start, draw_color);
+            gizmos.line(inner_end, outer_end, draw_color);
         }
     }
 }
@@ -1141,12 +1262,38 @@ pub fn update_oni2_animation(
             continue;
         }
 
-        let strip_root = render_offset.is_some() && anim_state.looping;
-        let mut bone_transforms = crate::oni2_loader::utils::bone::compute_animated_bone_transforms(
+        // Decide whether to strip root XZ translation from channel data this
+        // tick.  Priority:
+        //   1. If the anim has a `.gait` file, honour its Normalize value —
+        //      `Root` (2) strips; every other value preserves.  Mirrors
+        //      rb/src/animator/animatortype.cpp:722.
+        //   2. Otherwise fall back to the legacy loop heuristic (strip while
+        //      looping, preserve on one-shots) — a reasonable default for
+        //      creatures where no .gait file ships.
+        //
+        // The stripped root translation used to be discarded outright.  We
+        // now capture it into `anim_state.root_offset_this_frame` so
+        // gameplay can read `anim_state.root_motion_delta()` each tick and
+        // optionally apply that displacement (e.g. for a running lunge).
+        // See `Oni2AnimState` doc for the field contract.  The C++
+        // equivalent was `ComputeFrameDeltas()` at load time; we compute
+        // lazily at playback instead.
+        let strip_root = match anim_state.anim.gait_normalize {
+            Some(mode) => mode.should_strip_root(),
+            None => render_offset.is_some() && anim_state.looping,
+        };
+        let bone_result = crate::oni2_loader::utils::bone::compute_animated_bone_transforms(
             &anim_state.skeleton,
             frame,
             strip_root,
         );
+        let mut bone_transforms = bone_result.bones;
+        // Shift prev→this_frame, record the newly-stripped offset.  Zero
+        // when the anim didn't strip (non-stripping anims produce no root
+        // motion signal — gameplay should treat delta==0 as "no anim-driven
+        // displacement this tick").
+        anim_state.root_offset_prev_frame = anim_state.root_offset_this_frame;
+        anim_state.root_offset_this_frame = bone_result.stripped_root_offset;
 
         // Creature render offset (capsule Y compensation + facing)
         let y_offset = render_offset.map(|o| o.y_offset).unwrap_or(0.0);

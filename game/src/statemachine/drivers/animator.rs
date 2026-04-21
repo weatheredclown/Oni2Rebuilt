@@ -36,12 +36,17 @@ use super::parse::{parse_sm, split_call, ActionParser, EventParser};
 #[derive(Clone, Debug)]
 pub enum AnimatorEvent {
     // --- Input-layer (button / command state this tick) --------------------
-    JumpPressed,
-    CrouchPressed,
-    SlidePressed,
-    EvadePressed,
-    WeaponToggled,
-    PickupPressed,
+    /// Held — true for every tick the named pad command is currently active
+    /// (value > 0.0 in the PadMapper).  Use for CONDITIONS that should
+    /// persist while the button is down, e.g. `!PadCmd "PADCMD_CROUCH"`
+    /// as an exit guard in #CROUCH.
+    PadCmd(String),
+    /// Edge — true only on the tick the named pad command just transitioned
+    /// from inactive to active.  Use for ONE-SHOT actions like entering
+    /// JUMP / EVADE / SLIDE / PICKUP — otherwise a held button repeatedly
+    /// re-fires the rule and stomps the in-progress action's state.
+    PadPressed(String),
+    JumpsAvailable,
     /// AI / script asked to start a CustomAnim this tick.
     CustomAnimRequested,
 
@@ -63,9 +68,12 @@ pub enum AnimatorEvent {
     // --- Query ------------------------------------------------------------
     /// Convenience predicate: true iff the ctx reports we're in the given
     /// mode (matched against the state name literally).  Lets states share
-    /// transition shortcuts without having to re-check which mode is active.
+    /// transitions (e.g. "if InMode('FALL') ...").
     InMode(String),
 
+    // --- Composables ------------------------------------------------------
+    And(Vec<AnimatorEvent>),
+    Or(Vec<AnimatorEvent>),
     Always,
 }
 
@@ -100,14 +108,16 @@ pub enum AnimatorAction {
 /// host — the FSM only reads, never derives.
 #[derive(Default, Clone, Debug)]
 pub struct AnimatorCtx {
-    // Input (held / pressed this tick)
-    pub jump_pressed: bool,
-    pub crouch_pressed: bool,
-    pub slide_pressed: bool,
-    pub evade_pressed: bool,
-    pub weapon_toggled: bool,
-    pub pickup_pressed: bool,
+    /// Pad commands currently held (value > 0.0 this tick).  Matches the
+    /// semantic of `PadCmd(...)` events — held-state checks.
+    pub active_pad_cmds: std::collections::HashSet<String>,
+    /// Pad commands that TRANSITIONED from inactive to active this tick —
+    /// i.e. edge-triggered "just pressed" signals.  Computed by the host
+    /// from the delta between this tick's `active_pad_cmds` and last
+    /// tick's.  Matches the semantic of `PadPressed(...)` events.
+    pub pressed_pad_cmds: std::collections::HashSet<String>,
     pub custom_anim_requested: bool,
+    pub jumps_available: bool,
 
     // Physics
     pub ground_lost_this_tick: bool,
@@ -157,15 +167,12 @@ impl SmDriver for AnimatorDriver {
     fn eval_event(
         ctx: &Self::Context,
         event: &Self::Event,
-        _runtime: &SmRuntime<Self>,
+        runtime: &SmRuntime<Self>,
     ) -> bool {
         match event {
-            AnimatorEvent::JumpPressed => ctx.jump_pressed,
-            AnimatorEvent::CrouchPressed => ctx.crouch_pressed,
-            AnimatorEvent::SlidePressed => ctx.slide_pressed,
-            AnimatorEvent::EvadePressed => ctx.evade_pressed,
-            AnimatorEvent::WeaponToggled => ctx.weapon_toggled,
-            AnimatorEvent::PickupPressed => ctx.pickup_pressed,
+            AnimatorEvent::PadCmd(name) => ctx.active_pad_cmds.contains(name),
+            AnimatorEvent::PadPressed(name) => ctx.pressed_pad_cmds.contains(name),
+            AnimatorEvent::JumpsAvailable => ctx.jumps_available,
             AnimatorEvent::CustomAnimRequested => ctx.custom_anim_requested,
             AnimatorEvent::GroundLost => ctx.ground_lost_this_tick,
             AnimatorEvent::GroundRegained => ctx.ground_regained_this_tick,
@@ -176,6 +183,8 @@ impl SmDriver for AnimatorDriver {
             AnimatorEvent::Damaged => ctx.damage_this_tick,
             AnimatorEvent::HealthZero => ctx.health_zero,
             AnimatorEvent::InMode(name) => ctx.current_mode.eq_ignore_ascii_case(name),
+            AnimatorEvent::And(events) => events.iter().all(|e| Self::eval_event(ctx, e, runtime)),
+            AnimatorEvent::Or(events) => events.iter().any(|e| Self::eval_event(ctx, e, runtime)),
             AnimatorEvent::Always => true,
         }
     }
@@ -186,6 +195,7 @@ impl SmDriver for AnimatorDriver {
         output: &mut Self::Output,
         adv: &mut SmAdvance<Self>,
     ) {
+        bevy::log::info!("animator: apply_action {:?}", action);
         match action {
             AnimatorAction::Broadcast(name) => output.broadcasts.push(name.clone()),
             AnimatorAction::Destroy => output.should_destroy = true,
@@ -201,18 +211,47 @@ impl SmDriver for AnimatorDriver {
 
 pub fn parse_animator_event(
     text: &str,
-    _state_index: &HashMap<String, usize>,
+    state_idx: &HashMap<String, usize>,
 ) -> Result<AnimatorEvent, String> {
     let text = text.trim();
-    let (name, args) = split_call(text);
+    if text.is_empty() {
+        return Err("empty animator event".to_string());
+    }
+
+    if text.contains("||") {
+        let mut parts = Vec::new();
+        for piece in text.split("||") {
+            parts.push(parse_animator_event(piece, state_idx)?);
+        }
+        return Ok(AnimatorEvent::Or(parts));
+    }
+
+    if text.contains("&&") {
+        let mut parts = Vec::new();
+        for piece in text.split("&&") {
+            parts.push(parse_animator_event(piece, state_idx)?);
+        }
+        return Ok(AnimatorEvent::And(parts));
+    }
+
+    // Accept two call-syntax forms for the same rule:
+    //   Name(arg)       — call-style with parens (handled by split_call)
+    //   Name arg        — space-separated (common in the embedded FSM)
+    // When split_call finds no parens, fall back to whitespace tokenizing.
+    let (name, args) = {
+        let (n, a) = crate::statemachine::drivers::parse::split_call(text);
+        if a.is_empty() && n.contains(char::is_whitespace) {
+            let mut it = n.splitn(2, char::is_whitespace);
+            (it.next().unwrap_or("").trim(), it.next().unwrap_or("").trim())
+        } else {
+            (n, a)
+        }
+    };
 
     Ok(match name {
-        "JumpPressed" => AnimatorEvent::JumpPressed,
-        "CrouchPressed" => AnimatorEvent::CrouchPressed,
-        "SlidePressed" => AnimatorEvent::SlidePressed,
-        "EvadePressed" => AnimatorEvent::EvadePressed,
-        "WeaponToggled" => AnimatorEvent::WeaponToggled,
-        "PickupPressed" => AnimatorEvent::PickupPressed,
+        "PadCmd" => AnimatorEvent::PadCmd(args.trim_matches('"').to_string()),
+        "PadPressed" => AnimatorEvent::PadPressed(args.trim_matches('"').to_string()),
+        "JumpsAvailable" => AnimatorEvent::JumpsAvailable,
         "CustomAnimRequested" => AnimatorEvent::CustomAnimRequested,
         "GroundLost" => AnimatorEvent::GroundLost,
         "GroundRegained" => AnimatorEvent::GroundRegained,
@@ -296,25 +335,29 @@ pub const ANIMATOR_FSM: &str = r#"
 ; EndZipline, EndCrouch).  `Timeout` is the canonical ONI2 anim-done alias
 ; accepted in addition to `ModeAnimDone`.
 
+; One-shot enters use `PadPressed` (edge) so a held button doesn't re-fire
+; the rule and stomp the in-progress schedule.  Held-state queries use
+; `PadCmd` (e.g. !PadCmd PADCMD_CROUCH as a stay-in-stance guard).
+
 #IDLE
 if HealthZero                 { Broadcast StartDeath;         goto DIE }
 if Damaged                    { Broadcast StartReact;         goto REACT }
 if GroundLost                 { Broadcast StartFall;          goto FALL }
-if JumpPressed                { Broadcast StartJumpCompress;  goto JUMP }
-if EvadePressed               { Broadcast StartEvade;         goto EVADE }
-if SlidePressed               { Broadcast StartSlide;         goto SLIDE }
-if CrouchPressed              { Broadcast StartCrouch;        goto CROUCH }
+if PadPressed("PADCMD_JUMP")  { Broadcast StartJumpCompress;  goto JUMP }
+if PadPressed("PADCMD_EVADE") { Broadcast StartEvade;         goto EVADE }
+if PadPressed("PADCMD_SLIDE") { Broadcast StartSlide;         goto SLIDE }
+if PadPressed("PADCMD_CROUCH"){ Broadcast StartCrouch;        goto CROUCH }
 if WallGrabAvailable          { Broadcast StartLedgeGrab;     goto LEDGE_HANG }
 if ZiplineAvailable           { Broadcast StartZiplineGrab;   goto ZIPLINE }
-if PickupPressed              { Broadcast StartPickup;        goto PICKUP }
+if PadPressed("PADCMD_PICKUP"){ Broadcast StartPickup;        goto PICKUP }
 if CustomAnimRequested        { Broadcast StartCustomAnim;    goto CUSTOM_ANIM }
 
 #JUMP
 if HealthZero                 { Broadcast StartDeath;         goto DIE }
 if Damaged                    { Broadcast StartReact;         goto REACT }
 if GroundRegained             { Broadcast StartLand;          goto LAND }
-if Timeout                    { Broadcast StartFall;          goto FALL }
 if WallGrabAvailable          { Broadcast StartLedgeGrab;     goto LEDGE_HANG }
+if PadPressed("PADCMD_JUMP") && JumpsAvailable { Broadcast StartJumpCompress;  goto JUMP }
 
 #FALL
 if HealthZero                 { Broadcast StartDeath;         goto DIE }
@@ -323,19 +366,20 @@ if HighVelocityLanding        { Broadcast StartHardLand;      goto LAND }
 if GroundRegained             { Broadcast StartLand;          goto LAND }
 if WallGrabAvailable          { Broadcast StartLedgeGrab;     goto LEDGE_HANG }
 if ZiplineAvailable           { Broadcast StartZiplineGrab;   goto ZIPLINE }
+if PadPressed("PADCMD_JUMP") && JumpsAvailable { Broadcast StartJumpCompress;  goto JUMP }
 
 #LAND
 if HealthZero                 { Broadcast StartDeath;         goto DIE }
 if Damaged                    { Broadcast StartReact;         goto REACT }
 if Timeout                    { goto IDLE }
-if JumpPressed                { Broadcast StartJumpCompress;  goto JUMP }
+if PadPressed("PADCMD_JUMP")  { Broadcast StartJumpCompress;  goto JUMP }
 
 #SLIDE
 if HealthZero                 { Broadcast StartDeath;         goto DIE }
 if Damaged                    { Broadcast StartReact;         goto REACT }
 if GroundLost                 { Broadcast StartFall;          goto FALL }
 if Timeout                    { goto IDLE }
-if JumpPressed                { Broadcast StartJumpCompress;  goto JUMP }
+if PadPressed("PADCMD_JUMP")  { Broadcast StartJumpCompress;  goto JUMP }
 
 #EVADE
 if HealthZero                 { Broadcast StartDeath;         goto DIE }
@@ -345,13 +389,13 @@ if Timeout                    { goto IDLE }
 #CROUCH
 if HealthZero                 { Broadcast StartDeath;         goto DIE }
 if Damaged                    { Broadcast StartReact;         goto REACT }
-if !CrouchPressed             { Broadcast EndCrouch;          goto IDLE }
-if JumpPressed                { Broadcast StartJumpCompress;  goto JUMP }
+if !PadCmd "PADCMD_CROUCH"    { Broadcast EndCrouch;          goto IDLE }
+if PadPressed "PADCMD_JUMP"   { Broadcast StartJumpCompress;  goto JUMP }
 
 #LEDGE_HANG
 if HealthZero                 { Broadcast StartDeath;         goto DIE }
 if Damaged                    { Broadcast StartReact;         goto REACT }
-if JumpPressed                { Broadcast StartLedgeClamber;  goto LEDGE_CLAMBER }
+if PadPressed "PADCMD_JUMP"   { Broadcast StartLedgeClamber;  goto LEDGE_CLAMBER }
 if !WallGrabAvailable         { Broadcast StartFall;          goto FALL }
 
 #LEDGE_CLAMBER
@@ -413,14 +457,53 @@ mod tests {
         let jump = data.index_of_or_zero("JUMP");
         let mut rt = SmRuntime::<AnimatorDriver>::new(data, idle);
 
+        // IDLE's jump rule now uses `PadPressed` (edge) not `PadCmd` (held)
+        // so a held button doesn't re-fire each tick and stomp the jump
+        // schedule.  Populate `pressed_pad_cmds` to simulate the "button
+        // just transitioned from up to down" tick.
+        let mut pressed_pad_cmds = std::collections::HashSet::new();
+        pressed_pad_cmds.insert("PADCMD_JUMP".into());
+        let mut active_pad_cmds = std::collections::HashSet::new();
+        active_pad_cmds.insert("PADCMD_JUMP".into());
         let mut ctx = AnimatorCtx {
-            jump_pressed: true,
+            active_pad_cmds,
+            pressed_pad_cmds,
             current_mode: "IDLE".into(),
             ..Default::default()
         };
         let out = rt.tick(&mut ctx);
         assert_eq!(rt.current_state, jump);
         assert!(out.broadcasts.iter().any(|b| b == "StartJumpCompress"));
+    }
+
+    #[test]
+    fn held_pad_jump_does_not_re_fire_in_jump_state() {
+        // Regression: while the button is HELD and we're already in JUMP,
+        // the rule `PadPressed("PADCMD_JUMP") && JumpsAvailable` must not
+        // re-fire.  Before the edge split, `PadCmd("PADCMD_JUMP")` was
+        // true every held tick and stomped the in-progress jump schedule
+        // with a second JUMP_SOMERSAULT schedule on tick 1.
+        let data = Arc::new(load_embedded().expect("parses"));
+        let jump = data.index_of_or_zero("JUMP");
+        let mut rt = SmRuntime::<AnimatorDriver>::new(data, jump);
+
+        let mut active_pad_cmds = std::collections::HashSet::new();
+        active_pad_cmds.insert("PADCMD_JUMP".into());
+        // Held but NOT pressed this tick (edge is absent).
+        let mut ctx = AnimatorCtx {
+            active_pad_cmds,
+            pressed_pad_cmds: Default::default(),
+            jumps_available: true,
+            current_mode: "JUMP".into(),
+            ..Default::default()
+        };
+        let out = rt.tick(&mut ctx);
+        assert_eq!(rt.current_state, jump, "should stay in JUMP while held");
+        assert!(
+            !out.broadcasts.iter().any(|b| b == "StartJumpCompress"),
+            "held button must not re-fire StartJumpCompress, got: {:?}",
+            out.broadcasts
+        );
     }
 
     #[test]
@@ -446,8 +529,10 @@ mod tests {
         let die = data.index_of_or_zero("DIE");
         let mut rt = SmRuntime::<AnimatorDriver>::new(data, die);
 
+        let mut active_pad_cmds = std::collections::HashSet::new();
+        active_pad_cmds.insert("PADCMD_JUMP".into());
         let mut ctx = AnimatorCtx {
-            jump_pressed: true,
+            active_pad_cmds,
             mode_anim_done: true,
             damage_this_tick: true,
             current_mode: "DIE".into(),

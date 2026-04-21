@@ -50,14 +50,28 @@ pub fn convert_world_to_bone_local(model: &mut Oni2Model, skel: &Oni2Skeleton) {
 
 /// Compute per-bone global transforms from one animation frame.
 /// Uses XZY euler convention and parent-chain accumulation per AGE engine.
-/// Returns Vec of (rotation_quat, world_position) per bone.
+/// Returns `BoneEvalResult` with per-bone transforms plus any root XZ
+/// translation that was stripped — see the type doc.
+pub struct BoneEvalResult {
+    /// Per-bone (rotation, world_position).
+    pub bones: Vec<(Quat, Vec3)>,
+    /// Channel-space root XZ translation relative to the skeleton rest
+    /// offset, captured BEFORE stripping.  `Vec3::ZERO` when stripping
+    /// didn't happen (or when the root bone has no translation channels).
+    /// Consumers that want to apply the anim's intended root motion to
+    /// gameplay (e.g. a running lunge pushing the character forward) can
+    /// read this and feed it into velocity/position.
+    pub stripped_root_offset: Vec3,
+}
+
 pub fn compute_animated_bone_transforms(
     skel: &Oni2Skeleton,
     frame_channels: &[f32],
     strip_root_xz: bool,
-) -> Vec<(Quat, Vec3)> {
+) -> BoneEvalResult {
     let num_bones = skel.positions.len();
     let mut result = vec![(Quat::IDENTITY, Vec3::ZERO); num_bones];
+    let mut stripped_root_offset = Vec3::ZERO;
 
     let mut ch_idx = 0;
     let has_flags = !skel.channel_is_rot.is_empty();
@@ -73,6 +87,14 @@ pub fn compute_animated_bone_transforms(
                 let ty = *frame_channels.get(4).unwrap_or(&skel.local_offsets[i][1]);
                 let mut tz = *frame_channels.get(5).unwrap_or(&skel.local_offsets[i][2]);
                 if strip_root_xz {
+                    // Capture the channel-space translation relative to the
+                    // rest offset before we overwrite it.  `Y` left at 0 —
+                    // vertical root motion is preserved.
+                    stripped_root_offset = Vec3::new(
+                        tx - skel.local_offsets[i][0],
+                        0.0,
+                        tz - skel.local_offsets[i][2],
+                    );
                     tx = skel.local_offsets[i][0];
                     tz = skel.local_offsets[i][2];
                 }
@@ -148,6 +170,9 @@ pub fn compute_animated_bone_transforms(
             let mut final_ty = ty + skel.local_offsets[i][1];
             let mut final_tz = tz + skel.local_offsets[i][2];
             if i == 0 && strip_root_xz {
+                // Capture the channel-space translation relative to rest
+                // before overriding.  Y left at 0 — vertical is preserved.
+                stripped_root_offset = Vec3::new(tx, 0.0, tz);
                 final_tx = skel.local_offsets[i][0];
                 final_tz = skel.local_offsets[i][2];
             }
@@ -167,7 +192,10 @@ pub fn compute_animated_bone_transforms(
         }
     }
 
-    result
+    BoneEvalResult {
+        bones: result,
+        stripped_root_offset,
+    }
 }
 
 /// Compute inverse bind-pose matrices for GPU skinning.

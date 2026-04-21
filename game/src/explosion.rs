@@ -41,7 +41,7 @@ pub fn update_explosion_system(
                 });
 
                 // Fallback attempt to play as sound if it was an Sfx moniker
-                commands.trigger(crate::scroni::vm::ScrOniSysEvent::PlaySound {
+                commands.trigger(crate::fx_system::PlaySound {
                     script_entity: active.spawn_source,
                     actor: None,
                     name: fx.fx_type.clone(),
@@ -81,6 +81,7 @@ pub fn update_explosion_system(
                                 disable_creature_detect: false,
                                 attack_class: None,
                                 attack_strength: None,
+                                attack_target: None,
                                 strike_react_enum: None, // Explode reaction!
                             });
                         }

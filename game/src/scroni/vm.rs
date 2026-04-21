@@ -331,11 +331,9 @@ pub enum ScrOniSysEvent {
         at: Option<Vec3>,
         name: Option<String>,
     },
-    PlaySound {
-        script_entity: Entity,
-        actor: Option<String>,
-        name: String,
-    },
+    // PlaySound moved to `fx_system::PlaySound`.  Scripts that request sound
+    // playback still use `SysRequest::PlaySound` — the VM fan-out below
+    // translates that into the FX-layer event.
     Teleport {
         script_entity: Entity,
         target: Entity,
@@ -2192,7 +2190,9 @@ pub fn scroni_tick_system(
                     });
                 }
                 SysRequest::PlaySound(actor, name) => {
-                    commands.trigger(ScrOniSysEvent::PlaySound {
+                    // Script-initiated sound — route through the FX-layer
+                    // event so the audio dispatcher lives in one place.
+                    commands.trigger(crate::fx_system::PlaySound {
                         script_entity: entity,
                         actor,
                         name,
@@ -2393,6 +2393,7 @@ pub fn scroni_tick_system(
                         disable_creature_detect: false,
                         attack_class: None,
                         attack_strength: None,
+                        attack_target: None,
                         strike_react_enum: None,
                     });
                 }

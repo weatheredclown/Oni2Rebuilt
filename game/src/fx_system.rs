@@ -31,6 +31,25 @@ pub struct SpawnPtx {
     pub start_active: bool,
 }
 
+/// Request playback of a named sound through the audio pipeline.  Routes
+/// through the audio-package → TD manifest → HD/BD decode chain, ultimately
+/// spawning a Bevy `AudioPlayer` entity.  Owned by the FX system so it can
+/// be triggered by any subsystem (combat hits, explosions, scroni scripts,
+/// FX tables) without pulling in scripting-layer concepts.
+///
+/// * `script_entity` — the entity the sound is associated with (used for 3D
+///   audio positioning once spatial audio lands; currently informational).
+/// * `actor` — optional actor context for per-actor sound packages; forwarded
+///   to the lookup but not yet consulted by the default dispatcher.
+/// * `name` — audio-package name OR direct TD manifest entry; package names
+///   win if they resolve (they randomize nugget / volume / pitch).
+#[derive(Event, Debug, Clone)]
+pub struct PlaySound {
+    pub script_entity: Entity,
+    pub actor: Option<String>,
+    pub name: String,
+}
+
 #[derive(Component)]
 pub struct FxStartInactive;
 
@@ -46,11 +65,183 @@ impl Plugin for FxPlugin {
             .add_observer(handle_spawn_fx)
             .add_observer(handle_spawn_ptx)
             .add_observer(handle_fx_action)
+            .add_observer(handle_play_sound)
             .add_systems(Update, handle_actor_fx_attachments)
             .add_systems(Update, apply_fx_start_inactive)
             .add_systems(Update, sync_intended_fx_state)
             .add_systems(Update, uv_animator_system);
     }
+}
+
+// ---------------------------------------------------------------------------
+// PlaySound dispatch
+// ---------------------------------------------------------------------------
+
+/// Observer for `PlaySound` events.  Resolves the name against the loaded
+/// audio packages + TD manifest directory, decodes PSX ADPCM out of the
+/// HD/BD bank pair, and spawns a Bevy `AudioPlayer`.  Called by combat,
+/// explosion, scroni script dispatch, and the fight FX table.
+fn handle_play_sound(
+    trigger: On<PlaySound>,
+    mut commands: Commands,
+    mut audio_sources: ResMut<Assets<bevy::audio::AudioSource>>,
+    mut td_directory: Local<Option<crate::oni2_loader::parsers::td::SoundBankDirectory>>,
+    mut audio_packages: Local<
+        Option<crate::oni2_loader::parsers::audiopackages::AudioPackagesDirectory>,
+    >,
+) {
+    // Lazy-load the audio directories on first event.  Mirrors the init
+    // behaviour that previously lived in scroni::system_bindings.
+    if td_directory.is_none() {
+        *td_directory = Some(crate::oni2_loader::parsers::td::load_all_tds());
+    }
+    if audio_packages.is_none() {
+        if let Ok(content) = crate::vfs::read_to_string("Audio", "rb.audiopackages") {
+            *audio_packages =
+                Some(crate::oni2_loader::parsers::audiopackages::parse_audiopackages(&content));
+        } else {
+            let assets_path = crate::get_assets_path();
+            let pkgs_path = std::path::Path::new(assets_path)
+                .join("Audio")
+                .join("rb.audiopackages");
+            if let Ok(content) = std::fs::read_to_string(&pkgs_path) {
+                *audio_packages = Some(
+                    crate::oni2_loader::parsers::audiopackages::parse_audiopackages(&content),
+                );
+            } else {
+                warn!("Failed to load Audio/rb.audiopackages, audio package lookups will fail.");
+                *audio_packages = Some(std::collections::HashMap::new());
+            }
+        }
+    }
+
+    let ev = (*trigger).clone();
+    let mut resolved_name = ev.name.clone();
+    let mut final_volume = 1.0;
+    let mut final_pitch = 1.0;
+
+    // Audio package: optionally randomize among nuggets.
+    if let Some(pkgs) = audio_packages.as_ref() {
+        if let Some((_, pkg)) = pkgs.iter().find(|(k, _)| k.eq_ignore_ascii_case(&ev.name)) {
+            if !pkg.nuggets.is_empty() {
+                use rand::Rng;
+                let mut rng = rand::rng();
+                let idx = rng.random_range(0..pkg.nuggets.len());
+                let nugget = &pkg.nuggets[idx];
+                resolved_name = nugget.sound.clone();
+                final_volume = nugget.volume
+                    * rng.random_range(nugget.random_min_volume..=nugget.random_max_volume);
+                final_pitch = nugget.pitch
+                    * rng.random_range(nugget.random_min_pitch..=nugget.random_max_pitch);
+            } else {
+                warn!("Audio package `{}` found, but it has no nuggets.", ev.name);
+            }
+        } else {
+            warn!(
+                "Audio package `{}` not found in rb.audiopackages (falling back to direct .td lookup)",
+                ev.name
+            );
+        }
+    }
+
+    // TD manifest: locate bank + vag index, decode and spawn.
+    let Some(dir) = td_directory.as_ref() else {
+        return;
+    };
+    let Some((_, v)) = dir
+        .sounds
+        .iter()
+        .find(|(k, _)| k.eq_ignore_ascii_case(&resolved_name))
+    else {
+        if resolved_name != ev.name {
+            warn!(
+                "Sound `{}` (resolved from package `{}`) not found in .td manifest directory.",
+                resolved_name, ev.name
+            );
+        } else {
+            warn!("Sound `{}` not found in .td manifest directory.", ev.name);
+        }
+        return;
+    };
+
+    let bank_name = &v.0;
+    let vag_index = v.1;
+    let hd_name = format!("{}.hd", bank_name);
+    let bd_name = format!("{}.bd", bank_name);
+
+    let hd_bytes_opt = crate::vfs::read("", &hd_name).ok();
+    let Some(hd_bytes) = hd_bytes_opt else {
+        warn!("HD file not found in VFS: {}", hd_name);
+        return;
+    };
+
+    let Ok(header) = crate::oni2_loader::parsers::hd_bd::parse_hd(&hd_bytes) else {
+        warn!("Failed to parse HD header for {}", hd_name);
+        return;
+    };
+
+    // HD subsongs are 1-indexed; TD vag_index is 0-indexed.
+    let target_index = vag_index + 1;
+    let Some(subsong) = header.subsongs.iter().find(|s| s.index == target_index) else {
+        warn!("Subsong {} not found in HD header.", target_index);
+        return;
+    };
+
+    let bd_paths = [bd_name.clone(), format!("Audio/banks/{}", bd_name)];
+    let mut bd_bytes_opt = None;
+    for p in &bd_paths {
+        if let Ok(b) = crate::vfs::read("", p) {
+            bd_bytes_opt = Some(b);
+            break;
+        }
+    }
+    let Some(bd_bytes) = bd_bytes_opt else {
+        warn!("BD file not found in VFS: {}", bd_name);
+        return;
+    };
+
+    let start = subsong.stream_offset as usize;
+    let end = start + subsong.stream_size as usize;
+    if end > bd_bytes.len() {
+        warn!("Subsong payload overflows BD file.");
+        return;
+    }
+
+    let payload = &bd_bytes[start..end];
+    let Ok(pcm) = crate::oni2_loader::parsers::hd_bd::decode_psx_adpcm(payload, subsong.num_samples)
+    else {
+        return;
+    };
+    let Ok(wav) = crate::oni2_loader::parsers::hd_bd::create_wav_bytes(
+        &pcm,
+        subsong.sample_rate,
+        subsong.channels,
+    ) else {
+        return;
+    };
+
+    let source_handle = audio_sources.add(bevy::audio::AudioSource {
+        bytes: std::sync::Arc::from(wav),
+    });
+
+    commands.spawn((
+        bevy::audio::AudioPlayer(source_handle),
+        bevy::audio::PlaybackSettings {
+            mode: if subsong.loop_flag {
+                bevy::audio::PlaybackMode::Loop
+            } else {
+                bevy::audio::PlaybackMode::Despawn
+            },
+            volume: bevy::audio::Volume::Linear(final_volume),
+            speed: final_pitch,
+            ..Default::default()
+        },
+    ));
+
+    // `ev.script_entity` / `ev.actor` are currently informational — consumed
+    // once 3D audio / per-actor audio-attachment lands.
+    let _ = ev.script_entity;
+    let _ = ev.actor;
 }
 
 fn apply_fx_start_inactive(

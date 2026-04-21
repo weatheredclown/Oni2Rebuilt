@@ -67,7 +67,7 @@ fn compute_jump_time(jump: &crate::oni2_loader::parsers::jump::JumpState) -> f32
 
 /// Which .jump index (matches the ordering encoded in kno.jump / jae.jump /
 /// joe.jump) corresponds to a given ACT_S0_JUMP_* substate.
-fn jump_index_for_substate(substate: i32) -> i32 {
+pub(crate) fn jump_index_for_substate(substate: i32) -> i32 {
     match substate {
         sub_state_0::JUMP_UP
         | sub_state_0::JUMP_FORWARD
@@ -91,7 +91,7 @@ fn jump_index_for_substate(substate: i32) -> i32 {
 ///   rate = at / jump.Time                  // scale to match physics arc
 /// Here we use the playback `state_fps` so the anim finishes in `jump.Time`
 /// seconds regardless of our fps baseline.
-fn build_jump_schedule(
+pub(crate) fn build_jump_schedule(
     substate: i32,
     lib: &Oni2AnimLibrary,
     jump_controller: Option<&JumpController>,
@@ -117,6 +117,12 @@ fn build_jump_schedule(
         }
     };
 
+    // Every JUMP_MAIN / JUMP_SOMERSAULT entry is marked `with_hold()` so
+    // that when the airborne anim reaches its natural end we LOOP it rather
+    // than immediately advancing to LAND.  The schedule stays parked on
+    // MAIN until `jump_land_on_ground_system` detects ground contact and
+    // explicitly advances the cursor to LAND.  This mirrors the C++ behavior
+    // of holding a looping FALL anim while airborne.
     let entries = match substate {
         sub_state_0::JUMP_UP => {
             let compress_alias = if fight_stance {
@@ -124,61 +130,96 @@ fn build_jump_schedule(
             } else {
                 "ANIMJUMP_VERTICAL_1_STAND"
             };
+            // C++ layout from action.cpp (Parent->GetAnimation calls):
+            //   VERTICAL_1_STAND → VERTICAL_2 → VERTICAL_3 (stretched to
+            //   jump_time) → VERTICAL_3_EXT (looping airborne extension,
+            //   plays if still airborne when VERTICAL_3 ends) → VERTICAL_4.
+            // VERTICAL_3 plays ONCE at its rate-matched speed; if the
+            // actual airtime is shorter, ground_regained advances past
+            // EXT to VERTICAL_4.  If longer, VERTICAL_3 auto-advances to
+            // EXT which loops until ground contact.
             vec![
                 AnimScheduleEntry::new(compress_alias, sub_state_1::JUMP_COMPRESS),
                 AnimScheduleEntry::new("ANIMJUMP_VERTICAL_2", sub_state_1::JUMP_COMPRESS),
                 AnimScheduleEntry::new("ANIMJUMP_VERTICAL_3", sub_state_1::JUMP_MAIN)
                     .with_rate(main_rate("ANIMJUMP_VERTICAL_3")),
+                AnimScheduleEntry::new("ANIMJUMP_VERTICAL_3_EXT", sub_state_1::JUMP_MAIN)
+                    .with_hold(),
                 AnimScheduleEntry::new("ANIMJUMP_VERTICAL_4", sub_state_1::JUMP_LAND),
             ]
         }
+        // Directional jump variants all follow the same shape:
+        //   SPRING (compress) → FLOAT (main arc, rate-stretched, NO hold)
+        //     → VERTICAL_3_EXT (generic airborne fall-hold; loops via
+        //       with_hold until ground) → LAND.
+        // Matches the C++ pattern where VERTICAL_3_EXT is the shared
+        // "extended airborne" hold (Parent->GetAnimation(ANIMCATEGORY_JUMP,
+        // ANIMJUMP_VERTICAL_3_EXT)).  Without the EXT entry, MAIN with
+        // with_hold() would loop visibly when the rate-stretched anim
+        // ended before the actual airtime.
         sub_state_0::JUMP_FORWARD => vec![
             AnimScheduleEntry::new("ANIMJUMP_RUN_1", sub_state_1::JUMP_COMPRESS),
             AnimScheduleEntry::new("ANIMJUMP_RUN_2", sub_state_1::JUMP_MAIN)
                 .with_rate(main_rate("ANIMJUMP_RUN_2")),
+            AnimScheduleEntry::new("ANIMJUMP_VERTICAL_3_EXT", sub_state_1::JUMP_MAIN)
+                .with_hold(),
             AnimScheduleEntry::new("ANIMJUMP_RUN_3", sub_state_1::JUMP_LAND),
         ],
         sub_state_0::JUMP_LEFT => vec![
             AnimScheduleEntry::new("ANIMJUMP_RUN_LEFT_SPRING", sub_state_1::JUMP_COMPRESS),
             AnimScheduleEntry::new("ANIMJUMP_RUN_LEFT_FLOAT", sub_state_1::JUMP_MAIN)
                 .with_rate(main_rate("ANIMJUMP_RUN_LEFT_FLOAT")),
+            AnimScheduleEntry::new("ANIMJUMP_VERTICAL_3_EXT", sub_state_1::JUMP_MAIN)
+                .with_hold(),
             AnimScheduleEntry::new("ANIMJUMP_RUN_LEFT_LAND", sub_state_1::JUMP_LAND),
         ],
         sub_state_0::JUMP_LEFT_EVADE => vec![
             AnimScheduleEntry::new("ANIMJUMP_JOG_LEFT_SPRING", sub_state_1::JUMP_COMPRESS),
             AnimScheduleEntry::new("ANIMJUMP_JOG_LEFT_FLOAT", sub_state_1::JUMP_MAIN)
                 .with_rate(main_rate("ANIMJUMP_JOG_LEFT_FLOAT")),
+            AnimScheduleEntry::new("ANIMJUMP_VERTICAL_3_EXT", sub_state_1::JUMP_MAIN)
+                .with_hold(),
             AnimScheduleEntry::new("ANIMJUMP_JOG_LEFT_LAND", sub_state_1::JUMP_LAND),
         ],
         sub_state_0::JUMP_RIGHT => vec![
             AnimScheduleEntry::new("ANIMJUMP_RUN_RIGHT_SPRING", sub_state_1::JUMP_COMPRESS),
             AnimScheduleEntry::new("ANIMJUMP_RUN_RIGHT_FLOAT", sub_state_1::JUMP_MAIN)
                 .with_rate(main_rate("ANIMJUMP_RUN_RIGHT_FLOAT")),
+            AnimScheduleEntry::new("ANIMJUMP_VERTICAL_3_EXT", sub_state_1::JUMP_MAIN)
+                .with_hold(),
             AnimScheduleEntry::new("ANIMJUMP_RUN_RIGHT_LAND", sub_state_1::JUMP_LAND),
         ],
         sub_state_0::JUMP_RIGHT_EVADE => vec![
             AnimScheduleEntry::new("ANIMJUMP_JOG_RIGHT_SPRING", sub_state_1::JUMP_COMPRESS),
             AnimScheduleEntry::new("ANIMJUMP_JOG_RIGHT_FLOAT", sub_state_1::JUMP_MAIN)
                 .with_rate(main_rate("ANIMJUMP_JOG_RIGHT_FLOAT")),
+            AnimScheduleEntry::new("ANIMJUMP_VERTICAL_3_EXT", sub_state_1::JUMP_MAIN)
+                .with_hold(),
             AnimScheduleEntry::new("ANIMJUMP_JOG_RIGHT_LAND", sub_state_1::JUMP_LAND),
         ],
         sub_state_0::JUMP_BACK => vec![
             AnimScheduleEntry::new("ANIMJUMP_RUN_BACK_SPRING", sub_state_1::JUMP_COMPRESS),
             AnimScheduleEntry::new("ANIMJUMP_RUN_BACK_FLOAT", sub_state_1::JUMP_MAIN)
                 .with_rate(main_rate("ANIMJUMP_RUN_BACK_FLOAT")),
+            AnimScheduleEntry::new("ANIMJUMP_VERTICAL_3_EXT", sub_state_1::JUMP_MAIN)
+                .with_hold(),
             AnimScheduleEntry::new("ANIMJUMP_RUN_BACK_LAND", sub_state_1::JUMP_LAND),
         ],
         sub_state_0::JUMP_BACK_EVADE => vec![
             AnimScheduleEntry::new("ANIMJUMP_JOG_BACK_SPRING", sub_state_1::JUMP_COMPRESS),
             AnimScheduleEntry::new("ANIMJUMP_JOG_BACK_FLOAT", sub_state_1::JUMP_MAIN)
                 .with_rate(main_rate("ANIMJUMP_JOG_BACK_FLOAT")),
+            AnimScheduleEntry::new("ANIMJUMP_VERTICAL_3_EXT", sub_state_1::JUMP_MAIN)
+                .with_hold(),
             AnimScheduleEntry::new("ANIMJUMP_JOG_BACK_LAND", sub_state_1::JUMP_LAND),
         ],
         sub_state_0::JUMP_SOMERSAULT => vec![
             // Mid-air flip — no compress phase.  The impulse fires as soon as
             // SubState1 becomes JUMP_SOMERSAULT (which is "fresh" on start).
+            // `with_hold()` keeps the anim looping until ground contact.
             AnimScheduleEntry::new("ANIMJUMP_VERTICAL_2", sub_state_1::JUMP_SOMERSAULT)
-                .with_rate(main_rate("ANIMJUMP_VERTICAL_2")),
+                .with_rate(main_rate("ANIMJUMP_VERTICAL_2"))
+                .with_hold(),
         ],
         sub_state_0::JUMP_WALL_COMPRESS => vec![AnimScheduleEntry::new(
             "ANIMJUMP_RUN_WALL_COMPRESS",
@@ -306,18 +347,38 @@ fn try_start_action(
         }
 
         MainAction::FightStance => {
-            if ap.find_at_least_one_flag(action_flags::REJECTLIST_FIGHTSTANCE) {
-                return ActionResult::Denied;
+            // Subaction picks enter vs. leave.  Defaults to enter when the
+            // caller doesn't specify — matches the legacy default-START
+            // behavior and keeps old call sites working.
+            let leaving = substate == sub_state_0::TRANSITION_FIGHTSTANCE_END;
+
+            if leaving {
+                // Leaving fight stance: only valid if we're currently in it.
+                // No reject list applies — a fight-stance exit should always
+                // succeed when requested.
+                ap.flags &= !action_flags::FIGHTSTANCE;
+                play_and_record(
+                    "ANIMFIGHTSTANCE_FIGHT_TO_STAND",
+                    sub_state_1::TRANSITION,
+                    ap,
+                    lib,
+                    state,
+                )
+            } else {
+                // Entering fight stance: reject list + override list apply.
+                if ap.find_at_least_one_flag(action_flags::REJECTLIST_FIGHTSTANCE) {
+                    return ActionResult::Denied;
+                }
+                ap.flags &= !action_flags::OVERRIDELIST_FIGHTSTANCE;
+                ap.flags |= action_flags::FIGHTSTANCE;
+                play_and_record(
+                    "ANIMFIGHTSTANCE_STAND_TO_FIGHT",
+                    sub_state_1::TRANSITION,
+                    ap,
+                    lib,
+                    state,
+                )
             }
-            ap.flags &= !action_flags::OVERRIDELIST_FIGHTSTANCE;
-            ap.flags |= action_flags::FIGHTSTANCE;
-            play_and_record(
-                "ANIMFIGHTSTANCE_STAND_TO_FIGHT",
-                sub_state_1::TRANSITION,
-                ap,
-                lib,
-                state,
-            )
         }
 
         MainAction::DrawWeapon => {
@@ -336,13 +397,19 @@ fn try_start_action(
         }
 
         MainAction::Fall => {
+            // NOTE: this legacy arm is bypassed when the action registry
+            // contains a FallAction — `action_start_system` skips
+            // registered actions.  Kept here for entities that haven't
+            // been migrated yet.
             if ap.find_at_least_one_flag(action_flags::REJECTLIST_FALL) {
                 return ActionResult::Denied;
             }
             ap.flags &= !action_flags::OVERRIDELIST_FALL;
-            // Fall uses the loop part of the jump animation set.  Sub_state_1
-            // stays at IDLE here — the airborne "fall" has no bespoke substate.
-            play_and_record("ANIMJUMP_FORWARD_FLOAT", sub_state_1::IDLE, ap, lib, state)
+            // Fall uses the legacy "vertical-3 extended" airborne hold —
+            // matches `action.cpp`'s `GetAnimation(ANIMCATEGORY_JUMP,
+            // ANIMJUMP_VERTICAL_3_EXT)`.  Sub_state_1 stays at IDLE since
+            // the airborne fall has no bespoke substate.
+            play_and_record("ANIMJUMP_VERTICAL_3_EXT", sub_state_1::IDLE, ap, lib, state)
         }
 
         MainAction::LieDown => {
@@ -533,6 +600,7 @@ pub fn action_start_system(
     mut commands: Commands,
     mut reader: MessageReader<StartActionMessage>,
     mut writer: MessageWriter<ActionStartedMessage>,
+    registry: Res<super::actions::ActionRegistry>,
     mut query: Query<(
         &mut ActionPlayer,
         &Oni2AnimLibrary,
@@ -541,6 +609,13 @@ pub fn action_start_system(
     )>,
 ) {
     for msg in reader.read() {
+        // Migration: actions registered in the new pipeline are handled
+        // by `action_start_dispatch_system`; skip them here so we don't
+        // double-dispatch the same StartActionMessage through two
+        // competing code paths.
+        if registry.contains(msg.action) {
+            continue;
+        }
         let mut schedule_out: Option<AnimSchedule> = None;
         let result = if let Ok((mut ap, lib, mut state, jc)) = query.get_mut(msg.entity) {
             let r = try_start_action(
@@ -933,5 +1008,333 @@ pub fn jump_impulse_emit_system(
             time,
             heading_adjust: jump.heading_adjust,
         });
+    }
+}
+
+// ---------------------------------------------------------------------------
+// jump_land_on_ground_system
+// ---------------------------------------------------------------------------
+
+/// Advances a jump schedule from JUMP_MAIN (or JUMP_SOMERSAULT) into JUMP_LAND
+/// the moment the character reconnects with ground.
+///
+/// `build_jump_schedule` now marks every MAIN/SOMERSAULT entry as
+/// `hold_at_end=true`, which writes `looping=true` into the anim state and
+/// keeps the airborne FLOAT anim looping forever.  That's the right visual
+/// for an in-flight character — the loop is effectively a fall animation —
+/// but something has to break the loop when they touch down.  This system
+/// is that hook: on a `false → true` edge in `is_grounded`, if the schedule
+/// is parked on MAIN/SOMERSAULT, call `schedule.advance()` so LAND kicks in
+/// on the next tick.
+///
+/// Matches the C++ animator.cpp loop: it holds a FALL anim while airborne
+/// and on ground contact transitions the action to LAND.
+pub fn jump_land_on_ground_system(
+    mut query: Query<(
+        Entity,
+        &mut crate::animator::schedule::AnimSchedule,
+        &Oni2AnimState,
+    )>,
+    mut was_grounded: Local<bevy::ecs::entity::EntityHashMap<bool>>,
+) {
+    for (entity, mut schedule, anim_state) in &mut query {
+        // Default the previous reading to `true` for a fresh entity so the
+        // first tick doesn't spuriously fire a "just landed" transition on
+        // spawn (when we don't yet know the prior state).
+        let prev = was_grounded.get(&entity).copied().unwrap_or(true);
+        let curr = anim_state.is_grounded;
+        was_grounded.insert(entity, curr);
+
+        if !(!prev && curr) {
+            continue;
+        }
+
+        // Only advance when the schedule is parked on an airborne entry.
+        // Advancing out of COMPRESS (pre-impulse) or LAND (already past)
+        // would skip or cut off legitimate frames.
+        let Some(current) = schedule.current() else {
+            continue;
+        };
+        let is_airborne_entry = current.substate_1 == sub_state_1::JUMP_MAIN
+            || current.substate_1 == sub_state_1::JUMP_SOMERSAULT;
+        if !is_airborne_entry {
+            continue;
+        }
+
+        debug!(
+            "jump_land_on_ground: entity {:?} landed while in substate_1={} — advancing schedule to LAND",
+            entity, current.substate_1
+        );
+        schedule.advance();
+    }
+}
+
+// ---------------------------------------------------------------------------
+// schedule_finished_end_action_system
+// ---------------------------------------------------------------------------
+
+/// Emits `EndActionMessage` on the frame an entity's `AnimSchedule` just
+/// finished.  This is the missing hook that lets `action_end_system` run
+/// `do_end_action` and clear action flags (e.g. `CLEARLIST_JUMP` which
+/// wipes JUMPING / DOUBLE_JUMPING / RUNNING_JUMP / STANDING_JUMP).
+///
+/// Matches the legacy animator pipeline: when the crAnimList empties
+/// (e.g. the LAND anim finishes at the end of a jump), the animator calls
+/// `EndAction` on the owning MainAction, clearing its flags.  Without
+/// this, JUMPING stays set forever and re-entering JUMP in an FSM that
+/// checks `check_flags(JUMPING)` would silently refuse.
+pub fn schedule_finished_end_action_system(
+    mut writer: MessageWriter<EndActionMessage>,
+    query: Query<(
+        Entity,
+        &crate::animator::schedule::AnimSchedule,
+        &ActionPlayer,
+    )>,
+    mut was_finished: Local<bevy::ecs::entity::EntityHashMap<bool>>,
+) {
+    for (entity, schedule, ap) in &query {
+        // Default prior state to `true` so we don't spuriously fire
+        // EndActionMessage for a freshly-spawned empty schedule.
+        let prev = was_finished.get(&entity).copied().unwrap_or(true);
+        let curr = schedule.finished;
+        was_finished.insert(entity, curr);
+
+        if !(!prev && curr) {
+            continue;
+        }
+        if ap.last_action == MainAction::None {
+            continue;
+        }
+
+        let subaction_idx = ap.last_action as usize;
+        let subaction = ap.sub_state_0.get(subaction_idx).copied().unwrap_or(0);
+
+        debug!(
+            "schedule_finished_end_action: entity {:?} schedule finished — emitting EndActionMessage(action={:?}, subaction={})",
+            entity, ap.last_action, subaction
+        );
+        writer.write(EndActionMessage {
+            entity,
+            action: ap.last_action,
+            subaction,
+        });
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Jump impulse application
+// ---------------------------------------------------------------------------
+
+/// Consumes `JumpImpulseMessage` (emitted by the animator when SubState1
+/// transitions into JUMP_MAIN / JUMP_SOMERSAULT) and applies the computed
+/// velocity to the player's `LinearVelocity`.  It effectively sets both
+/// vertical and planar horizontal impulses derived from the .jump data
+/// (height, gravity_factor, length, heading_adjust).
+///
+/// Vertical component: overwrites `velocity.y` directly so the jump reaches
+/// the scripted apex regardless of current downward velocity (falls reset).
+///
+/// Horizontal components: projected onto the entity's facing plane.
+///   • `forward` → along `fighter.facing` (XZ).
+///   • `lateral` → perpendicular to facing, +lateral = right (heading_adjust
+///     = +90° in the legacy encoding).
+///
+/// When the message carries nonzero horizontal components, the existing
+/// XZ velocity is replaced.  For vertical-only jumps (length=0 in kno.jump),
+/// XZ is left alone so the jumper keeps any running start.
+pub fn jump_impulse_apply_system(
+    mut reader: MessageReader<crate::animator::JumpImpulseMessage>,
+    mut commands: Commands,
+    mut query: Query<(&mut avian3d::prelude::LinearVelocity, &crate::combat::components::Fighter)>,
+) {
+    for msg in reader.read() {
+        let Ok((mut vel, fighter)) = query.get_mut(msg.entity) else {
+            continue;
+        };
+
+        // Apply the jump's gravity scale so the airborne arc matches the
+        // kno.jump data (height 1.56m, factor 3.2 → total airtime 0.63s).
+        // Reset happens in `jump_gravity_reset_system` on next ground contact.
+        if (msg.gravity_factor - 1.0).abs() > 0.01 {
+            info!(
+                "GRAVITY SET: entity {:?} → factor={:.2} (jump impulse: \
+                 vertical={:.2}, forward={:.2}, lateral={:.2}, time={:.2}s)",
+                msg.entity,
+                msg.gravity_factor,
+                msg.vertical,
+                msg.forward,
+                msg.lateral,
+                msg.time,
+            );
+            commands
+                .entity(msg.entity)
+                .insert(avian3d::prelude::GravityScale(msg.gravity_factor));
+        }
+
+        vel.0.y = msg.vertical;
+
+        if msg.forward.abs() > 0.001 || msg.lateral.abs() > 0.001 {
+            let facing = {
+                let f = Vec3::new(fighter.facing.x, 0.0, fighter.facing.z);
+                f.normalize_or_zero()
+            };
+            if facing.length_squared() > 0.001 {
+                let right = facing.cross(Vec3::Y).normalize_or_zero();
+                let horiz = facing * msg.forward + right * msg.lateral;
+                vel.0.x = horiz.x;
+                vel.0.z = horiz.z;
+            }
+        }
+    }
+}
+
+/// Restore normal gravity once the jumper lands.  A `GravityScale` left in
+/// place after landing would make walking feel heavier than intended.  Runs
+/// every tick and is a no-op when there's nothing to reset.
+///
+/// Gated on `is_grounded AND NOT ascending`: right after the jump impulse
+/// fires, the ShapeCaster still reports ground contact for 1-2 FixedUpdate
+/// ticks (velocity has been applied but position hasn't separated yet),
+/// which would trigger a spurious reset and clobber the jump's gravity
+/// factor — making the rest of the arc play under normal gravity.
+/// Checking `linear_velocity.y <= 0` prevents that: we only reset when the
+/// character is genuinely standing / landing, not in the process of
+/// launching.
+pub fn jump_gravity_reset_system(
+    mut commands: Commands,
+    mut query: Query<(
+        Entity,
+        Option<&crate::oni2_loader::animation::Oni2AnimState>,
+        Option<&avian3d::prelude::LinearVelocity>,
+        &avian3d::prelude::GravityScale,
+        Option<&mut ActionPlayer>,
+    )>,
+) {
+    const ASCENDING_VY_THRESHOLD: f32 = 0.5;
+
+    for (entity, anim_state_opt, vel_opt, scale, ap_opt) in &mut query {
+        let is_grounded = anim_state_opt.map_or(true, |s| s.is_grounded);
+        if !is_grounded {
+            continue;
+        }
+
+        // Suppress reset while the character is actively ascending — they
+        // just fired a jump impulse and Avian hasn't moved them off the
+        // ground collider yet.  Once velocity decays (apex or descent) we
+        // resume the reset path on the next grounded tick.
+        let vy = vel_opt.map_or(0.0, |v| v.0.y);
+        if vy > ASCENDING_VY_THRESHOLD {
+            continue;
+        }
+
+        if let Some(mut ap) = ap_opt {
+            ap.jumps_remaining = ap.max_jumps;
+        }
+        if (scale.0 - 1.0).abs() > 0.01 {
+            info!(
+                "GRAVITY RESET: entity {:?} {:.2} → 1.0 (grounded, vy={:.2})",
+                entity, scale.0, vy,
+            );
+            commands
+                .entity(entity)
+                .insert(avian3d::prelude::GravityScale(1.0));
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Animator Dispatch
+// ---------------------------------------------------------------------------
+
+/// Listens for top-level AnimatorBroadcastEvent messages generated from the
+/// character FSM and dispatches the native movement routines (translating string logic down to internal StartActionMessages).
+pub fn animator_broadcast_handler(
+    mut events: MessageReader<crate::statemachine::runtime::AnimatorBroadcastEvent>,
+    mut start_action_writer: MessageWriter<crate::animator::StartActionMessage>,
+    mut player_query: Query<(
+        &mut ActionPlayer,
+        Option<&crate::player::components::InputState>,
+    )>,
+) {
+    for ev in events.read() {
+        match ev.payload.as_str() {
+            "StartJumpCompress" => {
+                if let Ok((mut ap, input_opt)) = player_query.get_mut(ev.entity) {
+                    // Ensure jumps are replenished if we're technically grounded or starting our first jump
+                    let is_first_jump = ap.jumps_remaining == ap.max_jumps;
+                    if ap.jumps_remaining > 0 {
+                        ap.jumps_remaining -= 1;
+                    }
+
+                    let substate = if !is_first_jump {
+                        crate::animator::sub_state_0::JUMP_SOMERSAULT
+                    } else if let Some(input) = input_opt {
+                        if input.movement.length_squared() > 0.05 {
+                            if input.movement.y < -0.1 {
+                                crate::animator::sub_state_0::JUMP_FORWARD
+                            } else if input.movement.y > 0.1 {
+                                crate::animator::sub_state_0::JUMP_BACK
+                            } else if input.movement.x > 0.1 {
+                                crate::animator::sub_state_0::JUMP_LEFT
+                            } else if input.movement.x < -0.1 {
+                                crate::animator::sub_state_0::JUMP_RIGHT
+                            } else {
+                                crate::animator::sub_state_0::JUMP_UP
+                            }
+                        } else {
+                            crate::animator::sub_state_0::JUMP_UP
+                        }
+                    } else {
+                        // AI jump default for now (could parse velocity/facing intent instead later)
+                        crate::animator::sub_state_0::JUMP_UP
+                    };
+
+                    start_action_writer.write(crate::animator::StartActionMessage {
+                        entity: ev.entity,
+                        action: crate::animator::MainAction::Jump,
+                        substate,
+                    });
+                }
+            }
+
+            // FSM entered FALL from somewhere other than an internal
+            // Jump→Fall handoff (e.g. IDLE→FALL when walking off a
+            // ledge or on spawn).  Kick off a fresh FallAction so the
+            // fall anim plays + the landing handoff is armed.
+            "StartFall" => {
+                start_action_writer.write(crate::animator::StartActionMessage {
+                    entity: ev.entity,
+                    action: crate::animator::MainAction::Fall,
+                    substate: 0,
+                });
+            }
+
+            // The FSM broadcasts `StartLand` / `StartHardLand` when
+            // transitioning to #LAND, but LAND is an internal phase of
+            // JumpAction / FallAction (no MainAction::Land exists — see
+            // the action-pipeline design note in animator/actions).  The
+            // Actions detect ground contact themselves via the physics
+            // edge in `ActionCtx.ground_just_regained`, so these
+            // broadcasts are informational — intentional no-ops here
+            // kept for FX / audio hooks to subscribe to later.
+            "StartLand" | "StartHardLand" => {}
+
+            // StartDeath / StartReact / StartEvade / StartSlide /
+            // StartCrouch / EndCrouch / StartLedgeGrab / StartLedgeClamber
+            // / StartZiplineGrab / EndZipline / EndReact / StartPickup /
+            // StartCustomAnim: not yet wired to Actions; silent no-ops
+            // until those modes migrate to the action pipeline.
+            "StartDeath" | "StartReact" | "EndReact" | "StartEvade" | "StartSlide"
+            | "StartCrouch" | "EndCrouch" | "StartLedgeGrab" | "StartLedgeClamber"
+            | "StartZiplineGrab" | "EndZipline" | "StartPickup" | "StartCustomAnim" => {}
+
+            _ => {
+                bevy::log::warn!(
+                    "Unhandled AnimatorBroadcastEvent: '{}' for entity {:?}",
+                    ev.payload,
+                    ev.entity
+                );
+            }
+        }
     }
 }

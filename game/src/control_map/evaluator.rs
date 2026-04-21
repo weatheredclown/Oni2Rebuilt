@@ -145,6 +145,15 @@ impl PadMapper {
             .unwrap_or(0.0)
     }
 
+    /// Returns a list of all pad command names that are currently active (> 0.0)
+    pub fn active_commands(&self) -> Vec<String> {
+        self.name_to_index
+            .iter()
+            .filter(|(_, i)| self.values[**i] > 0.0)
+            .map(|(k, _)| k.clone())
+            .collect()
+    }
+
     /// Evaluate all commands against `frame` and update `self.values`.
     /// Must be called exactly once per game frame before any consumer reads values.
     pub fn update(&mut self, frame: &RawInputFrame) {

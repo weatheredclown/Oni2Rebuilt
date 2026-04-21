@@ -35,7 +35,7 @@ pub fn get_assets_path() -> &'static str {
     ASSETS_PATH
         .get()
         .map(|s| s.as_str())
-        .unwrap_or("oni2/zips/assets")
+        .unwrap_or("../oni2/zips/assets")
 }
 
 pub fn get_assets_dat() -> &'static str {

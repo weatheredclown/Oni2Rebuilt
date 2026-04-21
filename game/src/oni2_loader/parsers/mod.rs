@@ -18,6 +18,7 @@ pub mod camera;
 pub mod effect;
 pub mod entity_type;
 pub mod expl;
+pub mod gait;
 pub mod graph;
 pub mod hd_bd;
 pub mod inventory;

@@ -9,7 +9,7 @@
  */
 use bevy::prelude::*;
 
-use super::components::{AttackClass, AttackStrength, ReactionKind};
+use super::components::{AttackClass, AttackStrength, AttackTarget, ReactionKind};
 
 #[derive(Message)]
 pub struct AttackMessage {
@@ -62,9 +62,20 @@ pub struct InjureMessage {
     pub from: Option<Vec3>,
     pub play_react: bool,
     pub disable_creature_detect: bool,
-    // Provide combat context if this injury comes from a physical strike
+    // Combat classification sourced from the attacker's ATDT file when
+    // declared (authoritative).  All three are `None` for non-ATDT hits
+    // (environmental damage, scripted injuries, etc.) — downstream FX
+    // lookup skips in that case rather than picking a wrong default.
     pub attack_class: Option<AttackClass>,
     pub attack_strength: Option<AttackStrength>,
+    pub attack_target: Option<AttackTarget>,
     // For handling animations resolving HitReaction logic
     pub strike_react_enum: Option<i32>,
+}
+
+#[derive(Message, Clone)]
+pub struct StrikeConnectedEvent {
+    pub attacker: Entity,
+    pub target: Entity,
+    pub headingnotlockedtotarget: bool,
 }

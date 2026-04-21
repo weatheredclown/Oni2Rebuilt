@@ -1941,13 +1941,17 @@ mod tests {
     use crate::oni2_loader::parsers::animation::parse_anim;
     use crate::oni2_loader::parsers::skeleton::parse_skel;
 
+    fn init_test_vfs() {
+        crate::set_assets_path("../../oni2/zips/assets");
+        let mut multi = crate::filesystem::vfs::MultiVfs::new();
+        multi.push(Box::new(crate::filesystem::vfs::DiskVfs::new(crate::get_assets_path().to_string())));
+        crate::filesystem::vfs::set_vfs(Box::new(multi));
+    }
+
     #[test]
     fn test_file_structure_analysis() {
-        let path_str = format!(
-            "{}/Entity/Tim/win32_tim_LODs3.mod",
-            crate::get_assets_path()
-        );
-        let path = path_str.as_str();
+        init_test_vfs();
+        let path = "Entity/Tim/win32_tim_LODs3.mod";
         let data = crate::vfs::read("", path).expect("Failed to read tim LODs3.mod");
         eprintln!("=== TIM LOD3 FILE STRUCTURE ANALYSIS ===");
         eprintln!("File size: {} bytes", data.len());
@@ -2521,8 +2525,8 @@ mod tests {
 
     #[test]
     fn test_parse_mod_binary_blocks() {
-        let base_str = format!("{}/Entity", crate::get_assets_path());
-        let base = base_str.as_str();
+        init_test_vfs();
+        let base = "Entity";
         let paths: Vec<String> = vec![
             // Sci — 1 material, simple
             format!("{base}/Sci/win32_sci_LODs0.mod"),
@@ -2591,7 +2595,7 @@ mod tests {
                 n_reskins
             );
 
-            if let Some(model) = parse_mod_binary(&data, &base_str) {
+            if let Some(model) = parse_mod_binary(&data, base) {
                 let total_adj: usize = model.packets.iter().map(|p| p.adjuncts.len()).sum();
                 let total_strips: usize = model.packets.iter().map(|p| p.strips.len()).sum();
                 let total_strip_verts: usize = model
@@ -2669,6 +2673,7 @@ mod tests {
 
     #[test]
     fn test_material_sequential_parse() {
+        init_test_vfs();
         // Sequential field-by-field parser for binary material records.
         // AGE binary format principle: data is sequentially parsed, not fixed-size blocks.
         // Variable-length strings are inline (not in a string table), saving space.
@@ -2825,6 +2830,7 @@ mod tests {
 
     #[test]
     fn test_packet_sequential_parse() {
+        init_test_vfs();
         // Strict packet parser. Aborts on any format mismatch.
         //
         // Packet format (binary):
@@ -3182,10 +3188,10 @@ mod tests {
 
     #[test]
     fn test_packet_region_analysis() {
+        init_test_vfs();
         // Analyze the packet region between materials-end and mtxv.
         // Now that we know exact material boundaries, we can find the exact packet region start.
-        let base_str = format!("{}/Entity", crate::get_assets_path());
-        let base = base_str.as_str();
+        let base = "Entity";
         let files = vec![
             // Simple: 2 materials, 9 packets, 140 adjuncts, 200 primitives
             format!("{base}/Tim/win32_tim_LODs3.mod"),
@@ -3428,8 +3434,8 @@ mod tests {
 
     #[test]
     fn test_scan_all_kno_anim_channels() {
-        let base_str = format!("{}/Entity/kno", crate::get_assets_path());
-        let base = base_str.as_str();
+        init_test_vfs();
+        let base = "Entity/kno";
         let skel_data = crate::vfs::read_to_string(base, "kno.skel").expect("skel");
         let skel = parse_skel(&skel_data);
         let num_bones = skel.positions.len();
@@ -3525,10 +3531,9 @@ mod tests {
 
     #[test]
     fn test_anim_library_loading() {
-        let entity_dir_str = format!("{}/Entity/kno", crate::get_assets_path());
-        let entity_dir = entity_dir_str.as_str();
-        let assets_base_str = crate::get_assets_path().to_string();
-        let assets_base = assets_base_str.as_str();
+        init_test_vfs();
+        let entity_dir = "Entity/kno";
+        let assets_base = "../../oni2/zips/assets";
         let skel_data = crate::vfs::read_to_string(entity_dir, "kno.skel").expect("skel");
         let skel = parse_skel(&skel_data);
 

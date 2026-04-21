@@ -17,7 +17,7 @@ use bevy::prelude::*;
 // MainAction — the top-level action enum (mirrors crMainActionEnums)
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 #[repr(u8)]
 pub enum MainAction {
     #[default]
@@ -325,6 +325,9 @@ pub struct ActionPlayer {
     pub animator_tilt: f32,
     /// Smoothed current-slope value (used to pick up/down slope variants).
     pub animator_slope: f32,
+    
+    pub jumps_remaining: u8,
+    pub max_jumps: u8,
 }
 
 impl Default for ActionPlayer {
@@ -348,6 +351,8 @@ impl Default for ActionPlayer {
             animator_throttle: 1.0,
             animator_tilt: 0.0,
             animator_slope: 0.0,
+            jumps_remaining: 2,
+            max_jumps: 2,
         }
     }
 }
