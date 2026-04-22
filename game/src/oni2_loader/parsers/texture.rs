@@ -194,49 +194,47 @@ pub fn load_tga_texture(
     // Try native .tex.highres format first, then fallback to standard .tex
     for ext in &[".tex.highres", ".tex"] {
         let tex_filename = format!("{}{}", texture_name, ext);
-        if crate::vfs::exists(entity_dir, &tex_filename) {
-            if let Ok(tex_bytes) = crate::vfs::read(entity_dir, &tex_filename) {
-                if let Some((width, height, rgba, has_alpha)) = decode_tex(&tex_bytes) {
-                    let mut image = Image::new(
-                        bevy::render::render_resource::Extent3d {
-                            width,
-                            height,
-                            depth_or_array_layers: 1,
-                        },
-                        bevy::render::render_resource::TextureDimension::D2,
-                        rgba,
-                        bevy::render::render_resource::TextureFormat::Rgba8UnormSrgb,
-                        default(),
-                    );
-                    image.sampler = bevy::image::ImageSampler::Descriptor(
-                        bevy::image::ImageSamplerDescriptor {
-                            address_mode_u: bevy::image::ImageAddressMode::Repeat,
-                            address_mode_v: bevy::image::ImageAddressMode::Repeat,
-                            ..default()
-                        },
-                    );
-                    return Some((images.add(image), has_alpha));
-                }
-            }
+        if crate::vfs::exists(entity_dir, &tex_filename)
+            && let Ok(tex_bytes) = crate::vfs::read(entity_dir, &tex_filename)
+            && let Some((width, height, rgba, has_alpha)) = decode_tex(&tex_bytes)
+        {
+            let mut image = Image::new(
+                bevy::render::render_resource::Extent3d {
+                    width,
+                    height,
+                    depth_or_array_layers: 1,
+                },
+                bevy::render::render_resource::TextureDimension::D2,
+                rgba,
+                bevy::render::render_resource::TextureFormat::Rgba8UnormSrgb,
+                default(),
+            );
+            image.sampler =
+                bevy::image::ImageSampler::Descriptor(bevy::image::ImageSamplerDescriptor {
+                    address_mode_u: bevy::image::ImageAddressMode::Repeat,
+                    address_mode_v: bevy::image::ImageAddressMode::Repeat,
+                    ..default()
+                });
+            return Some((images.add(image), has_alpha));
         }
     }
 
     // Try shader indirection (e.g. perimstructSG.shader -> texture perimstruct01.tex)
     let shader_filename = format!("{}.shader", texture_name);
-    if crate::vfs::exists(entity_dir, &shader_filename) {
-        if let Ok(shader_data) = crate::vfs::read_to_string(entity_dir, &shader_filename) {
-            for line in shader_data.lines() {
-                let trimmed = line.trim();
-                if trimmed.starts_with("texture ") {
-                    let parts: Vec<&str> = trimmed.split_whitespace().collect();
-                    if parts.len() >= 2 {
-                        let actual_tex = parts[1].trim_matches('"').trim_end_matches(".tex");
-                        info!(
-                            "Shader {} redirects to texture {}",
-                            shader_filename, actual_tex
-                        );
-                        return load_tga_texture(entity_dir, actual_tex, images);
-                    }
+    if crate::vfs::exists(entity_dir, &shader_filename)
+        && let Ok(shader_data) = crate::vfs::read_to_string(entity_dir, &shader_filename)
+    {
+        for line in shader_data.lines() {
+            let trimmed = line.trim();
+            if trimmed.starts_with("texture ") {
+                let parts: Vec<&str> = trimmed.split_whitespace().collect();
+                if parts.len() >= 2 {
+                    let actual_tex = parts[1].trim_matches('"').trim_end_matches(".tex");
+                    info!(
+                        "Shader {} redirects to texture {}",
+                        shader_filename, actual_tex
+                    );
+                    return load_tga_texture(entity_dir, actual_tex, images);
                 }
             }
         }
@@ -244,23 +242,23 @@ pub fn load_tga_texture(
 
     // Fallback: pre-converted .tex.tga
     let tga_filename = format!("{}.tex.tga", texture_name);
-    if crate::vfs::exists(entity_dir, &tga_filename) {
-        if let Some((handle, has_alpha)) = load_tga_file(entity_dir, &tga_filename, images) {
-            info!(
-                "Loaded .tex.tga texture: {:?} alpha={}",
-                tga_filename, has_alpha
-            );
-            return Some((handle, has_alpha));
-        }
+    if crate::vfs::exists(entity_dir, &tga_filename)
+        && let Some((handle, has_alpha)) = load_tga_file(entity_dir, &tga_filename, images)
+    {
+        info!(
+            "Loaded .tex.tga texture: {:?} alpha={}",
+            tga_filename, has_alpha
+        );
+        return Some((handle, has_alpha));
     }
 
     // Last resort: bare .tga
     let bare_tga = format!("{}.tga", texture_name);
-    if crate::vfs::exists(entity_dir, &bare_tga) {
-        if let Some(handle) = load_tga_file(entity_dir, &bare_tga, images) {
-            info!("Loaded .tga texture: {:?}", bare_tga);
-            return Some(handle);
-        }
+    if crate::vfs::exists(entity_dir, &bare_tga)
+        && let Some(handle) = load_tga_file(entity_dir, &bare_tga, images)
+    {
+        info!("Loaded .tga texture: {:?}", bare_tga);
+        return Some(handle);
     }
 
     info!("Texture not found: {} (.tex/.tex.tga/.tga)", texture_name);

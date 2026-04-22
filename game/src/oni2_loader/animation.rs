@@ -31,7 +31,7 @@ pub fn curve_follower_system(
                 -epsilon
             };
 
-            let mut lookahead_phase = (follower.phase + delta_phase).clamp(0.0, 1.0);
+            let lookahead_phase = (follower.phase + delta_phase).clamp(0.0, 1.0);
             let lookahead_pos = follower.curve.get_curve_point(lookahead_phase);
 
             let dist = current_pos.distance(lookahead_pos);
@@ -121,7 +121,7 @@ pub fn scroni_curve_bridge_system(
 ) {
     for (mut script, mut follower, anim_lib, mut anim_state, name_comp) in &mut query {
         let exec = &mut script.exec;
-        let entity_name = name_comp.map(|n| n.as_str()).unwrap_or("Unknown Entity");
+        let _entity_name = name_comp.map(|n| n.as_str()).unwrap_or("Unknown Entity");
 
         // We need to iterate over all active threads to see if any generated a curve variable or blocked on animation/curve
         for t in exec.all_threads_mut() {
@@ -143,59 +143,55 @@ pub fn scroni_curve_bridge_system(
             }
 
             // 2. Handle blocking actions
-            if t.state == scroni::vm::ExecState::Blocked {
-                if let Some(ref action) = t.blocking.clone() {
-                    match action {
-                        scroni::vm::BlockingAction::GotoCurvePhase { target, seconds } => {
-                            if let Some(ref mut follower) = follower {
-                                if follower.reached_target {
-                                    let target_val = *target;
-                                    let seconds_val = *seconds;
-                                    let dist = target_val - follower.phase;
-                                    follower.speed = if seconds_val > 0.0 {
-                                        dist / seconds_val
-                                    } else {
-                                        0.0
-                                    };
-                                    follower.speed_is_physical = false; // Script commands evaluate parametrically 
-                                    follower.target_phase = target_val;
-                                    follower.reached_target = false;
-                                    follower.wrap_around = false;
-                                    t.blocking = Some(scroni::vm::BlockingAction::WaitingForCurve);
-                                }
-                            }
+            if t.state == scroni::vm::ExecState::Blocked
+                && let Some(ref action) = t.blocking.clone()
+            {
+                match action {
+                    scroni::vm::BlockingAction::GotoCurvePhase { target, seconds } => {
+                        if let Some(ref mut follower) = follower
+                            && follower.reached_target
+                        {
+                            let target_val = *target;
+                            let seconds_val = *seconds;
+                            let dist = target_val - follower.phase;
+                            follower.speed = if seconds_val > 0.0 {
+                                dist / seconds_val
+                            } else {
+                                0.0
+                            };
+                            follower.speed_is_physical = false; // Script commands evaluate parametrically 
+                            follower.target_phase = target_val;
+                            follower.reached_target = false;
+                            follower.wrap_around = false;
+                            t.blocking = Some(scroni::vm::BlockingAction::WaitingForCurve);
                         }
-                        scroni::vm::BlockingAction::WaitingForCurve => {
-                            if let Some(ref follower) = follower {
-                                if follower.reached_target {
-                                    t.blocking = None;
-                                    t.state = scroni::vm::ExecState::Running;
-                                }
-                            }
+                    }
+                    scroni::vm::BlockingAction::WaitingForCurve => {
+                        if let Some(ref follower) = follower
+                            && follower.reached_target
+                        {
+                            t.blocking = None;
+                            t.state = scroni::vm::ExecState::Running;
                         }
-                        scroni::vm::BlockingAction::PlayAnimation {
-                            name,
-                            hold,
-                            loop_anim,
-                            rate,
-                            ..
-                        } => {
-                            if let Some(lib) = anim_lib.as_ref() {
-                                if let Some(ref mut state) = anim_state.as_deref_mut() {
-                                    let name_val = name.clone();
-                                    let hold_val = *hold;
-                                    let rate_val = *rate;
-                                    if lib.play(&name_val, state) {
-                                        state.looping = *loop_anim;
-                                        state.speed_multiplier = rate_val.unwrap_or(1.0);
-                                        if hold_val {
-                                            t.blocking = Some(
-                                                scroni::vm::BlockingAction::WaitingForAnimation,
-                                            );
-                                        } else {
-                                            t.blocking = None;
-                                            t.state = scroni::vm::ExecState::Running;
-                                        }
+                    }
+                    scroni::vm::BlockingAction::PlayAnimation {
+                        name,
+                        hold,
+                        loop_anim,
+                        rate,
+                        ..
+                    } => {
+                        if let Some(lib) = anim_lib.as_ref() {
+                            if let Some(ref mut state) = anim_state.as_deref_mut() {
+                                let name_val = name.clone();
+                                let hold_val = *hold;
+                                let rate_val = *rate;
+                                if lib.play(&name_val, state) {
+                                    state.looping = *loop_anim;
+                                    state.speed_multiplier = rate_val.unwrap_or(1.0);
+                                    if hold_val {
+                                        t.blocking =
+                                            Some(scroni::vm::BlockingAction::WaitingForAnimation);
                                     } else {
                                         t.blocking = None;
                                         t.state = scroni::vm::ExecState::Running;
@@ -208,24 +204,27 @@ pub fn scroni_curve_bridge_system(
                                 t.blocking = None;
                                 t.state = scroni::vm::ExecState::Running;
                             }
+                        } else {
+                            t.blocking = None;
+                            t.state = scroni::vm::ExecState::Running;
                         }
-                        scroni::vm::BlockingAction::WaitingForAnimation => {
-                            if let Some(ref state) = anim_state.as_deref() {
-                                let num_frames = state.anim.frames.len() as f32;
-                                if num_frames > 0.0
-                                    && state.current_time >= num_frames - 1.0
-                                    && !state.looping
-                                {
-                                    t.blocking = None;
-                                    t.state = scroni::vm::ExecState::Running;
-                                }
-                            } else {
+                    }
+                    scroni::vm::BlockingAction::WaitingForAnimation => {
+                        if let Some(state) = anim_state.as_deref() {
+                            let num_frames = state.anim.frames.len() as f32;
+                            if num_frames > 0.0
+                                && state.current_time >= num_frames - 1.0
+                                && !state.looping
+                            {
                                 t.blocking = None;
                                 t.state = scroni::vm::ExecState::Running;
                             }
+                        } else {
+                            t.blocking = None;
+                            t.state = scroni::vm::ExecState::Running;
                         }
-                        _ => {}
                     }
+                    _ => {}
                 }
             }
         }
@@ -552,22 +551,20 @@ pub fn load_anim_library(
         // the same fallback-to-prefix-dir strategy as the .anim above.
         let gait_file = format!("{}/{}.gait", entity_dir, anim_name);
         let mut gait_content = crate::vfs::read_to_string("", &gait_file).ok();
-        if gait_content.is_none() {
-            if let Some(prefix) = anim_name.split('_').next() {
-                let mut parts: Vec<&str> = entity_dir.split('/').collect();
-                if let Some(last) = parts.last_mut() {
-                    *last = prefix;
-                }
-                let fallback_gait = format!("{}/{}.gait", parts.join("/"), anim_name);
-                gait_content = crate::vfs::read_to_string("", &fallback_gait).ok();
+        if gait_content.is_none()
+            && let Some(prefix) = anim_name.split('_').next()
+        {
+            let mut parts: Vec<&str> = entity_dir.split('/').collect();
+            if let Some(last) = parts.last_mut() {
+                *last = prefix;
             }
+            let fallback_gait = format!("{}/{}.gait", parts.join("/"), anim_name);
+            gait_content = crate::vfs::read_to_string("", &fallback_gait).ok();
         }
-        if let Some(gc) = gait_content {
-            if let Some(gait) =
-                crate::oni2_loader::parsers::gait::parse_gait(&gc, &gait_file)
-            {
-                anim.gait_normalize = Some(gait.normalize);
-            }
+        if let Some(gc) = gait_content
+            && let Some(gait) = crate::oni2_loader::parsers::gait::parse_gait(&gc, &gait_file)
+        {
+            anim.gait_normalize = Some(gait.normalize);
         }
 
         let tune_atdt = format!("entity.tune/{}/{}.atdt", entity_name, anim_name);
@@ -582,19 +579,19 @@ pub fn load_anim_library(
             loaded_from = base_atdt.clone();
             atdt_content = crate::vfs::read_to_string("", &base_atdt);
         }
-        if atdt_content.is_err() {
-            if let Some(prefix) = anim_name.split('_').next() {
-                let fallback_tune = format!("entity.tune/{}/{}.atdt", prefix, anim_name);
-                loaded_from = fallback_tune.clone();
-                atdt_content = crate::vfs::read_to_string("", &fallback_tune);
-                if atdt_content.is_err() {
-                    let fallback_base = format!("Entity/{}/{}.atdt", prefix, anim_name);
-                    loaded_from = fallback_base.clone();
-                    atdt_content = crate::vfs::read_to_string("", &fallback_base);
-                }
+        if atdt_content.is_err()
+            && let Some(prefix) = anim_name.split('_').next()
+        {
+            let fallback_tune = format!("entity.tune/{}/{}.atdt", prefix, anim_name);
+            loaded_from = fallback_tune.clone();
+            atdt_content = crate::vfs::read_to_string("", &fallback_tune);
+            if atdt_content.is_err() {
+                let fallback_base = format!("Entity/{}/{}.atdt", prefix, anim_name);
+                loaded_from = fallback_base.clone();
+                atdt_content = crate::vfs::read_to_string("", &fallback_base);
             }
         }
-        
+
         if let Ok(atdt_data) = atdt_content {
             anim.attack_data = Some(crate::oni2_loader::parsers::atdt::parse_atdt_content(
                 &atdt_data,
@@ -757,14 +754,13 @@ pub fn debug_draw_bounds(
             let mut use_joint = false;
             let mut joint_tf = Transform::IDENTITY;
 
-            if let Some(state) = anim_state {
-                if let Some(&j_ent) = state.joint_entities.get(sub.bone_idx) {
-                    if let Ok(gtf) = joints.get(j_ent) {
-                        let (_, rot, trans) = gtf.to_scale_rotation_translation();
-                        joint_tf = Transform::from_translation(trans).with_rotation(rot);
-                        use_joint = true;
-                    }
-                }
+            if let Some(state) = anim_state
+                && let Some(&j_ent) = state.joint_entities.get(sub.bone_idx)
+                && let Ok(gtf) = joints.get(j_ent)
+            {
+                let (_, rot, trans) = gtf.to_scale_rotation_translation();
+                joint_tf = Transform::from_translation(trans).with_rotation(rot);
+                use_joint = true;
             }
 
             for edge in &sub.edges {
@@ -963,7 +959,7 @@ pub fn debug_draw_skeleton(
 
     let trigger_color = Color::srgba(1.0, 0.5, 0.0, 0.5); // Semi-transparent orange
 
-    let trigger_count = trigger_query.iter().count();
+    let _trigger_count = trigger_query.iter().count();
 
     for trigger in &trigger_query {
         let world_pos = trigger.world_center;
@@ -990,9 +986,9 @@ pub fn debug_draw_attack_wedges(
         return;
     }
 
-    let color = Color::srgba(1.0, 0.0, 0.0, 0.8);
+    let _color = Color::srgba(1.0, 0.0, 0.0, 0.8);
 
-    for (transform, anim_state, _fighter, offset_opt) in &query {
+    for (transform, anim_state, _fighter, _offset_opt) in &query {
         let Some(data) = &anim_state.anim.attack_data else {
             // ATDT not loaded for this animation — check VFS path if wedge is expected
             // debug!("debug_draw_attack_wedges: no attack_data for anim id={:?}", anim_state.current_anim_id);
@@ -1041,11 +1037,11 @@ pub fn debug_draw_attack_wedges(
 
         let attacker_forward = transform.rotation * Vec3::NEG_Z;
         let slice_heading = Quat::from_rotation_y(swept_heading) * attacker_forward;
-        let slice_heading_xz =
-            Vec3::new(slice_heading.x, 0.0, slice_heading.z).normalize_or_zero();
+        let slice_heading_xz = Vec3::new(slice_heading.x, 0.0, slice_heading.z).normalize_or_zero();
 
         // Shift origin backward by vanishingpoint
-        let center = base_translation + Vec3::Y * strike.reactdiskheight - slice_heading_xz * strike.vanishingpoint;
+        let center = base_translation + Vec3::Y * strike.reactdiskheight
+            - slice_heading_xz * strike.vanishingpoint;
 
         let radius = strike.reactdiskradius;
         if radius <= 0.01 {
@@ -1060,7 +1056,7 @@ pub fn debug_draw_attack_wedges(
         let full_circle = sweep.abs() < 1e-4 || sweep.abs() >= std::f32::consts::TAU * 0.99;
 
         // Draw an arc at a specific radius
-        let mut draw_wedge_arc = |gizmos: &mut Gizmos, r: f32, color: Color| {
+        let draw_wedge_arc = |gizmos: &mut Gizmos, r: f32, color: Color| {
             if r <= 0.01 {
                 return;
             }
@@ -1111,12 +1107,20 @@ pub fn debug_draw_attack_wedges(
                 let local_dir = Quat::from_rotation_y(total_angle) * Vec3::NEG_Z;
                 center + (transform.rotation * local_dir) * r
             };
-            
+
             let outer_start = get_point(start_rad, radius);
             let outer_end = get_point(end_rad, radius);
-            let inner_start = if inner_r > 0.01 { get_point(start_rad, inner_r) } else { center };
-            let inner_end = if inner_r > 0.01 { get_point(end_rad, inner_r) } else { center };
-            
+            let inner_start = if inner_r > 0.01 {
+                get_point(start_rad, inner_r)
+            } else {
+                center
+            };
+            let inner_end = if inner_r > 0.01 {
+                get_point(end_rad, inner_r)
+            } else {
+                center
+            };
+
             gizmos.line(inner_start, outer_start, draw_color);
             gizmos.line(inner_end, outer_end, draw_color);
         }
@@ -1143,7 +1147,11 @@ pub fn frame_lerp(state: &mut Oni2AnimState, idx_a: usize, idx_b: usize, t: f32)
             rot_flags[i]
         } else {
             // Legacy fallback if no explicit channel map exists
-            if len == 1 { false } else { i < 3 || i >= 6 }
+            if len == 1 {
+                false
+            } else {
+                !(3..6).contains(&i)
+            }
             //if len == 1 { false } else { i >= 3 }
         };
 
@@ -1230,34 +1238,34 @@ pub fn update_oni2_animation(
             anim_state.current_frame = vec![0.0; expected_len];
         }
 
-        frame_lerp(&mut *anim_state, frame_idx, next_idx, blend);
+        frame_lerp(&mut anim_state, frame_idx, next_idx, blend);
 
         let frame = &anim_state.current_frame;
 
         // Single-channel animation: apply as Y-rotation composed on top of base orientation
         if anim_state.anim.num_channels == 1 {
-            if let Some(y_rot) = frame.first() {
-                if let Ok((mut tf, mut opt_lvel, mut opt_avel)) = transform_query.get_mut(entity) {
-                    let new_rot = anim_state.base_rotation * Quat::from_rotation_y(*y_rot);
+            if let Some(y_rot) = frame.first()
+                && let Ok((mut tf, mut opt_lvel, mut opt_avel)) = transform_query.get_mut(entity)
+            {
+                let new_rot = anim_state.base_rotation * Quat::from_rotation_y(*y_rot);
 
-                    let dt = time.delta_secs();
-                    if dt > 0.0001 {
-                        if let Some(lv) = opt_lvel.as_deref_mut() {
-                            lv.0 = Vec3::ZERO;
-                        }
-                        if let Some(av) = opt_avel.as_deref_mut() {
-                            let diff = new_rot * tf.rotation.inverse();
-                            let (axis, angle) = diff.to_axis_angle();
-                            let mut angular_vel = axis * (angle / dt);
-                            if angular_vel.is_nan() {
-                                angular_vel = Vec3::ZERO;
-                            }
-                            av.0 = angular_vel;
-                        }
+                let dt = time.delta_secs();
+                if dt > 0.0001 {
+                    if let Some(lv) = opt_lvel.as_deref_mut() {
+                        lv.0 = Vec3::ZERO;
                     }
-
-                    tf.rotation = new_rot;
+                    if let Some(av) = opt_avel.as_deref_mut() {
+                        let diff = new_rot * tf.rotation.inverse();
+                        let (axis, angle) = diff.to_axis_angle();
+                        let mut angular_vel = axis * (angle / dt);
+                        if angular_vel.is_nan() {
+                            angular_vel = Vec3::ZERO;
+                        }
+                        av.0 = angular_vel;
+                    }
                 }
+
+                tf.rotation = new_rot;
             }
             continue;
         }
@@ -1287,7 +1295,7 @@ pub fn update_oni2_animation(
             frame,
             strip_root,
         );
-        let mut bone_transforms = bone_result.bones;
+        let bone_transforms = bone_result.bones;
         // Shift prev→this_frame, record the newly-stripped offset.  Zero
         // when the anim didn't strip (non-stripping anims produce no root
         // motion signal — gameplay should treat delta==0 as "no anim-driven
@@ -1301,38 +1309,36 @@ pub fn update_oni2_animation(
 
         // Update joint entity transforms for GPU skinning
         for (i, (rot, pos)) in bone_transforms.iter().enumerate() {
-            if let Some(&joint_entity) = anim_state.joint_entities.get(i) {
-                if let Ok((mut joint_tf, mut opt_lvel, mut opt_avel)) =
+            if let Some(&joint_entity) = anim_state.joint_entities.get(i)
+                && let Ok((mut joint_tf, mut opt_lvel, mut opt_avel)) =
                     transform_query.get_mut(joint_entity)
-                {
-                    // Convert from Oni2 coordinates to Bevy: negate X and Z
-                    let bevy_pos =
-                        space::to_bevy_space_pos(Vec3::new(pos.x, pos.y + y_offset, pos.z));
-                    // Conjugate rotation by 180° Y rotation: negate X and Z components
-                    let bevy_rot = Quat::from_xyzw(-rot.x, rot.y, -rot.z, rot.w);
-                    // Apply facing rotation (if model needs to be rotated)
-                    let final_rot = facing * bevy_rot;
-                    let final_pos = facing * bevy_pos;
+            {
+                // Convert from Oni2 coordinates to Bevy: negate X and Z
+                let bevy_pos = space::to_bevy_space_pos(Vec3::new(pos.x, pos.y + y_offset, pos.z));
+                // Conjugate rotation by 180° Y rotation: negate X and Z components
+                let bevy_rot = Quat::from_xyzw(-rot.x, rot.y, -rot.z, rot.w);
+                // Apply facing rotation (if model needs to be rotated)
+                let final_rot = facing * bevy_rot;
+                let final_pos = facing * bevy_pos;
 
-                    // Support native kinematic frictional bindings for moving objects
-                    let dt = time.delta_secs();
-                    if dt > 0.0001 {
-                        if let Some(lv) = opt_lvel.as_deref_mut() {
-                            lv.0 = (final_pos - joint_tf.translation) / dt;
-                        }
-                        if let Some(av) = opt_avel.as_deref_mut() {
-                            let diff = final_rot * joint_tf.rotation.inverse();
-                            let (axis, angle) = diff.to_axis_angle();
-                            let mut angular_vel = axis * (angle / dt);
-                            if angular_vel.is_nan() {
-                                angular_vel = Vec3::ZERO;
-                            }
-                            av.0 = angular_vel;
-                        }
+                // Support native kinematic frictional bindings for moving objects
+                let dt = time.delta_secs();
+                if dt > 0.0001 {
+                    if let Some(lv) = opt_lvel.as_deref_mut() {
+                        lv.0 = (final_pos - joint_tf.translation) / dt;
                     }
-
-                    *joint_tf = Transform::from_translation(final_pos).with_rotation(final_rot);
+                    if let Some(av) = opt_avel.as_deref_mut() {
+                        let diff = final_rot * joint_tf.rotation.inverse();
+                        let (axis, angle) = diff.to_axis_angle();
+                        let mut angular_vel = axis * (angle / dt);
+                        if angular_vel.is_nan() {
+                            angular_vel = Vec3::ZERO;
+                        }
+                        av.0 = angular_vel;
+                    }
                 }
+
+                *joint_tf = Transform::from_translation(final_pos).with_rotation(final_rot);
             }
         }
 

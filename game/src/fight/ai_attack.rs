@@ -116,12 +116,9 @@ impl AiAttackData {
             // Degenerate facing — can't resolve a cone; reject conservatively.
             return false;
         }
-        let slice_center =
-            Quat::from_rotation_y(self.slice_heading_rads) * facing_xz;
-        let slice_center_xz =
-            Vec3::new(slice_center.x, 0.0, slice_center.z).normalize_or_zero();
-        let dir_to_target =
-            Vec3::new(diff.x, 0.0, diff.z).normalize_or_zero();
+        let slice_center = Quat::from_rotation_y(self.slice_heading_rads) * facing_xz;
+        let slice_center_xz = Vec3::new(slice_center.x, 0.0, slice_center.z).normalize_or_zero();
+        let dir_to_target = Vec3::new(diff.x, 0.0, diff.z).normalize_or_zero();
         if dir_to_target.length_squared() < 0.0001 {
             // Target directly overhead / beneath — conservatively accept
             // (height gate already passed and range is 0).
@@ -217,9 +214,9 @@ impl AiAttackTable {
         target_pos: Vec3,
         target_height: f32,
     ) -> bool {
-        self.attacks.iter().any(|a| {
-            a.can_hit(attacker_pos, attacker_facing, target_pos, target_height)
-        })
+        self.attacks
+            .iter()
+            .any(|a| a.can_hit(attacker_pos, attacker_facing, target_pos, target_height))
     }
 
     /// Pick a random attack from the full roster, ignoring range/cone.
@@ -312,10 +309,7 @@ impl AiAttackTableCache {
 pub fn build_ai_attack_tables_system(
     mut commands: Commands,
     mut cache: ResMut<AiAttackTableCache>,
-    query: Query<
-        (Entity, &super::FighterType, &Oni2AnimLibrary, &Name),
-        Without<AiAttackTable>,
-    >,
+    query: Query<(Entity, &super::FighterType, &Oni2AnimLibrary, &Name), Without<AiAttackTable>>,
 ) {
     for (entity, fighter_type, lib, name) in &query {
         let cached = cache.get_or_build(&fighter_type.name, lib);
@@ -456,9 +450,11 @@ mod tests {
         let table = AiAttackTable::default();
         let mut rng = rand::rng();
         assert!(table.choose_random_strike(&mut rng).is_none());
-        assert!(table
-            .choose_random_strike_for(&mut rng, Vec3::ZERO, Vec3::Z, Vec3::Z, 2.0)
-            .is_none());
+        assert!(
+            table
+                .choose_random_strike_for(&mut rng, Vec3::ZERO, Vec3::Z, Vec3::Z, 2.0)
+                .is_none()
+        );
     }
 
     #[test]

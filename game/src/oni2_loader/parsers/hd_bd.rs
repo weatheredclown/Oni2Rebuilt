@@ -103,10 +103,8 @@ pub fn parse_hd(sf: &[u8]) -> Result<HdHeader> {
         let last_offset = read_u32le(sf, vagi_offset + 0x10 + 4 * last_idx)?;
         if last_offset > 0 {
             let actual_offset_pos = vagi_offset + last_offset as usize;
-            if actual_offset_pos + 4 <= sf.len() {
-                if read_u32le(sf, actual_offset_pos)? == bd_size {
-                    total_subsongs -= 1;
-                }
+            if actual_offset_pos + 4 <= sf.len() && read_u32le(sf, actual_offset_pos)? == bd_size {
+                total_subsongs -= 1;
             }
         }
     }

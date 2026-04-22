@@ -18,16 +18,13 @@ use bevy::prelude::*;
 use crate::combat::systems::{hit_reaction_system, injure_system};
 use crate::menu::AppState;
 
-pub use components::{
-    AnimControlBlock, BlockDef, BlockLibrary, BlockStatus, FighterState, FighterType, GrabAction,
-    GrappleState, fighter_flags, grapple_flags,
-};
+pub use ai_attack::AiAttackTableCache;
+pub use components::FighterType;
 pub use events::{
     ApplyRotationNotchesEvent, BlockFailedEvent, BlockSuccessEvent, GrappleEndEvent,
-    GrappleEndReason, GrappleStartEvent, SuperMeterAddEvent,
+    GrappleStartEvent, SuperMeterAddEvent,
 };
-pub use ai_attack::{AiAttackData, AiAttackTable, AiAttackTableCache};
-pub use fx_table::{AttackFxRegistry, AttackFxTable, FxSet};
+pub use fx_table::AttackFxRegistry;
 
 pub struct FightPlugin;
 
@@ -93,10 +90,8 @@ impl Plugin for FightPlugin {
                     // run first so FighterState.FIGHT_MODE reflects the
                     // animator's FIGHTSTANCE flag before entry/exit read it.
                     systems::fight_stance_sync_system,
-                    systems::fight_stance_entry_system
-                        .after(systems::fight_stance_sync_system),
-                    systems::fight_stance_exit_system
-                        .after(systems::fight_stance_sync_system),
+                    systems::fight_stance_entry_system.after(systems::fight_stance_sync_system),
+                    systems::fight_stance_exit_system.after(systems::fight_stance_sync_system),
                     // Build AiAttackTable for any FighterType that doesn't
                     // have one yet.  One-shot per entity: the Without<...>
                     // filter means this is a no-op once every fighter has

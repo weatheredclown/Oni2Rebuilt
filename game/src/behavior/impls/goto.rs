@@ -62,7 +62,11 @@ impl Behavior for GotoBehavior {
         let dist = delta.length();
 
         let is_last = self.cursor + 1 == self.path.len();
-        let tolerance = if is_last { self.within } else { INTER_WAYPOINT_TOLERANCE };
+        let tolerance = if is_last {
+            self.within
+        } else {
+            INTER_WAYPOINT_TOLERANCE
+        };
 
         if dist <= tolerance {
             self.cursor += 1;
@@ -75,7 +79,11 @@ impl Behavior for GotoBehavior {
             // Otherwise fall through and steer toward the new current waypoint.
         }
 
-        let dir_to_current = if dist > 0.001 { delta / dist } else { Vec3::ZERO };
+        let dir_to_current = if dist > 0.001 {
+            delta / dist
+        } else {
+            Vec3::ZERO
+        };
         let desired = dir_to_current * self.speed;
         ctx.velocity.x = desired.x;
         ctx.velocity.z = desired.z;

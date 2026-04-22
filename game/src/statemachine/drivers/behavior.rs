@@ -23,7 +23,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use super::super::core::{SmAdvance, SmData, SmDriver, SmRuntime};
-use super::parse::{parse_sm, ActionParser, EventParser};
+use super::parse::{ActionParser, EventParser, parse_sm};
 
 // ---------------------------------------------------------------------------
 // Behavior kind — the small closed set of behaviors we dispatch.
@@ -158,11 +158,7 @@ impl SmDriver for BehaviorDriver {
     type Context = BehaviorCtx;
     type Output = BehaviorOutput;
 
-    fn eval_event(
-        ctx: &Self::Context,
-        event: &Self::Event,
-        _runtime: &SmRuntime<Self>,
-    ) -> bool {
+    fn eval_event(ctx: &Self::Context, event: &Self::Event, _runtime: &SmRuntime<Self>) -> bool {
         match event {
             BehaviorEvent::Fight => ctx.requested_fight,
             BehaviorEvent::Follow => ctx.requested_follow,
@@ -230,7 +226,7 @@ pub fn parse_behavior_action(
                 return Err(format!(
                     "behavior: StartBehavior with unknown kind '{}'",
                     arg
-                ))
+                ));
             }
         },
         "Check" => match state_index.get(arg) {

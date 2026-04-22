@@ -129,33 +129,32 @@ pub fn script_camera_system(
         }
 
         // Ensure active_rail resolves dynamically from layout.paths
-        if let Some(name) = &seq.active_rail_name {
-            if seq.active_rail.is_none() {
-                if let Some(lp) = &layout_paths {
-                    if let Some(curve) = lp.curves.iter().find(|(n, _)| n == name) {
-                        info!(
-                            "[CAM-SCRIPT] Rail '{}' resolved: {} control points | first={:?} last={:?}",
-                            name,
-                            curve.1.len(),
-                            curve.1.first(),
-                            curve.1.last()
-                        );
-                        seq.active_rail = Some(curve.1.clone());
-                    } else {
-                        let available: Vec<&str> =
-                            lp.curves.iter().map(|(n, _)| n.as_str()).collect();
-                        warn!(
-                            "[CAM-SCRIPT] Rail '{}' NOT found. Available curves: {:?}",
-                            name, available
-                        );
-                        seq.active_rail_name = None; // stop trying
-                    }
-                } else {
-                    warn!(
-                        "[CAM-SCRIPT] Rail '{}' requested but LayoutPaths resource missing",
-                        name
+        if let Some(name) = &seq.active_rail_name
+            && seq.active_rail.is_none()
+        {
+            if let Some(lp) = &layout_paths {
+                if let Some(curve) = lp.curves.iter().find(|(n, _)| n == name) {
+                    info!(
+                        "[CAM-SCRIPT] Rail '{}' resolved: {} control points | first={:?} last={:?}",
+                        name,
+                        curve.1.len(),
+                        curve.1.first(),
+                        curve.1.last()
                     );
+                    seq.active_rail = Some(curve.1.clone());
+                } else {
+                    let available: Vec<&str> = lp.curves.iter().map(|(n, _)| n.as_str()).collect();
+                    warn!(
+                        "[CAM-SCRIPT] Rail '{}' NOT found. Available curves: {:?}",
+                        name, available
+                    );
+                    seq.active_rail_name = None; // stop trying
                 }
+            } else {
+                warn!(
+                    "[CAM-SCRIPT] Rail '{}' requested but LayoutPaths resource missing",
+                    name
+                );
             }
         }
 
@@ -185,7 +184,7 @@ pub fn script_camera_system(
             seq.move_time_elapsed += dt;
 
             let mut target_pos = Vec3::ZERO;
-            let move_target_clone = seq.move_target.clone().unwrap();
+            let move_target_clone = seq.move_target.unwrap();
             match move_target_clone {
                 ScriptFocusTarget::Actor(e) => {
                     if let Ok(tf) = transform_query.get(e) {

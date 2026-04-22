@@ -80,7 +80,7 @@ pub fn compute_animated_bone_transforms(
         if !has_flags {
             // Legacy struct fallback mapping
             if i == 0 {
-                let euler_x = *frame_channels.get(0).unwrap_or(&0.0);
+                let euler_x = *frame_channels.first().unwrap_or(&0.0);
                 let euler_y = *frame_channels.get(1).unwrap_or(&0.0);
                 let euler_z = *frame_channels.get(2).unwrap_or(&0.0);
                 let mut tx = *frame_channels.get(3).unwrap_or(&skel.local_offsets[i][0]);
@@ -167,7 +167,7 @@ pub fn compute_animated_bone_transforms(
             let local_rot = Quat::from_euler(EulerRot::YZX, euler_y, euler_z, euler_x);
 
             let mut final_tx = tx + skel.local_offsets[i][0];
-            let mut final_ty = ty + skel.local_offsets[i][1];
+            let final_ty = ty + skel.local_offsets[i][1];
             let mut final_tz = tz + skel.local_offsets[i][2];
             if i == 0 && strip_root_xz {
                 // Capture the channel-space translation relative to rest

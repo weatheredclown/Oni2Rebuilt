@@ -174,7 +174,7 @@ fn decode_stm(path: &Path) -> Result<StmDecoded> {
 }
 
 fn decode_pcm(data: &[u8], channels: usize, big_endian: bool) -> Result<Vec<i16>> {
-    if data.len() % 2 != 0 {
+    if !data.len().is_multiple_of(2) {
         bail!("PCM data not aligned");
     }
     let mut samples = Vec::with_capacity(data.len() / 2);
@@ -197,7 +197,7 @@ fn decode_ima(data: &[u8], channels: usize, block_size: usize) -> Result<Vec<i16
         bail!("IMA block size too small");
     }
     let frame_size = block_size * channels;
-    if data.len() % frame_size != 0 {
+    if !data.len().is_multiple_of(frame_size) {
         bail!("IMA data doesn't align to channel blocks");
     }
 

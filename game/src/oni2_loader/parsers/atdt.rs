@@ -7,8 +7,8 @@
  * attack_sync_system and hit_detection_system.
  */
 use super::block_parser::BlockParser;
-use bevy::prelude::*;
 use crate::oni2_loader::utils::space::{bevy_to_oni2_yaw_rads, oni2_to_bevy_yaw_rads};
+use bevy::prelude::*;
 
 #[derive(Debug, Clone, Reflect)]
 pub struct AtdtStrike {
@@ -232,8 +232,7 @@ pub fn parse_atdt_content(content: &str) -> AtdtData {
                                     p.read_float(&a_key, strike.reactdiskheighttolerance);
                             }
                             "vanishingpoint" => {
-                                strike.vanishingpoint =
-                                    p.read_float(&a_key, strike.vanishingpoint);
+                                strike.vanishingpoint = p.read_float(&a_key, strike.vanishingpoint);
                             }
                             "minradiusframe" => {
                                 strike.minradiusframe = p.read_float(&a_key, strike.minradiusframe)
@@ -243,20 +242,28 @@ pub fn parse_atdt_content(content: &str) -> AtdtData {
                             }
                             "slicestartradians" => {
                                 let def_oni2 = bevy_to_oni2_yaw_rads(strike.slicestartradians);
-                                strike.slicestartradians = oni2_to_bevy_yaw_rads(p.read_float(&a_key, def_oni2));
+                                strike.slicestartradians =
+                                    oni2_to_bevy_yaw_rads(p.read_float(&a_key, def_oni2));
                             }
                             "sliceendradians" => {
                                 let def_oni2 = bevy_to_oni2_yaw_rads(strike.sliceendradians);
-                                strike.sliceendradians = oni2_to_bevy_yaw_rads(p.read_float(&a_key, def_oni2));
+                                strike.sliceendradians =
+                                    oni2_to_bevy_yaw_rads(p.read_float(&a_key, def_oni2));
                             }
                             "sliceheadingradiansb" => {
                                 let def_oni2 = bevy_to_oni2_yaw_rads(strike.sliceheadingradiansb);
-                                strike.sliceheadingradiansb = oni2_to_bevy_yaw_rads(p.read_float(&a_key, def_oni2));
+                                strike.sliceheadingradiansb =
+                                    oni2_to_bevy_yaw_rads(p.read_float(&a_key, def_oni2));
                             }
                             "headingnotlockedtotarget" => {
-                                strike.headingnotlockedtotarget =
-                                    p.read_i32(&a_key, if strike.headingnotlockedtotarget { 1 } else { 0 })
-                                        != 0
+                                strike.headingnotlockedtotarget = p.read_i32(
+                                    &a_key,
+                                    if strike.headingnotlockedtotarget {
+                                        1
+                                    } else {
+                                        0
+                                    },
+                                ) != 0
                             }
                             "sweepheading" => {
                                 strike.sweepheading = p.read_i32(&a_key, strike.sweepheading)
@@ -282,7 +289,8 @@ pub fn parse_atdt_content(content: &str) -> AtdtData {
                                     p.read_i32(&a_key, if strike.can_redirect { 1 } else { 0 }) != 0
                             }
                             "endrotationnotches" => {
-                                strike.end_rotation_notches = p.read_i32(&a_key, strike.end_rotation_notches);
+                                strike.end_rotation_notches =
+                                    p.read_i32(&a_key, strike.end_rotation_notches);
                             }
                             "stoptrackframe" => {
                                 strike.stop_track_frame =
@@ -400,7 +408,7 @@ pub fn parse_atdt_content(content: &str) -> AtdtData {
                     let max_bound = strike.slicestartradians.max(strike.sliceendradians);
                     strike.slicestartradians = min_bound;
                     strike.sliceendradians = max_bound;
-                    
+
                     data.strike = Some(strike);
                 }
             }
@@ -408,9 +416,7 @@ pub fn parse_atdt_content(content: &str) -> AtdtData {
             "blockreaction" => data.block_reaction = p.read_i32(&actual_key, data.block_reaction),
             "guardtype" => data.guardtype = p.read_i32(&actual_key, data.guardtype as i32) as u8,
             "targetclass" => data.target_class = target_from_int(p.read_i32(&actual_key, 0)),
-            "strengthclass" => {
-                data.strength_class = strength_from_int(p.read_i32(&actual_key, 0))
-            }
+            "strengthclass" => data.strength_class = strength_from_int(p.read_i32(&actual_key, 0)),
             "attackclass" => data.attack_class = attack_class_from_int(p.read_i32(&actual_key, 0)),
             "}" => {
                 p.next();

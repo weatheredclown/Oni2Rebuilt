@@ -237,10 +237,10 @@ fn parse_state_rules<D: SmDriver>(
             let brace_line = &lines[i];
 
             if brace_line.contains('{') && brace_line.contains('}') {
-                if let (Some(o), Some(c)) = (brace_line.find('{'), brace_line.rfind('}')) {
-                    if o < c {
-                        block_lines.push(brace_line[o + 1..c].to_string());
-                    }
+                if let (Some(o), Some(c)) = (brace_line.find('{'), brace_line.rfind('}'))
+                    && o < c
+                {
+                    block_lines.push(brace_line[o + 1..c].to_string());
                 }
                 i += 1;
             } else {

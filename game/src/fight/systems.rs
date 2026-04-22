@@ -17,7 +17,9 @@
 use avian3d::prelude::*;
 use bevy::prelude::*;
 
-use crate::combat::components::{ComboTracker, Health, HitReaction, ReactLibrary, ReactionKind, Fighter};
+use crate::combat::components::{
+    ComboTracker, Fighter, Health, HitReaction, ReactLibrary, ReactionKind,
+};
 use crate::combat::events::{AboutToBeHitMessage, HitReactionMessage};
 use crate::oni2_loader::animation::{Oni2AnimLibrary, Oni2AnimState};
 
@@ -81,25 +83,25 @@ pub fn fighter_state_update_system(
 
         // Invulnerability phase tracking: once the react animation passes
         // invulnerability_start_phase, set in_invuln_phase
-        if !fs.in_invuln_phase && fs.invulnerability_start_phase > 0.0 {
-            if let Some(anim) = anim_opt {
-                if anim.anim.num_frames > 1 {
-                    let phase = anim.current_time / (anim.anim.num_frames as f32 - 1.0).max(1.0);
-                    if phase >= fs.invulnerability_start_phase {
-                        fs.in_invuln_phase = true;
-                    }
-                }
+        if !fs.in_invuln_phase
+            && fs.invulnerability_start_phase > 0.0
+            && let Some(anim) = anim_opt
+            && anim.anim.num_frames > 1
+        {
+            let phase = anim.current_time / (anim.anim.num_frames as f32 - 1.0).max(1.0);
+            if phase >= fs.invulnerability_start_phase {
+                fs.in_invuln_phase = true;
             }
         }
         // Clear once the animation ends
-        if let Some(anim) = anim_opt {
-            if !anim.looping {
-                let last = (anim.anim.num_frames as f32 - 1.0).max(0.0);
-                if anim.current_time >= last {
-                    fs.in_invuln_phase = false;
-                    fs.invulnerability_start_phase = 0.0;
-                    fs.no_react_start_phase = 0.0;
-                }
+        if let Some(anim) = anim_opt
+            && !anim.looping
+        {
+            let last = (anim.anim.num_frames as f32 - 1.0).max(0.0);
+            if anim.current_time >= last {
+                fs.in_invuln_phase = false;
+                fs.invulnerability_start_phase = 0.0;
+                fs.no_react_start_phase = 0.0;
             }
         }
     }
@@ -127,18 +129,17 @@ pub fn block_success_system(
 ) {
     for ev in events.read() {
         // --- Force block-break reaction on the ATTACKER ---
-        if ev.block_reaction_on_attacker >= 0 {
-            if let Ok((mut attacker_fs, _, _)) = query.get_mut(ev.attacker) {
-                if attacker_fs.cur_combo_index > ev.combo_count_before_react {
-                    attacker_fs.set_flag(fighter_flags::HIT_START);
-                    reaction_writer.write(HitReactionMessage {
-                        entity: ev.attacker,
-                        kind: ReactionKind::Flinch,
-                        direction: Vec3::ZERO,
-                        react_enum: ev.block_reaction_on_attacker,
-                    });
-                }
-            }
+        if ev.block_reaction_on_attacker >= 0
+            && let Ok((mut attacker_fs, _, _)) = query.get_mut(ev.attacker)
+            && attacker_fs.cur_combo_index > ev.combo_count_before_react
+        {
+            attacker_fs.set_flag(fighter_flags::HIT_START);
+            reaction_writer.write(HitReactionMessage {
+                entity: ev.attacker,
+                kind: ReactionKind::Flinch,
+                direction: Vec3::ZERO,
+                react_enum: ev.block_reaction_on_attacker,
+            });
         }
 
         // --- Blocker response ---
@@ -159,15 +160,15 @@ pub fn block_success_system(
                 blocker_fs.block_combo_count = 0;
             } else {
                 // Play the successful block animation / counter
-                if let Some(counter_name) = &ev.counter_atk {
-                    if let (Some(mut anim), Some(lib)) = (anim_state_opt, lib_opt) {
-                        let played = lib.play(counter_name, &mut anim);
-                        if !played {
-                            warn!(
-                                "block_success: counter anim '{}' not in library",
-                                counter_name
-                            );
-                        }
+                if let Some(counter_name) = &ev.counter_atk
+                    && let (Some(mut anim), Some(lib)) = (anim_state_opt, lib_opt)
+                {
+                    let played = lib.play(counter_name, &mut anim);
+                    if !played {
+                        warn!(
+                            "block_success: counter anim '{}' not in library",
+                            counter_name
+                        );
                     }
                 }
             }
@@ -245,7 +246,7 @@ pub fn grapple_tick_system(
     // --- Per-frame grapple tick ---
     let mut to_end: Vec<(Entity, Option<Entity>, GrappleEndReason)> = Vec::new();
 
-    for (holder_entity, mut gs, mut holder_fs, health, _anim_opt, _lib_opt) in &mut holders {
+    for (holder_entity, mut gs, holder_fs, health, _anim_opt, _lib_opt) in &mut holders {
         if gs.is_broken() {
             continue;
         }
@@ -364,10 +365,10 @@ pub fn grapple_end_system(
         // Remove GrappleState component from holder
         commands.entity(ev.attacker).remove::<GrappleState>();
 
-        if let Some(target) = ev.target {
-            if let Ok(mut target_fs) = targets.get_mut(target) {
-                target_fs.grapple_attacker = None;
-            }
+        if let Some(target) = ev.target
+            && let Ok(mut target_fs) = targets.get_mut(target)
+        {
+            target_fs.grapple_attacker = None;
         }
     }
 }
@@ -404,11 +405,11 @@ pub fn super_meter_system(
 pub fn successive_attacks_system(
     mut damage_reader: MessageReader<crate::combat::events::DamageMessage>,
     mut attacker_query: Query<(&mut FighterState, Option<&FighterType>, &ComboTracker)>,
-    mut target_query: Query<&mut FighterState, Without<ComboTracker>>,
+    _target_query: Query<&mut FighterState, Without<ComboTracker>>,
 ) {
     for msg in damage_reader.read() {
         // Update attacker successive attack count
-        let Ok((mut attacker_fs, ft_opt, combo)) = attacker_query.get_mut(msg.attacker) else {
+        let Ok((mut attacker_fs, ft_opt, _combo)) = attacker_query.get_mut(msg.attacker) else {
             continue;
         };
 
@@ -500,12 +501,17 @@ pub fn react_end_rotation_system(
 ///
 /// Mirrors the per-tick spin application in crFighter::Update().
 pub fn attack_spin_system(
-    mut query: Query<(&mut Transform, &FighterState, &Oni2AnimState, &mut crate::combat::components::Fighter)>,
+    mut query: Query<(
+        &mut Transform,
+        &FighterState,
+        &Oni2AnimState,
+        &mut crate::combat::components::Fighter,
+    )>,
     time: Res<Time>,
 ) {
     let dt = time.delta_secs();
 
-    for (mut transform, fs, anim_state, mut fighter) in &mut query {
+    for (_transform, _fs, anim_state, mut fighter) in &mut query {
         let Some(attack_data) = &anim_state.anim.attack_data else {
             continue;
         };
@@ -572,7 +578,7 @@ pub fn update_fighter_strike_facing_system(
         };
         let target_pos = target_tf.translation;
 
-        if let Ok(mut attacker_tf) = transform_query.get_mut(entity) {
+        if let Ok(attacker_tf) = transform_query.get_mut(entity) {
             let mut dir = target_pos - attacker_tf.translation;
             dir.y = 0.0;
             if dir.length_squared() > 0.001 {
@@ -598,7 +604,7 @@ pub fn hit_eta_system(
     attackers: Query<(Entity, &Transform, &Oni2AnimState, &FighterState)>,
     targets: Query<(Entity, &Transform), With<FighterState>>,
     mut about_writer: MessageWriter<AboutToBeHitMessage>,
-    mut target_writer: MessageWriter<crate::fight::events::SuperMeterAddEvent>,
+    _target_writer: MessageWriter<crate::fight::events::SuperMeterAddEvent>,
 ) {
     for (attacker_entity, attacker_tf, anim_state, _fs) in &attackers {
         let Some(attack_data) = &anim_state.anim.attack_data else {
@@ -755,9 +761,7 @@ pub fn fight_stance_entry_system(
         }
 
         // Trigger set.  Any one of these flips the enter flag.
-        let attack_input = input_opt
-            .map(|i| i.attack || i.attack_two)
-            .unwrap_or(false);
+        let attack_input = input_opt.map(|i| i.attack || i.attack_two).unwrap_or(false);
         let was_damaged = damaged.contains(&entity);
         let triggered = attack_input || pad_fight_mode || was_damaged;
         if !triggered {
@@ -816,9 +820,7 @@ pub fn fight_stance_exit_system(
 /// Mirror the animator's FIGHTSTANCE flag onto `FighterState.flags::FIGHT_MODE`
 /// so existing fight-side queries (`fs.in_fight_mode()`, `fs.has_flag(FIGHT_MODE)`)
 /// see the real stance state without reaching into animator components.
-pub fn fight_stance_sync_system(
-    mut query: Query<(&mut FighterState, &ActionPlayer)>,
-) {
+pub fn fight_stance_sync_system(mut query: Query<(&mut FighterState, &ActionPlayer)>) {
     for (mut fs, ap) in &mut query {
         let animator_in_stance = ap.check_flags(ap_flags::FIGHTSTANCE);
         let fs_in_stance = fs.has_flag(fighter_flags::FIGHT_MODE);
@@ -839,7 +841,11 @@ pub fn fight_stance_sync_system(
 /// Mirrors NOTCHES2RADIANS = PI/4 and the rotation helpers in crFighter.
 pub fn rotation_notches_system(
     mut events: MessageReader<ApplyRotationNotchesEvent>,
-    mut query: Query<(&mut Transform, Option<&mut FighterState>, Option<&mut Fighter>)>,
+    mut query: Query<(
+        &mut Transform,
+        Option<&mut FighterState>,
+        Option<&mut Fighter>,
+    )>,
 ) {
     for ev in events.read() {
         let Ok((mut transform, fs_opt, fighter_opt)) = query.get_mut(ev.entity) else {
@@ -850,9 +856,9 @@ pub fn rotation_notches_system(
         }
         let radians = ev.notches as f32 * NOTCH_RADIANS;
         let rotation = Quat::from_rotation_y(radians);
-        
+
         let new_forward = if let Some(mut fighter) = fighter_opt {
-            // Because we have fighter_rotation_sync_system, we only mutate 
+            // Because we have fighter_rotation_sync_system, we only mutate
             // Fighter.facing here so it can natively propagate to Avian and Transform
             fighter.facing = rotation * fighter.facing;
             fighter.facing

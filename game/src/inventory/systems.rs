@@ -94,22 +94,22 @@ pub fn add_weapon_system(
             .id();
 
         // Seed initial ammo.
-        if !inv_ty.ammo_type_name.is_empty() {
-            if let Some(ammo_ty) = ammo_registry.get(&inv_ty.ammo_type_name).cloned() {
-                commands.queue(move |world: &mut World| {
-                    if let Some(mut w) = world.get_mut::<Weapon>(weapon_entity) {
-                        w.set_ammo(0, ammo_ty, 0.0);
-                    }
-                });
-                let initial = inv_ty.initial_ammo;
-                commands.queue(move |world: &mut World| {
-                    if let Some(mut w) = world.get_mut::<Weapon>(weapon_entity) {
-                        if let Some(slot) = w.ammo_slots.get_mut(0) {
-                            slot.amount = initial;
-                        }
-                    }
-                });
-            }
+        if !inv_ty.ammo_type_name.is_empty()
+            && let Some(ammo_ty) = ammo_registry.get(&inv_ty.ammo_type_name).cloned()
+        {
+            commands.queue(move |world: &mut World| {
+                if let Some(mut w) = world.get_mut::<Weapon>(weapon_entity) {
+                    w.set_ammo(0, ammo_ty, 0.0);
+                }
+            });
+            let initial = inv_ty.initial_ammo;
+            commands.queue(move |world: &mut World| {
+                if let Some(mut w) = world.get_mut::<Weapon>(weapon_entity)
+                    && let Some(slot) = w.ammo_slots.get_mut(0)
+                {
+                    slot.amount = initial;
+                }
+            });
         }
 
         inv.weapon_weight += inv_ty.base.weight;
@@ -582,10 +582,10 @@ pub fn set_active_weapon_system(
     mut query: Query<&mut Inventory>,
 ) {
     for msg in reader.read() {
-        if let Ok(mut inv) = query.get_mut(msg.entity) {
-            if msg.slot_index < inv.weapon_slots.len() {
-                inv.current_weapon = Some(msg.slot_index);
-            }
+        if let Ok(mut inv) = query.get_mut(msg.entity)
+            && msg.slot_index < inv.weapon_slots.len()
+        {
+            inv.current_weapon = Some(msg.slot_index);
         }
     }
 }
@@ -605,32 +605,32 @@ pub fn inventory_forward_fire_system(
     inventories: Query<&Inventory>,
 ) {
     for msg in fire_reader.read() {
-        if let Ok(inv) = inventories.get(msg.entity) {
-            if let Some(weapon_entity) = inv.current_weapon_entity() {
-                fire_writer.write(FireWeaponMessage {
-                    entity: weapon_entity,
-                    multi_dir: msg.multi_dir,
-                });
-            }
+        if let Ok(inv) = inventories.get(msg.entity)
+            && let Some(weapon_entity) = inv.current_weapon_entity()
+        {
+            fire_writer.write(FireWeaponMessage {
+                entity: weapon_entity,
+                multi_dir: msg.multi_dir,
+            });
         }
     }
     for msg in stop_reader.read() {
-        if let Ok(inv) = inventories.get(msg.entity) {
-            if let Some(weapon_entity) = inv.current_weapon_entity() {
-                stop_writer.write(StopFiringMessage {
-                    entity: weapon_entity,
-                });
-            }
+        if let Ok(inv) = inventories.get(msg.entity)
+            && let Some(weapon_entity) = inv.current_weapon_entity()
+        {
+            stop_writer.write(StopFiringMessage {
+                entity: weapon_entity,
+            });
         }
     }
     for msg in aim_reader.read() {
-        if let Ok(inv) = inventories.get(msg.entity) {
-            if let Some(weapon_entity) = inv.current_weapon_entity() {
-                aim_writer.write(WeapAimMessage {
-                    entity: weapon_entity,
-                    target: msg.target.clone(),
-                });
-            }
+        if let Ok(inv) = inventories.get(msg.entity)
+            && let Some(weapon_entity) = inv.current_weapon_entity()
+        {
+            aim_writer.write(WeapAimMessage {
+                entity: weapon_entity,
+                target: msg.target.clone(),
+            });
         }
     }
 }
@@ -679,10 +679,10 @@ pub fn drop_on_death_system(
     query: Query<&Inventory>,
 ) {
     for msg in reader.read() {
-        if let Ok(inv) = query.get(msg.entity) {
-            if inv.drop_items_on_death {
-                writer.write(DropAllMessage { entity: msg.entity });
-            }
+        if let Ok(inv) = query.get(msg.entity)
+            && inv.drop_items_on_death
+        {
+            writer.write(DropAllMessage { entity: msg.entity });
         }
     }
 }

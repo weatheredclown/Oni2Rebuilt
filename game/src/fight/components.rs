@@ -296,10 +296,7 @@ impl FighterState {
     /// (rb/src/fight/fighter.cpp:542) — the C++ checks `channel.scale == 1.0
     /// && !paused && !IsBlocking()`; we apply the same gates against
     /// `Oni2AnimState`.  Caller passes the entity's active anim state.
-    pub fn is_attacking(
-        &self,
-        anim: &crate::oni2_loader::animation::Oni2AnimState,
-    ) -> bool {
+    pub fn is_attacking(&self, anim: &crate::oni2_loader::animation::Oni2AnimState) -> bool {
         if self.is_blocking() {
             return false;
         }
@@ -330,7 +327,7 @@ impl FighterState {
     /// Update via `record_attack_hit` (on hit landing) and clear via
     /// `reset_attack_hits` (on attack start).
     pub fn has_hit_class(&self, cls: u32) -> bool {
-        self.attack_hit_classes.iter().any(|&c| c == cls)
+        self.attack_hit_classes.contains(&cls)
     }
 
     /// Record a hit landing during the current attack — appends the target's
@@ -391,7 +388,6 @@ mod predicate_tests {
 // its original position.  Keeping the impl block closed here preserves the
 // original layout for downstream items in this file.
 impl FighterState {
-
     /// Tick the per-frame state transitions:
     /// - HIT_START → HIT (set for one frame then clear)
     /// - IH_START → IMPENDING_HIT (set for one frame then clear)

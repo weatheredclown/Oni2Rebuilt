@@ -292,7 +292,7 @@ pub fn parse_projectile(
     def_type: &str,
     name: &str,
     block: &SettingsBlock,
-    asset_server: &AssetServer,
+    _asset_server: &AssetServer,
 ) -> Option<ProjectileDef> {
     let damage_block = block.get_block("Damage");
     let damage = if let Some(db) = damage_block {

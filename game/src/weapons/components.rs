@@ -331,9 +331,10 @@ pub struct AmmoSlot {
 }
 
 /// Mirror of weapUpdateParameters — the aim state passed into Aim() each frame.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub enum AimTarget {
     /// No aim target — weapon fires in `FiringDir`.
+    #[default]
     None,
     /// Aim at the given world-space point.
     Point(Vec3),
@@ -349,12 +350,6 @@ pub enum AimTarget {
         dist_away: f32,
         target_velocity: Vec3,
     },
-}
-
-impl Default for AimTarget {
-    fn default() -> Self {
-        AimTarget::None
-    }
 }
 
 /// Cursor into the currently-firing charge state's projectile + effect list.
@@ -455,7 +450,7 @@ impl Weapon {
     }
     pub fn is_charging(&self) -> bool {
         self.has_flag(weapon_flags::TRIGGER_PULLED)
-            && self.active_mode().map_or(false, |m| m.can_charge())
+            && self.active_mode().is_some_and(|m| m.can_charge())
     }
 
     // --- Accessors ---
@@ -504,6 +499,6 @@ impl Weapon {
         self.ammo_slots
             .get(slot)
             .and_then(|s| s.ammo_type.as_ref())
-            .map_or(false, |t| t.name == ty.name)
+            .is_some_and(|t| t.name == ty.name)
     }
 }

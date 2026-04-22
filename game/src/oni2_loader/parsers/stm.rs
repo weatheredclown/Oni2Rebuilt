@@ -158,7 +158,7 @@ fn decode_pcm(
     channels: usize,
     big_endian: bool,
 ) -> Result<Vec<i16>, Box<dyn std::error::Error + Send + Sync + 'static>> {
-    if data.len() % 2 != 0 {
+    if !data.len().is_multiple_of(2) {
         return Err("PCM data not aligned".into());
     }
     let mut samples = Vec::with_capacity(data.len() / 2);
@@ -185,7 +185,7 @@ fn decode_ima(
         return Err("IMA block size too small".into());
     }
     let frame_size = block_size * channels;
-    if data.len() % frame_size != 0 {
+    if !data.len().is_multiple_of(frame_size) {
         return Err("IMA data doesn't align to channel blocks".into());
     }
 

@@ -20,12 +20,7 @@ use bevy::prelude::*;
 
 use crate::menu::AppState;
 
-pub use components::{
-    AMMO_NONE, AimTarget, Aimer, AmmoRegistry, AmmoSlot, AmmoType, ChargeState, EffectInfo,
-    HoldType, LaunchCursor, MAX_CHARGE_FX, MAX_FIRING_FX, MAX_NUM_AMMO_SLOTS, OperationalMode,
-    ProjectileInfo, TrigHoldMode, Weapon, WeaponClass, WeaponRegistry, WeaponTypeData,
-    weapon_flags,
-};
+pub use components::{AimTarget, AmmoRegistry, Weapon, WeaponRegistry};
 pub use events::{
     AddAmmoMessage, AimMessage, FireWeaponMessage, ReloadMessage, SetOpModeMessage,
     SetShooterAccuracyMessage, StopFiringMessage, WeaponChargeChangedMessage, WeaponFiredMessage,

@@ -22,10 +22,9 @@ use std::collections::HashMap;
 
 use super::super::core::{SmAdvance, SmDriver, SmRuntime};
 use super::super::types::{
-    ctrl_flags, entity_flags, pad_flags, FsmAction, FsmEvent, FsmOutput, FsmPacket,
-    PacketCondition,
+    FsmAction, FsmEvent, FsmOutput, FsmPacket, PacketCondition, ctrl_flags, entity_flags, pad_flags,
 };
-use super::parse::{split_call, ActionParser, EventParser};
+use super::parse::{ActionParser, EventParser, split_call};
 
 // ---------------------------------------------------------------------------
 // InputDriver
@@ -85,18 +84,12 @@ impl SmDriver for InputDriver {
     type Context = InputCtx;
     type Output = FsmOutput;
 
-    fn eval_event(
-        ctx: &Self::Context,
-        event: &Self::Event,
-        runtime: &SmRuntime<Self>,
-    ) -> bool {
+    fn eval_event(ctx: &Self::Context, event: &Self::Event, runtime: &SmRuntime<Self>) -> bool {
         match event {
             FsmEvent::Packet(cond) => packet_matches(&ctx.packet, cond),
             FsmEvent::Timeout => ctx.timed_out || ctx.is_anim_done(),
             FsmEvent::Me(flags) => *flags == 0 || (ctx.packet.me_flags & flags) == *flags,
-            FsmEvent::Target(flags) => {
-                *flags == 0 || (ctx.packet.target_flags & flags) == *flags
-            }
+            FsmEvent::Target(flags) => *flags == 0 || (ctx.packet.target_flags & flags) == *flags,
             FsmEvent::True => true,
             FsmEvent::Random(p) => runtime.random_pct < *p,
             FsmEvent::Timer(t) => runtime.elapsed - runtime.timer_start >= *t,
@@ -205,10 +198,10 @@ fn packet_matches(packet: &FsmPacket, cond: &PacketCondition) -> bool {
     if cond.not_ctrl_flags != 0 && (packet.ctrl_flags & cond.not_ctrl_flags) != 0 {
         return false;
     }
-    if let Some(req) = cond.class_hit {
-        if packet.class_hit != req {
-            return false;
-        }
+    if let Some(req) = cond.class_hit
+        && packet.class_hit != req
+    {
+        return false;
     }
     if let Some(req_w) = &cond.has_weapon_name {
         if let Some(packet_w) = &packet.has_weapon {
@@ -219,12 +212,11 @@ fn packet_matches(packet: &FsmPacket, cond: &PacketCondition) -> bool {
             return false;
         }
     }
-    if let Some(req_w) = &cond.not_has_weapon_name {
-        if let Some(packet_w) = &packet.has_weapon {
-            if packet_w.contains(req_w) {
-                return false;
-            }
-        }
+    if let Some(req_w) = &cond.not_has_weapon_name
+        && let Some(packet_w) = &packet.has_weapon
+        && packet_w.contains(req_w)
+    {
+        return false;
     }
     true
 }
@@ -386,12 +378,18 @@ fn build_pad_table() -> HashMap<&'static str, u64> {
         "PADCMD_WEAPON_FIRE_FORWARD",
         pad_flags::PADCMD_WEAPON_FIRE_FORWARD,
     );
-    m.insert("PADCMD_WEAPON_FIRE_LEFT", pad_flags::PADCMD_WEAPON_FIRE_LEFT);
+    m.insert(
+        "PADCMD_WEAPON_FIRE_LEFT",
+        pad_flags::PADCMD_WEAPON_FIRE_LEFT,
+    );
     m.insert(
         "PADCMD_WEAPON_FIRE_RIGHT",
         pad_flags::PADCMD_WEAPON_FIRE_RIGHT,
     );
-    m.insert("PADCMD_WEAPON_FIRE_BACK", pad_flags::PADCMD_WEAPON_FIRE_BACK);
+    m.insert(
+        "PADCMD_WEAPON_FIRE_BACK",
+        pad_flags::PADCMD_WEAPON_FIRE_BACK,
+    );
     m.insert(
         "PADCMD_WEAPON_FIRE_BACK_LEFT",
         pad_flags::PADCMD_WEAPON_FIRE_BACK_LEFT,
@@ -480,10 +478,7 @@ fn build_entity_table() -> HashMap<&'static str, u32> {
     m
 }
 
-fn parse_packet_args(
-    args: &str,
-    tables: &InputFlagTables,
-) -> Result<PacketCondition, String> {
+fn parse_packet_args(args: &str, tables: &InputFlagTables) -> Result<PacketCondition, String> {
     let mut cond = PacketCondition::default();
 
     for token in args.split(',') {

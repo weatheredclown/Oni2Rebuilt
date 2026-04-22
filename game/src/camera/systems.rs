@@ -11,7 +11,7 @@
 use bevy::input::mouse::AccumulatedMouseScroll;
 use bevy::prelude::*;
 
-use super::channel::{CameraBumpDirection, CameraChannel};
+use super::channel::CameraChannel;
 use super::components::{ActiveCameraMode, CameraController, PrototypeElement, PrototypeVisible};
 
 /// Toggle camera mode with Tab key or F5 (FreeCam).
@@ -38,28 +38,27 @@ pub fn camera_mode_toggle_system(
             };
         }
     }
-    if keyboard.just_pressed(KeyCode::F5) {
-        if let Ok((mut main_cam, main_tf, _)) = main_cam_query.single_mut() {
-            if let Ok((debug_ent, _, _)) = debug_cam_query.single_mut() {
-                // Return to main camera
-                commands.entity(debug_ent).despawn();
-                main_cam.is_active = true;
-            } else {
-                // Switch to debug camera
-                main_cam.is_active = false;
-                let (yaw, pitch, _) = main_tf.rotation.to_euler(EulerRot::YXZ);
-                commands.spawn((
-                    Camera3d::default(),
-                    Transform::from_translation(main_tf.translation)
-                        .with_rotation(main_tf.rotation),
-                    crate::camera::components::DebugFreeCamera {
-                        yaw,
-                        pitch,
-                        speed: 10.0,
-                    },
-                ));
-                main_cam.is_active = false;
-            }
+    if keyboard.just_pressed(KeyCode::F5)
+        && let Ok((mut main_cam, main_tf, _)) = main_cam_query.single_mut()
+    {
+        if let Ok((debug_ent, _, _)) = debug_cam_query.single_mut() {
+            // Return to main camera
+            commands.entity(debug_ent).despawn();
+            main_cam.is_active = true;
+        } else {
+            // Switch to debug camera
+            main_cam.is_active = false;
+            let (yaw, pitch, _) = main_tf.rotation.to_euler(EulerRot::YXZ);
+            commands.spawn((
+                Camera3d::default(),
+                Transform::from_translation(main_tf.translation).with_rotation(main_tf.rotation),
+                crate::camera::components::DebugFreeCamera {
+                    yaw,
+                    pitch,
+                    speed: 10.0,
+                },
+            ));
+            main_cam.is_active = false;
         }
     }
 }
@@ -116,44 +115,43 @@ pub fn update_camera_channel(
         // Populate Environmental Camera Packages
         if let (Some(active_pkg), Some(pkgs), Some(sets)) =
             (&active_camera_package, &camera_packages, &camera_sets)
+            && let Some(pkg) = pkgs.packages.get(&active_pkg.name)
         {
-            if let Some(pkg) = pkgs.packages.get(&active_pkg.name) {
-                let is_combat = controller.active_mode == ActiveCameraMode::GameFighting;
+            let is_combat = controller.active_mode == ActiveCameraMode::GameFighting;
 
-                let set_name = if is_combat && !pkg.fighting.is_empty() {
-                    &pkg.fighting
-                } else if !pkg.navigation.is_empty() {
-                    &pkg.navigation
+            let set_name = if is_combat && !pkg.fighting.is_empty() {
+                &pkg.fighting
+            } else if !pkg.navigation.is_empty() {
+                &pkg.navigation
+            } else {
+                ""
+            };
+
+            if let Some(params) = sets.sets.get(set_name) {
+                if channel.active_set_name != params.name {
+                    info!("Camera selected parameter set: {}", params.name);
+                    channel.active_set_name = params.name.clone();
+                }
+
+                channel.package_fov = params.fov;
+                channel.package_distance = params.distance;
+                channel.package_incline_offset = params.incline_offset;
+                channel.package_incline_offset_running = params.incline_offset_running;
+                channel.package_focus_offset = Vec3::from_array(params.focus_offset);
+                channel.package_spin_threshold = params.spin_threshold;
+                channel.package_zone_lerp_rates = [
+                    params.lerp_rate_azimuth_zone1,
+                    params.lerp_rate_azimuth_zone2,
+                    params.lerp_rate_azimuth_zone3,
+                    params.lerp_rate_azimuth_zone4,
+                ];
+
+                if is_combat {
+                    channel.package_inner_radius = params.inner_radius;
+                    channel.package_outer_radius = params.outer_radius;
                 } else {
-                    ""
-                };
-
-                if let Some(params) = sets.sets.get(set_name) {
-                    if channel.active_set_name != params.name {
-                        info!("Camera selected parameter set: {}", params.name);
-                        channel.active_set_name = params.name.clone();
-                    }
-
-                    channel.package_fov = params.fov;
-                    channel.package_distance = params.distance;
-                    channel.package_incline_offset = params.incline_offset;
-                    channel.package_incline_offset_running = params.incline_offset_running;
-                    channel.package_focus_offset = Vec3::from_array(params.focus_offset);
-                    channel.package_spin_threshold = params.spin_threshold;
-                    channel.package_zone_lerp_rates = [
-                        params.lerp_rate_azimuth_zone1,
-                        params.lerp_rate_azimuth_zone2,
-                        params.lerp_rate_azimuth_zone3,
-                        params.lerp_rate_azimuth_zone4,
-                    ];
-
-                    if is_combat {
-                        channel.package_inner_radius = params.inner_radius;
-                        channel.package_outer_radius = params.outer_radius;
-                    } else {
-                        channel.package_inner_radius = params.dead_zone_inner_radius;
-                        channel.package_outer_radius = params.dead_zone_outer_radius;
-                    }
+                    channel.package_inner_radius = params.dead_zone_inner_radius;
+                    channel.package_outer_radius = params.dead_zone_outer_radius;
                 }
             }
         }
@@ -172,7 +170,7 @@ pub fn update_camera_channel(
         // The camera must sit BEHIND that direction, so we negate before atan2.
         channel.current_focus_azimuth = (-fighter.facing.x).atan2(-fighter.facing.z);
 
-        channel.is_moving = input_opt.map_or(false, |i| i.movement.length_squared() > 0.01);
+        channel.is_moving = input_opt.is_some_and(|i| i.movement.length_squared() > 0.01);
 
         // Accumulate running time natively
         if channel.is_moving {

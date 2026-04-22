@@ -88,11 +88,7 @@ pub fn gravity_sync_system(
                 // Dump every active layer's key for this sync — helps
                 // diagnose "who pushed this?" bugs without needing to
                 // grep through every push call site.
-                let keys: Vec<&str> = modifiers
-                    .0
-                    .layers_iter()
-                    .map(|(k, _)| k.as_str())
-                    .collect();
+                let keys: Vec<&str> = modifiers.0.layers_iter().map(|(k, _)| k.as_str()).collect();
                 format!("[{}]", keys.join(", "))
             };
             info!(

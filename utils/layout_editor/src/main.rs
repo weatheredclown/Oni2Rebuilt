@@ -12,7 +12,7 @@ use bevy_egui::{EguiContexts, EguiPlugin, EguiPrimaryContextPass, egui};
 use rb_game::oni2_loader::parsers::actor_xml::parse_actor_xml;
 use rb_game::oni2_loader::registries::{AnimRegistry, EntityLibrary};
 use rb_game::oni2_loader::utils::space;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -960,10 +960,10 @@ fn next_actor_name_for_entity(layout: &LayoutDocument, entity_type: &str) -> Str
     let mut max_n = 0u32;
     let prefix = format!("actor_{entity_type}");
     for actor in &layout.actors {
-        if let Some(suffix) = actor.name.strip_prefix(&prefix) {
-            if let Ok(n) = suffix.parse::<u32>() {
-                max_n = max_n.max(n);
-            }
+        if let Some(suffix) = actor.name.strip_prefix(&prefix)
+            && let Ok(n) = suffix.parse::<u32>()
+        {
+            max_n = max_n.max(n);
         }
     }
     format!("{prefix}{}", max_n + 1)
@@ -1337,11 +1337,11 @@ fn camera_orbit_system(
 
     for (mut transform, mut orbit) in &mut query {
         if state.request_focus_selected {
-            if let Some(selected) = state.selected_actor.as_ref() {
-                if let Some((target_tf, _)) = actors.iter().find(|(_, h)| &h.name == selected) {
-                    orbit.focus = target_tf.translation;
-                    state.status = format!("Focused '{}'", selected);
-                }
+            if let Some(selected) = state.selected_actor.as_ref()
+                && let Some((target_tf, _)) = actors.iter().find(|(_, h)| &h.name == selected)
+            {
+                orbit.focus = target_tf.translation;
+                state.status = format!("Focused '{}'", selected);
             }
             state.request_focus_selected = false;
         }
@@ -1475,7 +1475,7 @@ fn transform_edit_system(
     let shift = keys.pressed(KeyCode::ShiftLeft) || keys.pressed(KeyCode::ShiftRight);
 
     for (mut tf, handle) in &mut actors {
-        if !selected.as_ref().is_some_and(|n| n == &handle.name) {
+        if selected.as_ref().is_none_or(|n| n != &handle.name) {
             continue;
         }
 
@@ -1560,7 +1560,7 @@ fn apply_inspector_edits_system(
 
     let selected = state.selected_actor.clone();
     for (mut tf, handle) in &mut actors {
-        if !selected.as_ref().is_some_and(|n| n == &handle.name) {
+        if selected.as_ref().is_none_or(|n| n != &handle.name) {
             continue;
         }
         if let Some(pos) = pending_pos {
@@ -1595,11 +1595,11 @@ fn sync_actor_transforms(
     // which would despawn and respawn all visuals every frame an entity moves.
     let doc = layout.bypass_change_detection();
     for (tf, handle) in &actors_query {
-        if let Some(index) = map.get(&handle.name) {
-            if let Some(actor) = doc.actors.get_mut(*index) {
-                actor.set_position(tf.translation);
-                actor.set_rotation(tf.rotation.to_euler(EulerRot::XYZ));
-            }
+        if let Some(index) = map.get(&handle.name)
+            && let Some(actor) = doc.actors.get_mut(*index)
+        {
+            actor.set_position(tf.translation);
+            actor.set_rotation(tf.rotation.to_euler(EulerRot::XYZ));
         }
     }
 }
@@ -1711,7 +1711,7 @@ fn discover_entity_types(entity_dir: &Path) -> Vec<EntityTypeEntry> {
         .filter(|e| e.path().is_dir())
         .filter_map(|e| e.file_name().to_str().map(|s| s.to_string()))
         .collect();
-    names.sort_by(|a, b| a.to_lowercase().cmp(&b.to_lowercase()));
+    names.sort_by_key(|a| a.to_lowercase());
 
     names
         .into_iter()

@@ -47,14 +47,19 @@ pub fn setup_formation_scene(
     let mut entity_dirs: Vec<(String, String)> = Vec::new();
 
     if let Ok(mut entries) = crate::vfs::read_dir(&entity_base_str) {
-        entries.sort_by(|a, b| a.path.split('/').last().cmp(&b.path.split('/').last()));
+        entries.sort_by(|a, b| {
+            a.path
+                .split('/')
+                .next_back()
+                .cmp(&b.path.split('/').next_back())
+        });
 
         for entry in entries {
             if entry.is_dir {
                 let dir_path_str = &entry.path;
                 let dir_name = dir_path_str
                     .split('/')
-                    .last()
+                    .next_back()
                     .unwrap_or_default()
                     .to_string();
 

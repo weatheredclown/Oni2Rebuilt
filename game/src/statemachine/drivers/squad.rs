@@ -36,11 +36,7 @@ impl SmDriver for SquadDriver {
     type Context = SquadCtx;
     type Output = SquadOutput;
 
-    fn eval_event(
-        _ctx: &Self::Context,
-        event: &Self::Event,
-        _runtime: &SmRuntime<Self>,
-    ) -> bool {
+    fn eval_event(_ctx: &Self::Context, event: &Self::Event, _runtime: &SmRuntime<Self>) -> bool {
         match event {
             SquadEvent::Always => true,
         }

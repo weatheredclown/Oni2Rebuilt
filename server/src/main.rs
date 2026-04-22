@@ -63,10 +63,8 @@ impl TelemetryService for TelemetryServiceImpl {
             should_flush = buffer.len() >= 64;
         }
 
-        if should_flush {
-            if let Err(e) = flush_buffer(&self.state).await {
-                tracing::error!("flush after gRPC ingest failed: {}", e);
-            }
+        if should_flush && let Err(e) = flush_buffer(&self.state).await {
+            tracing::error!("flush after gRPC ingest failed: {}", e);
         }
 
         Ok(Response::new(SendEventsResponse {
@@ -190,10 +188,8 @@ async fn ingest_events(
         tracing::info!("REST: ingested {} events (buffer: {})", count, buffer.len());
         should_flush = buffer.len() >= 64;
     }
-    if should_flush {
-        if let Err(e) = flush_buffer(&state).await {
-            tracing::error!("flush after ingest failed: {}", e);
-        }
+    if should_flush && let Err(e) = flush_buffer(&state).await {
+        tracing::error!("flush after ingest failed: {}", e);
     }
     StatusCode::ACCEPTED
 }

@@ -39,7 +39,7 @@ pub fn parse_anims_content(
             *loco_pkg = Some(loco_ref.trim().to_string());
             continue;
         }
-        if let Some(jump_ref) = trimmed.strip_prefix("jumppkg ") {
+        if let Some(_jump_ref) = trimmed.strip_prefix("jumppkg ") {
             //load_apkg_aliases(jump_ref.trim(), alias_map);
             // TODO: implement jump pkg loading (*.jump)
             continue;

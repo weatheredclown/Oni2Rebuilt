@@ -24,7 +24,7 @@
 use std::collections::HashMap;
 
 use super::super::core::{SmAdvance, SmDriver, SmRuntime};
-use super::parse::{split_call, ActionParser, EventParser};
+use super::parse::{ActionParser, EventParser, split_call};
 
 // ---------------------------------------------------------------------------
 // FightDriver vocabulary
@@ -132,11 +132,7 @@ impl SmDriver for FightDriver {
     type Context = FightCtx;
     type Output = FightOutput;
 
-    fn eval_event(
-        ctx: &Self::Context,
-        event: &Self::Event,
-        runtime: &SmRuntime<Self>,
-    ) -> bool {
+    fn eval_event(ctx: &Self::Context, event: &Self::Event, runtime: &SmRuntime<Self>) -> bool {
         match event {
             FightEvent::HasTarget => ctx.has_target,
             FightEvent::Reacting => ctx.is_reacting,
@@ -217,16 +213,10 @@ pub fn parse_fight_action(
         "ARequestPosition" | "RequestPosition" => FightAction::RequestPosition,
         "AGrabPosition" | "GrabPosition" => FightAction::GrabPosition,
         "AUpgradePosition" | "UpgradePosition" => FightAction::UpgradePosition,
-        "AUpgradePositionInFront" | "UpgradePositionInFront" => {
-            FightAction::UpgradePositionInFront
-        }
-        "AUpgradePositionBehind" | "UpgradePositionBehind" => {
-            FightAction::UpgradePositionBehind
-        }
+        "AUpgradePositionInFront" | "UpgradePositionInFront" => FightAction::UpgradePositionInFront,
+        "AUpgradePositionBehind" | "UpgradePositionBehind" => FightAction::UpgradePositionBehind,
         "AUpgradePositionLeft" | "UpgradePositionLeft" => FightAction::UpgradePositionLeft,
-        "AUpgradePositionRight" | "UpgradePositionRight" => {
-            FightAction::UpgradePositionRight
-        }
+        "AUpgradePositionRight" | "UpgradePositionRight" => FightAction::UpgradePositionRight,
         "AReleasePosition" | "ReleasePosition" => FightAction::ReleasePosition,
         "ARequestCookie" | "RequestCookie" => FightAction::RequestCookie,
         "AGrabCookie" | "GrabCookie" => FightAction::GrabCookie,

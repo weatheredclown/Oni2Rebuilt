@@ -7,7 +7,7 @@
  */
 use super::OpsCtx;
 use crate::scroni::ast::Stmt;
-use crate::scroni::vm::{BlockingAction, ExecState};
+use crate::scroni::vm::BlockingAction;
 
 pub fn exec(ctx: &mut OpsCtx, stmt: &Stmt) -> bool {
     match stmt {

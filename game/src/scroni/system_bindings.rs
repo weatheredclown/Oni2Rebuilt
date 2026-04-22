@@ -84,7 +84,7 @@ pub fn scroni_sys_event_observer(
         mut meshes,
         mut images,
         mut skinned_mesh_ibp,
-        asset_server,
+        _asset_server,
         mut audio_sources,
         mut texture_collections,
         mut entity_lib,
@@ -135,7 +135,7 @@ pub fn scroni_sys_event_observer(
         ScrOniSysEvent::MakeExplosion {
             script_entity,
             name,
-            orientation,
+            orientation: _,
             at,
         } => {
             info!("MakeExplosion requested: {} at {:?}", name, at);
@@ -266,7 +266,7 @@ pub fn scroni_sys_event_observer(
             }
         }
         ScrOniSysEvent::CameraSetFOV(fov, dur) => {
-            for (ent, mut controller, mut channel, seq_opt, cam_tf) in &mut camera_query {
+            for (ent, mut controller, channel, seq_opt, cam_tf) in &mut camera_query {
                 info!(
                     "[CAM-SCRIPT] CameraSetFOV: {:.1}° over {:.2}s | cam_pos={}",
                     fov, dur, cam_tf.translation
@@ -376,43 +376,40 @@ pub fn scroni_sys_event_observer(
             action,
             arg,
         } => {
-            match action {
-                super::ast::TextureMovieAction::SetFrame => {
-                    let frame = arg.as_int() as usize;
+            if action == super::ast::TextureMovieAction::SetFrame {
+                let frame = arg.as_int() as usize;
 
-                    // Get preloaded texture handle directly from the collections resource
-                    if let Some(frames) = texture_collections.collections.get(&target_name) {
-                        if frame < frames.len() {
-                            let tex_handle = frames[frame].clone();
-                            let mut stack = vec![script_entity];
-                            while let Some(ent) = stack.pop() {
-                                if let Ok(mut mat_handle) = materials_query.get_mut(ent) {
-                                    if let Some(old_mat) = materials.get(&mat_handle.0) {
-                                        let mut new_mat = old_mat.clone();
-                                        new_mat.base_color_texture = Some(tex_handle.clone());
-                                        new_mat.base_color = Color::WHITE;
-                                        let new_handle = materials.add(new_mat);
-                                        mat_handle.0 = new_handle;
-                                    }
-                                }
-                                if let Ok(children) = children_query.get(ent) {
-                                    stack.extend(children.iter());
-                                }
+                // Get preloaded texture handle directly from the collections resource
+                if let Some(frames) = texture_collections.collections.get(&target_name) {
+                    if frame < frames.len() {
+                        let tex_handle = frames[frame].clone();
+                        let mut stack = vec![script_entity];
+                        while let Some(ent) = stack.pop() {
+                            if let Ok(mut mat_handle) = materials_query.get_mut(ent)
+                                && let Some(old_mat) = materials.get(&mat_handle.0)
+                            {
+                                let mut new_mat = old_mat.clone();
+                                new_mat.base_color_texture = Some(tex_handle.clone());
+                                new_mat.base_color = Color::WHITE;
+                                let new_handle = materials.add(new_mat);
+                                mat_handle.0 = new_handle;
                             }
-                        } else {
-                            warn!(
-                                "TextureMovie SetFrame {} out of bounds for {}",
-                                frame, target_name
-                            );
+                            if let Ok(children) = children_query.get(ent) {
+                                stack.extend(children.iter());
+                            }
                         }
                     } else {
                         warn!(
-                            "TextureMovie: No preloaded textures found for {}",
-                            target_name
+                            "TextureMovie SetFrame {} out of bounds for {}",
+                            frame, target_name
                         );
                     }
+                } else {
+                    warn!(
+                        "TextureMovie: No preloaded textures found for {}",
+                        target_name
+                    );
                 }
-                _ => {}
             }
         }
         ScrOniSysEvent::Spawn {
@@ -566,8 +563,8 @@ pub fn scroni_sys_event_observer(
             at,
         } => {
             commands.trigger(crate::fx_system::SpawnFx {
-                name: name,
-                at: at,
+                name,
+                at,
                 parent: Some(script_entity),
                 start_active: true,
             });
@@ -580,12 +577,12 @@ pub fn scroni_sys_event_observer(
             if component.eq_ignore_ascii_case("fx") {
                 commands.trigger(crate::fx_system::FxAction {
                     action: action.clone(),
-                    target: target,
+                    target,
                 });
             } else if component.eq_ignore_ascii_case("actorspecific") {
                 commands.trigger(crate::door::ActorSpecificAction {
                     action: action.clone(),
-                    target: target,
+                    target,
                 });
             } else {
                 warn!("SendAction: Unrecognized component '{}'", component);
@@ -593,7 +590,7 @@ pub fn scroni_sys_event_observer(
         }
         ScrOniSysEvent::ControlHead { actor, task } => {
             use crate::oni2_loader::components::ActiveHeadIK;
-            if let Ok(mut entity_cmds) = commands.get_entity(actor.clone()) {
+            if let Ok(mut entity_cmds) = commands.get_entity(actor) {
                 entity_cmds.insert(ActiveHeadIK { task: task.clone() });
                 debug!("VM: Observed ControlHead {:?} onto actor {:?}", task, actor);
             }
@@ -677,7 +674,7 @@ pub fn scroni_sys_event_observer(
             val,
         } => {
             if let Ok((_, _, _, mut locals_opt)) = script_query.get_mut(script_entity) {
-                if let Some(mut locals) = locals_opt.as_deref_mut() {
+                if let Some(locals) = locals_opt.as_deref_mut() {
                     locals.locals.insert(name.clone(), val);
                 } else {
                     let mut locals = ShaderLocals::default();
@@ -698,14 +695,12 @@ pub fn scroni_sys_event_observer(
                 if let Some(n) = name_opt {
                     let mut is_match = n.as_str() == target;
 
-                    if !is_match {
-                        if let Some(h) = target_hash {
-                            let mut hasher = std::collections::hash_map::DefaultHasher::new();
-                            std::hash::Hash::hash(n.as_str(), &mut hasher);
-                            let hashed = (std::hash::Hasher::finish(&hasher) % 100000) as i32;
-                            if hashed == h {
-                                is_match = true;
-                            }
+                    if !is_match && let Some(h) = target_hash {
+                        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+                        std::hash::Hash::hash(n.as_str(), &mut hasher);
+                        let hashed = (std::hash::Hasher::finish(&hasher) % 100000) as i32;
+                        if hashed == h {
+                            is_match = true;
                         }
                     }
 
@@ -733,7 +728,7 @@ pub fn scroni_sys_event_observer(
             // Hand this actor the player pad.  Strip every AI-side runtime so
             // the AI update chain stops ticking on this entity, then add
             // `Player` + `PadFsmName` so `insert_player_fsm` attaches the
-            // player-side input FSM (player.fsm via `EnemyFsmCache`).
+            // player-side input FSM (player.fsm via `PadFsmCache`).
             let mut ec = commands.entity(script_entity);
             ec.insert((
                 crate::player::components::Player,
@@ -760,7 +755,7 @@ pub fn scroni_sys_event_observer(
         } => {
             let mut source_handle = None;
             let mut should_loop = true; // STM streams always loop; HD/BD overrides from loop_flag
-            let mut file_name = name.clone();
+            let file_name = name.clone();
             if file_name.starts_with("Stream:") {
                 let mut stream_name = file_name.replace("Stream:", "");
                 stream_name.push_str(".stm");
@@ -787,94 +782,89 @@ pub fn scroni_sys_event_observer(
                 let mut p_vol = 1.0;
                 let mut p_pitch = 1.0;
 
-                if let Some(pkgs) = audio_packages.as_ref() {
-                    if let Some((_, pkg)) = pkgs
+                if let Some(pkgs) = audio_packages.as_ref()
+                    && let Some((_, pkg)) = pkgs
                         .iter()
                         .find(|(k, _)| k.eq_ignore_ascii_case(&resolved_name))
-                    {
-                        if !pkg.nuggets.is_empty() {
-                            use rand::Rng;
-                            let mut rng = rand::rng();
-                            let idx = rng.random_range(0..pkg.nuggets.len());
-                            let nugget = &pkg.nuggets[idx];
-                            resolved_name = nugget.sound.clone();
-                            p_vol = nugget.volume
-                                * rng.random_range(
-                                    nugget.random_min_volume..=nugget.random_max_volume,
-                                );
-                            p_pitch = nugget.pitch
-                                * rng.random_range(
-                                    nugget.random_min_pitch..=nugget.random_max_pitch,
-                                );
-                        }
-                    }
+                    && !pkg.nuggets.is_empty()
+                {
+                    use rand::Rng;
+                    let mut rng = rand::rng();
+                    let idx = rng.random_range(0..pkg.nuggets.len());
+                    let nugget = &pkg.nuggets[idx];
+                    resolved_name = nugget.sound.clone();
+                    p_vol = nugget.volume
+                        * rng.random_range(nugget.random_min_volume..=nugget.random_max_volume);
+                    p_pitch = nugget.pitch
+                        * rng.random_range(nugget.random_min_pitch..=nugget.random_max_pitch);
                 }
 
-                if let Some(dir) = td_directory.as_ref() {
-                    if let Some((_, v)) = dir
+                if let Some(dir) = td_directory.as_ref()
+                    && let Some((_, v)) = dir
                         .sounds
                         .iter()
                         .find(|(k, _)| k.eq_ignore_ascii_case(&resolved_name))
-                    {
-                        let bank_name = &v.0;
-                        let vag_index = v.1;
-                        let hd_name = format!("{}.hd", bank_name);
-                        let bd_name = format!("{}.bd", bank_name);
-                        let hd_paths = [hd_name.clone()];
-                        let mut hd_bytes_opt = None;
-                        for p in &hd_paths {
-                            if let Ok(b) = crate::vfs::read("", p) {
-                                hd_bytes_opt = Some(b);
-                                break;
-                            }
+                {
+                    let bank_name = &v.0;
+                    let vag_index = v.1;
+                    let hd_name = format!("{}.hd", bank_name);
+                    let bd_name = format!("{}.bd", bank_name);
+                    let hd_paths = [hd_name.clone()];
+                    let mut hd_bytes_opt = None;
+                    for p in &hd_paths {
+                        if let Ok(b) = crate::vfs::read("", p) {
+                            hd_bytes_opt = Some(b);
+                            break;
                         }
-                        if let Some(hd_bytes) = hd_bytes_opt {
-                            if let Ok(header) =
-                                crate::oni2_loader::parsers::hd_bd::parse_hd(&hd_bytes)
-                            {
-                                let target_index = vag_index + 1;
-                                if let Some(subsong) =
-                                    header.subsongs.iter().find(|s| s.index == target_index)
-                                {
-                                    let bd_paths =
-                                        [bd_name.clone(), format!("Audio/banks/{}", bd_name)];
-                                    let mut bd_bytes_opt = None;
-                                    for p in &bd_paths {
-                                        if let Ok(b) = crate::vfs::read("", p) {
-                                            bd_bytes_opt = Some(b);
-                                            break;
-                                        }
-                                    }
-                                    if let Some(bd_bytes) = bd_bytes_opt {
-                                        let start = subsong.stream_offset as usize;
-                                        let end = start + subsong.stream_size as usize;
-                                        if end <= bd_bytes.len() {
-                                            let payload = &bd_bytes[start..end];
-                                            if let Ok(pcm) =
-                                                crate::oni2_loader::parsers::hd_bd::decode_psx_adpcm(
-                                                    payload,
-                                                    subsong.num_samples,
-                                                )
-                                            {
-                                                if let Ok(wav) = crate::oni2_loader::parsers::hd_bd::create_wav_bytes(&pcm, subsong.sample_rate, subsong.channels) {
-                                                    source_handle = Some(audio_sources.add(bevy::audio::AudioSource {
-                                                        bytes: std::sync::Arc::from(wav),
-                                                    }));
-                                                    should_loop = subsong.loop_flag;
+                    }
+                    if let Some(hd_bytes) = hd_bytes_opt
+                        && let Ok(header) = crate::oni2_loader::parsers::hd_bd::parse_hd(&hd_bytes)
+                    {
+                        let target_index = vag_index + 1;
+                        if let Some(subsong) =
+                            header.subsongs.iter().find(|s| s.index == target_index)
+                        {
+                            let bd_paths = [bd_name.clone(), format!("Audio/banks/{}", bd_name)];
+                            let mut bd_bytes_opt = None;
+                            for p in &bd_paths {
+                                if let Ok(b) = crate::vfs::read("", p) {
+                                    bd_bytes_opt = Some(b);
+                                    break;
+                                }
+                            }
+                            if let Some(bd_bytes) = bd_bytes_opt {
+                                let start = subsong.stream_offset as usize;
+                                let end = start + subsong.stream_size as usize;
+                                if end <= bd_bytes.len() {
+                                    let payload = &bd_bytes[start..end];
+                                    if let Ok(pcm) =
+                                        crate::oni2_loader::parsers::hd_bd::decode_psx_adpcm(
+                                            payload,
+                                            subsong.num_samples,
+                                        )
+                                        && let Ok(wav) =
+                                            crate::oni2_loader::parsers::hd_bd::create_wav_bytes(
+                                                &pcm,
+                                                subsong.sample_rate,
+                                                subsong.channels,
+                                            )
+                                    {
+                                        source_handle =
+                                            Some(audio_sources.add(bevy::audio::AudioSource {
+                                                bytes: std::sync::Arc::from(wav),
+                                            }));
+                                        should_loop = subsong.loop_flag;
 
-                                                    // Apply package multipliers to our volume arguments
-                                                    if let Some(target) = volume.as_mut() {
-                                                        *target *= p_vol;
-                                                    } else {
-                                                        volume = Some(p_vol);
-                                                    }
-                                                    if let Some(target) = pitch.as_mut() {
-                                                        *target *= p_pitch;
-                                                    } else {
-                                                        pitch = Some(p_pitch);
-                                                    }
-                                                }
-                                            }
+                                        // Apply package multipliers to our volume arguments
+                                        if let Some(target) = volume.as_mut() {
+                                            *target *= p_vol;
+                                        } else {
+                                            volume = Some(p_vol);
+                                        }
+                                        if let Some(target) = pitch.as_mut() {
+                                            *target *= p_pitch;
+                                        } else {
+                                            pitch = Some(p_pitch);
                                         }
                                     }
                                 }

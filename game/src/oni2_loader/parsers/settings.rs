@@ -169,12 +169,12 @@ pub fn parse_settings(content: &str) -> Vec<SettingsDefinition> {
             let name = line[1].trim_matches('"').to_string();
 
             // Consume opening brace if it's on the next line
-            if line.len() == 2 {
-                if let Some(next) = iter.peek() {
-                    if next.len() == 1 && next[0] == "{" {
-                        iter.next();
-                    }
-                }
+            if line.len() == 2
+                && let Some(next) = iter.peek()
+                && next.len() == 1
+                && next[0] == "{"
+            {
+                iter.next();
             }
 
             let block = parse_block_lines(&mut iter);
@@ -209,13 +209,14 @@ fn parse_block_lines(
 
         if line.len() == 1 {
             // Lookahead for opening brace
-            if let Some(next) = iter.peek() {
-                if next.len() == 1 && next[0] == "{" {
-                    iter.next(); // consume '{'
-                    let child = parse_block_lines(iter);
-                    block.properties.insert(key, SettingsValue::Block(child));
-                    continue;
-                }
+            if let Some(next) = iter.peek()
+                && next.len() == 1
+                && next[0] == "{"
+            {
+                iter.next(); // consume '{'
+                let child = parse_block_lines(iter);
+                block.properties.insert(key, SettingsValue::Block(child));
+                continue;
             }
         }
 

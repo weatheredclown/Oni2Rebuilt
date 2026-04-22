@@ -185,14 +185,14 @@ pub fn moving_platform_system(
 
             let mut current = hit.entity;
             loop {
-                if let Ok((_, rb)) = platforms.get(current) {
-                    if matches!(
+                if let Ok((_, rb)) = platforms.get(current)
+                    && matches!(
                         rb,
                         avian3d::prelude::RigidBody::Kinematic
                             | avian3d::prelude::RigidBody::Static
-                    ) {
-                        return Some(current);
-                    }
+                    )
+                {
+                    return Some(current);
                 }
 
                 if let Ok(parent) = parents.get(current) {
@@ -205,36 +205,35 @@ pub fn moving_platform_system(
         });
 
         // Apply delta only when we're on the same platform as last tick.
-        if let Some(platform_entity) = new_platform {
-            if rider.platform == Some(platform_entity) {
-                if let Ok((platform_tf, _)) = platforms.get(platform_entity) {
-                    let prev = rider.last_transform;
+        if let Some(platform_entity) = new_platform
+            && rider.platform == Some(platform_entity)
+            && let Ok((platform_tf, _)) = platforms.get(platform_entity)
+        {
+            let prev = rider.last_transform;
 
-                    // Rotation delta between frames.
-                    let rot_delta = platform_tf.rotation * prev.rotation.inverse();
+            // Rotation delta between frames.
+            let rot_delta = platform_tf.rotation * prev.rotation.inverse();
 
-                    // Rotate the rider's world offset around the platform's
-                    // *previous* origin, then re-anchor to its *new* origin.
-                    let offset: Vec3 = pos.0 - prev.translation;
-                    let new_world_pos = platform_tf.translation + rot_delta * offset;
-                    pos.0 = new_world_pos;
+            // Rotate the rider's world offset around the platform's
+            // *previous* origin, then re-anchor to its *new* origin.
+            let offset: Vec3 = pos.0 - prev.translation;
+            let new_world_pos = platform_tf.translation + rot_delta * offset;
+            pos.0 = new_world_pos;
 
-                    // Apply yaw-only rotation to the rider's facing so they
-                    // turn with the platform (e.g. a spinning disk).
-                    let (yaw, _, _) = rot_delta.to_euler(EulerRot::YXZ);
-                    if yaw.abs() > 1e-6 {
-                        rider_rot.0 = Quat::from_rotation_y(yaw) * rider_rot.0;
-                    }
-                }
+            // Apply yaw-only rotation to the rider's facing so they
+            // turn with the platform (e.g. a spinning disk).
+            let (yaw, _, _) = rot_delta.to_euler(EulerRot::YXZ);
+            if yaw.abs() > 1e-6 {
+                rider_rot.0 = Quat::from_rotation_y(yaw) * rider_rot.0;
             }
         }
 
         // Record state for next tick.
         rider.platform = new_platform;
-        if let Some(entity) = new_platform {
-            if let Ok((tf, _)) = platforms.get(entity) {
-                rider.last_transform = *tf;
-            }
+        if let Some(entity) = new_platform
+            && let Ok((tf, _)) = platforms.get(entity)
+        {
+            rider.last_transform = *tf;
         }
     }
 }
@@ -283,25 +282,26 @@ pub fn creature_movement_anim_system(
     ) in &mut creatures
     {
         // Block locomotion while an FSM-driven animation (attack, etc.) is playing.
-        if let Some(fsm) = fsm_opt {
-            if fsm.ctx.active_anim.is_some() && !fsm.ctx.timed_out {
-                continue;
-            }
+        if let Some(fsm) = fsm_opt
+            && fsm.ctx.active_anim.is_some()
+            && !fsm.ctx.timed_out
+        {
+            continue;
         }
 
         // Block locomotion while a hit reaction animation is playing.
-        if react_opt.map_or(false, |r| r.active.is_some()) {
+        if react_opt.is_some_and(|r| r.active.is_some()) {
             continue;
         }
 
         // Block locomotion while an AnimSchedule is active (e.g. jump
         // compress → spring → main → land) — it drives Oni2AnimState each
         // tick and would otherwise be clobbered by the idle-gait lookup.
-        if schedule_opt.map_or(false, |s| !s.finished && !s.entries.is_empty()) {
+        if schedule_opt.is_some_and(|s| !s.finished && !s.entries.is_empty()) {
             continue;
         }
 
-        let horiz_speed = Vec2::new(vel.x, vel.z).length();
+        let _horiz_speed = Vec2::new(vel.x, vel.z).length();
 
         // Get character forward and right directions
         let forward = transform.forward().xz().normalize_or_zero();
@@ -332,13 +332,13 @@ pub fn creature_movement_anim_system(
             let mut best_gait = None;
 
             // Hysteresis: prevent physics micro-fluctuations from dropping states (bias against falling out below)
-            if let Some(cur_id) = anim_state.current_anim_id {
-                if let Some(cur_gait) = gaits.iter().find(|g| g.anim == cur_id) {
-                    let lower = cur_gait.min_throttle.min(cur_gait.max_throttle) - 0.15;
-                    let upper = cur_gait.min_throttle.max(cur_gait.max_throttle);
-                    if throttle >= lower && throttle <= upper {
-                        best_gait = Some(cur_gait);
-                    }
+            if let Some(cur_id) = anim_state.current_anim_id
+                && let Some(cur_gait) = gaits.iter().find(|g| g.anim == cur_id)
+            {
+                let lower = cur_gait.min_throttle.min(cur_gait.max_throttle) - 0.15;
+                let upper = cur_gait.min_throttle.max(cur_gait.max_throttle);
+                if throttle >= lower && throttle <= upper {
+                    best_gait = Some(cur_gait);
                 }
             }
 
@@ -359,26 +359,26 @@ pub fn creature_movement_anim_system(
                     })
             });
 
-            if let Some(gait) = best_gait {
-                if Some(gait.anim) != anim_state.current_anim_id {
-                    let prev_num_frames = anim_state.anim.frames.len().max(1) as f32;
-                    let prev_phase = if prev_num_frames > 1.0 {
-                        anim_state.current_time / (prev_num_frames - 1.0)
-                    } else {
-                        0.0
-                    };
+            if let Some(gait) = best_gait
+                && Some(gait.anim) != anim_state.current_anim_id
+            {
+                let prev_num_frames = anim_state.anim.frames.len().max(1) as f32;
+                let prev_phase = if prev_num_frames > 1.0 {
+                    anim_state.current_time / (prev_num_frames - 1.0)
+                } else {
+                    0.0
+                };
 
-                    if library.play_id(gait.anim, &mut anim_state) {
-                        *move_anim = CreatureMovementAnim::Stand; // Prevent legacy code from desyncing state
+                if library.play_id(gait.anim, &mut anim_state) {
+                    *move_anim = CreatureMovementAnim::Stand; // Prevent legacy code from desyncing state
 
-                        // Sync the new animation length directly to the previous phase percentage
-                        let new_num_frames = anim_state.anim.frames.len().max(1) as f32;
-                        if new_num_frames > 1.0 {
-                            anim_state.current_time = prev_phase * (new_num_frames - 1.0);
-                        }
-                    } else {
-                        warn!("Loco gait requested missing animation ID: {}", gait.anim);
+                    // Sync the new animation length directly to the previous phase percentage
+                    let new_num_frames = anim_state.anim.frames.len().max(1) as f32;
+                    if new_num_frames > 1.0 {
+                        anim_state.current_time = prev_phase * (new_num_frames - 1.0);
                     }
+                } else {
+                    warn!("Loco gait requested missing animation ID: {}", gait.anim);
                 }
             }
         }
@@ -500,7 +500,7 @@ pub fn spawn_mod_file(
             positions: skel
                 .positions
                 .iter()
-                .map(|p| space::to_bevy_space_pos(p))
+                .map(space::to_bevy_space_pos)
                 .collect(),
             parent_indices: skel.parent_indices.clone(),
             names: skel.names.clone(),
@@ -593,10 +593,10 @@ pub fn spawn_oni2_entity(
 
 fn parse_sawtooth_speed(payload: &str) -> f32 {
     let parts: Vec<&str> = payload.split_whitespace().collect();
-    if let Some(idx) = parts.iter().position(|&x| x == "sawtooth") {
-        if idx + 1 < parts.len() {
-            return parts[idx + 1].parse().unwrap_or(0.0);
-        }
+    if let Some(idx) = parts.iter().position(|&x| x == "sawtooth")
+        && idx + 1 < parts.len()
+    {
+        return parts[idx + 1].parse().unwrap_or(0.0);
     }
     0.0
 }
@@ -663,39 +663,37 @@ pub fn load_oni2_entity_type(
         let mut m: Option<Oni2Model> = None;
 
         let mut mod_path = format!("{}/{}", dir, model_file);
-        if !crate::vfs::exists("", &mod_path) {
-            if model_file.ends_with(".mod") {
-                let fallback = model_file.replace(".mod", "0.mod");
-                let fallback_path = format!("{}/{}", dir, fallback);
-                if crate::vfs::exists("", &fallback_path) {
-                    mod_path = fallback_path;
-                }
+        if !crate::vfs::exists("", &mod_path) && model_file.ends_with(".mod") {
+            let fallback = model_file.replace(".mod", "0.mod");
+            let fallback_path = format!("{}/{}", dir, fallback);
+            if crate::vfs::exists("", &fallback_path) {
+                mod_path = fallback_path;
             }
         }
 
-        if crate::vfs::exists("", &mod_path) {
-            if let Some(mut model) = super::layout_loader::load_mod_file(&mod_path) {
-                m = Some(model);
-            }
+        if crate::vfs::exists("", &mod_path)
+            && let Some(model) = super::layout_loader::load_mod_file(&mod_path)
+        {
+            m = Some(model);
         }
 
         if m.is_none() {
             let base_mod = format!("{}/{}.mod", dir, name);
-            if crate::vfs::exists("", &base_mod) {
-                if let Some(mut text_model) = super::layout_loader::load_mod_file(&base_mod) {
-                    text_model.world_space_verts = true;
-                    m = Some(text_model);
-                }
+            if crate::vfs::exists("", &base_mod)
+                && let Some(mut text_model) = super::layout_loader::load_mod_file(&base_mod)
+            {
+                text_model.world_space_verts = true;
+                m = Some(text_model);
             }
         }
 
         if m.is_none() {
             let win32_mod = format!("{}/win32_{}", dir, model_file);
-            if crate::vfs::exists("", &win32_mod) {
-                if let Some(mut model) = super::layout_loader::load_mod_file(&win32_mod) {
-                    model.world_space_verts = true;
-                    m = Some(model);
-                }
+            if crate::vfs::exists("", &win32_mod)
+                && let Some(mut model) = super::layout_loader::load_mod_file(&win32_mod)
+            {
+                model.world_space_verts = true;
+                m = Some(model);
             }
         }
 
@@ -743,7 +741,7 @@ pub fn load_oni2_entity_type(
         .map(|skel| {
             skel.positions
                 .iter()
-                .map(|p| space::to_bevy_space_pos(p))
+                .map(space::to_bevy_space_pos)
                 .collect()
         })
         .unwrap_or_default();
@@ -837,18 +835,18 @@ pub fn load_oni2_entity_type(
             if !m.bone_world_positions.is_empty() {
                 m.bone_world_positions
                     .iter()
-                    .map(|p| space::to_bevy_space_pos(p))
+                    .map(space::to_bevy_space_pos)
                     .collect()
             } else {
                 skel.positions
                     .iter()
-                    .map(|p| space::to_bevy_space_pos(p))
+                    .map(space::to_bevy_space_pos)
                     .collect()
             }
         } else {
             skel.positions
                 .iter()
-                .map(|p| space::to_bevy_space_pos(p))
+                .map(space::to_bevy_space_pos)
                 .collect()
         };
         crate::oni2_loader::spawn::Oni2DebugSkeleton {
@@ -884,15 +882,13 @@ pub fn load_oni2_entity_type(
     let sub_meshes = if let Some(ref m) = model {
         if use_gpu_skinning {
             build_skinned_meshes_by_material(m, skeleton.as_ref().unwrap())
+        } else if let Some(ref skel) = skeleton {
+            let mut model_copy = m.clone();
+            model_copy.bone_world_positions = skel.positions.clone();
+            model_copy.bone_rotations = vec![[0.0, 0.0, 0.0, 1.0]; skel.positions.len()];
+            build_meshes_by_material(&model_copy)
         } else {
-            if let Some(ref skel) = skeleton {
-                let mut model_copy = m.clone();
-                model_copy.bone_world_positions = skel.positions.clone();
-                model_copy.bone_rotations = vec![[0.0, 0.0, 0.0, 1.0]; skel.positions.len()];
-                build_meshes_by_material(&model_copy)
-            } else {
-                build_meshes_by_material(m)
-            }
+            build_meshes_by_material(m)
         }
     } else {
         Vec::new()
@@ -1367,14 +1363,13 @@ pub fn spawn_oni2_entity_with_rotation(
                 Transform::default(),
             ));
 
-            if let Some(anim) = pass_animators.get(pass_idx) {
-                if anim.slides_speed != 0.0
+            if let Some(anim) = pass_animators.get(pass_idx)
+                && (anim.slides_speed != 0.0
                     || anim.slidet_speed != 0.0
                     || anim.rotate_speed != 0.0
-                    || anim.scalet_speed != 0.0
-                {
-                    mesh_ec.insert(anim.clone());
-                }
+                    || anim.scalet_speed != 0.0)
+            {
+                mesh_ec.insert(anim.clone());
             }
 
             if let Some(ref ibp) = ent_type.inverse_bind_poses {
@@ -1431,8 +1426,8 @@ pub fn spawn_oni2_creature(
         Some(anim_name),
     )?;
 
-    let mut min_y = 0.0;
-    let mut max_y = 2.0;
+    let min_y = 0.0;
+    let max_y = 2.0;
 
     // Reverted bounding volume processing. Collision bounds naturally have differing "invisible padding"
     // margins beneath the physical feet vertices per-character, causing variable floats when math'd dynamically.

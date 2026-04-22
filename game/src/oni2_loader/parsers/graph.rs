@@ -36,7 +36,7 @@ pub fn parse_layout_graphs(dir: &str) -> Vec<LayoutGraph> {
     };
 
     let mut names = Vec::new();
-    let mut lines = content
+    let lines = content
         .lines()
         .filter_map(|l| {
             let s = l.trim();

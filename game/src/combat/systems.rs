@@ -39,7 +39,10 @@ const CAPSULE_HALF_HEIGHT: f32 = 1.0;
 /// `Last`-scheduled reset and was vulnerable to schedule mismatches.
 pub fn attack_sync_system(
     mut reader: MessageReader<crate::animator::AnimStartedMessage>,
-    mut query: Query<(&mut AttackState, &crate::oni2_loader::animation::Oni2AnimState)>,
+    mut query: Query<(
+        &mut AttackState,
+        &crate::oni2_loader::animation::Oni2AnimState,
+    )>,
     mut rotation_writer: MessageWriter<ApplyRotationNotchesEvent>,
 ) {
     for msg in reader.read() {
@@ -72,10 +75,10 @@ pub fn attack_sync_system(
             }
         } else {
             let mut new_active = ActiveAttack::default();
-            if let Some(data) = &anim_state.anim.attack_data {
-                if let Some(strike) = &data.strike {
-                    new_active.end_rotation_notches = strike.end_rotation_notches;
-                }
+            if let Some(data) = &anim_state.anim.attack_data
+                && let Some(strike) = &data.strike
+            {
+                new_active.end_rotation_notches = strike.end_rotation_notches;
             }
             attack_state.active_attack = Some(new_active);
         }
@@ -109,7 +112,7 @@ pub fn hit_detection_system(
     mut damage_writer: MessageWriter<DamageMessage>,
     mut injure_writer: MessageWriter<InjureMessage>,
     mut block_success_writer: MessageWriter<BlockSuccessEvent>,
-    mut block_failed_writer: MessageWriter<BlockFailedEvent>,
+    _block_failed_writer: MessageWriter<BlockFailedEvent>,
     mut strike_connected_writer: MessageWriter<StrikeConnectedEvent>,
 ) {
     let now = time.elapsed_secs_f64();
@@ -171,9 +174,9 @@ pub fn hit_detection_system(
         for (
             target_entity,
             target_tf,
-            mut health,
+            health,
             target_fighter,
-            react_lib,
+            _react_lib,
             target_fs_opt,
             block_lib_opt,
             target_anim_opt,
@@ -195,15 +198,13 @@ pub fn hit_detection_system(
                     continue;
                 }
                 // no_react_start_phase: if set, damage only accepted before this phase
-                if fs.no_react_start_phase > 0.0 {
-                    if let Some(tanim) = target_anim_opt {
-                        if tanim.anim.num_frames > 1 {
-                            let tphase =
-                                tanim.current_time / (tanim.anim.num_frames as f32 - 1.0).max(1.0);
-                            if tphase >= fs.no_react_start_phase {
-                                continue;
-                            }
-                        }
+                if fs.no_react_start_phase > 0.0
+                    && let Some(tanim) = target_anim_opt
+                    && tanim.anim.num_frames > 1
+                {
+                    let tphase = tanim.current_time / (tanim.anim.num_frames as f32 - 1.0).max(1.0);
+                    if tphase >= fs.no_react_start_phase {
+                        continue;
                     }
                 }
             }
@@ -313,9 +314,9 @@ pub fn hit_detection_system(
             let atdt_strength = attack_data.strength_class;
             let atdt_target = attack_data.target_class;
             let attack_class = atdt_attack_class.unwrap_or(match strike.hittype {
-                0 | 1 | 2 => AttackClass::Punch,
-                3 | 4 | 5 => AttackClass::Kick,
-                6 | 7 | 8 => AttackClass::Grab,
+                0..=2 => AttackClass::Punch,
+                3..=5 => AttackClass::Kick,
+                6..=8 => AttackClass::Grab,
                 _ => AttackClass::Punch,
             });
             let attack_strength = atdt_strength.unwrap_or(AttackStrength::High);
@@ -376,7 +377,7 @@ pub fn hit_detection_system(
             } else {
                 // ── Not blocked ───────────────────────────────────────────
                 let damage = attack_data.damage;
-                let knockback_dir =
+                let _knockback_dir =
                     (target_tf.translation - attacker_tf.translation).normalize_or_zero();
 
                 injure_writer.write(InjureMessage {
@@ -430,11 +431,7 @@ pub fn process_strike_connections_system(
     for ev in events.read() {
         if let Ok(mut fs) = fs_query.get_mut(ev.attacker) {
             fs.strike_target = Some(ev.target);
-            if ev.headingnotlockedtotarget {
-                fs.clear_st_after_first_use = true;
-            } else {
-                fs.clear_st_after_first_use = false;
-            }
+            fs.clear_st_after_first_use = ev.headingnotlockedtotarget;
         }
     }
 }
@@ -493,7 +490,7 @@ pub fn injure_system(
             mut fighter_opt,
             mut transform_opt,
             hit_reaction_opt,
-            anim_state_opt,
+            _anim_state_opt,
             fighter_type_opt,
         )) = query.get_mut(msg.target)
         else {
@@ -508,10 +505,10 @@ pub fn injure_system(
 
         if is_env_hazard {
             // "not allowed to do environmental damage until you've finished reacting"
-            if let Some(hr) = hit_reaction_opt {
-                if hr.active.is_some() {
-                    continue;
-                }
+            if let Some(hr) = hit_reaction_opt
+                && hr.active.is_some()
+            {
+                continue;
             }
         }
 
@@ -530,17 +527,17 @@ pub fn injure_system(
         if let Some(ref mut fighter) = fighter_opt {
             fighter.facing = fighter.facing; // Trigger mut access
 
-            if let Some(from_pos) = msg.from {
-                if let Some(tf) = &transform_opt {
-                    let mut diff = from_pos - tf.translation;
-                    diff.y = 0.0;
-                    if diff.length_squared() > 0.001 {
-                        let to_attack = diff.normalize_or_zero();
-                        let my_forward = fighter.facing;
-                        let angle = my_forward.dot(to_attack).clamp(-1.0, 1.0).acos();
-                        if angle > 100.0f32.to_radians() {
-                            hit_from_behind = true;
-                        }
+            if let Some(from_pos) = msg.from
+                && let Some(tf) = &transform_opt
+            {
+                let mut diff = from_pos - tf.translation;
+                diff.y = 0.0;
+                if diff.length_squared() > 0.001 {
+                    let to_attack = diff.normalize_or_zero();
+                    let my_forward = fighter.facing;
+                    let angle = my_forward.dot(to_attack).clamp(-1.0, 1.0).acos();
+                    if angle > 100.0f32.to_radians() {
+                        hit_from_behind = true;
                     }
                 }
             }
@@ -567,20 +564,18 @@ pub fn injure_system(
         }
 
         // Face and React
-        if let Some(from_pos) = msg.from {
-            if let Some(ref mut fighter) = fighter_opt {
-                if msg.play_react {
-                    if let Some(ref mut tf) = transform_opt {
-                        let mut to_attacker = (from_pos - tf.translation).normalize_or_zero();
-                        to_attacker.y = 0.0;
-                        if to_attacker.length_squared() > 0.001 {
-                            if reacting_to_hit_from_behind {
-                                to_attacker = -to_attacker;
-                            }
-                            fighter.facing = to_attacker;
-                        }
-                    }
+        if let Some(from_pos) = msg.from
+            && let Some(ref mut fighter) = fighter_opt
+            && msg.play_react
+            && let Some(ref mut tf) = transform_opt
+        {
+            let mut to_attacker = (from_pos - tf.translation).normalize_or_zero();
+            to_attacker.y = 0.0;
+            if to_attacker.length_squared() > 0.001 {
+                if reacting_to_hit_from_behind {
+                    to_attacker = -to_attacker;
                 }
+                fighter.facing = to_attacker;
             }
         }
 
@@ -705,15 +700,14 @@ pub fn hit_reaction_system(
         let mut active = ActiveReaction::new(msg.kind, msg.direction, msg.react_enum);
 
         // Play the ANIMREACT_* animation and record its id for completion detection.
-        if let (Some(ref mut anim_state), Some(lib)) = (anim_state_opt.as_mut(), lib_opt) {
-            if msg.react_enum >= 0 {
-                if let Some(&anim_name) = ANIMREACT_NAMES.get(msg.react_enum as usize) {
-                    if lib.play(anim_name, anim_state) {
-                        active.react_anim_id = AnimId::new(anim_name).0;
-                    } else {
-                        warn!("hit_reaction: react anim '{}' not in library", anim_name);
-                    }
-                }
+        if let (Some(ref mut anim_state), Some(lib)) = (anim_state_opt.as_mut(), lib_opt)
+            && msg.react_enum >= 0
+            && let Some(&anim_name) = ANIMREACT_NAMES.get(msg.react_enum as usize)
+        {
+            if lib.play(anim_name, anim_state) {
+                active.react_anim_id = AnimId::new(anim_name).0;
+            } else {
+                warn!("hit_reaction: react anim '{}' not in library", anim_name);
             }
         }
 
@@ -873,7 +867,10 @@ pub fn telemetry_combat_system(
 }
 
 pub fn ground_detection_system(
-    mut query: Query<(&mut crate::oni2_loader::animation::Oni2AnimState, &ShapeHits)>,
+    mut query: Query<(
+        &mut crate::oni2_loader::animation::Oni2AnimState,
+        &ShapeHits,
+    )>,
     materials: Query<&crate::oni2_loader::components::MaterialType>,
 ) {
     for (mut anim_state, hits) in &mut query {
@@ -894,26 +891,26 @@ pub fn ground_detection_system(
 // fighter_rotation_sync_system
 // ---------------------------------------------------------------------------
 
-/// Central authority for rotating characters. Ensures that `Fighter.facing` is the 
-/// single source of truth for the entity's Y-axis orientation, applying it to both 
-/// the visual `Transform` and Avian's physics `Rotation` component to prevent the 
+/// Central authority for rotating characters. Ensures that `Fighter.facing` is the
+/// single source of truth for the entity's Y-axis orientation, applying it to both
+/// the visual `Transform` and Avian's physics `Rotation` component to prevent the
 /// physics engine from reverting rotation changes made in FixedUpdate.
 pub fn fighter_rotation_sync_system(
     mut query: Query<(
         Entity,
-        &crate::combat::components::Fighter, 
-        &mut Transform, 
-        Option<&mut avian3d::prelude::Rotation>
-    )>
+        &crate::combat::components::Fighter,
+        &mut Transform,
+        Option<&mut avian3d::prelude::Rotation>,
+    )>,
 ) {
-    for (entity, fighter, mut transform, mut rot_opt) in &mut query {
+    for (_entity, fighter, mut transform, rot_opt) in &mut query {
         if fighter.facing.length_squared() > 0.001 {
-            // We use Y-up coordinates, but the model inherently faces local +Z 
-            // (so it looks backwards natively). We must rotate such that its 
+            // We use Y-up coordinates, but the model inherently faces local +Z
+            // (so it looks backwards natively). We must rotate such that its
             // local +Z points ALONG fighter.facing.
             let target_rot = Quat::from_rotation_arc(Vec3::Z, fighter.facing.normalize());
             transform.rotation = target_rot;
-            
+
             if let Some(mut phys_rot) = rot_opt {
                 phys_rot.0 = target_rot;
             }

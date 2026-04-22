@@ -25,60 +25,60 @@ pub fn exec(ctx: &mut OpsCtx, stmt: &Stmt) -> bool {
             true
         }
         Stmt::CameraFollowActor { args } => {
-            if args.len() >= 1 {
-                if let Value::Actor(ent) = ctx.eval(&args[0]) {
-                    ctx.sys_request(SysRequest::CameraFollowActor(ent));
-                }
+            if !args.is_empty()
+                && let Value::Actor(ent) = ctx.eval(&args[0])
+            {
+                ctx.sys_request(SysRequest::CameraFollowActor(ent));
             }
             true
         }
         Stmt::CameraTrackActor { args } => {
-            if args.len() >= 1 {
-                if let Value::Actor(ent) = ctx.eval(&args[0]) {
-                    ctx.sys_request(SysRequest::CameraTrackActor(ent));
-                }
+            if !args.is_empty()
+                && let Value::Actor(ent) = ctx.eval(&args[0])
+            {
+                ctx.sys_request(SysRequest::CameraTrackActor(ent));
             }
             true
         }
         Stmt::CameraTrackPoint { args } => {
-            if args.len() >= 1 {
-                if let Value::Vector(v) = ctx.eval(&args[0]) {
-                    ctx.sys_request(SysRequest::CameraTrackPoint(v));
-                }
+            if !args.is_empty()
+                && let Value::Vector(v) = ctx.eval(&args[0])
+            {
+                ctx.sys_request(SysRequest::CameraTrackPoint(v));
             }
             true
         }
         Stmt::CameraMoveToActor { args } => {
-            if args.len() >= 2 {
-                if let Value::Actor(ent) = ctx.eval(&args[0]) {
-                    let dur = ctx.eval_float(&args[1]);
-                    ctx.sys_request(SysRequest::CameraMoveToActor(ent, dur));
-                }
+            if args.len() >= 2
+                && let Value::Actor(ent) = ctx.eval(&args[0])
+            {
+                let dur = ctx.eval_float(&args[1]);
+                ctx.sys_request(SysRequest::CameraMoveToActor(ent, dur));
             }
             true
         }
         Stmt::CameraMoveToPoint { args } => {
-            if args.len() >= 2 {
-                if let Value::Vector(v) = ctx.eval(&args[0]) {
-                    let dur = ctx.eval_float(&args[1]);
-                    ctx.sys_request(SysRequest::CameraMoveToPoint(v, dur));
-                }
+            if args.len() >= 2
+                && let Value::Vector(v) = ctx.eval(&args[0])
+            {
+                let dur = ctx.eval_float(&args[1]);
+                ctx.sys_request(SysRequest::CameraMoveToPoint(v, dur));
             }
             true
         }
         Stmt::CameraCutToActor { args } => {
-            if args.len() >= 1 {
-                if let Value::Actor(ent) = ctx.eval(&args[0]) {
-                    ctx.sys_request(SysRequest::CameraMoveToActor(ent, 0.0));
-                }
+            if !args.is_empty()
+                && let Value::Actor(ent) = ctx.eval(&args[0])
+            {
+                ctx.sys_request(SysRequest::CameraMoveToActor(ent, 0.0));
             }
             true
         }
         Stmt::CameraCutToPoint { args } => {
-            if args.len() >= 1 {
-                if let Value::Vector(v) = ctx.eval(&args[0]) {
-                    ctx.sys_request(SysRequest::CameraMoveToPoint(v, 0.0));
-                }
+            if !args.is_empty()
+                && let Value::Vector(v) = ctx.eval(&args[0])
+            {
+                ctx.sys_request(SysRequest::CameraMoveToPoint(v, 0.0));
             }
             true
         }

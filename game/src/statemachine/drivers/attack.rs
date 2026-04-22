@@ -32,7 +32,7 @@
 use std::collections::HashMap;
 
 use super::super::core::{SmAdvance, SmDriver, SmRuntime};
-use super::parse::{split_call, ActionParser, EventParser};
+use super::parse::{ActionParser, EventParser, split_call};
 
 // ---------------------------------------------------------------------------
 // AtkAction trait — the polymorphic per-attack behavior unit
@@ -53,7 +53,11 @@ use super::parse::{split_call, ActionParser, EventParser};
 ///     phases of its execution.
 pub trait AtkAction: Send + Sync {
     fn name(&self) -> &str;
-    fn start(&mut self, _ctx: &mut AttackCtx) -> bool {
+    /// One-shot entry.  `output` is available so actions can write an
+    /// `attack_anim`/`block_anim`/etc. pulse synchronously with start —
+    /// matching how `DoAttack` fires in the player FSM (output value
+    /// written at apply_action time, drained by the host this tick).
+    fn start(&mut self, _ctx: &mut AttackCtx, _output: &mut AttackOutput) -> bool {
         true
     }
     fn update(&mut self, _ctx: &mut AttackCtx, _output: &mut AttackOutput, _dt: f32) -> bool {
@@ -78,15 +82,118 @@ macro_rules! atk_action_stub {
             fn name(&self) -> &str {
                 $log_name
             }
-            fn start(&mut self, _ctx: &mut AttackCtx) -> bool {
-                bevy::log::warn!("atk: {} is not implemented (args: '{}')", $log_name, self.args);
+            fn start(&mut self, _ctx: &mut AttackCtx, _output: &mut AttackOutput) -> bool {
+                bevy::log::warn!(
+                    "atk: {} is not implemented (args: '{}')",
+                    $log_name,
+                    self.args
+                );
                 true
             }
         }
     };
 }
 
-atk_action_stub!(ActionAttack, "attack");
+// ActionAttack — real impl.  Mirrors the player FSM's `DoAttack` terminal
+// DNA: write the anim alias into `AttackOutput.attack_anim` at start, then
+// wait for the animation to finish before signaling action-complete.  The
+// host (attack_runtime_update_system) drains `attack_anim` via `do_attack`
+// on the same tick we set it, so the attack anim is playing by the time
+// our next `update` sees `ctx.anim_*` reflecting the new anim.
+pub struct ActionAttack {
+    pub args: String,
+    /// Filled from `self.args` on `start` — the anim alias handed off to
+    /// `do_attack`.  Kept so `update` can check whether the alias it
+    /// started matches what's currently on Oni2AnimState (detect stomp).
+    anim_name: String,
+    /// Set once `ctx.anim_current_time` has caught up to what we started
+    /// (guards against the one-frame "stale prior anim" state).
+    saw_our_anim: bool,
+}
+impl ActionAttack {
+    fn new(args: String) -> Self {
+        Self {
+            args,
+            anim_name: String::new(),
+            saw_our_anim: false,
+        }
+    }
+}
+impl AtkAction for ActionAttack {
+    fn name(&self) -> &str {
+        "attack"
+    }
+    fn start(&mut self, _ctx: &mut AttackCtx, output: &mut AttackOutput) -> bool {
+        let anim = self
+            .args
+            .split_whitespace()
+            .next()
+            .unwrap_or("")
+            .to_string();
+        if anim.is_empty() {
+            bevy::log::warn!("ActionAttack: missing anim alias in args '{}'", self.args);
+            return false;
+        }
+        self.anim_name = anim.clone();
+        self.saw_our_anim = false;
+        output.attack_anim = Some(anim);
+        true
+    }
+    fn update(&mut self, ctx: &mut AttackCtx, _output: &mut AttackOutput, _dt: f32) -> bool {
+        // Wait until we've actually entered our own anim and then until it
+        // plays through.  `anim_num_frames > 1` gates against the initial
+        // zero-state pre-play tick.  `saw_our_anim` flips once we've seen
+        // a tick AFTER the host wired in our anim — without it we'd match
+        // stale-anim end-of-play state left over from the previous action.
+        if ctx.anim_num_frames <= 1 {
+            return false;
+        }
+        if !self.saw_our_anim {
+            if ctx.anim_current_time < 0.5 {
+                self.saw_our_anim = true;
+            }
+            return false;
+        }
+        let last_frame = (ctx.anim_num_frames as f32 - 1.0).max(0.0);
+        !ctx.anim_looping && ctx.anim_current_time >= last_frame
+    }
+}
+
+// ActionWait — elapsed-time wait with dt accumulation.
+pub struct ActionWait {
+    pub args: String,
+    duration: f32,
+    elapsed: f32,
+}
+impl ActionWait {
+    fn new(args: String) -> Self {
+        Self {
+            args,
+            duration: 0.0,
+            elapsed: 0.0,
+        }
+    }
+}
+impl AtkAction for ActionWait {
+    fn name(&self) -> &str {
+        "wait"
+    }
+    fn start(&mut self, _ctx: &mut AttackCtx, _output: &mut AttackOutput) -> bool {
+        self.duration = self
+            .args
+            .split_whitespace()
+            .next()
+            .and_then(|s| s.parse::<f32>().ok())
+            .unwrap_or(0.0);
+        self.elapsed = 0.0;
+        true
+    }
+    fn update(&mut self, _ctx: &mut AttackCtx, _output: &mut AttackOutput, dt: f32) -> bool {
+        self.elapsed += dt;
+        self.elapsed >= self.duration
+    }
+}
+
 atk_action_stub!(ActionCombo, "combo");
 atk_action_stub!(ActionGrapple, "grapple");
 atk_action_stub!(ActionCtrlGrapple, "ctrlgrapple");
@@ -96,7 +203,7 @@ atk_action_stub!(ActionJump, "jump");
 atk_action_stub!(ActionDistance, "distance");
 atk_action_stub!(ActionSideMove, "sidemove");
 atk_action_stub!(ActionAnim, "anim");
-atk_action_stub!(ActionWait, "wait");
+// ActionWait has its own real impl above.
 atk_action_stub!(ActionDefend, "defend");
 atk_action_stub!(ActionBlockSuccess, "blocksuccess");
 atk_action_stub!(ActionBlockFail, "blockfail");
@@ -122,8 +229,12 @@ impl AtkAction for LogAction {
     fn name(&self) -> &str {
         &self.name
     }
-    fn start(&mut self, _ctx: &mut AttackCtx) -> bool {
-        bevy::log::warn!("atk: {} (Fallback) is not implemented (args: '{}')", self.name, self.args);
+    fn start(&mut self, _ctx: &mut AttackCtx, _output: &mut AttackOutput) -> bool {
+        bevy::log::warn!(
+            "atk: {} (Fallback) is not implemented (args: '{}')",
+            self.name,
+            self.args
+        );
         true
     }
 }
@@ -131,7 +242,7 @@ impl AtkAction for LogAction {
 pub fn build_atk_action(name: &str, args: &str) -> Box<dyn AtkAction> {
     let args = args.to_string();
     match name {
-        "attack" => Box::new(ActionAttack { args }),
+        "attack" => Box::new(ActionAttack::new(args)),
         "combo" => Box::new(ActionCombo { args }),
         "grapple" => Box::new(ActionGrapple { args }),
         "ctrlgrapple" => Box::new(ActionCtrlGrapple { args }),
@@ -141,7 +252,7 @@ pub fn build_atk_action(name: &str, args: &str) -> Box<dyn AtkAction> {
         "distance" => Box::new(ActionDistance { args }),
         "sidemove" => Box::new(ActionSideMove { args }),
         "anim" => Box::new(ActionAnim { args }),
-        "wait" => Box::new(ActionWait { args }),
+        "wait" => Box::new(ActionWait::new(args)),
         "defend" => Box::new(ActionDefend { args }),
         "blocksuccess" => Box::new(ActionBlockSuccess { args }),
         "blockfail" => Box::new(ActionBlockFail { args }),
@@ -158,7 +269,10 @@ pub fn build_atk_action(name: &str, args: &str) -> Box<dyn AtkAction> {
         "targetknockeddowncount" => Box::new(ActionTargetKnockedDownCount { args }),
         "targetgoingtobehit" => Box::new(ActionTargetGoingToBeHit { args }),
         "targethealth" => Box::new(ActionTargetHealth { args }),
-        _ => Box::new(LogAction { name: name.to_string(), args }), // Fallback
+        _ => Box::new(LogAction {
+            name: name.to_string(),
+            args,
+        }), // Fallback
     }
 }
 
@@ -170,14 +284,35 @@ pub fn build_atk_action(name: &str, args: &str) -> Box<dyn AtkAction> {
 pub enum AttackEvent {
     /// Always fires.
     Always,
-    /// Fires with probability `p` (0..1).
+    /// Weight-walk step: decrements `runtime.random_budget` by `p`; matches
+    /// when the budget drops to zero or below.  Matches the legacy
+    /// `aiAttackStateMachine::EProbability` evaluator (rb/src/aifight/
+    /// attackstatemachine.cpp:707) which walks a row of weights until the
+    /// accumulator reaches zero.  Budget is re-seeded each tick inside
+    /// `SmRuntime::tick`.
     Probability(f32),
-    /// Fires once a cookie was successfully grabbed this tick.
+    /// Fires while the fighter has the attack cookie (attack-slot granted by
+    /// the coordinator — see `aiFighter::FLAG_GOT_COOKIE`).  Persistent
+    /// across ticks, not pulse-style.
     GotCookie,
     /// Fires when the currently-running action emits the named event.
     Event(String),
     /// Fires once the currently-running action's `update()` returned true.
     Finished,
+    /// Fires while the machine has no action running — first tick after
+    /// entering a state (before its option-action has been started) or the
+    /// tick after `end_current` cleared the slot.  Drives each RUN state's
+    /// "kickoff the option's verb" rule.
+    NoCurrentAction,
+    /// Logical conjunction; matches iff every inner event matches.
+    /// Short-circuits left-to-right.  Inner probability events still
+    /// consume their budget as they're reached, mirroring the legacy
+    /// walk semantics.
+    And(Vec<AttackEvent>),
+    /// Logical disjunction; matches iff any inner event matches.
+    Or(Vec<AttackEvent>),
+    /// Logical negation of the inner event.
+    Not(Box<AttackEvent>),
 }
 
 #[derive(Clone, Debug)]
@@ -201,12 +336,21 @@ pub struct AttackCtx {
     pub current_action: Option<Box<dyn AtkAction>>,
     /// True once `current_action.update()` returned true this tick.
     pub current_finished: bool,
-    /// Set once a successful cookie grab landed this tick.
+    /// Set while this fighter has the attack cookie.  **Persistent** —
+    /// granted by the coordinator (or FightBehavior as a placeholder) and
+    /// cleared when revoked, NOT reset each tick.
     pub got_cookie: bool,
     /// Named events emitted by the running action this tick.
     pub action_events: Vec<String>,
     /// Per-tick delta seconds — the host sets this BEFORE calling `tick()`.
     pub dt: f32,
+    /// Mirrors of the attacker's current Oni2AnimState — actions that need
+    /// to wait for the animation to finish (e.g. ActionAttack) poll these
+    /// to decide when to signal `Finished`.  Host fills them each tick
+    /// before calling `sm.tick`.
+    pub anim_num_frames: i32,
+    pub anim_current_time: f32,
+    pub anim_looping: bool,
 }
 
 impl Default for AttackCtx {
@@ -217,21 +361,39 @@ impl Default for AttackCtx {
             got_cookie: false,
             action_events: Vec::new(),
             dt: 0.0,
+            anim_num_frames: 0,
+            anim_current_time: 0.0,
+            anim_looping: false,
         }
     }
 }
 
 /// Output produced by one tick.  `done` is the terminal flag — the host stops
-/// ticking the attack runtime once this becomes Some.
+/// ticking the attack runtime once this becomes Some.  `attack_anim`/
+/// `block_anim`/`evade_anim`/`custom_anim` are drained by the host via the
+/// shared `do_attack` / `do_block` / … helpers (`statemachine/runtime.rs`)
+/// — the SAME helpers the player's `FsmOutput` drain uses.  That's the
+/// shared DNA: whether `DoAttack ANIMATTACK_1` comes from player.fsm's
+/// rules or from a `.atk` `attack ANIMATTACK_1` verb, it converges on
+/// `Oni2AnimLibrary::play` via the same named helper.
 #[derive(Default)]
 pub struct AttackOutput {
     /// Set to Some(true) on `AFinish`, Some(false) on `AFail`.  None while
     /// the attack is still running.
     pub done: Option<bool>,
     /// Named events the action wants to surface to the host (vfx/sfx triggers
-    /// keyed off action progression).  Currently unused — the action's own
-    /// `update()` should write directly to game state via `_ctx`.
+    /// keyed off action progression).
     pub events: Vec<String>,
+    /// Attack animation alias requested this tick — `ActionAttack::start`
+    /// writes here.  Host calls `do_attack` with this name.
+    pub attack_anim: Option<String>,
+    /// Block animation alias requested this tick.
+    pub block_anim: Option<String>,
+    /// Evade animation alias requested this tick.  Bool is the mirror flag
+    /// (unused today; reserved for left/right-evade asymmetry).
+    pub evade_anim: Option<(String, bool)>,
+    /// Script-requested custom animation alias for the current tick.
+    pub custom_anim: Option<String>,
 }
 
 // ---------------------------------------------------------------------------
@@ -246,14 +408,25 @@ impl SmDriver for AttackDriver {
     type Context = AttackCtx;
     type Output = AttackOutput;
 
-    fn eval_event(
-        ctx: &Self::Context,
-        event: &Self::Event,
-        runtime: &SmRuntime<Self>,
-    ) -> bool {
+    fn eval_event(ctx: &Self::Context, event: &Self::Event, runtime: &SmRuntime<Self>) -> bool {
         match event {
             AttackEvent::Always => true,
-            AttackEvent::Probability(p) => runtime.random_pct < *p,
+            AttackEvent::Probability(p) => {
+                // Walk-by-subtraction — decrement the per-tick budget,
+                // match when it crosses zero.  Matches legacy
+                // aiAttackStateMachine::EProbability (attackstatemachine.cpp:
+                // 707).  `random_budget` is seeded at the top of
+                // `SmRuntime::tick`; we use an atomic f32 (stored as u32
+                // bits) because eval_event takes `&SmRuntime` and Bevy
+                // requires components be Sync.
+                use std::sync::atomic::Ordering;
+                let current_bits = runtime.random_budget.load(Ordering::Relaxed);
+                let new_budget = f32::from_bits(current_bits) - *p;
+                runtime
+                    .random_budget
+                    .store(new_budget.to_bits(), Ordering::Relaxed);
+                new_budget <= 0.0
+            }
             AttackEvent::GotCookie => ctx.got_cookie,
             AttackEvent::Event(name) => {
                 ctx.action_events.iter().any(|e| e == name)
@@ -264,6 +437,10 @@ impl SmDriver for AttackDriver {
                         .unwrap_or(false)
             }
             AttackEvent::Finished => ctx.current_finished,
+            AttackEvent::NoCurrentAction => ctx.current_action.is_none(),
+            AttackEvent::And(events) => events.iter().all(|e| Self::eval_event(ctx, e, runtime)),
+            AttackEvent::Or(events) => events.iter().any(|e| Self::eval_event(ctx, e, runtime)),
+            AttackEvent::Not(inner) => !Self::eval_event(ctx, inner, runtime),
         }
     }
 
@@ -286,7 +463,7 @@ impl SmDriver for AttackDriver {
             AttackAction::Action(name, args) => {
                 end_current(ctx);
                 let mut new_action = build_atk_action(name, args);
-                if call_action_start(ctx, &mut *new_action) {
+                if call_action_start(ctx, output, &mut *new_action) {
                     ctx.current_action = Some(new_action);
                     ctx.current_finished = false;
                 } else {
@@ -295,7 +472,7 @@ impl SmDriver for AttackDriver {
             }
             AttackAction::Resume => {
                 if let Some(mut action) = ctx.current_action.take() {
-                    let _ = call_action_start(ctx, &mut *action);
+                    let _ = call_action_start(ctx, output, &mut *action);
                     ctx.current_action = Some(action);
                 }
             }
@@ -305,10 +482,21 @@ impl SmDriver for AttackDriver {
     }
 
     fn update_running(ctx: &mut Self::Context, output: &mut Self::Output) {
-        // Fresh per-tick state; rule eval will re-read these.
+        // Fresh per-tick ephemeral state.  Note: `got_cookie` is NOT reset
+        // here — it's persistent across ticks, set/cleared externally by
+        // the fight coordinator (or FightBehavior today as a placeholder).
+        // Same for the anim mirror fields — host fills them each tick.
         ctx.action_events.clear();
-        ctx.got_cookie = false;
         ctx.current_finished = false;
+
+        // Drain the per-tick animation-play slots too — these are pulse
+        // outputs (consumed by the host's do_attack/do_block/etc. each
+        // tick), and should not leak across ticks.
+        output.attack_anim = None;
+        output.block_anim = None;
+        output.evade_anim = None;
+        output.custom_anim = None;
+        output.events.clear();
 
         let Some(mut action) = ctx.current_action.take() else {
             return;
@@ -322,9 +510,14 @@ impl SmDriver for AttackDriver {
     }
 }
 
-/// Start an action, passing an exclusive lock on `ctx`.
-fn call_action_start(ctx: &mut AttackCtx, action: &mut dyn AtkAction) -> bool {
-    action.start(ctx)
+/// Start an action, passing an exclusive lock on `ctx` + access to the
+/// tick's `output` (so `ActionAttack::start` can write `attack_anim`).
+fn call_action_start(
+    ctx: &mut AttackCtx,
+    output: &mut AttackOutput,
+    action: &mut dyn AtkAction,
+) -> bool {
+    action.start(ctx, output)
 }
 
 /// End and clear the current action.
@@ -353,6 +546,7 @@ pub fn parse_attack_event(
         "EGotCookie" | "GotCookie" => AttackEvent::GotCookie,
         "EEvent" | "Event" => AttackEvent::Event(args.trim_matches('"').to_string()),
         "EFinished" | "Finished" => AttackEvent::Finished,
+        "ENoCurrentAction" | "NoCurrentAction" => AttackEvent::NoCurrentAction,
         other => return Err(format!("atk: unknown event '{}'", other)),
     })
 }

@@ -29,7 +29,7 @@ use crate::combat::components::Fighter;
 use crate::oni2_loader::animation::{Oni2AnimLibrary, Oni2AnimState};
 use crate::statemachine::core::{SmData, SmRuntime};
 use crate::statemachine::drivers::input::{InputCtx, InputDriver};
-use crate::statemachine::enemy_fsm::EnemyFsmCache;
+use crate::statemachine::pad_fsm::PadFsmCache;
 use crate::statemachine::runtime::{do_attack, do_block, do_custom_anim, do_evade};
 use crate::statemachine::types::{FsmPacket, ctrl_flags, pad_flags};
 
@@ -86,7 +86,7 @@ impl AiFsmRuntime {
 /// FSM name, feed it in here instead of the hard-coded default.
 pub fn ai_attach_fsm_system(
     mut commands: Commands,
-    mut cache: ResMut<EnemyFsmCache>,
+    mut cache: ResMut<PadFsmCache>,
     query: Query<Entity, (Added<AiFighter>, Without<AiFsmRuntime>)>,
 ) {
     for entity in &query {
@@ -184,7 +184,13 @@ pub fn ai_fsm_update_system(
         // kicked it off.
         if let Some((anim_name, rotation_notches)) = &output.attack_anim {
             info!("AI FSM: DoAttack → '{}' (entity {:?})", anim_name, entity);
-            do_attack(anim_lib, &mut anim_state, &mut fighter, anim_name, *rotation_notches);
+            do_attack(
+                anim_lib,
+                &mut anim_state,
+                &mut fighter,
+                anim_name,
+                *rotation_notches,
+            );
         }
         if let Some(anim_name) = &output.block_anim {
             do_block(anim_lib, &mut anim_state, anim_name);

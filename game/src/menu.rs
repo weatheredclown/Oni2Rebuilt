@@ -103,30 +103,28 @@ fn setup_loading_screen(
     let mut loaded_handle = None;
 
     if crate::vfs::exists("", &tex_filename) {
-        if let Ok(tex_bytes) = crate::vfs::read("", &tex_filename) {
-            if let Some((width, height, rgba, _)) =
+        if let Ok(tex_bytes) = crate::vfs::read("", &tex_filename)
+            && let Some((width, height, rgba, _)) =
                 crate::oni2_loader::parsers::texture::decode_tex(&tex_bytes)
-            {
-                let image = Image::new(
-                    bevy::render::render_resource::Extent3d {
-                        width,
-                        height,
-                        depth_or_array_layers: 1,
-                    },
-                    bevy::render::render_resource::TextureDimension::D2,
-                    rgba,
-                    bevy::render::render_resource::TextureFormat::Rgba8UnormSrgb,
-                    default(),
-                );
-                loaded_handle = Some(images.add(image));
-            }
-        }
-    } else if crate::vfs::exists("", &tga_filename) {
-        if let Some((handle, _)) =
-            crate::oni2_loader::parsers::texture::load_tga_file("", &tga_filename, &mut images)
         {
-            loaded_handle = Some(handle);
+            let image = Image::new(
+                bevy::render::render_resource::Extent3d {
+                    width,
+                    height,
+                    depth_or_array_layers: 1,
+                },
+                bevy::render::render_resource::TextureDimension::D2,
+                rgba,
+                bevy::render::render_resource::TextureFormat::Rgba8UnormSrgb,
+                default(),
+            );
+            loaded_handle = Some(images.add(image));
         }
+    } else if crate::vfs::exists("", &tga_filename)
+        && let Some((handle, _)) =
+            crate::oni2_loader::parsers::texture::load_tga_file("", &tga_filename, &mut images)
+    {
+        loaded_handle = Some(handle);
     }
 
     commands.spawn((Camera2d, LoadingScreenEntity));
@@ -191,10 +189,10 @@ fn scan_layouts() -> Vec<(String, String)> {
     match crate::vfs::read_dir(&target_dir) {
         Ok(entries) => {
             for entry in entries {
-                if entry.is_dir {
-                    if let Some(name) = entry.path.split('/').last() {
-                        all_folders.push(name.to_string());
-                    }
+                if entry.is_dir
+                    && let Some(name) = entry.path.split('/').next_back()
+                {
+                    all_folders.push(name.to_string());
                 }
             }
         }
@@ -511,7 +509,7 @@ fn setup_anim_menu(
                             Text::new(format!(
                                 "{}  ->  {}",
                                 alias,
-                                file_path.split('/').last().unwrap_or(file_path)
+                                file_path.split('/').next_back().unwrap_or(file_path)
                             )),
                             TextFont {
                                 font_size: 20.0,
@@ -579,12 +577,12 @@ fn scan_entities(filter_layout: Option<&str>) -> Vec<String> {
     let mut all_folders = Vec::new();
     if let Ok(entries) = crate::vfs::read_dir(&target_dir) {
         for entry in entries {
-            if entry.is_dir {
-                if let Some(name) = entry.path.split('/').last() {
-                    let name_str = name.to_string();
-                    if !use_filter || allowed_entities.contains(&name_str.to_lowercase()) {
-                        all_folders.push(name_str);
-                    }
+            if entry.is_dir
+                && let Some(name) = entry.path.split('/').next_back()
+            {
+                let name_str = name.to_string();
+                if !use_filter || allowed_entities.contains(&name_str.to_lowercase()) {
+                    all_folders.push(name_str);
                 }
             }
         }

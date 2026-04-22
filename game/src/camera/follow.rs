@@ -126,11 +126,7 @@ pub fn follow_camera_system(
             if focus_dist > inner_dz {
                 channel.desired_azimuth = channel.current_focus_azimuth;
 
-                if abs_diff > spin_thresh {
-                    channel.spin_threshold_exceeded = true;
-                } else {
-                    channel.spin_threshold_exceeded = false;
-                }
+                channel.spin_threshold_exceeded = abs_diff > spin_thresh;
             } else {
                 channel.spin_threshold_exceeded = false;
             }

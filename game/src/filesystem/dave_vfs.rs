@@ -114,7 +114,7 @@ impl DaveVfs {
                 let parent = current[..slash_idx].to_string();
                 let basic_name = current[slash_idx + 1..].to_string();
 
-                let list = directories.entry(parent.clone()).or_insert_with(Vec::new);
+                let list = directories.entry(parent.clone()).or_default();
                 if let Some(existing) = list.iter_mut().find(|e| e.path == basic_name) {
                     if current_is_dir {
                         existing.is_dir = true;
@@ -134,7 +134,7 @@ impl DaveVfs {
 
             // Top-level root directory
             if !current.is_empty() {
-                let list = directories.entry("".to_string()).or_insert_with(Vec::new);
+                let list = directories.entry("".to_string()).or_default();
                 if !list.iter().any(|e| e.path == current) {
                     list.push(VfsEntry {
                         path: current.clone(),
@@ -186,7 +186,7 @@ impl Vfs for DaveVfs {
             if entry.compressed_size > 0 && entry.compressed_size < entry.uncompressed_size {
                 // Compressed using Deflate
                 // The python test confirmed that 1A FA 25 DD is a 4-byte header wrapper
-                if raw.len() >= 4 && &raw[0..4] == &[0x1A, 0xFA, 0x25, 0xDD] {
+                if raw.len() >= 4 && raw[0..4] == [0x1A, 0xFA, 0x25, 0xDD] {
                     let mut decoder = DeflateDecoder::new(&raw[4..]);
                     let mut out = Vec::with_capacity(entry.uncompressed_size as usize);
                     decoder.read_to_end(&mut out)?;

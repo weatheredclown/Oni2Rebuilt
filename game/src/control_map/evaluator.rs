@@ -223,10 +223,10 @@ fn eval_method(
         }
     }
     // Exclude block must NOT pass
-    if let Some(excl) = &method.exclude {
-        if eval_input_block(excl, frame, analog_prev, button_press_time, t) {
-            return false;
-        }
+    if let Some(excl) = &method.exclude
+        && eval_input_block(excl, frame, analog_prev, button_press_time, t)
+    {
+        return false;
     }
     true
 }

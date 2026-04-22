@@ -1764,43 +1764,44 @@ fn parse_blocks(
                     );
                 }
             }
-            if let Some(fm) = first_mixed {
-                if fm > 2 && fm + 3 < n_adjuncts {
-                    blk_log!("    around first mixed (rec {}):", fm);
-                    for i in (fm - 2)..(fm + 3).min(n_adjuncts) {
-                        let roff = off + i * 24;
-                        let r: [u32; 6] = std::array::from_fn(|j| read_u32_le(data, roff + j * 4));
-                        let f: [f32; 6] = std::array::from_fn(|j| read_f32_le(data, roff + j * 4));
-                        let is_mixed = r.iter().any(|&v| v > 5000);
-                        if is_mixed {
-                            blk_log!(
-                                "      [{:4}] {:6} {:6} {:6} {:6} {:6} {:6}  f32=({:.3},{:.3},{:.3},{:.3},{:.3},{:.3})",
-                                i,
-                                r[0],
-                                r[1],
-                                r[2],
-                                r[3],
-                                r[4],
-                                r[5],
-                                f[0],
-                                f[1],
-                                f[2],
-                                f[3],
-                                f[4],
-                                f[5]
-                            );
-                        } else {
-                            blk_log!(
-                                "      [{:4}] {:6} {:6} {:6} {:6} {:6} {:6}",
-                                i,
-                                r[0],
-                                r[1],
-                                r[2],
-                                r[3],
-                                r[4],
-                                r[5]
-                            );
-                        }
+            if let Some(fm) = first_mixed
+                && fm > 2
+                && fm + 3 < n_adjuncts
+            {
+                blk_log!("    around first mixed (rec {}):", fm);
+                for i in (fm - 2)..(fm + 3).min(n_adjuncts) {
+                    let roff = off + i * 24;
+                    let r: [u32; 6] = std::array::from_fn(|j| read_u32_le(data, roff + j * 4));
+                    let f: [f32; 6] = std::array::from_fn(|j| read_f32_le(data, roff + j * 4));
+                    let is_mixed = r.iter().any(|&v| v > 5000);
+                    if is_mixed {
+                        blk_log!(
+                            "      [{:4}] {:6} {:6} {:6} {:6} {:6} {:6}  f32=({:.3},{:.3},{:.3},{:.3},{:.3},{:.3})",
+                            i,
+                            r[0],
+                            r[1],
+                            r[2],
+                            r[3],
+                            r[4],
+                            r[5],
+                            f[0],
+                            f[1],
+                            f[2],
+                            f[3],
+                            f[4],
+                            f[5]
+                        );
+                    } else {
+                        blk_log!(
+                            "      [{:4}] {:6} {:6} {:6} {:6} {:6} {:6}",
+                            i,
+                            r[0],
+                            r[1],
+                            r[2],
+                            r[3],
+                            r[4],
+                            r[5]
+                        );
                     }
                 }
             }
@@ -1944,7 +1945,9 @@ mod tests {
     fn init_test_vfs() {
         crate::set_assets_path("../../oni2/zips/assets");
         let mut multi = crate::filesystem::vfs::MultiVfs::new();
-        multi.push(Box::new(crate::filesystem::vfs::DiskVfs::new(crate::get_assets_path().to_string())));
+        multi.push(Box::new(crate::filesystem::vfs::DiskVfs::new(
+            crate::get_assets_path().to_string(),
+        )));
         crate::filesystem::vfs::set_vfs(Box::new(multi));
     }
 

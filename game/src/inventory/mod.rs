@@ -22,10 +22,7 @@ use bevy::prelude::*;
 
 use crate::menu::AppState;
 
-pub use components::{
-    ConsumableItemType, Inventory, InventoryTypeData, ItemBaseData, ItemEffect, ItemRegistry,
-    ItemSlot, Pickup, WeaponItemRegistry, WeaponItemType, WeaponSlot,
-};
+pub use components::{ItemRegistry, WeaponItemRegistry};
 pub use events::{
     AddItemByNameMessage, AddWeaponByNameMessage, DeleteItemMessage, DeleteWeaponMessage,
     DropAllMessage, DropItemMessage, DropWeaponMessage, InventoryAimMessage, InventoryFireMessage,

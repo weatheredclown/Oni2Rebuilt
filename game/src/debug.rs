@@ -78,10 +78,10 @@ fn update_fps_counter(
     mut query: Query<&mut Text, With<FpsText>>,
 ) {
     for mut text in &mut query {
-        if let Some(diag) = diagnostics.get(&FrameTimeDiagnosticsPlugin::FPS) {
-            if let Some(val) = diag.smoothed() {
-                *text = Text::new(format!("FPS: {val:.0}"));
-            }
+        if let Some(diag) = diagnostics.get(&FrameTimeDiagnosticsPlugin::FPS)
+            && let Some(val) = diag.smoothed()
+        {
+            *text = Text::new(format!("FPS: {val:.0}"));
         }
     }
 }
@@ -237,10 +237,10 @@ fn cleanup_debug_names(mut removed: RemovedComponents<Name>) {
 
 /// Formats an Entity's name for debug printing, falling back to its ID if no Name is present.
 pub fn debug_name(entity: Entity) -> String {
-    if let Ok(map) = DEBUG_NAMES.read() {
-        if let Some(name) = map.get(&entity) {
-            return name.clone();
-        }
+    if let Ok(map) = DEBUG_NAMES.read()
+        && let Some(name) = map.get(&entity)
+    {
+        return name.clone();
     }
     format!("{:?}", entity)
 }
@@ -271,10 +271,10 @@ fn cleanup_debug_types(mut removed: RemovedComponents<crate::oni2_loader::compon
 
 /// Retrieves an Entity's BoundType string if it has one, otherwise returns "Actor/Prop".
 pub fn debug_type(entity: Entity) -> String {
-    if let Ok(map) = DEBUG_TYPES.read() {
-        if let Some(bt) = map.get(&entity) {
-            return bt.clone();
-        }
+    if let Ok(map) = DEBUG_TYPES.read()
+        && let Some(bt) = map.get(&entity)
+    {
+        return bt.clone();
     }
     "Actor/Prop".to_string()
 }

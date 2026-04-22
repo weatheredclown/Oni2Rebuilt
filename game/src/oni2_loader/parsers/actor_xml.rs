@@ -148,7 +148,7 @@ fn extract_component(chain: &[String], has_components: bool, tag: &str) -> Optio
                 requested = true;
             }
             merged.push_str(&block);
-            merged.push_str("\n");
+            merged.push('\n');
         }
     }
 
@@ -166,7 +166,7 @@ trait OptionExt {
 impl OptionExt for Option<String> {
     fn is_none_or_empty_hint(&self) -> bool {
         self.as_deref()
-            .map_or(true, |v| v.eq_ignore_ascii_case("none"))
+            .is_none_or(|v| v.eq_ignore_ascii_case("none"))
     }
 }
 
@@ -202,10 +202,10 @@ pub fn parse_actor_xml(dir: &str, filename: &str, template_dir: &str) -> Option<
     // since they are heavily nested and commonly exist in 'Prop' or the root.
     for content in &chain {
         // Fallback or override values
-        if let Some(v) = extract_xml_attr(content, "EntityType") {
-            if !v.eq_ignore_ascii_case("none") {
-                entity_type = Some(v);
-            }
+        if let Some(v) = extract_xml_attr(content, "EntityType")
+            && !v.eq_ignore_ascii_case("none")
+        {
+            entity_type = Some(v);
         }
         if let Some(v) = extract_root_xml_attr(content, "updatestate") {
             updatestate = Some(v);
@@ -242,14 +242,14 @@ pub fn parse_actor_xml(dir: &str, filename: &str, template_dir: &str) -> Option<
 
     // Extract Animator props
     let mut animator_type: Option<String> = None;
-    if let Some(block) = animator_block {
-        if let Some(v) = extract_xml_attr(&block, "AnimatorType") {
-            animator_type = Some(v);
-        }
+    if let Some(block) = animator_block
+        && let Some(v) = extract_xml_attr(&block, "AnimatorType")
+    {
+        animator_type = Some(v);
     }
 
     // Extract Creature props
-    let mut is_creature = creature_block.is_some();
+    let is_creature = creature_block.is_some();
     let mut is_player = false;
     let mut faction: Option<String> = None;
     if let Some(block) = &creature_block {
@@ -299,10 +299,10 @@ pub fn parse_actor_xml(dir: &str, filename: &str, template_dir: &str) -> Option<
 
     // Extract BroadcastTrigger props
     let mut broadcast_radius: Option<f32> = None;
-    if let Some(block) = broadcast_block {
-        if let Some(v) = extract_xml_attr(&block, "Radius") {
-            broadcast_radius = v.parse().ok();
-        }
+    if let Some(block) = broadcast_block
+        && let Some(v) = extract_xml_attr(&block, "Radius")
+    {
+        broadcast_radius = v.parse().ok();
     }
 
     let checkpoint_block = extract_component(&chain, has_components_xml, "CheckpointTrigger");
@@ -321,12 +321,11 @@ pub fn parse_actor_xml(dir: &str, filename: &str, template_dir: &str) -> Option<
     // template chain so derived actors (e.g. Konoko) inherit the parent's weapon.
     let inventory_block = extract_component(&chain, has_components_xml, "Inventory");
     let mut weapon_string: Option<String> = None;
-    if let Some(block) = inventory_block {
-        if let Some(w) = extract_xml_attr(&block, "WeaponString") {
-            if !w.is_empty() {
-                weapon_string = Some(w);
-            }
-        }
+    if let Some(block) = inventory_block
+        && let Some(w) = extract_xml_attr(&block, "WeaponString")
+        && !w.is_empty()
+    {
+        weapon_string = Some(w);
     }
 
     // <Behavior> ... <Pad_FSM value="player"/> ... — which input FSM to load
@@ -335,17 +334,17 @@ pub fn parse_actor_xml(dir: &str, filename: &str, template_dir: &str) -> Option<
     // (rb behavior/pad.cpp:267).
     let behavior_block = extract_component(&chain, has_components_xml, "Behavior");
     let mut pad_fsm: Option<String> = None;
-    if let Some(block) = behavior_block {
-        if let Some(v) = extract_xml_attr(&block, "Pad_FSM") {
-            let trimmed = v.trim();
-            if !trimmed.is_empty() {
-                // Strip trailing `.fsm` so callers can pass the bare name to the cache.
-                let stripped = trimmed
-                    .strip_suffix(".fsm")
-                    .or_else(|| trimmed.strip_suffix(".FSM"))
-                    .unwrap_or(trimmed);
-                pad_fsm = Some(stripped.to_string());
-            }
+    if let Some(block) = behavior_block
+        && let Some(v) = extract_xml_attr(&block, "Pad_FSM")
+    {
+        let trimmed = v.trim();
+        if !trimmed.is_empty() {
+            // Strip trailing `.fsm` so callers can pass the bare name to the cache.
+            let stripped = trimmed
+                .strip_suffix(".fsm")
+                .or_else(|| trimmed.strip_suffix(".FSM"))
+                .unwrap_or(trimmed);
+            pad_fsm = Some(stripped.to_string());
         }
     }
 
@@ -399,10 +398,10 @@ pub fn parse_actor_xml(dir: &str, filename: &str, template_dir: &str) -> Option<
         // Fallback for standalone FXType tag in old maps
         for content in &chain {
             let fx_alone = extract_xml_block(content, "FXType");
-            if let Some(block) = fx_alone {
-                if let Some(v) = extract_xml_attr(&block, "value") {
-                    fx_type = Some(v);
-                }
+            if let Some(block) = fx_alone
+                && let Some(v) = extract_xml_attr(&block, "value")
+            {
+                fx_type = Some(v);
             }
         }
     }
@@ -411,12 +410,12 @@ pub fn parse_actor_xml(dir: &str, filename: &str, template_dir: &str) -> Option<
 
     let has_fight_ai = fight_ai_block.is_some();
     let mut attack_table: Option<String> = None;
-    if let Some(block) = fight_ai_block {
-        if let Some(v) = extract_xml_attr(&block, "AttackTable").or_else(|| extract_xml_attr(&block, "Table")) {
-            if !v.is_empty() {
-                attack_table = Some(v);
-            }
-        }
+    if let Some(block) = fight_ai_block
+        && let Some(v) =
+            extract_xml_attr(&block, "AttackTable").or_else(|| extract_xml_attr(&block, "Table"))
+        && !v.is_empty()
+    {
+        attack_table = Some(v);
     }
 
     Some(LayoutActor {

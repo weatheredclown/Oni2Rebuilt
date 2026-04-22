@@ -45,8 +45,7 @@ impl Action for FallAction {
     }
 
     fn can_enter(&self, ctx: &ActionCtx<'_>, _subaction: i32) -> bool {
-        !ctx.ap
-            .find_at_least_one_flag(action_flags::REJECTLIST_FALL)
+        !ctx.ap.find_at_least_one_flag(action_flags::REJECTLIST_FALL)
     }
 
     fn on_enter(&mut self, ctx: &mut ActionCtx<'_>, _subaction: i32) {
@@ -62,8 +61,8 @@ impl Action for FallAction {
         //   Parent->GetAnimation(ANIMCATEGORY_JUMP, ANIMJUMP_VERTICAL_3_EXT)
         // — the "extended vertical-3" airborne hold variant.  That's the
         // real fall-loop alias, not the forward-float we were using.
-        let entry = AnimScheduleEntry::new("ANIMJUMP_VERTICAL_3_EXT", sub_state_1::IDLE)
-            .with_hold();
+        let entry =
+            AnimScheduleEntry::new("ANIMJUMP_VERTICAL_3_EXT", sub_state_1::IDLE).with_hold();
         if ctx.lib.play(&entry.alias, ctx.anim_state) {
             ctx.anim_state.speed_multiplier = entry.rate;
             ctx.anim_state.looping = entry.hold_at_end;
@@ -100,10 +99,8 @@ impl Action for FallAction {
                     // Try to swap to a LAND entry.  If the alias is
                     // missing, skip straight to Finished so the action
                     // tears down and locomotion unfreezes.
-                    let land_entry = AnimScheduleEntry::new(
-                        "ANIMJUMP_VERTICAL_4",
-                        sub_state_1::JUMP_LAND,
-                    );
+                    let land_entry =
+                        AnimScheduleEntry::new("ANIMJUMP_VERTICAL_4", sub_state_1::JUMP_LAND);
                     if ctx.lib.play(&land_entry.alias, ctx.anim_state) {
                         ctx.anim_state.speed_multiplier = land_entry.rate;
                         ctx.anim_state.looping = land_entry.hold_at_end;

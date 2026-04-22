@@ -225,10 +225,10 @@ impl NavGraph {
 
             for &(next, w) in &self.adj[index] {
                 // Check if edge is blocked by a closed door
-                if let Some(&door_id) = self.edge_doors.get(&(index, next)) {
-                    if !self.doors_open[door_id] {
-                        continue;
-                    }
+                if let Some(&door_id) = self.edge_doors.get(&(index, next))
+                    && !self.doors_open[door_id]
+                {
+                    continue;
                 }
 
                 let next_cost = cost + w;
@@ -406,12 +406,12 @@ pub fn retreat_steering_system(
             escape_dir = tf.local_z().normalize_or_zero();
         }
 
-        if let Some(target) = retreating.avoid_target {
-            if let Ok((_, target_tf, _)) = all_factions.get(target) {
-                // If script explicitly requested retreating from this specific person, override with away vector
-                let away = pos - target_tf.translation;
-                escape_dir = away.normalize_or_zero();
-            }
+        if let Some(target) = retreating.avoid_target
+            && let Ok((_, target_tf, _)) = all_factions.get(target)
+        {
+            // If script explicitly requested retreating from this specific person, override with away vector
+            let away = pos - target_tf.translation;
+            escape_dir = away.normalize_or_zero();
         }
 
         escape_dir.y = 0.0;

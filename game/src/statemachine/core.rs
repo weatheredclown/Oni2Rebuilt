@@ -34,6 +34,7 @@
  */
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU32, Ordering};
 
 // ---------------------------------------------------------------------------
 // Public trait — each concrete machine implements this.
@@ -68,11 +69,7 @@ pub trait SmDriver: Sized + 'static {
     /// Evaluate a rule's guard against the current context + runtime.  Pure
     /// predicate — must not mutate anything.  Returning `true` makes the
     /// rule "match"; `SmRule.negated` then flips the sense of the match.
-    fn eval_event(
-        ctx: &Self::Context,
-        event: &Self::Event,
-        runtime: &SmRuntime<Self>,
-    ) -> bool;
+    fn eval_event(ctx: &Self::Context, event: &Self::Event, runtime: &SmRuntime<Self>) -> bool;
 
     /// Apply one action's side effects.  Writes mutations to `ctx` and the
     /// tick `output`.  For state changes, request them via `adv.goto(n)` or
@@ -88,10 +85,7 @@ pub trait SmDriver: Sized + 'static {
     /// Optional hook fired once per tick BEFORE rule evaluation.  Used by
     /// drivers whose Actions have a per-tick lifecycle beyond "fire once"
     /// (e.g. `AttackDriver`'s `aiAtkAction::Update`).  Default is a no-op.
-    fn update_running(
-        _ctx: &mut Self::Context,
-        _output: &mut Self::Output,
-    ) {}
+    fn update_running(_ctx: &mut Self::Context, _output: &mut Self::Output) {}
 
     /// When a rule whose event matches THIS predicate causes a successful
     /// `goto`, the runtime immediately re-evaluates the destination state in
@@ -247,8 +241,18 @@ pub struct SmRuntime<D: SmDriver> {
     /// the caller (we don't own a clock — the host system passes `dt`).
     pub elapsed: f32,
     /// Random value in [0, 1) — refreshed each tick from the RNG.  Used by
-    /// probability-gated events.
+    /// threshold-style probability events (e.g. `FsmEvent::Random(p)` — fires
+    /// iff `random_pct < p`).
     pub random_pct: f32,
+
+    /// Walk-style budget — seeded each tick to a fresh [0,1) roll, but
+    /// mutable-through-shared-reference via an atomic f32 (stored as
+    /// u32 bits; Bevy components must be Send+Sync so `Cell` is out).
+    /// `AttackEvent::Probability(p)` uses this: each rule in a pick-row
+    /// subtracts `p`; the first rule whose subtraction drives the budget
+    /// to `<= 0` fires.  Mirrors legacy `aiAttackStateMachine::
+    /// EProbability` (rb/src/aifight/attackstatemachine.cpp:707).
+    pub random_budget: AtomicU32,
 
     /// xorshift seed.  Pub so the host can synchronize a shadow runtime to a
     /// production one for parity testing.
@@ -263,6 +267,7 @@ impl<D: SmDriver> SmRuntime<D> {
             timer_start: 0.0,
             elapsed: 0.0,
             random_pct: 0.0,
+            random_budget: AtomicU32::new(0_f32.to_bits()),
             rng_seed: 0xdeadbeef_cafebabe,
         }
     }
@@ -283,6 +288,12 @@ impl<D: SmDriver> SmRuntime<D> {
     /// `Output`.
     pub fn tick(&mut self, ctx: &mut D::Context) -> D::Output {
         self.random_pct = self.advance_rng();
+        // Seed the walk budget with a fresh roll.  Drivers that consume
+        // it (AttackDriver::Probability) decrement and consider a match
+        // when the value crosses zero.  Stored as f32 bits in the atomic.
+        let walk_seed = self.advance_rng();
+        self.random_budget
+            .store(walk_seed.to_bits(), Ordering::Relaxed);
 
         let mut output = D::Output::default();
         D::update_running(ctx, &mut output);

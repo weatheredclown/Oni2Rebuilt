@@ -325,7 +325,7 @@ pub struct ActionPlayer {
     pub animator_tilt: f32,
     /// Smoothed current-slope value (used to pick up/down slope variants).
     pub animator_slope: f32,
-    
+
     pub jumps_remaining: u8,
     pub max_jumps: u8,
 }

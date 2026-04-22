@@ -96,8 +96,8 @@ fn ballistic_aim(
     let theta = tan_theta.atan();
 
     let horiz = Vec3::new(diff.x, 0.0, diff.z).normalize_or_zero();
-    let dir = (horiz * theta.cos() + Vec3::Y * theta.sin()).normalize_or_zero();
-    dir
+
+    (horiz * theta.cos() + Vec3::Y * theta.sin()).normalize_or_zero()
 }
 
 /// Apply a Weapon's `aim` field, computing a firing direction given the
@@ -301,24 +301,19 @@ pub fn weapon_attachment_system(
             }
         }
 
-        if let Some(anim_state) = anim_state {
-            if let Some(&joint_entity) = anim_state.joint_entities.get(bone_idx) {
-                if let Ok(joint_gtf) = joints.get(joint_entity) {
-                    let (_, bone_rot, bone_pos) = joint_gtf.to_scale_rotation_translation();
+        if let Some(anim_state) = anim_state
+            && let Some(&joint_entity) = anim_state.joint_entities.get(bone_idx)
+            && let Ok(joint_gtf) = joints.get(joint_entity)
+        {
+            let (_, bone_rot, bone_pos) = joint_gtf.to_scale_rotation_translation();
 
-                    let local_grip_rot = Quat::from_euler(
-                        EulerRot::XYZ,
-                        grip_eulers.x,
-                        grip_eulers.y,
-                        grip_eulers.z,
-                    );
-                    let world_rot = bone_rot * local_grip_rot;
-                    let world_pos = bone_pos + bone_rot * grip_offset;
+            let local_grip_rot =
+                Quat::from_euler(EulerRot::XYZ, grip_eulers.x, grip_eulers.y, grip_eulers.z);
+            let world_rot = bone_rot * local_grip_rot;
+            let world_pos = bone_pos + bone_rot * grip_offset;
 
-                    weapon_tf.translation = world_pos;
-                    weapon_tf.rotation = world_rot;
-                }
-            }
+            weapon_tf.translation = world_pos;
+            weapon_tf.rotation = world_rot;
         }
     }
 }

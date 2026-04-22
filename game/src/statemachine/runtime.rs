@@ -14,15 +14,15 @@ use super::core::{SmData, SmRuntime};
 use super::drivers::input::{InputCtx, InputDriver};
 use super::types::*;
 use super::types::{ctrl_flags, pad_flags};
+use crate::animator::events::EndActionMessage;
 use crate::combat::components::{Fighter, Health};
 use crate::combat::events::DamageMessage;
-use std::collections::HashSet;
 use crate::control_map::PadMapper;
 use crate::fight_vector::{FightVectorTrigger, facing_within, find_fight_trigger_vector};
 use crate::oni2_loader::{Oni2AnimLibrary, Oni2AnimState};
 use crate::player::components::{InputState, Player};
 use crate::statemachine::drivers::animator::AnimatorCtx;
-use crate::animator::events::EndActionMessage;
+use std::collections::HashSet;
 
 // ---------------------------------------------------------------------------
 // FsmRuntime — per-entity state-machine runtime
@@ -323,10 +323,10 @@ pub fn build_fsm_packet(
     }
 
     let mut has_weapon = None;
-    if let Some(inv) = inventory {
-        if let Some(slot) = inv.current_weapon_slot() {
-            has_weapon = Some(slot.ty.base.name.to_uppercase());
-        }
+    if let Some(inv) = inventory
+        && let Some(slot) = inv.current_weapon_slot()
+    {
+        has_weapon = Some(slot.ty.base.name.to_uppercase());
     }
 
     FsmPacket {
@@ -479,7 +479,7 @@ pub fn fsm_update_system(
         mut anim_state,
         anim_lib,
         gtf,
-        mut transform,
+        _transform,
         fighter_state_opt,
         inventory_opt,
     ) in &mut query
@@ -497,11 +497,7 @@ pub fn fsm_update_system(
         // than a shared bool on the component — see the top of the
         // system for the event drain.  The `previous.is_some()` guard
         // suppresses the very first anim play (no prior anim yet).
-        if newly_started_anims
-            .get(&entity)
-            .copied()
-            .unwrap_or(false)
-        {
+        if newly_started_anims.get(&entity).copied().unwrap_or(false) {
             runtime.ctx.queued_attack = false;
             runtime.ctx.queued_attack_two = false;
         }
@@ -509,7 +505,13 @@ pub fn fsm_update_system(
         let (gated_input, is_critical_frame) =
             apply_timing_windows(&mut runtime, input, &anim_state);
 
-        let mut packet = build_fsm_packet(&gated_input, anim_state.is_grounded, &pad_mapper, fighter_state_opt, inventory_opt);
+        let mut packet = build_fsm_packet(
+            &gated_input,
+            anim_state.is_grounded,
+            &pad_mapper,
+            fighter_state_opt,
+            inventory_opt,
+        );
         if is_critical_frame {
             packet.ctrl_flags |= ctrl_flags::CRITICAL_FRAME;
         }
@@ -540,14 +542,20 @@ pub fn fsm_update_system(
                 "FSM: DoAttack → '{}', pad_flags: {:#x}, ctrl_flags: {:#x}",
                 anim_name, packet.pad_flags, packet.ctrl_flags
             );
-            do_attack(&anim_lib, &mut anim_state, &mut fighter, anim_name, *rotation_notches);
+            do_attack(
+                anim_lib,
+                &mut anim_state,
+                &mut fighter,
+                anim_name,
+                *rotation_notches,
+            );
         } else if let Some(anim_name) = &output.block_anim {
             info!("FSM: DoBlock → '{}'", anim_name);
-            do_block(&anim_lib, &mut anim_state, anim_name);
+            do_block(anim_lib, &mut anim_state, anim_name);
         } else if let Some((anim_name, mirror)) = &output.evade_anim {
-            do_evade(&anim_lib, &mut anim_state, anim_name, *mirror);
+            do_evade(anim_lib, &mut anim_state, anim_name, *mirror);
         } else if let Some(anim_name) = &output.custom_anim {
-            do_custom_anim(&anim_lib, &mut anim_state, anim_name);
+            do_custom_anim(anim_lib, &mut anim_state, anim_name);
         }
     }
 }
@@ -607,7 +615,7 @@ pub fn animator_update_system(
     for msg in damage_reader.read() {
         damaged_entities.insert(msg.target);
     }
-    
+
     // Collect who explicitly ended a pipelined or scheduled action
     let mut finished_actions = HashSet::new();
     for msg in end_action_reader.read() {
@@ -620,7 +628,7 @@ pub fn animator_update_system(
     for (entity, mut runtime, anim_state_opt, health_opt, ap_opt, active_action_opt) in &mut query {
         runtime.sm.advance_clock(dt);
 
-        let is_grounded = anim_state_opt.map_or(true, |s| s.is_grounded); // Fallback to grounded
+        let is_grounded = anim_state_opt.is_none_or(|s| s.is_grounded); // Fallback to grounded
         let ground_regained = is_grounded && !runtime.previous_grounded;
         let ground_lost = !is_grounded && runtime.previous_grounded;
         runtime.previous_grounded = is_grounded;
@@ -637,10 +645,10 @@ pub fn animator_update_system(
 
         runtime.ctx.active_pad_cmds = active_pad_cmds.clone();
         runtime.ctx.pressed_pad_cmds = pressed_pad_cmds;
-        runtime.ctx.jumps_available = ap_opt.map_or(false, |a| a.jumps_remaining > 0);
+        runtime.ctx.jumps_available = ap_opt.is_some_and(|a| a.jumps_remaining > 0);
         runtime.ctx.ground_lost_this_tick = ground_lost;
         runtime.ctx.ground_regained_this_tick = ground_regained;
-        
+
         runtime.ctx.damage_this_tick = damaged_entities.contains(&entity);
         runtime.ctx.health_zero = health_opt.map(|h| h.current <= 0.0).unwrap_or(false);
 
@@ -655,24 +663,30 @@ pub fn animator_update_system(
             } else {
                 // Not actively running a new pipelined action.
                 // Was it explicitly finished this tick? OR fall back to legacy animation check.
-                finished_actions.contains(&entity) || anim_state_opt.map_or(false, |s| {
-                    !s.looping && s.current_time >= (s.anim.num_frames as f32 - 1.0).max(0.0)
-                })
+                finished_actions.contains(&entity)
+                    || anim_state_opt.is_some_and(|s| {
+                        !s.looping && s.current_time >= (s.anim.num_frames as f32 - 1.0).max(0.0)
+                    })
             }
         } else {
             // No ActiveAction component. Fall back to legacy animation check.
-            finished_actions.contains(&entity) || anim_state_opt.map_or(false, |s| {
-                !s.looping && s.current_time >= (s.anim.num_frames as f32 - 1.0).max(0.0)
-            })
+            finished_actions.contains(&entity)
+                || anim_state_opt.is_some_and(|s| {
+                    !s.looping && s.current_time >= (s.anim.num_frames as f32 - 1.0).max(0.0)
+                })
         };
-        
-        runtime.ctx.current_mode = runtime.sm.data.state_name(runtime.sm.current_state).to_string();
+
+        runtime.ctx.current_mode = runtime
+            .sm
+            .data
+            .state_name(runtime.sm.current_state)
+            .to_string();
 
         let runtime = runtime.into_inner();
         let prev_state_idx = runtime.sm.current_state;
 
         let output = runtime.sm.tick(&mut runtime.ctx);
-        
+
         let new_state_idx = runtime.sm.current_state;
         if prev_state_idx != new_state_idx {
             bevy::log::info!(
@@ -682,7 +696,7 @@ pub fn animator_update_system(
                 runtime.sm.data.state_name(new_state_idx)
             );
         }
-        
+
         for broadcast in output.broadcasts {
             event_writer.write(AnimatorBroadcastEvent {
                 entity,

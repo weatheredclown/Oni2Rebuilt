@@ -8,7 +8,6 @@
  */
 use super::block_parser::BlockParser;
 use bevy::prelude::*;
-use std::collections::HashMap;
 
 #[derive(Debug, Clone)]
 pub struct ParticleSystemDef {

@@ -7,7 +7,7 @@
  */
 use super::OpsCtx;
 use crate::scroni::ast::Stmt;
-use crate::scroni::vm::{BlockingAction, ExecState, SysRequest, Value};
+use crate::scroni::vm::{BlockingAction, SysRequest, Value};
 use bevy::prelude::*;
 
 pub fn exec(ctx: &mut OpsCtx, stmt: &Stmt) -> bool {

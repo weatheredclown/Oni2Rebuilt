@@ -95,7 +95,7 @@ pub fn apply_camera_transform(
 ) {
     let dt = time.delta_secs();
 
-    for (controller, mut channel, mut cam_tf, mut projection) in &mut camera_query {
+    for (_controller, mut channel, mut cam_tf, mut projection) in &mut camera_query {
         if let Projection::Perspective(ref mut persp) = *projection {
             persp.fov = channel.current_fov.to_radians();
         }
@@ -126,26 +126,6 @@ pub fn apply_camera_transform(
         );
 
         let mut desired_pos = target_base + offset;
-
-        // DEBUG PRINT
-        if channel.is_moving && rand::random::<f32>() < 0.01 {
-            info!(
-                "[CAM-DEBUG] \n\
-                 total_incline: {:.3} rads ({:.1} deg)\n\
-                 dist: {:.2}m\n\
-                 focus_offset: {:?}\n\
-                 target_base: {:?}\n\
-                 offset: {:?}\n\
-                 cam_tf_translation: {:?}",
-                total_incline,
-                total_incline.to_degrees(),
-                dist,
-                channel.current_focus_offset,
-                target_base,
-                offset,
-                cam_tf.translation
-            );
-        }
 
         // Environmental collision spherecast
         let dir = desired_pos - target_base;

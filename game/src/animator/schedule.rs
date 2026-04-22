@@ -222,7 +222,7 @@ pub fn anim_schedule_tick_system(
             let total = (state.anim.num_frames as f32 - 1.0).max(0.0);
             !state.looping && state.current_time >= total && total > 0.0
         };
-        let hold = sched.current().map_or(false, |e| e.hold_at_end);
+        let hold = sched.current().is_some_and(|e| e.hold_at_end);
         if at_end && !hold {
             sched.cursor += 1;
             if sched.cursor >= sched.entries.len() {

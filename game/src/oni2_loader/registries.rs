@@ -219,11 +219,11 @@ pub fn try_load_ptx(
     }
 
     let ptx_filename = format!("{}.ptx", name);
-    if let Ok(content) = vfs::read_to_string("Settings", &ptx_filename) {
-        if let Some(def) = parse_ptx(&content, name.to_string(), asset_server, images) {
-            ptx_lib.systems.insert(lower_name, def);
-            return;
-        }
+    if let Ok(content) = vfs::read_to_string("Settings", &ptx_filename)
+        && let Some(def) = parse_ptx(&content, name.to_string(), asset_server, images)
+    {
+        ptx_lib.systems.insert(lower_name, def);
+        return;
     }
 
     // Case-insensitive search inside Settings/ folder as fallback
@@ -237,12 +237,12 @@ pub fn try_load_ptx(
             {
                 // vfs read_dir returns full paths, but read_to_string requires (dir, filename)
                 // We'll extract the filename component safely.
-                let fallback_filename = entry.path.split('/').last().unwrap_or("");
-                if let Ok(content) = vfs::read_to_string("Settings", fallback_filename) {
-                    if let Some(def) = parse_ptx(&content, name.to_string(), asset_server, images) {
-                        ptx_lib.systems.insert(lower_name, def);
-                        return;
-                    }
+                let fallback_filename = entry.path.split('/').next_back().unwrap_or("");
+                if let Ok(content) = vfs::read_to_string("Settings", fallback_filename)
+                    && let Some(def) = parse_ptx(&content, name.to_string(), asset_server, images)
+                {
+                    ptx_lib.systems.insert(lower_name, def);
+                    return;
                 }
             }
         }

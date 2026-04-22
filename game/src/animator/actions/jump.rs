@@ -22,9 +22,7 @@
  * schedule build + phase transitions.
  */
 use super::{Action, ActionCtx, ActionUpdate};
-use crate::animator::components::{
-    MainAction, action_flags, sub_state_0, sub_state_1,
-};
+use crate::animator::components::{MainAction, action_flags, sub_state_0, sub_state_1};
 use crate::animator::systems::{build_jump_schedule, jump_index_for_substate};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

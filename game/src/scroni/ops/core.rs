@@ -208,10 +208,10 @@ pub fn exec(ctx: &mut OpsCtx, stmt: &Stmt) -> bool {
                 }
                 Value::Int(guid) => {
                     for (e, _, name_opt) in ctx.ctx.all_entities.iter() {
-                        if let Some(n) = name_opt {
-                            if hash_name(n.as_str()) == guid {
-                                ctx.sys_request(SysRequest::Destroy(e));
-                            }
+                        if let Some(n) = name_opt
+                            && hash_name(n.as_str()) == guid
+                        {
+                            ctx.sys_request(SysRequest::Destroy(e));
                         }
                     }
                 }
@@ -294,10 +294,10 @@ pub fn exec(ctx: &mut OpsCtx, stmt: &Stmt) -> bool {
             let max_dist_sq = max_dist * max_dist;
 
             for (k, v) in &eval_conds {
-                if k.to_lowercase() == "at" {
-                    if let Value::Vector(vec) = v {
-                        my_pos = space::to_bevy_space_pos(vec);
-                    }
+                if k.to_lowercase() == "at"
+                    && let Value::Vector(vec) = v
+                {
+                    my_pos = space::to_bevy_space_pos(vec);
                 }
             }
 
@@ -416,7 +416,7 @@ pub fn exec(ctx: &mut OpsCtx, stmt: &Stmt) -> bool {
                 _ => ctx.eval_string(action),
             };
 
-            let mut targets = if let Some(target_expr) = target {
+            let targets = if let Some(target_expr) = target {
                 let tgt = ctx.eval(target_expr);
                 let res = ctx.ctx.resolve_targets(&tgt);
                 if res.is_empty() {
@@ -576,7 +576,7 @@ pub fn exec(ctx: &mut OpsCtx, stmt: &Stmt) -> bool {
             if let Some(new_script) = ctx.exec.resolve_script(&script_name, ctx.ctx) {
                 let new_tid = ctx.exec.next_thread_id;
                 ctx.exec.next_thread_id += 1;
-                let mut new_thread = ScrOniThread::new(new_tid, Some(ctx.tid), new_script);
+                let new_thread = ScrOniThread::new(new_tid, Some(ctx.tid), new_script);
                 ctx.exec.child_threads.push(new_thread);
                 ctx.set_var(var.clone(), Value::Int(new_tid as i32));
             } else {
@@ -622,14 +622,14 @@ pub fn exec(ctx: &mut OpsCtx, stmt: &Stmt) -> bool {
             true
         }
         Stmt::SetLightParameter { args } => {
-            if let Some(light_name_expr) = args.get(0) {
+            if let Some(light_name_expr) = args.first() {
                 let name = ctx.eval_string(light_name_expr);
                 ctx.exec.current_light = Some(name);
             }
             true
         }
         Stmt::Intensity { args } => {
-            if let Some(intensity_expr) = args.get(0) {
+            if let Some(intensity_expr) = args.first() {
                 let intensity = ctx.eval_float(intensity_expr);
                 if let Some(light_name) = &ctx.exec.current_light {
                     ctx.sys_request(SysRequest::SetLightIntensity {

@@ -246,14 +246,11 @@ pub fn spawn_layout_actor(
     let template_dir = "template".to_string();
 
     // Parse the actor XML
-    let actor = match crate::oni2_loader::parsers::actor_xml::parse_actor_xml(
+    let actor = crate::oni2_loader::parsers::actor_xml::parse_actor_xml(
         &layout_ctx.layout_dir,
         &format!("{}.xml", xml_name),
         &template_dir,
-    ) {
-        Some(a) => a,
-        None => return None,
-    };
+    )?;
 
     if actor.spawn_later && !force_spawn {
         return None; // this should be loaded (with all sub-assets loaded) then spawning is just making it appear
@@ -386,20 +383,28 @@ pub fn spawn_layout_actor(
             if !actor.is_player {
                 // Non-player creature: attach AI + combat components
                 if actor.has_fight_ai {
-                    if let Some(fsm_data) = assets.fight_fsm_cache.get_or_load(&layout_ctx.entity_base) {
-                        assets.commands.entity(entity).insert(crate::fightai::components::FightRuntime {
-                            fsm: crate::statemachine::core::SmRuntime::new(fsm_data, 0),
-                            ctx: crate::statemachine::drivers::fight::FightCtx::default(),
-                        });
+                    if let Some(fsm_data) =
+                        assets.fight_fsm_cache.get_or_load(&layout_ctx.entity_base)
+                    {
+                        assets.commands.entity(entity).insert(
+                            crate::fightai::components::FightRuntime {
+                                fsm: crate::statemachine::core::SmRuntime::new(fsm_data, 0),
+                                ctx: crate::statemachine::drivers::fight::FightCtx::default(),
+                            },
+                        );
                     }
 
-                    if let Some(table) = &actor.attack_table {
-                        if let Some(atk_data) = assets.attack_fsm_cache.get_or_load(table, &layout_ctx.entity_base) {
-                            assets.commands.entity(entity).insert(crate::fightai::components::AttackRuntime {
+                    if let Some(table) = &actor.attack_table
+                        && let Some(atk_data) = assets
+                            .attack_fsm_cache
+                            .get_or_load(table, &layout_ctx.entity_base)
+                    {
+                        assets.commands.entity(entity).insert(
+                            crate::fightai::components::AttackRuntime {
                                 fsm: crate::statemachine::core::SmRuntime::new(atk_data, 0),
                                 ctx: crate::statemachine::drivers::attack::AttackCtx::default(),
-                            });
-                        }
+                            },
+                        );
                     }
 
                     assets
@@ -469,7 +474,7 @@ pub fn spawn_layout_actor(
         let position = pos_override.unwrap_or(actor.position);
         let rotation = space::to_bevy_space_rot(actor.orientation_o2);
 
-        let entity = if is_basic {
+        if is_basic {
             spawn_oni2_entity_with_rotation(
                 assets.commands,
                 assets.meshes,
@@ -498,9 +503,7 @@ pub fn spawn_layout_actor(
                     ))
                     .id(),
             )
-        };
-
-        entity
+        }
     };
 
     if let Some(entity) = spawned_entity {
@@ -587,12 +590,12 @@ pub fn spawn_layout_actor(
                         for s in &file.scripts {
                             exec.available_scripts.insert(s.name.clone(), s.clone());
                         }
-                        if let Some(ref update) = actor.updatestate {
-                            if update.eq_ignore_ascii_case("Asleep") {
-                                // TODO: Tease out asleep/awake lifecycle. For now, do not respect updatestate="Asleep".
-                                // exec.active = false;
-                                // assets.commands.entity(entity).insert(crate::oni2_loader::components::ActorAsleep);
-                            }
+                        if let Some(ref update) = actor.updatestate
+                            && update.eq_ignore_ascii_case("Asleep")
+                        {
+                            // TODO: Tease out asleep/awake lifecycle. For now, do not respect updatestate="Asleep".
+                            // exec.active = false;
+                            // assets.commands.entity(entity).insert(crate::oni2_loader::components::ActorAsleep);
                         }
                         assets
                             .commands
@@ -991,40 +994,40 @@ fn find_sky_texture(
             let name = entry
                 .path
                 .split('/')
-                .last()
+                .next_back()
                 .map(|s| s.to_lowercase())
                 .unwrap_or_default();
             if name.contains("sky") {
                 if name.ends_with(".tex") && !name.ends_with(".tex.tga") {
-                    if let Ok(tex_bytes) = crate::vfs::read("", &entry.path) {
-                        if let Some((width, height, rgba, _)) = decode_tex(&tex_bytes) {
-                            info!("Loaded sky texture: {} ({}x{})", entry.path, width, height);
-                            let mut image = Image::new(
-                                bevy::render::render_resource::Extent3d {
-                                    width,
-                                    height,
-                                    depth_or_array_layers: 1,
-                                },
-                                bevy::render::render_resource::TextureDimension::D2,
-                                rgba,
-                                bevy::render::render_resource::TextureFormat::Rgba8UnormSrgb,
-                                default(),
-                            );
-                            image.sampler = bevy::image::ImageSampler::Descriptor(
-                                bevy::image::ImageSamplerDescriptor {
-                                    address_mode_u: bevy::image::ImageAddressMode::Repeat,
-                                    address_mode_v: bevy::image::ImageAddressMode::Repeat,
-                                    ..default()
-                                },
-                            );
-                            return Some(images.add(image));
-                        }
+                    if let Ok(tex_bytes) = crate::vfs::read("", &entry.path)
+                        && let Some((width, height, rgba, _)) = decode_tex(&tex_bytes)
+                    {
+                        info!("Loaded sky texture: {} ({}x{})", entry.path, width, height);
+                        let mut image = Image::new(
+                            bevy::render::render_resource::Extent3d {
+                                width,
+                                height,
+                                depth_or_array_layers: 1,
+                            },
+                            bevy::render::render_resource::TextureDimension::D2,
+                            rgba,
+                            bevy::render::render_resource::TextureFormat::Rgba8UnormSrgb,
+                            default(),
+                        );
+                        image.sampler = bevy::image::ImageSampler::Descriptor(
+                            bevy::image::ImageSamplerDescriptor {
+                                address_mode_u: bevy::image::ImageAddressMode::Repeat,
+                                address_mode_v: bevy::image::ImageAddressMode::Repeat,
+                                ..default()
+                            },
+                        );
+                        return Some(images.add(image));
                     }
-                } else if name.ends_with(".tex.tga") || name.ends_with(".tga") {
-                    if let Some((handle, _)) = super::spawn::load_tga_file(&entry.path, images) {
-                        info!("Loaded sky texture: {}", entry.path);
-                        return Some(handle);
-                    }
+                } else if (name.ends_with(".tex.tga") || name.ends_with(".tga"))
+                    && let Some((handle, _)) = super::spawn::load_tga_file(&entry.path, images)
+                {
+                    info!("Loaded sky texture: {}", entry.path);
+                    return Some(handle);
                 }
             }
         }

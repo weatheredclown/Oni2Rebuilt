@@ -74,13 +74,17 @@ impl<T: Clone> LayeredValue<T> {
     /// frame don't leak layers.
     pub fn push(&mut self, key: impl Into<String>, value: T) {
         let key = key.into();
-        let replaced = self.layers.iter().position(|(k, _)| k == &key).is_some();
+        let replaced = self.layers.iter().any(|(k, _)| k == &key);
         self.layers.retain(|(k, _)| k != &key);
         self.layers.push((key.clone(), value));
         bevy::log::info!(
             "LayeredValue::push('{}') {} — layer_count now {}",
             key,
-            if replaced { "replaced existing" } else { "new layer" },
+            if replaced {
+                "replaced existing"
+            } else {
+                "new layer"
+            },
             self.layers.len(),
         );
     }

@@ -36,19 +36,14 @@ pub enum DebugCameraMode {
 }
 
 /// The mode selector spanning all possible camera states natively.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ActiveCameraMode {
+    #[default]
     GameNavigation,
     GameTargeting,
     GameFighting,
     Script,
     DebugPolar,
-}
-
-impl Default for ActiveCameraMode {
-    fn default() -> Self {
-        ActiveCameraMode::GameNavigation
-    }
 }
 
 /// CameraController tracks the active mode and handles mode switching.

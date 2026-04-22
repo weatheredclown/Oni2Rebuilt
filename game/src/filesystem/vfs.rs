@@ -185,13 +185,13 @@ impl Vfs for DiskVfs {
         } else {
             format!("{}/{}", dir, filename)
         };
-        let exists = Path::new(&self.resolve(&path)).exists();
+
         // TODO: Think about how to warn about expected files (e.g. files referenced by other files
         // are expected to exist because the inter-asset integrity is expected to be correct),
         // whereas other files are optional and loaded greedily if available.
         // It would be great to have a way to distinguish this in the VFS API so that we only warn
         // when a strictly expected file is missing, rather than generating warnings for optional probing.
-        exists
+        Path::new(&self.resolve(&path)).exists()
     }
 }
 

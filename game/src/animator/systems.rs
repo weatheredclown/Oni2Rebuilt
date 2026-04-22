@@ -161,56 +161,49 @@ pub(crate) fn build_jump_schedule(
             AnimScheduleEntry::new("ANIMJUMP_RUN_1", sub_state_1::JUMP_COMPRESS),
             AnimScheduleEntry::new("ANIMJUMP_RUN_2", sub_state_1::JUMP_MAIN)
                 .with_rate(main_rate("ANIMJUMP_RUN_2")),
-            AnimScheduleEntry::new("ANIMJUMP_VERTICAL_3_EXT", sub_state_1::JUMP_MAIN)
-                .with_hold(),
+            AnimScheduleEntry::new("ANIMJUMP_VERTICAL_3_EXT", sub_state_1::JUMP_MAIN).with_hold(),
             AnimScheduleEntry::new("ANIMJUMP_RUN_3", sub_state_1::JUMP_LAND),
         ],
         sub_state_0::JUMP_LEFT => vec![
             AnimScheduleEntry::new("ANIMJUMP_RUN_LEFT_SPRING", sub_state_1::JUMP_COMPRESS),
             AnimScheduleEntry::new("ANIMJUMP_RUN_LEFT_FLOAT", sub_state_1::JUMP_MAIN)
                 .with_rate(main_rate("ANIMJUMP_RUN_LEFT_FLOAT")),
-            AnimScheduleEntry::new("ANIMJUMP_VERTICAL_3_EXT", sub_state_1::JUMP_MAIN)
-                .with_hold(),
+            AnimScheduleEntry::new("ANIMJUMP_VERTICAL_3_EXT", sub_state_1::JUMP_MAIN).with_hold(),
             AnimScheduleEntry::new("ANIMJUMP_RUN_LEFT_LAND", sub_state_1::JUMP_LAND),
         ],
         sub_state_0::JUMP_LEFT_EVADE => vec![
             AnimScheduleEntry::new("ANIMJUMP_JOG_LEFT_SPRING", sub_state_1::JUMP_COMPRESS),
             AnimScheduleEntry::new("ANIMJUMP_JOG_LEFT_FLOAT", sub_state_1::JUMP_MAIN)
                 .with_rate(main_rate("ANIMJUMP_JOG_LEFT_FLOAT")),
-            AnimScheduleEntry::new("ANIMJUMP_VERTICAL_3_EXT", sub_state_1::JUMP_MAIN)
-                .with_hold(),
+            AnimScheduleEntry::new("ANIMJUMP_VERTICAL_3_EXT", sub_state_1::JUMP_MAIN).with_hold(),
             AnimScheduleEntry::new("ANIMJUMP_JOG_LEFT_LAND", sub_state_1::JUMP_LAND),
         ],
         sub_state_0::JUMP_RIGHT => vec![
             AnimScheduleEntry::new("ANIMJUMP_RUN_RIGHT_SPRING", sub_state_1::JUMP_COMPRESS),
             AnimScheduleEntry::new("ANIMJUMP_RUN_RIGHT_FLOAT", sub_state_1::JUMP_MAIN)
                 .with_rate(main_rate("ANIMJUMP_RUN_RIGHT_FLOAT")),
-            AnimScheduleEntry::new("ANIMJUMP_VERTICAL_3_EXT", sub_state_1::JUMP_MAIN)
-                .with_hold(),
+            AnimScheduleEntry::new("ANIMJUMP_VERTICAL_3_EXT", sub_state_1::JUMP_MAIN).with_hold(),
             AnimScheduleEntry::new("ANIMJUMP_RUN_RIGHT_LAND", sub_state_1::JUMP_LAND),
         ],
         sub_state_0::JUMP_RIGHT_EVADE => vec![
             AnimScheduleEntry::new("ANIMJUMP_JOG_RIGHT_SPRING", sub_state_1::JUMP_COMPRESS),
             AnimScheduleEntry::new("ANIMJUMP_JOG_RIGHT_FLOAT", sub_state_1::JUMP_MAIN)
                 .with_rate(main_rate("ANIMJUMP_JOG_RIGHT_FLOAT")),
-            AnimScheduleEntry::new("ANIMJUMP_VERTICAL_3_EXT", sub_state_1::JUMP_MAIN)
-                .with_hold(),
+            AnimScheduleEntry::new("ANIMJUMP_VERTICAL_3_EXT", sub_state_1::JUMP_MAIN).with_hold(),
             AnimScheduleEntry::new("ANIMJUMP_JOG_RIGHT_LAND", sub_state_1::JUMP_LAND),
         ],
         sub_state_0::JUMP_BACK => vec![
             AnimScheduleEntry::new("ANIMJUMP_RUN_BACK_SPRING", sub_state_1::JUMP_COMPRESS),
             AnimScheduleEntry::new("ANIMJUMP_RUN_BACK_FLOAT", sub_state_1::JUMP_MAIN)
                 .with_rate(main_rate("ANIMJUMP_RUN_BACK_FLOAT")),
-            AnimScheduleEntry::new("ANIMJUMP_VERTICAL_3_EXT", sub_state_1::JUMP_MAIN)
-                .with_hold(),
+            AnimScheduleEntry::new("ANIMJUMP_VERTICAL_3_EXT", sub_state_1::JUMP_MAIN).with_hold(),
             AnimScheduleEntry::new("ANIMJUMP_RUN_BACK_LAND", sub_state_1::JUMP_LAND),
         ],
         sub_state_0::JUMP_BACK_EVADE => vec![
             AnimScheduleEntry::new("ANIMJUMP_JOG_BACK_SPRING", sub_state_1::JUMP_COMPRESS),
             AnimScheduleEntry::new("ANIMJUMP_JOG_BACK_FLOAT", sub_state_1::JUMP_MAIN)
                 .with_rate(main_rate("ANIMJUMP_JOG_BACK_FLOAT")),
-            AnimScheduleEntry::new("ANIMJUMP_VERTICAL_3_EXT", sub_state_1::JUMP_MAIN)
-                .with_hold(),
+            AnimScheduleEntry::new("ANIMJUMP_VERTICAL_3_EXT", sub_state_1::JUMP_MAIN).with_hold(),
             AnimScheduleEntry::new("ANIMJUMP_JOG_BACK_LAND", sub_state_1::JUMP_LAND),
         ],
         sub_state_0::JUMP_SOMERSAULT => vec![
@@ -638,10 +631,10 @@ pub fn action_start_system(
 
         // Attach the multi-stage schedule (if built).  The
         // anim_schedule_tick_system picks it up next tick.
-        if result == ActionResult::Succeeded {
-            if let Some(schedule) = schedule_out {
-                commands.entity(msg.entity).insert(schedule);
-            }
+        if result == ActionResult::Succeeded
+            && let Some(schedule) = schedule_out
+        {
+            commands.entity(msg.entity).insert(schedule);
         }
 
         writer.write(ActionStartedMessage {
@@ -777,11 +770,11 @@ pub fn control_anim_system(
             continue;
         };
 
-        if let Some(alias) = &msg.animation_alias {
-            if !lib.play(alias, &mut state) {
-                warn!("control_anim: alias '{}' not in library", alias);
-                continue;
-            }
+        if let Some(alias) = &msg.animation_alias
+            && !lib.play(alias, &mut state)
+        {
+            warn!("control_anim: alias '{}' not in library", alias);
+            continue;
         }
 
         if msg.control & control_anim_bits::RESTART != 0 {
@@ -828,7 +821,7 @@ pub fn head_ik_mode_system(
 ) {
     for msg in reader.read() {
         if let Ok(mut ap) = query.get_mut(msg.entity) {
-            ap.head_ik_mode = msg.mode.clone();
+            ap.head_ik_mode = msg.mode;
         }
     }
 }
@@ -876,10 +869,10 @@ pub fn head_ik_bridge_system(
             },
         };
 
-        if let Some(active) = existing {
-            if active.task == task {
-                continue;
-            }
+        if let Some(active) = existing
+            && active.task == task
+        {
+            continue;
         }
 
         commands.entity(entity).insert(ActiveHeadIK { task });
@@ -1144,7 +1137,10 @@ pub fn schedule_finished_end_action_system(
 /// XZ is left alone so the jumper keeps any running start.
 pub fn jump_impulse_apply_system(
     mut reader: MessageReader<crate::animator::JumpImpulseMessage>,
-    mut query: Query<(&mut avian3d::prelude::LinearVelocity, &crate::combat::components::Fighter)>,
+    mut query: Query<(
+        &mut avian3d::prelude::LinearVelocity,
+        &crate::combat::components::Fighter,
+    )>,
 ) {
     for msg in reader.read() {
         let Ok((mut vel, fighter)) = query.get_mut(msg.entity) else {
@@ -1184,7 +1180,7 @@ pub fn replenish_jumps_on_ground_system(
     )>,
 ) {
     for (anim_state_opt, mut ap) in &mut query {
-        let is_grounded = anim_state_opt.map_or(true, |s| s.is_grounded);
+        let is_grounded = anim_state_opt.is_none_or(|s| s.is_grounded);
         if is_grounded && ap.jumps_remaining < ap.max_jumps {
             ap.jumps_remaining = ap.max_jumps;
         }

@@ -159,29 +159,29 @@ fn projectile_collision_system(
 
         let filter = SpatialQueryFilter::from_excluded_entities([entity, instance.owner]);
 
-        if let Ok(dir3) = Dir3::new(direction) {
-            if let Some(hit) = spatial_query.cast_ray(prev_pos, dir3, distance, true, &filter) {
-                let hit_pos = prev_pos + direction * hit.distance;
+        if let Ok(dir3) = Dir3::new(direction)
+            && let Some(hit) = spatial_query.cast_ray(prev_pos, dir3, distance, true, &filter)
+        {
+            let hit_pos = prev_pos + direction * hit.distance;
 
-                impact_writer.write(ImpactMessage {
-                    hit_entity: Some(hit.entity),
-                    hit_position: hit_pos,
-                    hit_normal: hit.normal,
-                    hit_type: instance.def.damage().hit_type,
-                    damage: instance.def.damage().hit_points,
-                    impulse: direction * instance.def.damage().impulse,
+            impact_writer.write(ImpactMessage {
+                hit_entity: Some(hit.entity),
+                hit_position: hit_pos,
+                hit_normal: hit.normal,
+                hit_type: instance.def.damage().hit_type,
+                damage: instance.def.damage().hit_points,
+                impulse: direction * instance.def.damage().impulse,
+            });
+
+            if let Some(ref explode_fx) = instance.def.explode_fx() {
+                commands.trigger(SpawnFx {
+                    name: explode_fx.clone(),
+                    at: Some(hit_pos),
+                    parent: None,
+                    start_active: true,
                 });
-
-                if let Some(ref explode_fx) = instance.def.explode_fx() {
-                    commands.trigger(SpawnFx {
-                        name: explode_fx.clone(),
-                        at: Some(hit_pos),
-                        parent: None,
-                        start_active: true,
-                    });
-                }
-                commands.entity(entity).despawn();
             }
+            commands.entity(entity).despawn();
         }
     }
 }
@@ -193,15 +193,15 @@ fn projectile_lifetime_system(
 ) {
     for (entity, transform, instance, mut lifetime) in &mut query {
         if lifetime.timer.tick(time.delta()).just_finished() {
-            if lifetime.explode_on_timeout {
-                if let Some(ref explode_fx) = instance.def.explode_fx() {
-                    commands.trigger(SpawnFx {
-                        name: explode_fx.clone(),
-                        at: Some(transform.translation),
-                        parent: None,
-                        start_active: true,
-                    });
-                }
+            if lifetime.explode_on_timeout
+                && let Some(ref explode_fx) = instance.def.explode_fx()
+            {
+                commands.trigger(SpawnFx {
+                    name: explode_fx.clone(),
+                    at: Some(transform.translation),
+                    parent: None,
+                    start_active: true,
+                });
             }
             commands.entity(entity).despawn();
         }
@@ -213,12 +213,12 @@ fn damage_router_system(
     mut health_query: Query<&mut crate::combat::components::Health>,
 ) {
     for ev in messages.read() {
-        if let Some(hit_entity) = ev.hit_entity {
-            if let Ok(mut health) = health_query.get_mut(hit_entity) {
-                health.current -= ev.damage;
-                if health.current <= 0.0 {
-                    info!("Entity {:?} destroyed by projectile damage", hit_entity);
-                }
+        if let Some(hit_entity) = ev.hit_entity
+            && let Ok(mut health) = health_query.get_mut(hit_entity)
+        {
+            health.current -= ev.damage;
+            if health.current <= 0.0 {
+                info!("Entity {:?} destroyed by projectile damage", hit_entity);
             }
         }
     }

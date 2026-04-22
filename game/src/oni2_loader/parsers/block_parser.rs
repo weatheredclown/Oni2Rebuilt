@@ -66,10 +66,8 @@ impl BlockParser {
         if self.peek() == Some("}") {
             self.tokens.next();
             true
-        } else if self.peek().is_none() {
-            true
         } else {
-            false
+            self.peek().is_none()
         }
     }
 
@@ -83,10 +81,10 @@ impl BlockParser {
     }
 
     pub fn read_i32_opt(&mut self, expected_key: &str) -> Option<i32> {
-        if self.consume_key(expected_key) {
-            if let Some(v_str) = self.tokens.next() {
-                return v_str.parse::<i32>().ok();
-            }
+        if self.consume_key(expected_key)
+            && let Some(v_str) = self.tokens.next()
+        {
+            return v_str.parse::<i32>().ok();
         }
         None
     }
@@ -96,10 +94,10 @@ impl BlockParser {
     }
 
     pub fn read_float_opt(&mut self, expected_key: &str) -> Option<f32> {
-        if self.consume_key(expected_key) {
-            if let Some(v_str) = self.tokens.next() {
-                return v_str.parse::<f32>().ok();
-            }
+        if self.consume_key(expected_key)
+            && let Some(v_str) = self.tokens.next()
+        {
+            return v_str.parse::<f32>().ok();
         }
         None
     }
@@ -109,10 +107,10 @@ impl BlockParser {
     }
 
     pub fn read_string_opt(&mut self, expected_key: &str) -> Option<String> {
-        if self.consume_key(expected_key) {
-            if let Some(v_str) = self.tokens.next() {
-                return Some(v_str.trim_matches('"').to_string());
-            }
+        if self.consume_key(expected_key)
+            && let Some(v_str) = self.tokens.next()
+        {
+            return Some(v_str.trim_matches('"').to_string());
         }
         None
     }

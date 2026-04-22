@@ -7,8 +7,6 @@
  */
 use bevy::prelude::*;
 use std::collections::HashMap;
-use std::fs;
-use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone)]
 pub struct TdSplit {
@@ -99,24 +97,24 @@ pub fn load_all_tds() -> SoundBankDirectory {
             let mut td_count = 0;
             for entry in entries {
                 let path = entry.path;
-                if path.to_lowercase().ends_with(".td") {
-                    if let Ok(content) = crate::vfs::read_to_string("", &path) {
-                        if let Some(mut prog) = parse_td_file(&content) {
-                            let bank_base = std::path::Path::new(&path)
-                                .file_stem()
-                                .unwrap()
-                                .to_string_lossy()
-                                .to_string();
+                if path.to_lowercase().ends_with(".td")
+                    && let Ok(content) = crate::vfs::read_to_string("", &path)
+                {
+                    if let Some(prog) = parse_td_file(&content) {
+                        let bank_base = std::path::Path::new(&path)
+                            .file_stem()
+                            .unwrap()
+                            .to_string_lossy()
+                            .to_string();
 
-                            for split in prog.splits {
-                                let full_name = format!("{}:{}", prog.name, split.name);
-                                dir.sounds
-                                    .insert(full_name, (bank_base.clone(), split.vag_index));
-                            }
-                            td_count += 1;
-                        } else {
-                            warn!("Failed to parse valid TdProgram from: {}", path);
+                        for split in prog.splits {
+                            let full_name = format!("{}:{}", prog.name, split.name);
+                            dir.sounds
+                                .insert(full_name, (bank_base.clone(), split.vag_index));
                         }
+                        td_count += 1;
+                    } else {
+                        warn!("Failed to parse valid TdProgram from: {}", path);
                     }
                 }
             }

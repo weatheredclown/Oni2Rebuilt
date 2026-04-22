@@ -26,19 +26,10 @@ pub struct ActorSpecificAction {
     pub target: Entity,
 }
 
-#[derive(Component)]
+#[derive(Component, Default)]
 pub struct DoorComponent {
     pub is_open: bool,
     pub graph_door_index: Option<usize>,
-}
-
-impl Default for DoorComponent {
-    fn default() -> Self {
-        Self {
-            is_open: false,
-            graph_door_index: None,
-        }
-    }
 }
 
 #[derive(Component)]
@@ -50,7 +41,7 @@ fn register_door_system(
         (Entity, &Oni2Entity, &Transform),
         (Without<RegisteredDoor>, Without<DoorComponent>),
     >,
-    mut opt_nav_graph: Option<ResMut<NavGraph>>,
+    opt_nav_graph: Option<ResMut<NavGraph>>,
 ) {
     let Some(mut nav_graph) = opt_nav_graph else {
         return; // NavGraph hasn't been loaded yet
@@ -126,10 +117,10 @@ fn handle_actor_specific_action(
             }
 
             // Sync the NavGraph state
-            if let Some(idx) = door_idx {
-                if let Some(mut nav_graph) = opt_nav_graph.as_mut() {
-                    nav_graph.set_door_state(idx, is_now_open);
-                }
+            if let Some(idx) = door_idx
+                && let Some(nav_graph) = opt_nav_graph.as_mut()
+            {
+                nav_graph.set_door_state(idx, is_now_open);
             }
 
             info!(

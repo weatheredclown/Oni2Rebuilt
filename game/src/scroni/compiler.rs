@@ -192,7 +192,7 @@ impl Compiler {
         self.skip_if(TokenCode::End); // skip 'end'
 
         let mut all_vars = variables;
-        all_vars.extend(self.current_inline_vars.drain(..));
+        all_vars.append(&mut self.current_inline_vars);
 
         Some(ScriptDef {
             name,
@@ -1739,14 +1739,12 @@ impl Compiler {
                         }
                         self.skip_if(TokenCode::RightParen);
                         Expr::Call { name, args }
+                    } else if name == "true" {
+                        Expr::IntLit(1)
+                    } else if name == "false" {
+                        Expr::IntLit(0)
                     } else {
-                        if name == "true" {
-                            Expr::IntLit(1)
-                        } else if name == "false" {
-                            Expr::IntLit(0)
-                        } else {
-                            Expr::Var(name)
-                        }
+                        Expr::Var(name)
                     }
                 } else {
                     self.error(format!(
@@ -1786,13 +1784,13 @@ impl Compiler {
         }
 
         // Parse trailing 'with' kwargs for message query expressions
-        if name.eq_ignore_ascii_case("receivemessage") || name.eq_ignore_ascii_case("receiveaction")
+        if (name.eq_ignore_ascii_case("receivemessage")
+            || name.eq_ignore_ascii_case("receiveaction"))
+            && self.skip_if(TokenCode::With)
         {
-            if self.skip_if(TokenCode::With) {
+            args.push(self.parse_expr());
+            while self.skip_if(TokenCode::Comma) {
                 args.push(self.parse_expr());
-                while self.skip_if(TokenCode::Comma) {
-                    args.push(self.parse_expr());
-                }
             }
         }
 
@@ -2046,7 +2044,10 @@ end
     #[test]
     fn test_compile_konoko_oni() {
         crate::set_assets_path("../../oni2/zips/assets");
-        let path = format!("{}/layout/M03_A01_Blast_Chambers/Scripts/konoko.oni", crate::get_assets_path());
+        let path = format!(
+            "{}/layout/M03_A01_Blast_Chambers/Scripts/konoko.oni",
+            crate::get_assets_path()
+        );
         let content = std::fs::read_to_string(path).unwrap();
         match Compiler::compile(&content) {
             Ok(_) => println!("COMPILE SUCCESS"),

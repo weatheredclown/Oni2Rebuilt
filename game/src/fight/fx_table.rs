@@ -270,22 +270,29 @@ mod tests {
         let mut reg = AttackFxRegistry::default();
         register_default(&mut reg);
         // Table exists; every cell is None (no fallback configured).
-        assert!(reg
-            .lookup("default", AttackTarget::Body, AttackStrength::Low, AttackClass::Punch)
-            .is_none());
+        assert!(
+            reg.lookup(
+                "default",
+                AttackTarget::Body,
+                AttackStrength::Low,
+                AttackClass::Punch
+            )
+            .is_none()
+        );
     }
 
     #[test]
     fn unknown_table_returns_none() {
         let reg = AttackFxRegistry::default();
-        assert!(reg
-            .lookup(
+        assert!(
+            reg.lookup(
                 "no_such_fighter",
                 AttackTarget::Body,
                 AttackStrength::Low,
                 AttackClass::Punch,
             )
-            .is_none());
+            .is_none()
+        );
     }
 
     #[test]
@@ -306,14 +313,24 @@ mod tests {
 
         // Explicit cell wins.
         assert_eq!(
-            reg.lookup("konoko", AttackTarget::Body, AttackStrength::Low, AttackClass::Punch)
-                .map(|fx| fx.name.as_str()),
+            reg.lookup(
+                "konoko",
+                AttackTarget::Body,
+                AttackStrength::Low,
+                AttackClass::Punch
+            )
+            .map(|fx| fx.name.as_str()),
             Some("konoko_punch_low"),
         );
         // Other cells fall back.
         assert_eq!(
-            reg.lookup("konoko", AttackTarget::Body, AttackStrength::Low, AttackClass::Kick)
-                .map(|fx| fx.name.as_str()),
+            reg.lookup(
+                "konoko",
+                AttackTarget::Body,
+                AttackStrength::Low,
+                AttackClass::Kick
+            )
+            .map(|fx| fx.name.as_str()),
             Some("generic_impact"),
         );
     }

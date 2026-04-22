@@ -23,10 +23,10 @@ pub mod gravity;
 pub mod schedule;
 pub mod systems;
 
-pub use actions::{Action, ActionCtx, ActionRegistry, ActionUpdate, ActiveAction};
-pub use anim_fx::{AnimFxEntry, AnimFxTracker};
+pub use actions::ActiveAction;
+pub use anim_fx::AnimFxEntry;
 pub use gravity::GravityModifiers;
-pub use schedule::{AnimSchedule, AnimScheduleEntry};
+pub use schedule::AnimSchedule;
 
 use bevy::prelude::*;
 
@@ -64,14 +64,11 @@ pub struct AnimatorBundle {
 
 use crate::menu::AppState;
 
-pub use components::{
-    ACT_NUM_ACTIONS, ActionPlayer, ActionResult, HeadIkMode, MainAction, WeaponState, action_flags,
-    end_adverb, pending_flags, sub_state_0, sub_state_1,
-};
+pub use components::{MainAction, sub_state_0};
 pub use events::{
     ActionEndedMessage, ActionStartedMessage, AnimStartedMessage, ControlAnimMessage, DropMessage,
     EndActionMessage, HeadIkModeMessage, JumpImpulseMessage, PlayDieMessage, PlayReactMessage,
-    SetPickupMatrixMessage, StartActionMessage, control_anim_bits,
+    SetPickupMatrixMessage, StartActionMessage,
 };
 
 pub struct AnimatorPlugin;
@@ -177,8 +174,7 @@ impl Plugin for AnimatorPlugin {
                         // `gravity_sync_system` reflects the resolved
                         // stack into Avian's `GravityScale` each tick.
                         // This system only applies the velocity impulse.
-                        systems::jump_impulse_apply_system
-                            .after(systems::jump_impulse_emit_system),
+                        systems::jump_impulse_apply_system.after(systems::jump_impulse_emit_system),
                         // Idempotently attach `GravityModifiers` to any
                         // entity with `GravityScale` that doesn't have
                         // one yet.  Runs first so downstream sync has

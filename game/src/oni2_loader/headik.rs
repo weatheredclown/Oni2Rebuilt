@@ -157,13 +157,13 @@ pub fn head_ik_system(
         };
 
         // ---- Read current joint world transforms (copy before any write) --
-        let Ok(spine_tf) = joint_tf_query.get(spine_ent).map(|t| *t) else {
+        let Ok(spine_tf) = joint_tf_query.get(spine_ent).copied() else {
             continue;
         };
-        let Ok(neck_anim) = joint_tf_query.get(neck_ent).map(|t| *t) else {
+        let Ok(neck_anim) = joint_tf_query.get(neck_ent).copied() else {
             continue;
         };
-        let Ok(head_anim) = joint_tf_query.get(head_ent).map(|t| *t) else {
+        let Ok(head_anim) = joint_tf_query.get(head_ent).copied() else {
             continue;
         };
 

@@ -127,8 +127,8 @@ pub fn oni2_camera_incline_to_bevy(incline_rads: f32) -> f32 {
     incline_rads
 }
 
-/// Converts a yaw angle (rotation around the Y axis) from Oni2 space (left-handed, CCW) 
-/// to Bevy space (right-handed, CW rotation logic). 
+/// Converts a yaw angle (rotation around the Y axis) from Oni2 space (left-handed, CCW)
+/// to Bevy space (right-handed, CW rotation logic).
 /// Inverts the sign of the angle to accommodate the coordinate system flip.
 #[inline]
 pub fn oni2_to_bevy_yaw_rads(rads: f32) -> f32 {

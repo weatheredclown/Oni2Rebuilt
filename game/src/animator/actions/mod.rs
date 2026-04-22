@@ -227,7 +227,7 @@ pub fn action_start_dispatch_system(
         // moves into ctx — the borrow checker rejects a simultaneous
         // shared + exclusive borrow on the same component.
         let is_grounded = anim_state.is_grounded;
-        let mut gravity_mut = gravity_opt.map(|g| g.into_inner());
+        let gravity_mut = gravity_opt.map(|g| g.into_inner());
         let mut ctx = ActionCtx {
             entity: msg.entity,
             ap: &mut ap,
@@ -235,7 +235,7 @@ pub fn action_start_dispatch_system(
             anim_state: &mut anim_state,
             lib,
             jump_controller: jc,
-            gravity: gravity_mut.as_deref_mut(),
+            gravity: gravity_mut,
             // Physics flags aren't needed at entry time (update-only);
             // default them here rather than querying.
             is_grounded,
@@ -360,7 +360,7 @@ pub fn action_dispatch_system(
 
         let mut broadcasts: Vec<String> = Vec::new();
         let is_grounded = anim_state.is_grounded;
-        let mut gravity_mut = gravity_opt.map(|g| g.into_inner());
+        let gravity_mut = gravity_opt.map(|g| g.into_inner());
         let mut ctx = ActionCtx {
             entity,
             ap: &mut ap,
@@ -368,7 +368,7 @@ pub fn action_dispatch_system(
             anim_state: &mut anim_state,
             lib,
             jump_controller: jc,
-            gravity: gravity_mut.as_deref_mut(),
+            gravity: gravity_mut,
             is_grounded,
             ground_just_regained,
             ground_just_lost,
@@ -444,10 +444,7 @@ pub fn action_dispatch_system(
         }
 
         for payload in broadcasts {
-            broadcast_writer.write(AnimatorBroadcastEvent {
-                entity,
-                payload,
-            });
+            broadcast_writer.write(AnimatorBroadcastEvent { entity, payload });
         }
     }
 }

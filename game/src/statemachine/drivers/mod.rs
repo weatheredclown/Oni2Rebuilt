@@ -16,6 +16,7 @@
  */
 
 pub mod animator;
+pub mod atk_parser;
 pub mod attack;
 pub mod behavior;
 pub mod fight;

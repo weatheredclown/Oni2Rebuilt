@@ -11,7 +11,6 @@ use bevy_hanabi::prelude::*;
 
 use crate::oni2_loader::components::ActorFxType;
 use crate::oni2_loader::registries::{FxLibrary, ParticleLibrary, try_load_ptx};
-use crate::scroni::vm::ScrOniSysEvent;
 
 #[derive(Event, Debug, Clone)]
 pub struct SpawnFx {
@@ -105,9 +104,8 @@ fn handle_play_sound(
                 .join("Audio")
                 .join("rb.audiopackages");
             if let Ok(content) = std::fs::read_to_string(&pkgs_path) {
-                *audio_packages = Some(
-                    crate::oni2_loader::parsers::audiopackages::parse_audiopackages(&content),
-                );
+                *audio_packages =
+                    Some(crate::oni2_loader::parsers::audiopackages::parse_audiopackages(&content));
             } else {
                 warn!("Failed to load Audio/rb.audiopackages, audio package lookups will fail.");
                 *audio_packages = Some(std::collections::HashMap::new());
@@ -208,7 +206,8 @@ fn handle_play_sound(
     }
 
     let payload = &bd_bytes[start..end];
-    let Ok(pcm) = crate::oni2_loader::parsers::hd_bd::decode_psx_adpcm(payload, subsong.num_samples)
+    let Ok(pcm) =
+        crate::oni2_loader::parsers::hd_bd::decode_psx_adpcm(payload, subsong.num_samples)
     else {
         return;
     };
@@ -284,7 +283,7 @@ pub fn uv_animator_system(
     // Natively iterate the layout definitions rather than the instantiated entities so that
     // we strictly perform mathematical mutations only once per pooled Handle<Mesh> memory allocation.
     for ent_type in lib.entities.values() {
-        for (_i, (mat_idx, handle)) in ent_type.sub_meshes.iter().enumerate() {
+        for (mat_idx, handle) in ent_type.sub_meshes.iter() {
             let animators = ent_type.material_animators.get(*mat_idx);
             if let Some(anims) = animators {
                 let mut u_speed = 0.0;
@@ -311,45 +310,44 @@ pub fn uv_animator_system(
                     continue;
                 }
 
-                if let Some(mesh) = meshes.get_mut(handle) {
-                    if let Some(bevy::mesh::VertexAttributeValues::Float32x2(uvs)) =
+                if let Some(mesh) = meshes.get_mut(handle)
+                    && let Some(bevy::mesh::VertexAttributeValues::Float32x2(uvs)) =
                         mesh.attribute_mut(Mesh::ATTRIBUTE_UV_0)
-                    {
-                        let du = u_speed * dt;
-                        let dv = v_speed * dt;
-                        let cos_r = (r_speed * dt).cos();
-                        let sin_r = (r_speed * dt).sin();
-                        let scale = if s_speed != 0.0 {
-                            1.0 + s_speed * dt
-                        } else {
-                            1.0
-                        };
+                {
+                    let du = u_speed * dt;
+                    let dv = v_speed * dt;
+                    let cos_r = (r_speed * dt).cos();
+                    let sin_r = (r_speed * dt).sin();
+                    let scale = if s_speed != 0.0 {
+                        1.0 + s_speed * dt
+                    } else {
+                        1.0
+                    };
 
-                        for uv in uvs.iter_mut() {
-                            let mut u = uv[0];
-                            let mut v = uv[1];
+                    for uv in uvs.iter_mut() {
+                        let mut u = uv[0];
+                        let mut v = uv[1];
 
-                            u -= du;
-                            v -= dv;
+                        u -= du;
+                        v -= dv;
 
-                            // Rotation around 0.5 (texture center pivot point)
-                            if r_speed != 0.0 || s_speed != 0.0 {
-                                let cu = u - 0.5;
-                                let cv = v - 0.5;
+                        // Rotation around 0.5 (texture center pivot point)
+                        if r_speed != 0.0 || s_speed != 0.0 {
+                            let cu = u - 0.5;
+                            let cv = v - 0.5;
 
-                                let rotated_u = cu * cos_r - cv * sin_r;
-                                let rotated_v = cu * sin_r + cv * cos_r;
+                            let rotated_u = cu * cos_r - cv * sin_r;
+                            let rotated_v = cu * sin_r + cv * cos_r;
 
-                                u = rotated_u * scale + 0.5;
-                                v = rotated_v * scale + 0.5;
-                            }
-
-                            // Float wrapping logic to prevent precision degradation
-                            // Only safely bounds if geometry does not natively span across multiple units smoothly.
-                            // Left unbounded purposely to preserve identical tiled tiling mappings.
-                            uv[0] = u;
-                            uv[1] = v;
+                            u = rotated_u * scale + 0.5;
+                            v = rotated_v * scale + 0.5;
                         }
+
+                        // Float wrapping logic to prevent precision degradation
+                        // Only safely bounds if geometry does not natively span across multiple units smoothly.
+                        // Left unbounded purposely to preserve identical tiled tiling mappings.
+                        uv[0] = u;
+                        uv[1] = v;
                     }
                 }
             }
@@ -468,7 +466,7 @@ fn get_or_create_ptx_asset(
         })
         .render(OrientModifier::new(OrientMode::FaceCameraPosition));
 
-    if let Some(mut init_sp) = init_sprite_index {
+    if let Some(init_sp) = init_sprite_index {
         asset = asset.init(init_sp);
     }
     if let Some(update_sp) = update_sprite_index {
@@ -689,17 +687,17 @@ fn sync_intended_fx_state(
     for (parent_intended, maybe_asleep, children) in &parent_q {
         let should_be_active = parent_intended.0 && maybe_asleep.is_none();
         for child_ent in children.iter() {
-            if let Ok((mut spawner, mut child_intended)) = spawner_q.get_mut(child_ent) {
-                if child_intended.0 != parent_intended.0 || spawner.active != should_be_active {
-                    if spawner.active && !should_be_active {
-                        // Instantly visually terminate particle emissions cleanly
-                        // (without popping already birthed particles violently)
-                        spawner.active = false;
-                    } else {
-                        spawner.active = should_be_active;
-                    }
-                    child_intended.0 = parent_intended.0;
+            if let Ok((mut spawner, mut child_intended)) = spawner_q.get_mut(child_ent)
+                && (child_intended.0 != parent_intended.0 || spawner.active != should_be_active)
+            {
+                if spawner.active && !should_be_active {
+                    // Instantly visually terminate particle emissions cleanly
+                    // (without popping already birthed particles violently)
+                    spawner.active = false;
+                } else {
+                    spawner.active = should_be_active;
                 }
+                child_intended.0 = parent_intended.0;
             }
         }
     }

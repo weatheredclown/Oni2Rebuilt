@@ -25,7 +25,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use super::super::core::{SmAdvance, SmData, SmDriver, SmRuntime};
-use super::parse::{parse_sm, split_call, ActionParser, EventParser};
+use super::parse::{ActionParser, EventParser, parse_sm};
 
 // ---------------------------------------------------------------------------
 // Vocabulary
@@ -164,11 +164,7 @@ impl SmDriver for AnimatorDriver {
     type Context = AnimatorCtx;
     type Output = AnimatorOutput;
 
-    fn eval_event(
-        ctx: &Self::Context,
-        event: &Self::Event,
-        runtime: &SmRuntime<Self>,
-    ) -> bool {
+    fn eval_event(ctx: &Self::Context, event: &Self::Event, runtime: &SmRuntime<Self>) -> bool {
         match event {
             AnimatorEvent::PadCmd(name) => ctx.active_pad_cmds.contains(name),
             AnimatorEvent::PadPressed(name) => ctx.pressed_pad_cmds.contains(name),
@@ -242,7 +238,10 @@ pub fn parse_animator_event(
         let (n, a) = crate::statemachine::drivers::parse::split_call(text);
         if a.is_empty() && n.contains(char::is_whitespace) {
             let mut it = n.splitn(2, char::is_whitespace);
-            (it.next().unwrap_or("").trim(), it.next().unwrap_or("").trim())
+            (
+                it.next().unwrap_or("").trim(),
+                it.next().unwrap_or("").trim(),
+            )
         } else {
             (n, a)
         }
@@ -303,11 +302,7 @@ pub const ANIMATOR_ACTION_PARSER: ActionParser<AnimatorDriver> = parse_animator_
 /// Call once at startup and store the result in a Bevy resource (Arc-shared
 /// across every character entity).
 pub fn load_embedded() -> Result<SmData<AnimatorDriver>, String> {
-    parse_sm::<AnimatorDriver>(
-        ANIMATOR_FSM,
-        ANIMATOR_EVENT_PARSER,
-        ANIMATOR_ACTION_PARSER,
-    )
+    parse_sm::<AnimatorDriver>(ANIMATOR_FSM, ANIMATOR_EVENT_PARSER, ANIMATOR_ACTION_PARSER)
 }
 
 /// Convenience: wrap `load_embedded` into an `Arc` for sharing via a resource.
@@ -633,6 +628,9 @@ if Always { Destroy; goto END }
         let mut ctx = AnimatorCtx::default();
         let out = rt.tick(&mut ctx);
         assert_eq!(rt.current_state, end);
-        assert!(out.should_destroy, "Destroy action should set should_destroy");
+        assert!(
+            out.should_destroy,
+            "Destroy action should set should_destroy"
+        );
     }
 }

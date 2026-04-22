@@ -30,13 +30,9 @@ use avian3d::prelude::LinearVelocity;
 use crate::combat::components::Fighter;
 use crate::menu::AppState;
 use crate::statemachine::core::{SmData, SmRuntime};
-use crate::statemachine::drivers::behavior::{
-    self, BehaviorCtx, BehaviorDriver, BehaviorKind,
-};
+use crate::statemachine::drivers::behavior::{self, BehaviorCtx, BehaviorDriver, BehaviorKind};
 
 pub mod impls;
-
-pub use crate::statemachine::drivers::behavior::BehaviorKind as Kind;
 
 // ---------------------------------------------------------------------------
 // Components
@@ -131,6 +127,10 @@ pub struct BehaviorRunCtx<'a> {
     /// Current animation playback state on this entity.  Mutated by
     /// `anim_lib.play(..)` to switch the active anim.
     pub anim_state: Option<&'a mut crate::oni2_loader::animation::Oni2AnimState>,
+    /// The .atk-driven attack state machine.  FightBehavior toggles
+    /// `ctx.got_cookie` here on enter / exit so the attack machine
+    /// switches between no_cookie (ambient) and cookie (attacking) rows.
+    pub attack_runtime: Option<&'a mut crate::fightai::components::AttackRuntime>,
     /// World position of the entity currently stored in
     /// `ai_fighter.target`, if any.  Pre-resolved by the dispatcher so
     /// behaviors don't need their own transforms query.
@@ -387,6 +387,7 @@ pub fn behavior_start_dispatch_system(
         Option<&mut crate::ai::fsm::AiPadCommands>,
         Option<&crate::oni2_loader::animation::Oni2AnimLibrary>,
         Option<&mut crate::oni2_loader::animation::Oni2AnimState>,
+        Option<&mut crate::fightai::components::AttackRuntime>,
     )>,
     target_transforms: Query<&GlobalTransform>,
     mut end_writer: MessageWriter<EndBehaviorMessage>,
@@ -402,10 +403,27 @@ pub fn behavior_start_dispatch_system(
             pad_commands_opt,
             anim_lib_opt,
             anim_state_opt,
+            attack_runtime_opt,
         )) = query.get_mut(msg.entity)
         else {
             continue;
         };
+
+        // Re-entry guard: if the active behavior already matches the
+        // requested kind, drop the message silently.  Prevents the
+        // "strobe" where an upstream pulse (e.g. ScrOni's `fight` stmt
+        // re-firing TriggerFight, or any FSM rule that unconditionally
+        // keeps firing StartBehavior) would tear down and re-instantiate
+        // the current behavior every tick — resetting its internal
+        // timers (FightBehavior.decision_timer, Goto.cursor, etc.) and
+        // causing visible flicker.  Behaviors persist across repeated
+        // start requests of the same kind; only a kind change does the
+        // full on_exit/on_enter swap.
+        if let Some(prev) = active.0.as_ref()
+            && prev.kind() == msg.kind
+        {
+            continue;
+        }
 
         let Some(mut new_behavior) = registry.make(msg.kind) else {
             warn!(
@@ -426,19 +444,21 @@ pub fn behavior_start_dispatch_system(
         let mut side_effects: Vec<BehaviorSideEffect> = Vec::new();
         let runtime_mut = runtime.as_mut();
         let params_snapshot = runtime_mut.pending_params.clone();
-        let mut ai_fighter_mut = ai_fighter_opt.map(|a| a.into_inner());
-        let mut pad_commands_mut = pad_commands_opt.map(|p| p.into_inner());
-        let mut anim_state_mut = anim_state_opt.map(|s| s.into_inner());
+        let ai_fighter_mut = ai_fighter_opt.map(|a| a.into_inner());
+        let pad_commands_mut = pad_commands_opt.map(|p| p.into_inner());
+        let anim_state_mut = anim_state_opt.map(|s| s.into_inner());
+        let attack_runtime_mut = attack_runtime_opt.map(|r| r.into_inner());
         let mut ctx = BehaviorRunCtx {
             entity: msg.entity,
             params: &params_snapshot,
             transform: &mut transform,
             velocity: &mut velocity,
             fighter: &mut fighter,
-            ai_fighter: ai_fighter_mut.as_deref_mut(),
-            pad_commands: pad_commands_mut.as_deref_mut(),
+            ai_fighter: ai_fighter_mut,
+            pad_commands: pad_commands_mut,
             anim_lib: anim_lib_opt,
-            anim_state: anim_state_mut.as_deref_mut(),
+            anim_state: anim_state_mut,
+            attack_runtime: attack_runtime_mut,
             target_position,
             side_effects: &mut side_effects,
         };
@@ -503,6 +523,7 @@ pub fn behavior_update_dispatch_system(
         Option<&mut crate::ai::fsm::AiPadCommands>,
         Option<&crate::oni2_loader::animation::Oni2AnimLibrary>,
         Option<&mut crate::oni2_loader::animation::Oni2AnimState>,
+        Option<&mut crate::fightai::components::AttackRuntime>,
     )>,
     target_transforms: Query<&GlobalTransform>,
     mut end_writer: MessageWriter<EndBehaviorMessage>,
@@ -520,6 +541,7 @@ pub fn behavior_update_dispatch_system(
         pad_commands_opt,
         anim_lib_opt,
         anim_state_opt,
+        attack_runtime_opt,
     ) in &mut query
     {
         let Some(mut current) = active.0.take() else {
@@ -534,19 +556,21 @@ pub fn behavior_update_dispatch_system(
 
         let mut side_effects: Vec<BehaviorSideEffect> = Vec::new();
         let params_snapshot = runtime.pending_params.clone();
-        let mut ai_fighter_mut = ai_fighter_opt.map(|a| a.into_inner());
-        let mut pad_commands_mut = pad_commands_opt.map(|p| p.into_inner());
-        let mut anim_state_mut = anim_state_opt.map(|s| s.into_inner());
+        let ai_fighter_mut = ai_fighter_opt.map(|a| a.into_inner());
+        let pad_commands_mut = pad_commands_opt.map(|p| p.into_inner());
+        let anim_state_mut = anim_state_opt.map(|s| s.into_inner());
+        let attack_runtime_mut = attack_runtime_opt.map(|r| r.into_inner());
         let mut ctx = BehaviorRunCtx {
             entity,
             params: &params_snapshot,
             transform: &mut transform,
             velocity: &mut velocity,
             fighter: &mut fighter,
-            ai_fighter: ai_fighter_mut.as_deref_mut(),
-            pad_commands: pad_commands_mut.as_deref_mut(),
+            ai_fighter: ai_fighter_mut,
+            pad_commands: pad_commands_mut,
             anim_lib: anim_lib_opt,
-            anim_state: anim_state_mut.as_deref_mut(),
+            anim_state: anim_state_mut,
+            attack_runtime: attack_runtime_mut,
             target_position,
             side_effects: &mut side_effects,
         };

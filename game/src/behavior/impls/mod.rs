@@ -24,7 +24,7 @@ pub fn register_default_behaviors(registry: &mut BehaviorRegistry) {
         Box::new(goto::GotoBehavior::default()) as Box<dyn Behavior>
     });
     registry.register(BehaviorKind::Fight, || {
-        Box::new(fight::FightBehavior::default()) as Box<dyn Behavior>
+        Box::new(fight::FightBehavior) as Box<dyn Behavior>
     });
     // Follow / Patrol / Retreat / Pad — ported in follow-ups.
 }

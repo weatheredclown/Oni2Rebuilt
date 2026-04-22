@@ -226,7 +226,7 @@ pub fn update_debug_light_grid(
     }
 
     for cell in desired_cells {
-        if !state.lights.contains_key(&cell) {
+        state.lights.entry(cell).or_insert_with(|| {
             let world_x = cell.0 as f32 * grid_size;
             let world_z = cell.1 as f32 * grid_size;
             let ray_origin = Vec3::new(world_x, py + 1.0, world_z);
@@ -242,7 +242,7 @@ pub fn update_debug_light_grid(
                 py + 5.0
             };
 
-            let light_entity = commands
+            commands
                 .spawn((
                     PointLight {
                         color: Color::WHITE,
@@ -253,9 +253,7 @@ pub fn update_debug_light_grid(
                     },
                     Transform::from_xyz(world_x, height, world_z),
                 ))
-                .id();
-
-            state.lights.insert(cell, light_entity);
-        }
+                .id()
+        });
     }
 }

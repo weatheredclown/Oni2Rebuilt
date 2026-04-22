@@ -519,10 +519,10 @@ pub fn init_variables(
             continue;
         }
         let mut val = Value::default_for_type(&var.var_type);
-        if let Some(ref expr) = var.initializer {
-            if let Some(c) = eval_constant(expr) {
-                val = c;
-            }
+        if let Some(ref expr) = var.initializer
+            && let Some(c) = eval_constant(expr)
+        {
+            val = c;
         }
         variables.insert(var.name.clone(), val);
     }
@@ -574,10 +574,10 @@ impl<'a, 'w_e, 's_e, 'w_t, 's_t> ScroniContext<'a, 'w_e, 's_e, 'w_t, 's_t> {
             }
             Value::Int(guid) => {
                 for (e, _, name_opt) in self.all_entities.iter() {
-                    if let Some(n) = name_opt {
-                        if hash_name(n.as_str()) == *guid {
-                            targets.push(e);
-                        }
+                    if let Some(n) = name_opt
+                        && hash_name(n.as_str()) == *guid
+                    {
+                        targets.push(e);
                     }
                 }
             }
@@ -860,34 +860,35 @@ impl ScriptExec {
                 continue;
             }
             for var_decl in &thread.script.variables {
-                if var_decl.var_type == VarType::Timer && !var_decl.is_parent {
-                    if let Some(val) = thread.variables.get(&var_decl.name) {
-                        match val {
-                            Value::Float(f) => {
-                                if *f > 0.0 {
-                                    let mut new_val = *f - delta_time;
-                                    if new_val < 0.0 {
-                                        new_val = 0.0;
-                                    }
-                                    thread
-                                        .variables
-                                        .insert(var_decl.name.clone(), Value::Float(new_val));
+                if var_decl.var_type == VarType::Timer
+                    && !var_decl.is_parent
+                    && let Some(val) = thread.variables.get(&var_decl.name)
+                {
+                    match val {
+                        Value::Float(f) => {
+                            if *f > 0.0 {
+                                let mut new_val = *f - delta_time;
+                                if new_val < 0.0 {
+                                    new_val = 0.0;
                                 }
+                                thread
+                                    .variables
+                                    .insert(var_decl.name.clone(), Value::Float(new_val));
                             }
-                            Value::Int(i) => {
-                                let f = *i as f32;
-                                if f > 0.0 {
-                                    let mut new_val = f - delta_time;
-                                    if new_val < 0.0 {
-                                        new_val = 0.0;
-                                    }
-                                    thread
-                                        .variables
-                                        .insert(var_decl.name.clone(), Value::Float(new_val));
-                                }
-                            }
-                            _ => {}
                         }
+                        Value::Int(i) => {
+                            let f = *i as f32;
+                            if f > 0.0 {
+                                let mut new_val = f - delta_time;
+                                if new_val < 0.0 {
+                                    new_val = 0.0;
+                                }
+                                thread
+                                    .variables
+                                    .insert(var_decl.name.clone(), Value::Float(new_val));
+                            }
+                        }
+                        _ => {}
                     }
                 }
             }
@@ -1435,13 +1436,13 @@ impl ScriptExec {
                     "clock" => Value::Float(now as f32),
                     "sin" => {
                         let val = args
-                            .get(0)
+                            .first()
                             .map_or(0.0, |e| self.eval_expr(tid, e, now, ctx).as_float());
                         Value::Float(val.to_radians().sin())
                     }
                     "cos" => {
                         let val = args
-                            .get(0)
+                            .first()
                             .map_or(0.0, |e| self.eval_expr(tid, e, now, ctx).as_float());
                         Value::Float(val.to_radians().cos())
                     }
@@ -1455,7 +1456,7 @@ impl ScriptExec {
                     "random" => Value::Int(rand::random::<i32>().abs() % 100),
                     "randomrange" => {
                         let min = args
-                            .get(0)
+                            .first()
                             .map(|e| self.eval_expr(tid, e, now, ctx).as_int())
                             .unwrap_or(0);
                         let max = args
@@ -1473,7 +1474,7 @@ impl ScriptExec {
                     }
                     "randomrangefloat" => {
                         let min = args
-                            .get(0)
+                            .first()
                             .map(|e| self.eval_expr(tid, e, now, ctx).as_float())
                             .unwrap_or(0.0);
                         let max = args
@@ -1484,14 +1485,14 @@ impl ScriptExec {
                         Value::Float(min + r * (max - min))
                     }
                     "guid" => {
-                        if let Some(e) = args.get(0) {
+                        if let Some(e) = args.first() {
                             let val = self.eval_expr(tid, e, now, ctx);
                             return Value::Int(hash_name(&val.as_string()));
                         }
                         Value::None
                     }
                     "exists" => {
-                        let target = args.get(0).map(|e| self.eval_expr(tid, e, now, ctx));
+                        let target = args.first().map(|e| self.eval_expr(tid, e, now, ctx));
                         if let Some(t) = target {
                             let ents = ctx.resolve_targets(&t);
                             for ent in ents {
@@ -1504,7 +1505,7 @@ impl ScriptExec {
                         Value::Int(0)
                     }
                     "status" => {
-                        let target = args.get(0).map(|e| self.eval_expr(tid, e, now, ctx));
+                        let target = args.first().map(|e| self.eval_expr(tid, e, now, ctx));
                         if let Some(t) = target {
                             let ents = ctx.resolve_targets(&t);
                             if let Some(&ent) = ents.first() {
@@ -1525,17 +1526,17 @@ impl ScriptExec {
                     "knockeddown" => Value::String("knockeddown".to_string()),
                     "attacking" => Value::String("attacking".to_string()),
                     "location" => {
-                        let target = args.get(0).map(|e| self.eval_expr(tid, e, now, ctx));
-                        if let Some(Value::Actor(act)) = target {
-                            if let Ok((_, tf, _)) = ctx.all_entities.get(act) {
-                                let p = tf.translation();
-                                return Value::Vector(space::to_oni2_space_pos(p));
-                            }
+                        let target = args.first().map(|e| self.eval_expr(tid, e, now, ctx));
+                        if let Some(Value::Actor(act)) = target
+                            && let Ok((_, tf, _)) = ctx.all_entities.get(act)
+                        {
+                            let p = tf.translation();
+                            return Value::Vector(space::to_oni2_space_pos(p));
                         }
                         Value::None
                     }
                     "distance" => {
-                        let arg1 = args.get(0).map(|e| self.eval_expr(tid, e, now, ctx));
+                        let arg1 = args.first().map(|e| self.eval_expr(tid, e, now, ctx));
                         let arg2 = args.get(1).map(|e| self.eval_expr(tid, e, now, ctx));
 
                         let resolve_pos = |val: Value| -> Option<Vec3> {
@@ -1556,12 +1557,13 @@ impl ScriptExec {
                         let mut p1 = arg1.and_then(resolve_pos);
                         let mut p2 = arg2.and_then(resolve_pos);
 
-                        if p1.is_some() && p2.is_none() {
-                            if let Ok((_, my_tf, _)) = ctx.all_entities.get(self.owner) {
-                                p2 = p1;
-                                let my_p = my_tf.translation();
-                                p1 = Some(space::to_oni2_space_pos(my_p));
-                            }
+                        if p1.is_some()
+                            && p2.is_none()
+                            && let Ok((_, my_tf, _)) = ctx.all_entities.get(self.owner)
+                        {
+                            p2 = p1;
+                            let my_p = my_tf.translation();
+                            p1 = Some(space::to_oni2_space_pos(my_p));
                         }
 
                         if let (Some(a), Some(b)) = (p1, p2) {
@@ -1570,7 +1572,7 @@ impl ScriptExec {
                         Value::Float(99999.0)
                     }
                     "trigger" => {
-                        if let Some(event_expr) = args.get(0) {
+                        if let Some(event_expr) = args.first() {
                             let event_name = match event_expr {
                                 Expr::Var(n) => n.clone(),
                                 Expr::StringLit(s) => s.clone(),
@@ -1581,80 +1583,74 @@ impl ScriptExec {
                             if let Ok(trigger) = ctx.triggers.get(self.owner) {
                                 match event_name.as_str() {
                                     "playerenter" => {
-                                        if let Some(p) = ctx.player {
-                                            if trigger.just_entered.contains(&p) {
-                                                return Value::Int(1);
-                                            }
+                                        if let Some(p) = ctx.player
+                                            && trigger.just_entered.contains(&p)
+                                        {
+                                            return Value::Int(1);
                                         }
                                     }
                                     "playerexit" => {
-                                        if let Some(p) = ctx.player {
-                                            if trigger.just_exited.contains(&p) {
-                                                return Value::Int(1);
-                                            }
+                                        if let Some(p) = ctx.player
+                                            && trigger.just_exited.contains(&p)
+                                        {
+                                            return Value::Int(1);
                                         }
                                     }
                                     "playerinside" => {
-                                        if let Some(p) = ctx.player {
-                                            if trigger.inside.contains(&p) {
-                                                return Value::Int(1);
-                                            }
+                                        if let Some(p) = ctx.player
+                                            && trigger.inside.contains(&p)
+                                        {
+                                            return Value::Int(1);
                                         }
                                     }
                                     "playeroutside" => {
-                                        if let Some(p) = ctx.player {
-                                            if !trigger.inside.contains(&p) {
-                                                return Value::Int(1);
-                                            }
+                                        if let Some(p) = ctx.player
+                                            && !trigger.inside.contains(&p)
+                                        {
+                                            return Value::Int(1);
                                         }
                                     }
                                     _ => {}
                                 }
                             }
                         }
-                        return Value::Int(0);
+                        Value::Int(0)
                     }
                     "triggerentered" => {
-                        let trig_ent = args.get(0).map(|e| self.eval_expr(tid, e, now, ctx));
+                        let trig_ent = args.first().map(|e| self.eval_expr(tid, e, now, ctx));
                         let targ_ent = args.get(1).map(|e| self.eval_expr(tid, e, now, ctx));
                         if let (Some(Value::Actor(t)), Some(Value::Actor(e))) = (trig_ent, targ_ent)
+                            && let Ok(trigger) = ctx.triggers.get(t)
+                            && trigger.just_entered.contains(&e)
                         {
-                            if let Ok(trigger) = ctx.triggers.get(t) {
-                                if trigger.just_entered.contains(&e) {
-                                    return Value::Int(1);
-                                }
-                            }
+                            return Value::Int(1);
                         }
                         Value::Int(0)
                     }
                     "triggerexited" => {
-                        let trig_ent = args.get(0).map(|e| self.eval_expr(tid, e, now, ctx));
+                        let trig_ent = args.first().map(|e| self.eval_expr(tid, e, now, ctx));
                         let targ_ent = args.get(1).map(|e| self.eval_expr(tid, e, now, ctx));
                         if let (Some(Value::Actor(t)), Some(Value::Actor(e))) = (trig_ent, targ_ent)
+                            && let Ok(trigger) = ctx.triggers.get(t)
+                            && trigger.just_exited.contains(&e)
                         {
-                            if let Ok(trigger) = ctx.triggers.get(t) {
-                                if trigger.just_exited.contains(&e) {
-                                    return Value::Int(1);
-                                }
-                            }
+                            return Value::Int(1);
                         }
                         Value::Int(0)
                     }
                     "triggerinside" => {
-                        let trig_ent = args.get(0).map(|e| self.eval_expr(tid, e, now, ctx));
+                        let trig_ent = args.first().map(|e| self.eval_expr(tid, e, now, ctx));
                         let targ_ent = args.get(1).map(|e| self.eval_expr(tid, e, now, ctx));
                         if let (Some(Value::Actor(t)), Some(Value::Actor(e))) = (trig_ent, targ_ent)
+                            && let Ok(trigger) = ctx.triggers.get(t)
+                            && trigger.inside.contains(&e)
                         {
-                            if let Ok(trigger) = ctx.triggers.get(t) {
-                                if trigger.inside.contains(&e) {
-                                    return Value::Int(1);
-                                }
-                            }
+                            return Value::Int(1);
                         }
                         Value::Int(0)
                     }
                     "receivemessage" => {
-                        if let Some(msg_expr) = args.get(0) {
+                        if let Some(msg_expr) = args.first() {
                             let target_msg = self.eval_expr(tid, msg_expr, now, ctx).as_string();
                             if let Some(idx) = self
                                 .message_queue
@@ -1674,7 +1670,7 @@ impl ScriptExec {
                         Value::Int(0)
                     }
                     "receiveaction" => {
-                        if let Some(msg_expr) = args.get(0) {
+                        if let Some(msg_expr) = args.first() {
                             let target_msg = self.eval_expr(tid, msg_expr, now, ctx).as_string();
                             if let Some(idx) = self
                                 .message_queue
@@ -1684,40 +1680,32 @@ impl ScriptExec {
                                 self.message_queue.remove(idx);
                                 return Value::Int(1);
                             }
-                        } else {
-                            if let Some(idx) = self.message_queue.iter().position(|m| m.is_action) {
-                                self.message_queue.remove(idx);
-                                return Value::Int(1);
-                            }
+                        } else if let Some(idx) =
+                            self.message_queue.iter().position(|m| m.is_action)
+                        {
+                            self.message_queue.remove(idx);
+                            return Value::Int(1);
                         }
                         Value::Int(0)
                     }
                     "getcheckpointindex" => Value::Int(ctx.current_checkpoint),
                     "first" => {
-                        if let Some(Expr::Var(list_name)) = args.get(0) {
-                            if let Value::ActorList(entities, _) = self.get_var(tid, list_name) {
-                                let updated = entities.clone();
-                                if let Some(&first_ent) = updated.first() {
-                                    self.set_var(
-                                        tid,
-                                        list_name.clone(),
-                                        Value::ActorList(updated, 1),
-                                    );
-                                    return Value::Actor(first_ent);
-                                } else {
-                                    self.set_var(
-                                        tid,
-                                        list_name.clone(),
-                                        Value::ActorList(updated, 0),
-                                    );
-                                    return Value::None;
-                                }
+                        if let Some(Expr::Var(list_name)) = args.first()
+                            && let Value::ActorList(entities, _) = self.get_var(tid, list_name)
+                        {
+                            let updated = entities.clone();
+                            if let Some(&first_ent) = updated.first() {
+                                self.set_var(tid, list_name.clone(), Value::ActorList(updated, 1));
+                                return Value::Actor(first_ent);
+                            } else {
+                                self.set_var(tid, list_name.clone(), Value::ActorList(updated, 0));
+                                return Value::None;
                             }
                         }
                         Value::None
                     }
                     "playambientsound" => {
-                        let n = args.get(0).map_or(String::new(), |e| {
+                        let n = args.first().map_or(String::new(), |e| {
                             self.eval_expr(tid, e, now, ctx).as_string()
                         });
                         let mut v = None;
@@ -1762,40 +1750,40 @@ impl ScriptExec {
                         Value::Int(handle)
                     }
                     "size" => {
-                        if let Some(Expr::Var(list_name)) = args.get(0) {
-                            if let Value::ActorList(entities, _) = self.get_var(tid, list_name) {
-                                return Value::Int(entities.len() as i32);
-                            }
+                        if let Some(Expr::Var(list_name)) = args.first()
+                            && let Value::ActorList(entities, _) = self.get_var(tid, list_name)
+                        {
+                            return Value::Int(entities.len() as i32);
                         }
                         Value::Int(0)
                     }
                     "next" => {
-                        if let Some(Expr::Var(list_name)) = args.get(0) {
-                            if let Value::ActorList(entities, idx) = self.get_var(tid, list_name) {
-                                let updated = entities.clone();
-                                let current_idx = idx;
-                                if current_idx < updated.len() {
-                                    let ent = updated[current_idx];
-                                    self.set_var(
-                                        tid,
-                                        list_name.clone(),
-                                        Value::ActorList(updated, current_idx + 1),
-                                    );
-                                    return Value::Actor(ent);
-                                } else {
-                                    self.set_var(
-                                        tid,
-                                        list_name.clone(),
-                                        Value::ActorList(updated, current_idx),
-                                    );
-                                    return Value::None;
-                                }
+                        if let Some(Expr::Var(list_name)) = args.first()
+                            && let Value::ActorList(entities, idx) = self.get_var(tid, list_name)
+                        {
+                            let updated = entities.clone();
+                            let current_idx = idx;
+                            if current_idx < updated.len() {
+                                let ent = updated[current_idx];
+                                self.set_var(
+                                    tid,
+                                    list_name.clone(),
+                                    Value::ActorList(updated, current_idx + 1),
+                                );
+                                return Value::Actor(ent);
+                            } else {
+                                self.set_var(
+                                    tid,
+                                    list_name.clone(),
+                                    Value::ActorList(updated, current_idx),
+                                );
+                                return Value::None;
                             }
                         }
                         Value::None
                     }
                     "isdone" => {
-                        let target_var = args.get(0).map(|e| self.eval_expr(tid, e, now, ctx));
+                        let target_var = args.first().map(|e| self.eval_expr(tid, e, now, ctx));
                         if let Some(Value::Int(target_tid)) = target_var {
                             // Check if child thread still exists
                             let mut exists_and_running = false;
@@ -1812,7 +1800,7 @@ impl ScriptExec {
                     "navpoint" | "path" => {
                         // navpoint("Name") or path("Name") -> return the name as a string so that
                         // the goto resolver can look it up in nav.names or path configs.
-                        if let Some(e) = args.get(0) {
+                        if let Some(e) = args.first() {
                             Value::String(self.eval_expr(tid, e, now, ctx).as_string())
                         } else {
                             Value::None
@@ -1820,7 +1808,7 @@ impl ScriptExec {
                     }
                     "lineofsight" => {
                         // lineofsight(actor_a, actor_b) -> bool (1 if unobstructed)
-                        let a = args.get(0).map(|e| self.eval_expr(tid, e, now, ctx));
+                        let a = args.first().map(|e| self.eval_expr(tid, e, now, ctx));
                         let b = args.get(1).map(|e| self.eval_expr(tid, e, now, ctx));
                         let resolve_pos = |val: &Value| -> Option<(Vec3, Entity)> {
                             match val {
@@ -1832,18 +1820,16 @@ impl ScriptExec {
                                 _ => None,
                             }
                         };
-                        if let (Some(av), Some(bv)) = (a.as_ref(), b.as_ref()) {
-                            if let (Some((pos_a, ent_a)), Some((pos_b, ent_b))) =
+                        if let (Some(av), Some(bv)) = (a.as_ref(), b.as_ref())
+                            && let (Some((pos_a, ent_a)), Some((pos_b, ent_b))) =
                                 (resolve_pos(av), resolve_pos(bv))
-                            {
-                                if let Some(los_fn) = ctx.line_of_sight {
-                                    return Value::Int(if los_fn(pos_a, pos_b, ent_a, ent_b) {
-                                        1
-                                    } else {
-                                        0
-                                    });
-                                }
-                            }
+                            && let Some(los_fn) = ctx.line_of_sight
+                        {
+                            return Value::Int(if los_fn(pos_a, pos_b, ent_a, ent_b) {
+                                1
+                            } else {
+                                0
+                            });
                         }
                         Value::Int(0)
                     }
@@ -1871,7 +1857,7 @@ impl ScriptExec {
             .child_threads
             .iter_mut()
             .find(|t| t.thread_id == tid)
-            .or_else(|| {
+            .or({
                 if tid == 0 {
                     Some(&mut self.main_thread)
                 } else {
@@ -1939,10 +1925,10 @@ fn eval_binop(op: BinOp, l: &Value, r: &Value, ctx: &ScroniContext) -> Value {
                     return Value::Int(0);
                 }
                 let mut matched = false;
-                if let Ok((_, _, Some(name))) = ctx.all_entities.get(*ent) {
-                    if hash_name(name.as_str()) == *guid {
-                        matched = true;
-                    }
+                if let Ok((_, _, Some(name))) = ctx.all_entities.get(*ent)
+                    && hash_name(name.as_str()) == *guid
+                {
+                    matched = true;
                 }
                 return Value::Int(if matched { 1 } else { 0 });
             }
@@ -2014,7 +2000,7 @@ pub fn scroni_tick_system(
     player_query: Query<Entity, With<crate::player::components::Player>>,
     current_checkpoint: Res<crate::oni2_loader::components::CurrentCheckpointIndex>,
     layout_context: Option<Res<crate::oni2_loader::environment::LayoutContext>>,
-    mut health_query: Query<(
+    health_query: Query<(
         Entity,
         &mut crate::combat::components::Health,
         Option<&crate::ai::components::AiFighter>,
@@ -2033,9 +2019,10 @@ pub fn scroni_tick_system(
     // `WaitingForBehavior { kind }` can resolve this tick.  Buffer the
     // set (entity, kind) pairs — messages are one-shot so re-reading the
     // reader in the resolve loop below would miss them.
-    let ended_behaviors: std::collections::HashSet<
-        (Entity, crate::statemachine::drivers::behavior::BehaviorKind),
-    > = end_behavior_reader
+    let ended_behaviors: std::collections::HashSet<(
+        Entity,
+        crate::statemachine::drivers::behavior::BehaviorKind,
+    )> = end_behavior_reader
         .read()
         .map(|m| (m.entity, m.kind))
         .collect();
@@ -2063,7 +2050,7 @@ pub fn scroni_tick_system(
         actor_statuses.insert(ent, status.to_string());
     }
 
-    for (entity, mut script, transform, pathfollower_opt, retreating_opt) in &mut query {
+    for (entity, mut script, transform, pathfollower_opt, _retreating_opt) in &mut query {
         if script.exec.ticks_alive == 0 {
             script.exec.ticks_alive += 1;
             continue;
@@ -2153,7 +2140,7 @@ pub fn scroni_tick_system(
                 })
                 .map(|(_, pts)| pts.clone());
             if let Some(pts) = waypoints {
-                if let Some(mut e_cmd) = commands.get_entity(entity).ok() {
+                if let Ok(mut e_cmd) = commands.get_entity(entity) {
                     e_cmd.insert(crate::ai::navigation::ActorPathfollower {
                         path: pts,
                         current_wp: 0,
@@ -2174,15 +2161,15 @@ pub fn scroni_tick_system(
             if let Value::Vector(v) = target {
                 resolved_pos = Some(space::to_bevy_space_pos(v)); // Convert to Bevy coords
             } else if let Value::String(s) = target {
-                if let Some(nav) = &nav_graph_opt {
-                    if let Some(idx) = nav.names.get(&s) {
-                        resolved_pos = Some(nav.points[*idx]);
-                    }
+                if let Some(nav) = &nav_graph_opt
+                    && let Some(idx) = nav.names.get(&s)
+                {
+                    resolved_pos = Some(nav.points[*idx]);
                 }
-            } else if let Value::Actor(act) = target {
-                if let Ok((_, tf, _)) = all_entities.get(act) {
-                    resolved_pos = Some(tf.translation());
-                }
+            } else if let Value::Actor(act) = target
+                && let Ok((_, tf, _)) = all_entities.get(act)
+            {
+                resolved_pos = Some(tf.translation());
             }
 
             let path = resolved_pos.and_then(|pos| {
@@ -2223,7 +2210,7 @@ pub fn scroni_tick_system(
             script.exec.tick_thread(tid, now, &mut ctx);
         }
 
-        let script_name = script.exec.main_thread.script.name.clone();
+        let _script_name = script.exec.main_thread.script.name.clone();
         for req in script.exec.sys_requests.drain(..) {
             match req {
                 SysRequest::MakeExplosion {
@@ -2286,12 +2273,12 @@ pub fn scroni_tick_system(
                     });
                 }
                 SysRequest::SetFaction { actor, faction } => {
-                    if let Some(mut e_cmd) = commands.get_entity(actor).ok() {
+                    if let Ok(mut e_cmd) = commands.get_entity(actor) {
                         e_cmd.insert(crate::combat::faction::Faction(faction));
                     }
                 }
                 SysRequest::Retreat { actor, target } => {
-                    if let Some(mut e_cmd) = commands.get_entity(actor).ok() {
+                    if let Ok(mut e_cmd) = commands.get_entity(actor) {
                         e_cmd.insert(crate::ai::components::ActorRetreating {
                             avoid_target: target,
                         });
@@ -2549,7 +2536,7 @@ pub struct ScreenFadeUi;
 pub fn update_screen_fade_system(
     mut commands: Commands,
     time: Res<Time>,
-    mut state_res: Option<ResMut<ScreenFadeState>>,
+    state_res: Option<ResMut<ScreenFadeState>>,
     mut query: Query<&mut BackgroundColor, With<ScreenFadeUi>>,
 ) {
     let Some(mut state) = state_res else {
@@ -2566,10 +2553,8 @@ pub fn update_screen_fade_system(
             1.0
         };
         state.current_color = state.start_color.lerp(state.target_color, t);
-    } else {
-        if state.duration == 0.0 {
-            state.current_color = state.target_color;
-        }
+    } else if state.duration == 0.0 {
+        state.current_color = state.target_color;
     }
 
     let r = state.current_color.x.clamp(0.0, 1.0);
@@ -2586,23 +2571,21 @@ pub fn update_screen_fade_system(
         } else {
             bg_color.0 = bevy_color;
         }
-    } else {
-        if opacity > 0.001 {
-            commands.spawn((
-                Node {
-                    position_type: PositionType::Absolute,
-                    left: Val::Px(0.0),
-                    top: Val::Px(0.0),
-                    width: Val::Vw(100.0),
-                    height: Val::Vh(100.0),
-                    ..default()
-                },
-                BackgroundColor(bevy_color),
-                GlobalZIndex(9999),
-                ScreenFadeUi,
-                crate::menu::InGameEntity,
-            ));
-        }
+    } else if opacity > 0.001 {
+        commands.spawn((
+            Node {
+                position_type: PositionType::Absolute,
+                left: Val::Px(0.0),
+                top: Val::Px(0.0),
+                width: Val::Vw(100.0),
+                height: Val::Vh(100.0),
+                ..default()
+            },
+            BackgroundColor(bevy_color),
+            GlobalZIndex(9999),
+            ScreenFadeUi,
+            crate::menu::InGameEntity,
+        ));
     }
 }
 
@@ -2624,10 +2607,10 @@ pub fn cleanup_scroni_text(
 ) {
     let now = time.elapsed_secs_f64();
     for (entity, text_element, _text) in &query {
-        if now > text_element.expires_at {
-            if let Some(mut e_cmd) = commands.get_entity(entity).ok() {
-                e_cmd.try_despawn();
-            }
+        if now > text_element.expires_at
+            && let Ok(mut e_cmd) = commands.get_entity(entity)
+        {
+            e_cmd.try_despawn();
         }
     }
 }
@@ -2646,7 +2629,7 @@ pub fn audio_ramp_system(
     )>,
 ) {
     let dt = time.delta_secs();
-    for (entity, mut sink, mut vol_ramp_opt, mut pitch_ramp_opt) in &mut audio_query {
+    for (entity, mut sink, vol_ramp_opt, pitch_ramp_opt) in &mut audio_query {
         if let Some(mut vr) = vol_ramp_opt {
             if vr.start_vol < 0.0 {
                 vr.start_vol = match sink.volume() {
@@ -2662,10 +2645,10 @@ pub fn audio_ramp_system(
             };
             let current = vr.start_vol + (vr.end_vol - vr.start_vol) * t;
             sink.set_volume(bevy::audio::Volume::Linear(current));
-            if t >= 1.0 {
-                if let Some(mut e_cmd) = commands.get_entity(entity).ok() {
-                    e_cmd.remove::<AudioVolumeRamp>();
-                }
+            if t >= 1.0
+                && let Ok(mut e_cmd) = commands.get_entity(entity)
+            {
+                e_cmd.remove::<AudioVolumeRamp>();
             }
         }
 
@@ -2681,10 +2664,10 @@ pub fn audio_ramp_system(
             };
             let current = pr.start_pitch + (pr.end_pitch - pr.start_pitch) * t;
             sink.set_speed(current);
-            if t >= 1.0 {
-                if let Some(mut e_cmd) = commands.get_entity(entity).ok() {
-                    e_cmd.remove::<AudioPitchRamp>();
-                }
+            if t >= 1.0
+                && let Ok(mut e_cmd) = commands.get_entity(entity)
+            {
+                e_cmd.remove::<AudioPitchRamp>();
             }
         }
     }
@@ -2705,14 +2688,12 @@ pub fn checkpoint_trigger_system(
 
     for (trigger, trigger_tf) in &trigger_query {
         let dist = player_pos.distance(trigger_tf.translation());
-        if dist <= trigger.radius {
-            if checkpoint_idx.0 != trigger.index {
-                checkpoint_idx.0 = trigger.index;
-                info!(
-                    "Player entered CheckpointTrigger: updated checkpoint_index to {}",
-                    trigger.index
-                );
-            }
+        if dist <= trigger.radius && checkpoint_idx.0 != trigger.index {
+            checkpoint_idx.0 = trigger.index;
+            info!(
+                "Player entered CheckpointTrigger: updated checkpoint_index to {}",
+                trigger.index
+            );
         }
     }
 }
@@ -2762,18 +2743,18 @@ pub fn apply_shader_locals_system(
 
                         let new_handle = materials.add(cloned_mat_val);
                         mesh_mat.0 = new_handle;
-                        if let Some(mut e_cmd) = commands.get_entity(child_entity).ok() {
+                        if let Ok(mut e_cmd) = commands.get_entity(child_entity) {
                             e_cmd.insert(ClonedShaderLocalMaterial);
                         }
                     }
                 } else {
                     // Already cloned, mutating in-place is instance-safe
-                    if let Some(target_mat) = materials.get_mut(mesh_mat.id()) {
-                        if let Some(offset) = target_uv_offset {
-                            // maybe invert?
-                            target_mat.uv_transform =
-                                bevy::math::Affine2::from_translation(Vec2::new(offset, offset));
-                        }
+                    if let Some(target_mat) = materials.get_mut(mesh_mat.id())
+                        && let Some(offset) = target_uv_offset
+                    {
+                        // maybe invert?
+                        target_mat.uv_transform =
+                            bevy::math::Affine2::from_translation(Vec2::new(offset, offset));
                     }
                 }
             }

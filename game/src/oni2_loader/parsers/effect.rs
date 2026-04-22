@@ -8,7 +8,6 @@
 use super::projectile::SettingsExt;
 use super::settings::SettingsBlock;
 use bevy::prelude::*;
-use std::collections::HashMap;
 
 #[derive(Debug, Clone)]
 pub enum EffectDef {
@@ -159,7 +158,7 @@ pub fn parse_effect(
             }))
         }
         "DELAYEDPARTICLEEFFECT" => {
-            let nested = block.children.first().or(Some(block)).unwrap();
+            let nested = block.children.first().unwrap_or(block);
             let system = parse_particle_ref(nested)?;
             Some(EffectDef::DelayedParticle(DelayedParticleDef {
                 name: name.to_string(),
@@ -179,7 +178,7 @@ pub fn parse_effect(
             if let Some(child) = block.children.first() {
                 top_level = child; // Contains the particle system + duration
             }
-            let nested = top_level.children.first().or(Some(top_level)).unwrap();
+            let nested = top_level.children.first().unwrap_or(top_level);
             let system = parse_particle_ref(nested)?;
 
             Some(EffectDef::HealthIndicator(HealthIndicatorDef {

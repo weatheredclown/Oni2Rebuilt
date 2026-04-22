@@ -20,8 +20,8 @@ mod debug;
 mod door;
 mod explosion;
 mod fight;
-mod fightai;
 mod fight_vector;
+mod fightai;
 mod filesystem;
 mod fx_system;
 mod hud;
@@ -69,8 +69,6 @@ pub fn set_assets_path(path: impl Into<String>) {
 pub fn set_assets_dat(path: impl Into<String>) {
     let _ = ASSETS_DAT.set(path.into());
 }
-
-
 
 /// Resource indicating sandbox mode (flat ground + model, no layout).
 #[derive(Resource)]
@@ -390,10 +388,7 @@ fn setup_scene(
 
     // Attach player components to layout entity, or spawn a fallback capsule
     let player_id = if let Some(ref pi) = layout_player_info {
-        let pad_fsm = pi
-            .pad_fsm
-            .clone()
-            .unwrap_or_else(|| "player".to_string());
+        let pad_fsm = pi.pad_fsm.clone().unwrap_or_else(|| "player".to_string());
         commands.entity(pi.entity).insert((
             scoped.clone(),
             crate::player::PlayerIdentityBundle::new(

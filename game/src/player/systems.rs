@@ -19,7 +19,6 @@ const MOVE_SPEED: f32 = 6.0;
 const MOUSE_SENSITIVITY: f32 = 0.003;
 const JUMP_IMPULSE: f32 = 8.0;
 
-
 // ---------------------------------------------------------------------------
 // Keyboard / mouse input backend
 // ---------------------------------------------------------------------------
@@ -381,17 +380,15 @@ pub fn player_mouse_look_system(
         return;
     }
 
-    for (mut transform, mut fighter, mut input) in &mut query {
+    for (_transform, mut fighter, mut input) in &mut query {
         let yaw = -total_delta.x * MOUSE_SENSITIVITY;
         input.yaw_delta = yaw;
 
         if input.blocking {
             fighter.facing = Quat::from_rotation_y(yaw) * fighter.facing;
-        } else {
-            if let Some(mut channel) = camera_query.iter_mut().next() {
-                channel.desired_azimuth += yaw;
-                channel.current_azimuth += yaw;
-            }
+        } else if let Some(mut channel) = camera_query.iter_mut().next() {
+            channel.desired_azimuth += yaw;
+            channel.current_azimuth += yaw;
         }
     }
 }
@@ -421,11 +418,11 @@ pub fn player_movement_system(
             Without<Player>,
         ),
     >,
-    mut start_action_writer: MessageWriter<crate::animator::StartActionMessage>,
+    _start_action_writer: MessageWriter<crate::animator::StartActionMessage>,
 ) {
     let camera_tf_opt = camera_query.iter().next();
 
-    for (entity, input, mut transform, mut velocity, mut fighter, fsm_opt, anim_state_opt) in
+    for (_entity, input, transform, mut velocity, mut fighter, fsm_opt, anim_state_opt) in
         &mut query
     {
         if let Some(fsm) = fsm_opt {
@@ -439,14 +436,12 @@ pub fn player_movement_system(
             }
         }
 
-        let is_grounded = anim_state_opt.map_or(true, |s| s.is_grounded);
+        let is_grounded = anim_state_opt.is_none_or(|s| s.is_grounded);
         // Debug/Placeholder players have no Animator/Oni2AnimState — they can't
         // run the data-driven jump schedule, so they get an instant hardcoded impulse.
         let is_placeholder = anim_state_opt.is_none();
-        if is_placeholder {
-            if input.jump && is_grounded {
-                velocity.y = JUMP_IMPULSE;
-            }
+        if is_placeholder && input.jump && is_grounded {
+            velocity.y = JUMP_IMPULSE;
         }
 
         if input.movement.length_squared() < 0.001 {
@@ -496,8 +491,9 @@ pub fn player_movement_system(
             if travel.length_squared() > 0.001 {
                 // Since visually the model faces local +Z, we must point local -Z OPPOSITE to travel
                 let target_rot = Transform::default().looking_to(-travel, Vec3::Y).rotation;
-                
-                let current_rot = Quat::from_rotation_arc(Vec3::Z, fighter.facing.normalize_or_zero());
+
+                let current_rot =
+                    Quat::from_rotation_arc(Vec3::Z, fighter.facing.normalize_or_zero());
                 let new_rot = current_rot.slerp(target_rot, 0.25);
                 fighter.facing = new_rot * Vec3::Z;
             }

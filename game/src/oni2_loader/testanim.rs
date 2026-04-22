@@ -46,7 +46,7 @@ pub fn setup_testanim_scene(
     // Derive entity name from filename prefix before first '_'
     let file_stem = anim_file
         .split('/')
-        .last()
+        .next_back()
         .unwrap_or("")
         .split('.')
         .next()

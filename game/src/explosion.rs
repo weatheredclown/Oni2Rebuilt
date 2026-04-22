@@ -1,4 +1,3 @@
-use avian3d::prelude::*;
 use bevy::prelude::*;
 
 use crate::combat::components::Health;
@@ -50,41 +49,39 @@ pub fn update_explosion_system(
         }
 
         // Process damage overlap checks
-        if let Some(ellipsoid) = &def.ellipsoid {
-            if active.timer <= ellipsoid.blast_duration {
-                let max_radii = Vec3::from(ellipsoid.max_radii);
-                // Simplify ellipsoid bounding as sphere for now (using largest radius)
-                let radius = max_radii.max_element();
+        if let Some(ellipsoid) = &def.ellipsoid
+            && active.timer <= ellipsoid.blast_duration
+        {
+            let max_radii = Vec3::from(ellipsoid.max_radii);
+            // Simplify ellipsoid bounding as sphere for now (using largest radius)
+            let radius = max_radii.max_element();
 
-                for (t_ent, t_tf, t_health) in &targets {
-                    let dist_sq = t_tf.translation.distance_squared(active.at);
-                    if dist_sq < radius * radius {
-                        // Apply damage! For continuous, we scale by dt.
-                        let dmg = if ellipsoid.continuous_damage {
-                            ellipsoid.max_damage * dt
-                        } else {
-                            if active.timer - dt <= 0.0 {
-                                ellipsoid.max_damage
-                            } else {
-                                0.0
-                            }
-                        };
+            for (t_ent, t_tf, _t_health) in &targets {
+                let dist_sq = t_tf.translation.distance_squared(active.at);
+                if dist_sq < radius * radius {
+                    // Apply damage! For continuous, we scale by dt.
+                    let dmg = if ellipsoid.continuous_damage {
+                        ellipsoid.max_damage * dt
+                    } else if active.timer - dt <= 0.0 {
+                        ellipsoid.max_damage
+                    } else {
+                        0.0
+                    };
 
-                        if dmg > 0.0 {
-                            injure_writer.write(InjureMessage {
-                                target: t_ent,
-                                attacker: None, // Or active.spawn_source if attributed to script
-                                damage: dmg,
-                                hit_type: "explosion".to_string(),
-                                from: Some(active.at),
-                                play_react: true,
-                                disable_creature_detect: false,
-                                attack_class: None,
-                                attack_strength: None,
-                                attack_target: None,
-                                strike_react_enum: None, // Explode reaction!
-                            });
-                        }
+                    if dmg > 0.0 {
+                        injure_writer.write(InjureMessage {
+                            target: t_ent,
+                            attacker: None, // Or active.spawn_source if attributed to script
+                            damage: dmg,
+                            hit_type: "explosion".to_string(),
+                            from: Some(active.at),
+                            play_react: true,
+                            disable_creature_detect: false,
+                            attack_class: None,
+                            attack_strength: None,
+                            attack_target: None,
+                            strike_react_enum: None, // Explode reaction!
+                        });
                     }
                 }
             }

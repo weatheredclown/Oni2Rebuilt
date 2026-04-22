@@ -1,5 +1,5 @@
 use super::block_parser::BlockParser;
-use crate::inventory::components::{ConsumableItemType, ItemBaseData, ItemEffect, WeaponItemType};
+use crate::inventory::components::{ConsumableItemType, ItemEffect, WeaponItemType};
 use bevy::prelude::*;
 use std::collections::HashMap;
 
