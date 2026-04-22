@@ -1,12 +1,15 @@
 pub mod ai;
 pub mod animator;
+pub mod behavior;
 pub mod camera;
 pub mod combat;
+pub mod common;
 pub mod control_map;
 pub mod debug;
 pub mod door;
 pub mod explosion;
 pub mod fight;
+pub mod fightai;
 pub mod fight_vector;
 pub mod filesystem;
 pub mod fx_system;

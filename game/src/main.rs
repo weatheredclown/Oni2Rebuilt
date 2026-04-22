@@ -11,13 +11,16 @@
  */
 mod ai;
 mod animator;
+mod behavior;
 mod camera;
 mod combat;
+mod common;
 mod control_map;
 mod debug;
 mod door;
 mod explosion;
 mod fight;
+mod fightai;
 mod fight_vector;
 mod filesystem;
 mod fx_system;
@@ -38,14 +41,11 @@ use avian3d::prelude::*;
 use bevy::diagnostic::FrameTimeDiagnosticsPlugin;
 use bevy::log::LogPlugin;
 use bevy::prelude::*;
-use uuid::Uuid;
-
 use camera::channel::CameraChannel;
 use camera::components::{CameraController, PrototypeElement};
-use combat::components::*;
+use combat::components::{CombatMaterials, FistVisual};
 use menu::{AppState, InGameEntity, SelectedLayout};
 use oni2_loader::TestAnimMode;
-use player::components::*;
 use std::sync::OnceLock;
 
 pub static ASSETS_PATH: OnceLock<String> = OnceLock::new();
@@ -200,6 +200,8 @@ fn main() {
     .add_plugins(control_map::ControlMapPlugin)
     .add_plugins(fight_vector::FightVectorPlugin)
     .add_plugins(statemachine::StateMachinePlugin)
+    .add_plugins(fightai::FightAiPlugin)
+    .add_plugins(behavior::BehaviorPlugin)
     .add_plugins(player::PlayerPlugin)
     .add_plugins(ai::AiPlugin)
     .add_plugins(camera::CameraPlugin)
@@ -294,6 +296,8 @@ fn setup_scene(
     mut skinned_mesh_ibp: ResMut<Assets<bevy::mesh::skinning::SkinnedMeshInverseBindposes>>,
     mut entity_lib: ResMut<oni2_loader::registries::EntityLibrary>,
     mut anim_registry: ResMut<oni2_loader::registries::AnimRegistry>,
+    mut fight_fsm_cache: ResMut<crate::fightai::FightFsmCache>,
+    mut attack_fsm_cache: ResMut<crate::fightai::AttackFsmCache>,
     combat_materials: Res<CombatMaterials>,
     selected_layout: Option<Res<SelectedLayout>>,
     sandbox: Option<Res<SandboxMode>>,
@@ -356,6 +360,8 @@ fn setup_scene(
             &mut skinned_mesh_ibp,
             &mut entity_lib,
             &mut anim_registry,
+            &mut fight_fsm_cache,
+            &mut attack_fsm_cache,
             &layout_path,
             &entity_base_str,
         )
@@ -384,23 +390,18 @@ fn setup_scene(
 
     // Attach player components to layout entity, or spawn a fallback capsule
     let player_id = if let Some(ref pi) = layout_player_info {
+        let pad_fsm = pi
+            .pad_fsm
+            .clone()
+            .unwrap_or_else(|| "player".to_string());
         commands.entity(pi.entity).insert((
             scoped.clone(),
-            Player,
-            crate::combat::faction::Faction(pi.faction.clone().unwrap_or_default()),
-            InputState::default(),
-            Fighter::default(),
-            FighterId(Uuid::new_v4()),
-            Health::new(pi.max_hitpoints.unwrap_or(100.0)),
-        ));
-        commands.entity(pi.entity).insert((
-            AttackState::default(),
-            ComboTracker::default(),
-            HitReaction::default(),
-            AboutToBeHit::default(),
-            fight::components::FighterState::default(),
-            fight::components::FighterType::default(),
-            fight::components::BlockLibrary::default(),
+            crate::player::PlayerIdentityBundle::new(
+                pi.faction.clone().unwrap_or_default(),
+                pi.max_hitpoints.unwrap_or(100.0),
+            ),
+            crate::player::components::PadFsmName(pad_fsm),
+            crate::combat::FighterBundle::default(),
         ));
         pi.entity
     } else {
@@ -445,40 +446,12 @@ pub fn spawn_fallback_player(
             })),
             Transform::from_translation(fallback_spawn),
             scoped,
-            (
-                RigidBody::Dynamic,
-                Collider::capsule(0.4, 1.2),
-                LockedAxes::new()
-                    .lock_rotation_x()
-                    .lock_rotation_y()
-                    .lock_rotation_z(),
-                LinearVelocity::default(),
-                ShapeCaster::new(
-                    Collider::sphere(0.35),
-                    Vec3::NEG_Y * 0.5,
-                    Quat::default(),
-                    Dir3::NEG_Y,
-                )
-                .with_max_distance(0.3),
-            ),
+            crate::combat::CreaturePhysicsBundle::new(0.4, 1.2),
             PrototypeElement,
-            (
-                Player,
-                crate::combat::faction::Faction("TCTF".to_string()),
-                InputState::default(),
-                Fighter::default(),
-                FighterId(Uuid::new_v4()),
-                Health::new(100.0),
-            ),
-            (
-                AttackState::default(),
-                ComboTracker::default(),
-                HitReaction::default(),
-                AboutToBeHit::default(),
-                fight::components::FighterState::default(),
-                fight::components::FighterType::default(),
-                fight::components::BlockLibrary::default(),
-            ),
+            crate::player::PlayerIdentityBundle::new("TCTF", 100.0),
+            crate::player::components::PadFsmName("player".to_string()),
+            crate::combat::FighterBundle::default(),
+            crate::animator::AnimatorBundle::default(),
         ))
         .with_children(|parent| {
             parent.spawn((

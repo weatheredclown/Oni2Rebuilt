@@ -22,6 +22,97 @@ use crate::fight_vector::{FightVectorTrigger, facing_within, find_fight_trigger_
 use crate::oni2_loader::{Oni2AnimLibrary, Oni2AnimState};
 use crate::player::components::{InputState, Player};
 use crate::statemachine::drivers::animator::AnimatorCtx;
+use crate::animator::events::EndActionMessage;
+
+// ---------------------------------------------------------------------------
+// FsmRuntime — per-entity state-machine runtime
+// ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// FSM action helpers — shared DNA for animation-effect FSM actions
+// ---------------------------------------------------------------------------
+//
+// Both the player's `fsm_update_system` (draining `FsmOutput.attack_anim`
+// etc.) and the AI-side `ai_fsm_update_system` historically inlined the
+// "play the anim, maybe rotate" code here.  `FightBehavior` (the
+// behavior-layer combat shim) wants the same semantics.  Extracting the
+// logic into named helpers keeps one implementation of each FSM action
+// so a future tuning tweak (e.g. wiring in `rotation_notches` on the AI
+// side, or adding a broadcast for `DoAttack` start) lives in one place.
+//
+// Downstream combat is entirely ATDT-driven off `Oni2AnimState.anim`:
+// `attack_sync_system` sees the newly-played animation, populates
+// `AttackState`, and `hit_detection_system` / `hit_reaction_system` pick
+// up the ATDT strike data (damage, hit window, cylinder slice, reaction)
+// without any further wiring on the caller's side.
+
+/// Execute the `DoAttack` FSM action: play an attack animation and
+/// optionally apply an FSM-authored facing rotation.  Return value
+/// matches `Oni2AnimLibrary::play` — `false` when the alias was missing.
+pub fn do_attack(
+    anim_lib: &Oni2AnimLibrary,
+    anim_state: &mut Oni2AnimState,
+    fighter: &mut Fighter,
+    anim_name: &str,
+    rotation_notches: i32,
+) -> bool {
+    let ok = anim_lib.play(anim_name, anim_state);
+    if !ok {
+        warn!(
+            "DoAttack: anim '{}' NOT in library ({} anims)",
+            anim_name,
+            anim_lib.anims.len()
+        );
+    }
+    if rotation_notches != 0 {
+        let rads = rotation_notches as f32 * NOTCH_RADIANS;
+        fighter.facing = Quat::from_rotation_y(rads) * fighter.facing;
+    }
+    ok
+}
+
+/// Execute the `DoBlock` FSM action: play a block animation.
+pub fn do_block(
+    anim_lib: &Oni2AnimLibrary,
+    anim_state: &mut Oni2AnimState,
+    anim_name: &str,
+) -> bool {
+    let ok = anim_lib.play(anim_name, anim_state);
+    if !ok {
+        warn!("DoBlock: anim '{}' NOT in library", anim_name);
+    }
+    ok
+}
+
+/// Execute the `DoEvade` FSM action: play an evade animation.  `_mirror`
+/// is accepted for future asymmetric-evade support (left-vs-right) but
+/// currently unused on both player and AI paths.
+pub fn do_evade(
+    anim_lib: &Oni2AnimLibrary,
+    anim_state: &mut Oni2AnimState,
+    anim_name: &str,
+    _mirror: bool,
+) -> bool {
+    let ok = anim_lib.play(anim_name, anim_state);
+    if !ok {
+        warn!("DoEvade: anim '{}' NOT in library", anim_name);
+    }
+    ok
+}
+
+/// Execute the `PlayCustomAnim` FSM action: play a script-requested
+/// animation.
+pub fn do_custom_anim(
+    anim_lib: &Oni2AnimLibrary,
+    anim_state: &mut Oni2AnimState,
+    anim_name: &str,
+) -> bool {
+    let ok = anim_lib.play(anim_name, anim_state);
+    if !ok {
+        warn!("PlayCustomAnim: anim '{}' NOT in library", anim_name);
+    }
+    ok
+}
 
 // ---------------------------------------------------------------------------
 // FsmRuntime — per-entity state-machine runtime
@@ -349,8 +440,10 @@ pub fn apply_timing_windows(
 pub fn fsm_update_system(
     time: Res<Time>,
     pad_mapper: Res<PadMapper>,
+    mut anim_start_reader: MessageReader<crate::animator::AnimStartedMessage>,
     mut query: Query<
         (
+            Entity,
             &mut FsmRuntime,
             &InputState,
             &mut Fighter,
@@ -365,7 +458,21 @@ pub fn fsm_update_system(
     >,
     triggers: Query<(&GlobalTransform, &FightVectorTrigger)>,
 ) {
+    // Drain `AnimStartedMessage` events into a per-entity flag set for
+    // this system's loop.  `true` iff the entity had a fresh anim this
+    // tick (or since this system last ran, if FixedUpdate ran multiple
+    // times between Update ticks).  The `previous.is_some()` guard
+    // suppresses the very-first anim play on a freshly-spawned entity.
+    let mut newly_started_anims: std::collections::HashMap<Entity, bool> =
+        std::collections::HashMap::new();
+    for msg in anim_start_reader.read() {
+        if msg.previous.is_some() {
+            newly_started_anims.insert(msg.entity, true);
+        }
+    }
+
     for (
+        entity,
         mut runtime,
         input,
         mut fighter,
@@ -386,9 +493,15 @@ pub fn fsm_update_system(
 
         // Drop any queued combo input the moment a new animation kicks
         // in (stale input from the previous attack mustn't persist).
-        // `anim_just_started` is a one-tick pulse — see Oni2AnimState
-        // doc for why we don't use `current != previous` here.
-        if anim_state.anim_just_started && anim_state.previous_anim_id.is_some() {
+        // Reads from the pre-collected `newly_started_anims` set rather
+        // than a shared bool on the component — see the top of the
+        // system for the event drain.  The `previous.is_some()` guard
+        // suppresses the very first anim play (no prior anim yet).
+        if newly_started_anims
+            .get(&entity)
+            .copied()
+            .unwrap_or(false)
+        {
             runtime.ctx.queued_attack = false;
             runtime.ctx.queued_attack_two = false;
         }
@@ -427,31 +540,14 @@ pub fn fsm_update_system(
                 "FSM: DoAttack → '{}', pad_flags: {:#x}, ctrl_flags: {:#x}",
                 anim_name, packet.pad_flags, packet.ctrl_flags
             );
-            if !anim_lib.play(anim_name, &mut anim_state) {
-                warn!(
-                    "FSM: attack anim NOT in library: '{}' (lib has {} anims)",
-                    anim_name,
-                    anim_lib.anims.len()
-                );
-            }
-            if *rotation_notches != 0 {
-                use super::types::NOTCH_RADIANS;
-                let rads = *rotation_notches as f32 * NOTCH_RADIANS;
-                fighter.facing = Quat::from_rotation_y(rads) * fighter.facing;
-            }
+            do_attack(&anim_lib, &mut anim_state, &mut fighter, anim_name, *rotation_notches);
         } else if let Some(anim_name) = &output.block_anim {
             info!("FSM: DoBlock → '{}'", anim_name);
-            if !anim_lib.play(anim_name, &mut anim_state) {
-                warn!("FSM: block anim NOT in library: '{}'", anim_name);
-            }
-        } else if let Some((anim_name, _mirror)) = &output.evade_anim {
-            if !anim_lib.play(anim_name, &mut anim_state) {
-                warn!("FSM: evade anim NOT in library: '{}'", anim_name);
-            }
+            do_block(&anim_lib, &mut anim_state, anim_name);
+        } else if let Some((anim_name, mirror)) = &output.evade_anim {
+            do_evade(&anim_lib, &mut anim_state, anim_name, *mirror);
         } else if let Some(anim_name) = &output.custom_anim {
-            if !anim_lib.play(anim_name, &mut anim_state) {
-                warn!("FSM: custom anim NOT in library: '{}'", anim_name);
-            }
+            do_custom_anim(&anim_lib, &mut anim_state, anim_name);
         }
     }
 }
@@ -499,8 +595,10 @@ pub fn animator_update_system(
         Option<&Oni2AnimState>,
         Option<&Health>,
         Option<&crate::animator::components::ActionPlayer>,
+        Option<&crate::animator::ActiveAction>,
     )>,
     mut event_writer: MessageWriter<AnimatorBroadcastEvent>,
+    mut end_action_reader: MessageReader<EndActionMessage>,
 ) {
     let dt = time.delta_secs();
 
@@ -509,11 +607,17 @@ pub fn animator_update_system(
     for msg in damage_reader.read() {
         damaged_entities.insert(msg.target);
     }
+    
+    // Collect who explicitly ended a pipelined or scheduled action
+    let mut finished_actions = HashSet::new();
+    for msg in end_action_reader.read() {
+        finished_actions.insert(msg.entity);
+    }
 
     // Collect active PadCmds from the unified active PadMapper
     let active_pad_cmds: HashSet<String> = pad_mapper.active_commands().into_iter().collect();
 
-    for (entity, mut runtime, anim_state_opt, health_opt, ap_opt) in &mut query {
+    for (entity, mut runtime, anim_state_opt, health_opt, ap_opt, active_action_opt) in &mut query {
         runtime.sm.advance_clock(dt);
 
         let is_grounded = anim_state_opt.map_or(true, |s| s.is_grounded); // Fallback to grounded
@@ -539,14 +643,28 @@ pub fn animator_update_system(
         
         runtime.ctx.damage_this_tick = damaged_entities.contains(&entity);
         runtime.ctx.health_zero = health_opt.map(|h| h.current <= 0.0).unwrap_or(false);
-        // Only non-looping anims can "complete".  A looping anim (e.g. the
-        // JUMP float now that build_jump_schedule marks MAIN with_hold())
-        // would otherwise fire Timeout once per anim length while airborne
-        // — spuriously sending the FSM into FALL mid-jump-loop.  Match the
-        // legacy `IsPlaying()` semantics: loops never finish.
-        runtime.ctx.mode_anim_done = anim_state_opt.map_or(false, |s| {
-            !s.looping && s.current_time >= (s.anim.num_frames as f32 - 1.0).max(0.0)
-        });
+
+        // Evaluation of ModeDone (formerly Timeout / ModeAnimDone).
+        // If the modern action pipeline is running, the mode is done when the pipeline
+        // clears the ActiveAction. For legacy animations, we fall back to checking if
+        // the non-looping animation reached its final frame.
+        runtime.ctx.mode_done = if let Some(active) = active_action_opt {
+            if active.0.is_some() {
+                // If a pipelined action is actively running, it's not done.
+                false
+            } else {
+                // Not actively running a new pipelined action.
+                // Was it explicitly finished this tick? OR fall back to legacy animation check.
+                finished_actions.contains(&entity) || anim_state_opt.map_or(false, |s| {
+                    !s.looping && s.current_time >= (s.anim.num_frames as f32 - 1.0).max(0.0)
+                })
+            }
+        } else {
+            // No ActiveAction component. Fall back to legacy animation check.
+            finished_actions.contains(&entity) || anim_state_opt.map_or(false, |s| {
+                !s.looping && s.current_time >= (s.anim.num_frames as f32 - 1.0).max(0.0)
+            })
+        };
         
         runtime.ctx.current_mode = runtime.sm.data.state_name(runtime.sm.current_state).to_string();
 

@@ -167,6 +167,13 @@ pub enum BlockingAction {
     Patrol(Value),
     Follow(Value),
     Attack(Value),
+    /// Waiting for the actor's BehaviorRuntime to finish the specified
+    /// behavior kind.  Resolved by an `EndBehaviorMessage` whose
+    /// `(entity, kind)` matches.  Used by the ported `goto` path so the
+    /// script thread parks until GotoBehavior returns Finished.
+    WaitingForBehavior {
+        kind: crate::statemachine::drivers::behavior::BehaviorKind,
+    },
     /// Internal: waiting for CurveFollower to reach its target phase.
     /// Set by the bridge system after configuring the CurveFollower from a GotoCurvePhase.
     WaitingForCurve,
@@ -2016,9 +2023,22 @@ pub fn scroni_tick_system(
     layout_paths: Option<Res<crate::oni2_loader::environment::LayoutPaths>>,
     spatial_query: avian3d::prelude::SpatialQuery,
     mut injure_writer: MessageWriter<crate::combat::events::InjureMessage>,
+    mut behavior_runtime_query: Query<&mut crate::behavior::BehaviorRuntime>,
+    mut end_behavior_reader: MessageReader<crate::behavior::EndBehaviorMessage>,
 ) {
     let now = time.elapsed_secs_f64();
     let delta_time = time.delta_secs();
+
+    // Drain behavior-completion events so threads blocked on
+    // `WaitingForBehavior { kind }` can resolve this tick.  Buffer the
+    // set (entity, kind) pairs — messages are one-shot so re-reading the
+    // reader in the resolve loop below would miss them.
+    let ended_behaviors: std::collections::HashSet<
+        (Entity, crate::statemachine::drivers::behavior::BehaviorKind),
+    > = end_behavior_reader
+        .read()
+        .map(|m| (m.entity, m.kind))
+        .collect();
     let mut all_messages = Vec::new();
     let player_ent = player_query.iter().next();
 
@@ -2027,14 +2047,15 @@ pub fn scroni_tick_system(
         let status = if health.current <= 0.0 {
             "dead"
         } else if let Some(ai) = ai_opt {
-            // [AUDIT]: Prototype leakage. `AiState` variants here match the prototype logic to emit generic "fighting".
-            // A real combat AI should decouple its specific behavior trees from the VM's high-level `status` inquiry.
-            match ai.state {
-                crate::ai::components::AiState::Pursuing
-                | crate::ai::components::AiState::Circling
-                | crate::ai::components::AiState::Attacking
-                | crate::ai::components::AiState::Recovering => "fighting",
-                _ => "alive",
+            // "fighting" means the actor has a current combat target.  Mirrors
+            // the legacy `aiFighter::GetMode() != M_IDLE` check — engaged vs
+            // not — without binding the scripting interface to any specific
+            // FSM state name.  Once the fight coordinator is wired, target
+            // assignment will flow from the fight FSM itself.
+            if ai.target.is_some() {
+                "fighting"
+            } else {
+                "alive"
             }
         } else {
             "alive"
@@ -2084,6 +2105,7 @@ pub fn scroni_tick_system(
         let mut gotos_to_resolve = Vec::new();
         let mut patrols_to_resolve = Vec::new();
         let mut waiting_for_path = Vec::new();
+        let mut waiting_for_behavior = Vec::new();
         for t in script.exec.all_threads_mut() {
             if let Some(BlockingAction::GotoPoint {
                 target,
@@ -2097,11 +2119,24 @@ pub fn scroni_tick_system(
                 patrols_to_resolve.push((t.thread_id, path_val));
             } else if let Some(BlockingAction::WaitingForPath) = t.blocking.clone() {
                 waiting_for_path.push(t.thread_id);
+            } else if let Some(BlockingAction::WaitingForBehavior { kind }) = t.blocking.clone() {
+                waiting_for_behavior.push((t.thread_id, kind));
             }
         }
 
         for tid in waiting_for_path {
             if pathfollower_opt.is_none() {
+                script.exec.clear_blocking(tid);
+                script.exec.tick_thread(tid, now, &mut ctx);
+            }
+        }
+
+        // Resolve `WaitingForBehavior` threads whose behavior finished this
+        // tick (EndBehaviorMessage was drained into `ended_behaviors` above).
+        // Entity + kind must both match — a different behavior finishing on
+        // the same actor doesn't unblock a script waiting on Goto.
+        for (tid, kind) in waiting_for_behavior {
+            if ended_behaviors.contains(&(entity, kind)) {
                 script.exec.clear_blocking(tid);
                 script.exec.tick_thread(tid, now, &mut ctx);
             }
@@ -2134,7 +2169,7 @@ pub fn scroni_tick_system(
             }
         }
 
-        for (tid, target, within, speed, duration) in gotos_to_resolve {
+        for (tid, target, within, speed, _duration) in gotos_to_resolve {
             let mut resolved_pos = None;
             if let Value::Vector(v) = target {
                 resolved_pos = Some(space::to_bevy_space_pos(v)); // Convert to Bevy coords
@@ -2150,26 +2185,40 @@ pub fn scroni_tick_system(
                 }
             }
 
-            if let Some(pos) = resolved_pos {
-                if let Some(nav) = &nav_graph_opt {
-                    if let Some(path) = nav.find_path_to_point(transform.translation(), pos) {
-                        let throttle = speed.unwrap_or(1.0);
-                        if let Some(mut e_cmd) = commands.get_entity(entity).ok() {
-                            e_cmd.insert(crate::ai::navigation::ActorPathfollower {
-                                path,
-                                current_wp: 0,
-                                speed_throttle: throttle,
-                                within,
-                            });
-                        }
-                        script.exec.get_thread_mut(tid).blocking =
-                            Some(BlockingAction::WaitingForPath);
-                        continue;
-                    }
+            let path = resolved_pos.and_then(|pos| {
+                nav_graph_opt
+                    .as_ref()
+                    .and_then(|nav| nav.find_path_to_point(transform.translation(), pos))
+                    .or_else(|| Some(vec![pos]))
+            });
+
+            if let Some(path) = path {
+                // Route the path through the new BehaviorRuntime pipeline.
+                // GotoBehavior consumes `pending_params.path` in its on_enter
+                // and walks the chain, writing velocity each FixedUpdate tick.
+                // The thread parks on WaitingForBehavior until the GotoBehavior
+                // fires `EndBehaviorMessage { kind: Goto }` on finish.
+                if let Ok(mut rt) = behavior_runtime_query.get_mut(entity) {
+                    rt.pending_params.path = path;
+                    rt.pending_params.within = within;
+                    rt.pending_params.speed_throttle = speed;
+                    rt.ctx.requested_goto = true;
+                    script.exec.get_thread_mut(tid).blocking =
+                        Some(BlockingAction::WaitingForBehavior {
+                            kind: crate::statemachine::drivers::behavior::BehaviorKind::Goto,
+                        });
+                    continue;
+                } else {
+                    warn!(
+                        "scroni goto: entity {:?} has no BehaviorRuntime — falling back to \
+                         unblocking without navigation",
+                        entity
+                    );
                 }
             }
 
-            // If we get here, pathfinding failed or target resolved to None. Just skip.
+            // If we get here, pathfinding failed OR the actor has no
+            // BehaviorRuntime.  Clear the block so the script doesn't hang.
             script.exec.clear_blocking(tid);
             script.exec.tick_thread(tid, now, &mut ctx);
         }

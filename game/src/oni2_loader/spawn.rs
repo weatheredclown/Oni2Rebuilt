@@ -1322,18 +1322,15 @@ pub fn spawn_oni2_entity_with_rotation(
 
         // Any actor with an animator also gets an ActionPlayer — it drives
         // high-level actions (jump/crouch/react/evade/etc.) and tracks substate
-        // transitions.  Mirrors the legacy invariant that ftFighterComponent +
-        // animAnimatorComponent always coexist.  Also attach the
-        // `ActiveAction` + `AnimSchedule` components that the new
-        // polymorphic-action pipeline queries require — without them the
-        // first StartActionMessage (e.g. the player's very first jump)
-        // would silently miss the dispatch query because commands-based
-        // lazy insertion doesn't flush until the end of the stage.
-        commands.entity(parent_entity).insert((
-            crate::animator::ActionPlayer::default(),
-            crate::animator::ActiveAction::default(),
-            crate::animator::AnimSchedule::default(),
-        ));
+        // Attach the animator pipeline's required components in one go.
+        // `AnimatorBundle` owns the canonical list — when a new subsystem
+        // needs a per-entity component at spawn time, add a field there,
+        // not here.  Lazy `ensure_*` systems aren't enough because
+        // commands flush at end-of-stage and the first dispatch after
+        // spawn would miss the components.
+        commands
+            .entity(parent_entity)
+            .insert(crate::animator::AnimatorBundle::default());
     }
 
     if let Some(ref lib) = ent_type.anim_library {
@@ -1458,20 +1455,7 @@ pub fn spawn_oni2_creature(
 
     // Every creature gets a physics capsule + render offset + ground snap
     commands.entity(entity).insert((
-        RigidBody::Dynamic,
-        Collider::capsule(capsule_radius, capsule_length),
-        LockedAxes::new()
-            .lock_rotation_x()
-            .lock_rotation_y()
-            .lock_rotation_z(),
-        LinearVelocity::default(),
-        ShapeCaster::new(
-            Collider::sphere(0.35),
-            Vec3::NEG_Y * 0.5,
-            Quat::default(),
-            Dir3::NEG_Y,
-        )
-        .with_max_distance(0.3),
+        crate::combat::CreaturePhysicsBundle::new(capsule_radius, capsule_length),
         CreatureRenderOffset {
             y_offset,
             facing: Quat::IDENTITY,

@@ -68,20 +68,97 @@ pub trait AtkAction: Send + Sync {
     }
 }
 
-/// Diagnostic-only fallback action — logs its name on start.  Used as a
-/// placeholder for any `.atk` action verb whose concrete implementation is
-/// not yet ported.
-pub struct LogAction {
-    pub name: String,
+// Each action from legacy Oni is stubbed out.
+macro_rules! atk_action_stub {
+    ($struct_name:ident, $log_name:expr) => {
+        pub struct $struct_name {
+            pub args: String,
+        }
+        impl AtkAction for $struct_name {
+            fn name(&self) -> &str {
+                $log_name
+            }
+            fn start(&mut self, _ctx: &mut AttackCtx) -> bool {
+                bevy::log::warn!("atk: {} is not implemented (args: '{}')", $log_name, self.args);
+                true
+            }
+        }
+    };
 }
 
+atk_action_stub!(ActionAttack, "attack");
+atk_action_stub!(ActionCombo, "combo");
+atk_action_stub!(ActionGrapple, "grapple");
+atk_action_stub!(ActionCtrlGrapple, "ctrlgrapple");
+atk_action_stub!(ActionGrapplePush, "grapplepush");
+atk_action_stub!(ActionEvade, "evade");
+atk_action_stub!(ActionJump, "jump");
+atk_action_stub!(ActionDistance, "distance");
+atk_action_stub!(ActionSideMove, "sidemove");
+atk_action_stub!(ActionAnim, "anim");
+atk_action_stub!(ActionWait, "wait");
+atk_action_stub!(ActionDefend, "defend");
+atk_action_stub!(ActionBlockSuccess, "blocksuccess");
+atk_action_stub!(ActionBlockFail, "blockfail");
+atk_action_stub!(ActionCloser, "closer");
+atk_action_stub!(ActionFurther, "further");
+atk_action_stub!(ActionIncomingAttack, "incomingattack");
+atk_action_stub!(ActionHealth, "health");
+atk_action_stub!(ActionTimeAndSpace, "timeandspace");
+atk_action_stub!(ActionTargetJumping, "targetjumping");
+atk_action_stub!(ActionTargetCrouching, "targetcrouching");
+atk_action_stub!(ActionTargetBlocking, "targetblocking");
+atk_action_stub!(ActionTargetAttacking, "targetattacking");
+atk_action_stub!(ActionTargetKnockedDown, "targetknockeddown");
+atk_action_stub!(ActionTargetKnockedDownCount, "targetknockeddowncount");
+atk_action_stub!(ActionTargetGoingToBeHit, "targetgoingtobehit");
+atk_action_stub!(ActionTargetHealth, "targethealth");
+
+pub struct LogAction {
+    pub name: String,
+    pub args: String,
+}
 impl AtkAction for LogAction {
     fn name(&self) -> &str {
         &self.name
     }
     fn start(&mut self, _ctx: &mut AttackCtx) -> bool {
-        bevy::log::info!("atk: LogAction.start '{}'", self.name);
+        bevy::log::warn!("atk: {} (Fallback) is not implemented (args: '{}')", self.name, self.args);
         true
+    }
+}
+
+pub fn build_atk_action(name: &str, args: &str) -> Box<dyn AtkAction> {
+    let args = args.to_string();
+    match name {
+        "attack" => Box::new(ActionAttack { args }),
+        "combo" => Box::new(ActionCombo { args }),
+        "grapple" => Box::new(ActionGrapple { args }),
+        "ctrlgrapple" => Box::new(ActionCtrlGrapple { args }),
+        "grapplepush" => Box::new(ActionGrapplePush { args }),
+        "evade" => Box::new(ActionEvade { args }),
+        "jump" => Box::new(ActionJump { args }),
+        "distance" => Box::new(ActionDistance { args }),
+        "sidemove" => Box::new(ActionSideMove { args }),
+        "anim" => Box::new(ActionAnim { args }),
+        "wait" => Box::new(ActionWait { args }),
+        "defend" => Box::new(ActionDefend { args }),
+        "blocksuccess" => Box::new(ActionBlockSuccess { args }),
+        "blockfail" => Box::new(ActionBlockFail { args }),
+        "closer" => Box::new(ActionCloser { args }),
+        "further" => Box::new(ActionFurther { args }),
+        "incomingattack" => Box::new(ActionIncomingAttack { args }),
+        "health" => Box::new(ActionHealth { args }),
+        "timeandspace" => Box::new(ActionTimeAndSpace { args }),
+        "targetjumping" => Box::new(ActionTargetJumping { args }),
+        "targetcrouching" => Box::new(ActionTargetCrouching { args }),
+        "targetblocking" => Box::new(ActionTargetBlocking { args }),
+        "targetattacking" => Box::new(ActionTargetAttacking { args }),
+        "targetknockeddown" => Box::new(ActionTargetKnockedDown { args }),
+        "targetknockeddowncount" => Box::new(ActionTargetKnockedDownCount { args }),
+        "targetgoingtobehit" => Box::new(ActionTargetGoingToBeHit { args }),
+        "targethealth" => Box::new(ActionTargetHealth { args }),
+        _ => Box::new(LogAction { name: name.to_string(), args }), // Fallback
     }
 }
 
@@ -109,8 +186,8 @@ pub enum AttackAction {
     Finish,
     /// End the current action and exit with failure.
     Fail,
-    /// End the current action, then start the action at the given pool index.
-    Action(usize),
+    /// End the current action, then instantiate and start the named action.
+    Action(String, String),
     /// Re-call the current action's `start()` without ending it.
     Resume,
     /// Inline-evaluate another state's rules.
@@ -119,17 +196,9 @@ pub enum AttackAction {
     Display(String),
 }
 
-/// Per-attack runtime context.  `actions` is a parallel `Vec` whose indices
-/// match the `AttackAction::Action(idx)` references parsed from the `.atk`
-/// file.  The host populates `actions` at load time by mapping each
-/// action-name token in the file onto a concrete `Box<dyn AtkAction>`.
-///
-/// Most fields default to the values a brand-new attack would have.
 pub struct AttackCtx {
-    /// Pool of action implementations indexed by `AttackAction::Action(idx)`.
-    pub actions: Vec<Box<dyn AtkAction>>,
-    /// Index of the currently-running action, if any.
-    pub current_action: Option<usize>,
+    /// The currently-running action, if any.
+    pub current_action: Option<Box<dyn AtkAction>>,
     /// True once `current_action.update()` returned true this tick.
     pub current_finished: bool,
     /// Set once a successful cookie grab landed this tick.
@@ -143,7 +212,6 @@ pub struct AttackCtx {
 impl Default for AttackCtx {
     fn default() -> Self {
         Self {
-            actions: Vec::new(),
             current_action: None,
             current_finished: false,
             got_cookie: false,
@@ -191,7 +259,7 @@ impl SmDriver for AttackDriver {
                 ctx.action_events.iter().any(|e| e == name)
                     || ctx
                         .current_action
-                        .and_then(|i| ctx.actions.get(i))
+                        .as_ref()
                         .map(|a| a.is_event(name))
                         .unwrap_or(false)
             }
@@ -215,28 +283,20 @@ impl SmDriver for AttackDriver {
                 output.done = Some(false);
                 adv.fail();
             }
-            AttackAction::Action(idx) => {
-                let new_idx = *idx;
+            AttackAction::Action(name, args) => {
                 end_current(ctx);
-                if new_idx >= ctx.actions.len() {
-                    bevy::log::warn!(
-                        "atk: AAction({}) but pool only has {} actions",
-                        new_idx,
-                        ctx.actions.len()
-                    );
-                    adv.fail();
-                    return;
-                }
-                if call_action_start(ctx, new_idx) {
-                    ctx.current_action = Some(new_idx);
+                let mut new_action = build_atk_action(name, args);
+                if call_action_start(ctx, &mut *new_action) {
+                    ctx.current_action = Some(new_action);
                     ctx.current_finished = false;
                 } else {
                     adv.fail();
                 }
             }
             AttackAction::Resume => {
-                if let Some(idx) = ctx.current_action {
-                    let _ = call_action_start(ctx, idx);
+                if let Some(mut action) = ctx.current_action.take() {
+                    let _ = call_action_start(ctx, &mut *action);
+                    ctx.current_action = Some(action);
                 }
             }
             AttackAction::Check(idx) => adv.check(*idx),
@@ -250,56 +310,28 @@ impl SmDriver for AttackDriver {
         ctx.got_cookie = false;
         ctx.current_finished = false;
 
-        let Some(idx) = ctx.current_action else {
+        let Some(mut action) = ctx.current_action.take() else {
             return;
         };
         let dt = ctx.dt;
 
-        // Re-borrow trick: temporarily detach the action from the pool so we
-        // can pass `ctx` into update() without aliasing.  Replace it with a
-        // sentinel `LogAction` so the slot stays valid; the swap puts it back.
-        let mut placeholder: Box<dyn AtkAction> = Box::new(LogAction {
-            name: String::new(),
-        });
-        std::mem::swap(&mut placeholder, &mut ctx.actions[idx]);
-        let finished = placeholder.update(ctx, output, dt);
-        std::mem::swap(&mut placeholder, &mut ctx.actions[idx]);
+        let finished = action.update(ctx, output, dt);
+        ctx.current_action = Some(action);
 
         ctx.current_finished = finished;
     }
 }
 
-/// Swap the action at `idx` out of the pool, call `start(ctx)`, swap back.
-/// The temporary swap eliminates the alias conflict between the borrow on
-/// `ctx.actions[idx]` and the `&mut ctx` argument the action needs.
-fn call_action_start(ctx: &mut AttackCtx, idx: usize) -> bool {
-    if idx >= ctx.actions.len() {
-        return false;
-    }
-    let mut placeholder: Box<dyn AtkAction> = Box::new(LogAction {
-        name: String::new(),
-    });
-    std::mem::swap(&mut placeholder, &mut ctx.actions[idx]);
-    let started = placeholder.start(ctx);
-    std::mem::swap(&mut placeholder, &mut ctx.actions[idx]);
-    started
+/// Start an action, passing an exclusive lock on `ctx`.
+fn call_action_start(ctx: &mut AttackCtx, action: &mut dyn AtkAction) -> bool {
+    action.start(ctx)
 }
 
-/// End and clear the current action.  Uses the same swap pattern so `end()`
-/// receives an exclusive `&mut AttackCtx`.
+/// End and clear the current action.
 fn end_current(ctx: &mut AttackCtx) {
-    let Some(idx) = ctx.current_action.take() else {
-        return;
-    };
-    if idx >= ctx.actions.len() {
-        return;
+    if let Some(mut action) = ctx.current_action.take() {
+        action.end(ctx);
     }
-    let mut placeholder: Box<dyn AtkAction> = Box::new(LogAction {
-        name: String::new(),
-    });
-    std::mem::swap(&mut placeholder, &mut ctx.actions[idx]);
-    placeholder.end(ctx);
-    std::mem::swap(&mut placeholder, &mut ctx.actions[idx]);
 }
 
 // ---------------------------------------------------------------------------
@@ -346,18 +378,11 @@ pub fn parse_attack_action(
         "AFail" | "Fail" => AttackAction::Fail,
         "AResume" | "Resume" => AttackAction::Resume,
         "AAction" | "Action" => {
-            // Numeric index? use as-is.
-            if let Ok(idx) = arg.parse::<usize>() {
-                AttackAction::Action(idx)
-            } else {
-                // Named action — needs late binding by host.  Emit MAX as a
-                // tombstone the runtime fails on cleanly.
-                bevy::log::warn!(
-                    "atk: AAction '{}' needs late-binding (no action pool builder yet)",
-                    arg
-                );
-                AttackAction::Action(usize::MAX)
-            }
+            // Named action instantiation
+            let mut inner_parts = arg.splitn(2, char::is_whitespace);
+            let name = inner_parts.next().unwrap_or("").trim().to_string();
+            let action_args = inner_parts.next().unwrap_or("").trim().to_string();
+            AttackAction::Action(name, action_args)
         }
         "Check" => match state_index.get(arg) {
             Some(&idx) => AttackAction::Check(idx),

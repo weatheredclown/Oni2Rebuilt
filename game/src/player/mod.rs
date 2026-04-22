@@ -6,8 +6,11 @@
  * FixedUpdate: moving_platform_system → player_movement_system (camera-relative
  * WASD + jump via Avian3d LinearVelocity).
  */
+pub mod bundles;
 pub mod components;
 pub mod systems;
+
+pub use bundles::PlayerIdentityBundle;
 
 use bevy::prelude::*;
 

@@ -15,6 +15,12 @@ pub struct MenuTransitionInputCushion(pub f32);
 #[derive(Component)]
 pub struct Player;
 
+/// Which input state machine file to attach when the player (or any pad-driven
+/// actor) spawns.  Value is the bare FSM name — no `.fsm` suffix.  Mirrors the
+/// legacy `bhPadTuningData::FSM` / `SUB_ATTRIBUTE(Pad, FSM)` pipeline.
+#[derive(Component, Clone)]
+pub struct PadFsmName(pub String);
+
 /// Logical per-player input state.
 ///
 /// This is the *only* place game logic reads input — it is populated each frame

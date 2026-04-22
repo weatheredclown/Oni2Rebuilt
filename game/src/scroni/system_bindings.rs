@@ -23,6 +23,8 @@ pub fn scroni_sys_event_observer(
         ResMut<crate::oni2_loader::registries::AnimRegistry>,
         Local<Option<crate::oni2_loader::parsers::td::SoundBankDirectory>>,
         Local<Option<crate::oni2_loader::parsers::audiopackages::AudioPackagesDirectory>>,
+        ResMut<crate::fightai::FightFsmCache>,
+        ResMut<crate::fightai::AttackFsmCache>,
     ),
     layout_data: (
         Option<Res<crate::oni2_loader::LayoutContext>>,
@@ -33,6 +35,8 @@ pub fn scroni_sys_event_observer(
     time: Res<Time>,
     screen_fade: Option<Res<ScreenFadeState>>,
     mut ai_target_query: Query<&mut crate::ai::components::AiFighter>,
+    mut fight_runtime_query: Query<&mut crate::fightai::components::FightRuntime>,
+    mut behavior_runtime_query: Query<&mut crate::behavior::BehaviorRuntime>,
     explosion_registry: Res<crate::oni2_loader::registries::ExplosionRegistry>,
     misc_queries: (
         Query<
@@ -87,6 +91,8 @@ pub fn scroni_sys_event_observer(
         mut anim_registry,
         mut td_directory,
         mut audio_packages,
+        mut fight_fsm_cache,
+        mut attack_fsm_cache,
     ) = assets;
 
     if td_directory.is_none() {
@@ -435,6 +441,8 @@ pub fn scroni_sys_event_observer(
                     entity_lib: &mut entity_lib,
                     anim_registry: &mut anim_registry,
                     texture_collections: &mut texture_collections,
+                    fight_fsm_cache: &mut fight_fsm_cache,
+                    attack_fsm_cache: &mut attack_fsm_cache,
                 };
 
                 // Call the shared spawn function
@@ -591,24 +599,47 @@ pub fn scroni_sys_event_observer(
             }
         }
         ScrOniSysEvent::SetAiTarget { actor, target } => {
-            // [AUDIT]: Prototype leakage. Direct writes to `ai.target` and hardcoding `AiState::Pursuing`.
-            // A real combat AI should interpret "Target = X" as an input, letting its behavior tree manage its own enum transitions.
+            // "Target X Y" — order AI X to engage Y.  The authoritative
+            // dispatch path now goes through the actor's BehaviorRuntime:
+            // stash the target in pending_params and pulse
+            // requested_fight, and the behavior FSM will transition to
+            // FIGHT_STATE → FightBehavior on its next tick.  Legacy
+            // `AiFighter.target` + `FightCtx.mode` writes stay as data
+            // hints for downstream queries / the future fight coordinator.
             if let Ok(mut ai) = ai_target_query.get_mut(actor) {
                 ai.target = Some(target);
-                ai.manual_target = true; // Lock it so auto-awareness doesn't overwrite it immediately.
-                ai.state = crate::ai::components::AiState::Pursuing;
+                ai.manual_target = true;
+            }
+            if let Ok(mut fight) = fight_runtime_query.get_mut(actor) {
+                fight.ctx.mode = "attack".to_string();
+                fight.ctx.has_target = true;
+            }
+            if let Ok(mut rt) = behavior_runtime_query.get_mut(actor) {
+                rt.pending_params.target_entity = Some(target);
+                rt.ctx.requested_fight = true;
             }
             info!("VM: AI {:?} ordered to Attack {:?}", actor, target);
         }
         ScrOniSysEvent::TriggerFight { actor, target } => {
+            // "Fight [target]" — push actor into fight mode; optional
+            // target overrides auto-acquisition.  Same dispatch split as
+            // SetAiTarget — BehaviorRuntime is the authoritative knob;
+            // AiFighter.target + FightCtx.mode are shadow data.
             if let Ok(mut ai) = ai_target_query.get_mut(actor) {
-                ai.state = crate::ai::components::AiState::Pursuing;
                 if let Some(t) = target {
                     ai.target = Some(t);
-                    ai.manual_target = true; // Lock the optional target
+                    ai.manual_target = true;
                 } else {
-                    ai.manual_target = false; // Unlock so auto-awareness can pick nearest targets
+                    ai.manual_target = false;
                 }
+            }
+            if let Ok(mut fight) = fight_runtime_query.get_mut(actor) {
+                fight.ctx.mode = "attack".to_string();
+                fight.ctx.has_target = target.is_some();
+            }
+            if let Ok(mut rt) = behavior_runtime_query.get_mut(actor) {
+                rt.pending_params.target_entity = target;
+                rt.ctx.requested_fight = true;
             }
         }
         ScrOniSysEvent::FollowActor { actor, target } => {
@@ -699,14 +730,20 @@ pub fn scroni_sys_event_observer(
             }
         }
         ScrOniSysEvent::UsePad { script_entity } => {
-            // [AUDIT]: Prototype leakage. Using `AiFighter` exclusively as an "is AI" boolean marker.
-            // True AI character structures likely have many more components that need pausing/disabling during possession!
-            commands
-                .entity(script_entity)
-                .insert(crate::player::components::Player);
-            commands
-                .entity(script_entity)
-                .remove::<crate::ai::components::AiFighter>();
+            // Hand this actor the player pad.  Strip every AI-side runtime so
+            // the AI update chain stops ticking on this entity, then add
+            // `Player` + `PadFsmName` so `insert_player_fsm` attaches the
+            // player-side input FSM (player.fsm via `EnemyFsmCache`).
+            let mut ec = commands.entity(script_entity);
+            ec.insert((
+                crate::player::components::Player,
+                crate::player::components::PadFsmName("player".to_string()),
+            ));
+            ec.remove::<crate::ai::components::AiFighter>();
+            ec.remove::<crate::ai::fsm::AiFsmRuntime>();
+            ec.remove::<crate::ai::fsm::AiPadCommands>();
+            ec.remove::<crate::fightai::components::FightRuntime>();
+            ec.remove::<crate::fightai::components::AttackRuntime>();
             for (_, _, mut channel, _, _) in &mut camera_query {
                 channel.focus_actor = script_entity;
             }

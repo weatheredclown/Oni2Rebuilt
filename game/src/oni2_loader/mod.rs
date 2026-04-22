@@ -145,24 +145,13 @@ impl Plugin for Oni2LoaderPlugin {
                         t1.is_some() || t2.is_some()
                     },
                 )),
-            )
-            // Late-running edge reset for Oni2AnimState.anim_just_started.
-            // Scheduled in `Last` so every consumer in Update / FixedUpdate
-            // observes the one-tick pulse before it gets cleared.  Without
-            // this reset the flag would stay `true` for the lifetime of
-            // the anim, causing consumers like attack_sync_system's
-            // end-rotation-notches path to fire every frame.
-            .add_systems(Last, reset_anim_transition_edges);
-    }
-}
-
-/// Late-running reset for `Oni2AnimState.anim_just_started`.  Runs in
-/// `Last` so every Update / FixedUpdate consumer has already observed the
-/// one-tick pulse this frame.
-fn reset_anim_transition_edges(mut query: Query<&mut animation::Oni2AnimState>) {
-    for mut state in &mut query {
-        if state.anim_just_started {
-            state.anim_just_started = false;
-        }
+            );
+        // NOTE: the old `Last`-scheduled `reset_anim_transition_edges`
+        // system was removed when `anim_just_started` migrated from a
+        // shared bool consumed by multiple systems (which needed a late
+        // reset to preserve the one-tick pulse) to an intention bit
+        // drained into `AnimStartedMessage` events by
+        // `anim_start_emit_system` (in `animator::systems`).  The emit
+        // system clears the bit itself, so no separate reset is needed.
     }
 }

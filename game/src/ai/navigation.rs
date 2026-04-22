@@ -263,7 +263,6 @@ pub fn path_following_system(
     mut query: Query<(
         Entity,
         &mut ActorPathfollower,
-        &mut crate::ai::components::AiFighter,
         &mut Transform,
         &mut avian3d::prelude::LinearVelocity,
         &mut crate::combat::components::Fighter,
@@ -272,10 +271,9 @@ pub fn path_following_system(
     let speed_multiplier = 4.5;
     let dt = time.delta_secs();
 
-    for (entity, mut follower, mut ai, mut tf, mut vel, mut fighter) in &mut query {
+    for (entity, mut follower, mut tf, mut vel, mut fighter) in &mut query {
         if follower.current_wp >= follower.path.len() {
             commands.entity(entity).remove::<ActorPathfollower>();
-            ai.state = crate::ai::components::AiState::Idle;
             vel.x = 0.0;
             vel.z = 0.0;
             continue;

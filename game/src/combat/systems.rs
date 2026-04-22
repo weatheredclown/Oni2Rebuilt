@@ -32,59 +32,52 @@ const CAPSULE_CENTER_HEIGHT: f32 = 1.1;
 const CAPSULE_HALF_HEIGHT: f32 = 1.0;
 
 /// Syncs the AttackState with the current running animation. Clears collision lists when a new animation plays.
+///
+/// Consumes `AnimStartedMessage` events (edge-triggered, ordering-immune)
+/// rather than polling a shared bool — this is the migration away from
+/// the `anim_just_started` shared-state pattern that required a late
+/// `Last`-scheduled reset and was vulnerable to schedule mismatches.
 pub fn attack_sync_system(
-    mut query: Query<(
-        Entity,
-        &mut AttackState,
-        &crate::oni2_loader::animation::Oni2AnimState,
-        Option<&crate::oni2_loader::animation::Oni2AnimLibrary>,
-    )>,
+    mut reader: MessageReader<crate::animator::AnimStartedMessage>,
+    mut query: Query<(&mut AttackState, &crate::oni2_loader::animation::Oni2AnimState)>,
     mut rotation_writer: MessageWriter<ApplyRotationNotchesEvent>,
 ) {
-    for (entity, mut attack_state, anim_state, lib_opt) in &mut query {
-        // One-tick pulse set by `play_id` and cleared in Last — see
-        // Oni2AnimState doc.  Using `current != previous` here would be
-        // broken: `previous_anim_id` never gets reset after play_id runs,
-        // so that comparison stays TRUE for the full duration of the new
-        // anim and fires the end-rotation-notches event every frame.
-        if anim_state.anim_just_started {
-            let prev_anim_name = lib_opt
-                .and_then(|lib| anim_state.previous_anim_id.and_then(|id| lib.debug_names.get(&id)))
-                .map(|s| s.as_str())
-                .unwrap_or("UNKNOWN");
+    for msg in reader.read() {
+        let Ok((mut attack_state, anim_state)) = query.get_mut(msg.entity) else {
+            continue;
+        };
 
-            // New animation started!
-            if let Some(ref mut active) = attack_state.active_attack {
-                // Apply end_rotation_notches from the PREVIOUS attack if any
-                if active.end_rotation_notches != 0 {
-                    rotation_writer.write(ApplyRotationNotchesEvent {
-                        entity,
-                        notches: active.end_rotation_notches,
-                    });
-                }
-                active.end_rotation_notches = 0;
-                active.hit_entities.clear();
-                active.has_fired_projectile = false;
+        // New animation started!
+        if let Some(ref mut active) = attack_state.active_attack {
+            // Apply end_rotation_notches from the PREVIOUS attack if any
+            if active.end_rotation_notches != 0 {
+                rotation_writer.write(ApplyRotationNotchesEvent {
+                    entity: msg.entity,
+                    notches: active.end_rotation_notches,
+                });
+            }
+            active.end_rotation_notches = 0;
+            active.hit_entities.clear();
+            active.has_fired_projectile = false;
 
-                // Grab ATDT end rotation notches for the newly started animation
-                if let Some(data) = &anim_state.anim.attack_data {
-                    if let Some(strike) = &data.strike {
-                        active.end_rotation_notches = strike.end_rotation_notches;
-                    } else {
-                        active.end_rotation_notches = 0;
-                    }
+            // Grab ATDT end rotation notches for the newly started animation
+            if let Some(data) = &anim_state.anim.attack_data {
+                if let Some(strike) = &data.strike {
+                    active.end_rotation_notches = strike.end_rotation_notches;
                 } else {
                     active.end_rotation_notches = 0;
                 }
             } else {
-                let mut new_active = ActiveAttack::default();
-                if let Some(data) = &anim_state.anim.attack_data {
-                    if let Some(strike) = &data.strike {
-                        new_active.end_rotation_notches = strike.end_rotation_notches;
-                    }
-                }
-                attack_state.active_attack = Some(new_active);
+                active.end_rotation_notches = 0;
             }
+        } else {
+            let mut new_active = ActiveAttack::default();
+            if let Some(data) = &anim_state.anim.attack_data {
+                if let Some(strike) = &data.strike {
+                    new_active.end_rotation_notches = strike.end_rotation_notches;
+                }
+            }
+            attack_state.active_attack = Some(new_active);
         }
     }
 }

@@ -57,9 +57,9 @@ pub enum AnimatorEvent {
     ZiplineAvailable,
     HighVelocityLanding,
 
-    // --- Animation lifecycle ----------------------------------------------
-    /// The currently-running mode animation reached its final frame.
-    ModeAnimDone,
+    // --- Animation / Action lifecycle -------------------------------------
+    /// The currently-running mode action reached completion.
+    ModeDone,
 
     // --- Damage / death ---------------------------------------------------
     Damaged,
@@ -126,8 +126,8 @@ pub struct AnimatorCtx {
     pub zipline_available: bool,
     pub high_velocity_landing: bool,
 
-    // Animation
-    pub mode_anim_done: bool,
+    // Action Pipeline / Animation
+    pub mode_done: bool,
 
     // Damage
     pub damage_this_tick: bool,
@@ -179,7 +179,7 @@ impl SmDriver for AnimatorDriver {
             AnimatorEvent::WallGrabAvailable => ctx.wall_grab_available,
             AnimatorEvent::ZiplineAvailable => ctx.zipline_available,
             AnimatorEvent::HighVelocityLanding => ctx.high_velocity_landing,
-            AnimatorEvent::ModeAnimDone => ctx.mode_anim_done,
+            AnimatorEvent::ModeDone => ctx.mode_done,
             AnimatorEvent::Damaged => ctx.damage_this_tick,
             AnimatorEvent::HealthZero => ctx.health_zero,
             AnimatorEvent::InMode(name) => ctx.current_mode.eq_ignore_ascii_case(name),
@@ -258,7 +258,7 @@ pub fn parse_animator_event(
         "WallGrabAvailable" => AnimatorEvent::WallGrabAvailable,
         "ZiplineAvailable" => AnimatorEvent::ZiplineAvailable,
         "HighVelocityLanding" => AnimatorEvent::HighVelocityLanding,
-        "ModeAnimDone" | "Timeout" => AnimatorEvent::ModeAnimDone,
+        "ModeDone" | "ModeAnimDone" | "Timeout" => AnimatorEvent::ModeDone,
         "Damaged" => AnimatorEvent::Damaged,
         "HealthZero" => AnimatorEvent::HealthZero,
         "InMode" => AnimatorEvent::InMode(args.trim_matches('"').to_string()),
@@ -533,7 +533,7 @@ mod tests {
         active_pad_cmds.insert("PADCMD_JUMP".into());
         let mut ctx = AnimatorCtx {
             active_pad_cmds,
-            mode_anim_done: true,
+            mode_done: true,
             damage_this_tick: true,
             current_mode: "DIE".into(),
             ..Default::default()
@@ -571,7 +571,7 @@ mod tests {
         let mut rt = SmRuntime::<AnimatorDriver>::new(data, react);
 
         let mut ctx = AnimatorCtx {
-            mode_anim_done: true,
+            mode_done: true,
             current_mode: "REACT".into(),
             ..Default::default()
         };

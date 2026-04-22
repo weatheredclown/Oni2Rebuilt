@@ -56,6 +56,8 @@ pub struct LayoutActor {
     pub curve_speed: f32,
     /// Whether the actor possesses a FightAI component.
     pub has_fight_ai: bool,
+    /// The attack table (loads *.atk) parsed from FightAI configuration.
+    pub attack_table: Option<String>,
     /// ScrOni script filename (from <ScrOni><Filename>). '$' prefix = layout-local.
     pub script_filename: Option<String>,
     /// ScrOni entry-point script name (from <ScrOni><MainScript>).
@@ -87,6 +89,12 @@ pub struct LayoutActor {
     /// Pre-loaded weapon name from the <Inventory><WeaponString> attribute
     /// (resolved through the template chain).  Feeds PendingInventory at spawn.
     pub weapon_string: Option<String>,
+    /// FSM filename from the `<Behavior>` component's `<Pad_FSM value="..."/>`
+    /// attribute (e.g. "player", "enemy_combo").  Drives which input state
+    /// machine gets attached at spawn, mirroring the legacy
+    /// `SUB_ATTRIBUTE(Pad, FSM)` / `bhPadTuningData::FSM` pipeline.  `.fsm`
+    /// extension is stripped at parse time.
+    pub pad_fsm: Option<String>,
 }
 
 /// Resolve the full template chain for an actor XML file.
@@ -321,6 +329,26 @@ pub fn parse_actor_xml(dir: &str, filename: &str, template_dir: &str) -> Option<
         }
     }
 
+    // <Behavior> ... <Pad_FSM value="player"/> ... — which input FSM to load
+    // for this actor.  Legacy `SUB_ATTRIBUTE(Pad, FSM)` → `bhPadTuningData::FSM`,
+    // consumed by `aiInputStateMachineData::GetStateMachineData(name)`
+    // (rb behavior/pad.cpp:267).
+    let behavior_block = extract_component(&chain, has_components_xml, "Behavior");
+    let mut pad_fsm: Option<String> = None;
+    if let Some(block) = behavior_block {
+        if let Some(v) = extract_xml_attr(&block, "Pad_FSM") {
+            let trimmed = v.trim();
+            if !trimmed.is_empty() {
+                // Strip trailing `.fsm` so callers can pass the bare name to the cache.
+                let stripped = trimmed
+                    .strip_suffix(".fsm")
+                    .or_else(|| trimmed.strip_suffix(".FSM"))
+                    .unwrap_or(trimmed);
+                pad_fsm = Some(stripped.to_string());
+            }
+        }
+    }
+
     // If an entity type isn't explicitly defined, fallback to the generic IconTrigger so it has a default
     // sprite in the layout editor instead of trying to load its literal instance name as a mesh folder.
     let entity_type = entity_type.unwrap_or_else(|| "IconTrigger".to_string());
@@ -382,6 +410,14 @@ pub fn parse_actor_xml(dir: &str, filename: &str, template_dir: &str) -> Option<
     let position = space::to_bevy_space_pos(position);
 
     let has_fight_ai = fight_ai_block.is_some();
+    let mut attack_table: Option<String> = None;
+    if let Some(block) = fight_ai_block {
+        if let Some(v) = extract_xml_attr(&block, "AttackTable").or_else(|| extract_xml_attr(&block, "Table")) {
+            if !v.is_empty() {
+                attack_table = Some(v);
+            }
+        }
+    }
 
     Some(LayoutActor {
         entity_type,
@@ -397,6 +433,7 @@ pub fn parse_actor_xml(dir: &str, filename: &str, template_dir: &str) -> Option<
         curve_ping_pong,
         curve_speed,
         has_fight_ai,
+        attack_table,
         script_filename,
         script_main,
         broadcast_radius,
@@ -415,5 +452,6 @@ pub fn parse_actor_xml(dir: &str, filename: &str, template_dir: &str) -> Option<
         parent_actor,
         parent_bone,
         weapon_string,
+        pad_fsm,
     })
 }

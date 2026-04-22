@@ -24,9 +24,9 @@ use super::components::{
     sub_state_1,
 };
 use super::events::{
-    ActionEndedMessage, ActionStartedMessage, ControlAnimMessage, EndActionMessage,
-    HeadIkModeMessage, JumpImpulseMessage, PlayDieMessage, PlayReactMessage, StartActionMessage,
-    control_anim_bits,
+    ActionEndedMessage, ActionStartedMessage, AnimStartedMessage, ControlAnimMessage,
+    EndActionMessage, HeadIkModeMessage, JumpImpulseMessage, PlayDieMessage, PlayReactMessage,
+    StartActionMessage, control_anim_bits,
 };
 use super::schedule::{AnimSchedule, AnimScheduleEntry};
 
@@ -1144,7 +1144,6 @@ pub fn schedule_finished_end_action_system(
 /// XZ is left alone so the jumper keeps any running start.
 pub fn jump_impulse_apply_system(
     mut reader: MessageReader<crate::animator::JumpImpulseMessage>,
-    mut commands: Commands,
     mut query: Query<(&mut avian3d::prelude::LinearVelocity, &crate::combat::components::Fighter)>,
 ) {
     for msg in reader.read() {
@@ -1152,24 +1151,10 @@ pub fn jump_impulse_apply_system(
             continue;
         };
 
-        // Apply the jump's gravity scale so the airborne arc matches the
-        // kno.jump data (height 1.56m, factor 3.2 → total airtime 0.63s).
-        // Reset happens in `jump_gravity_reset_system` on next ground contact.
-        if (msg.gravity_factor - 1.0).abs() > 0.01 {
-            info!(
-                "GRAVITY SET: entity {:?} → factor={:.2} (jump impulse: \
-                 vertical={:.2}, forward={:.2}, lateral={:.2}, time={:.2}s)",
-                msg.entity,
-                msg.gravity_factor,
-                msg.vertical,
-                msg.forward,
-                msg.lateral,
-                msg.time,
-            );
-            commands
-                .entity(msg.entity)
-                .insert(avian3d::prelude::GravityScale(msg.gravity_factor));
-        }
+        // Gravity scaling is NOT applied here — JumpAction pushes a
+        // `"jump"` layer onto `GravityModifiers` during on_enter, and
+        // `gravity_sync_system` reflects that into Avian's `GravityScale`
+        // component.  This system only applies the velocity impulse.
 
         vel.0.y = msg.vertical;
 
@@ -1188,56 +1173,20 @@ pub fn jump_impulse_apply_system(
     }
 }
 
-/// Restore normal gravity once the jumper lands.  A `GravityScale` left in
-/// place after landing would make walking feel heavier than intended.  Runs
-/// every tick and is a no-op when there's nothing to reset.
-///
-/// Gated on `is_grounded AND NOT ascending`: right after the jump impulse
-/// fires, the ShapeCaster still reports ground contact for 1-2 FixedUpdate
-/// ticks (velocity has been applied but position hasn't separated yet),
-/// which would trigger a spurious reset and clobber the jump's gravity
-/// factor — making the rest of the arc play under normal gravity.
-/// Checking `linear_velocity.y <= 0` prevents that: we only reset when the
-/// character is genuinely standing / landing, not in the process of
-/// launching.
-pub fn jump_gravity_reset_system(
-    mut commands: Commands,
+/// Replenish a character's jump count when they touch ground.  This is
+/// the only remaining job from the old `jump_gravity_reset_system` —
+/// gravity restoration is now handled by `GravityModifiers` stack
+/// push/remove in `JumpAction`.
+pub fn replenish_jumps_on_ground_system(
     mut query: Query<(
-        Entity,
         Option<&crate::oni2_loader::animation::Oni2AnimState>,
-        Option<&avian3d::prelude::LinearVelocity>,
-        &avian3d::prelude::GravityScale,
-        Option<&mut ActionPlayer>,
+        &mut ActionPlayer,
     )>,
 ) {
-    const ASCENDING_VY_THRESHOLD: f32 = 0.5;
-
-    for (entity, anim_state_opt, vel_opt, scale, ap_opt) in &mut query {
+    for (anim_state_opt, mut ap) in &mut query {
         let is_grounded = anim_state_opt.map_or(true, |s| s.is_grounded);
-        if !is_grounded {
-            continue;
-        }
-
-        // Suppress reset while the character is actively ascending — they
-        // just fired a jump impulse and Avian hasn't moved them off the
-        // ground collider yet.  Once velocity decays (apex or descent) we
-        // resume the reset path on the next grounded tick.
-        let vy = vel_opt.map_or(0.0, |v| v.0.y);
-        if vy > ASCENDING_VY_THRESHOLD {
-            continue;
-        }
-
-        if let Some(mut ap) = ap_opt {
+        if is_grounded && ap.jumps_remaining < ap.max_jumps {
             ap.jumps_remaining = ap.max_jumps;
-        }
-        if (scale.0 - 1.0).abs() > 0.01 {
-            info!(
-                "GRAVITY RESET: entity {:?} {:.2} → 1.0 (grounded, vy={:.2})",
-                entity, scale.0, vy,
-            );
-            commands
-                .entity(entity)
-                .insert(avian3d::prelude::GravityScale(1.0));
         }
     }
 }
@@ -1336,5 +1285,41 @@ pub fn animator_broadcast_handler(
                 );
             }
         }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// anim_start_emit_system
+// ---------------------------------------------------------------------------
+
+/// Drain the per-component `Oni2AnimState.anim_just_started` intention
+/// bit (set by `Oni2AnimLibrary::play_id`) into `AnimStartedMessage`
+/// events, then clear the bit.  One event per entity per new anim.
+///
+/// This is the "utility function → intention on state → sync system
+/// fans out to events" bridge pattern.  `play_id` is called from many
+/// places (systems, observers, broadcast handlers) and can't easily
+/// carry an `EventWriter` with it; stamping the intention on the
+/// component and draining it here keeps the call sites unchanged while
+/// giving all consumers an ordering-immune event stream to read.
+///
+/// Runs EARLY in FixedUpdate so consumers in the same schedule see the
+/// event the same tick it fires.  Consumers in other schedules will
+/// see it next frame (Bevy's event double-buffer).  No edge lost
+/// regardless of cadence.
+pub fn anim_start_emit_system(
+    mut writer: MessageWriter<AnimStartedMessage>,
+    mut query: Query<(Entity, &mut crate::oni2_loader::animation::Oni2AnimState)>,
+) {
+    for (entity, mut state) in &mut query {
+        if !state.anim_just_started {
+            continue;
+        }
+        writer.write(AnimStartedMessage {
+            entity,
+            anim_id: state.current_anim_id,
+            previous: state.previous_anim_id,
+        });
+        state.anim_just_started = false;
     }
 }

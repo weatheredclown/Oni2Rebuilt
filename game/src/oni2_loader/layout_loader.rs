@@ -20,6 +20,10 @@ pub struct LayoutPlayerInfo {
     pub animator_type: String,
     pub max_hitpoints: Option<f32>,
     pub faction: Option<String>,
+    /// FSM name from the actor's `<Pad FSM="..."/>` attribute, with `.fsm`
+    /// stripped.  None when the XML did not specify one — callers fall back
+    /// to `"player"`.
+    pub pad_fsm: Option<String>,
 }
 
 /// Load an ONI2 layout directory, spawning all entities and creatures.
@@ -33,6 +37,8 @@ pub fn load_layout(
     skinned_mesh_ibp: &mut ResMut<Assets<SkinnedMeshInverseBindposes>>,
     entity_lib: &mut ResMut<crate::oni2_loader::registries::EntityLibrary>,
     anim_registry: &mut ResMut<crate::oni2_loader::registries::AnimRegistry>,
+    fight_fsm_cache: &mut ResMut<crate::fightai::FightFsmCache>,
+    attack_fsm_cache: &mut ResMut<crate::fightai::AttackFsmCache>,
     layout_dir: &str,
     entity_base_dir: &str,
 ) -> Option<LayoutPlayerInfo> {
@@ -124,6 +130,8 @@ pub fn load_layout(
             skinned_mesh_ibp: &mut *skinned_mesh_ibp,
             entity_lib: &mut *entity_lib,
             anim_registry: &mut *anim_registry,
+            fight_fsm_cache: &mut *fight_fsm_cache,
+            attack_fsm_cache: &mut *attack_fsm_cache,
             texture_collections: &mut texture_collections,
         };
 
@@ -146,6 +154,7 @@ pub fn load_layout(
                         animator_type: actor.animator_type.clone().unwrap_or_default(),
                         max_hitpoints: actor.max_hitpoints,
                         faction: actor.faction.clone(),
+                        pad_fsm: actor.pad_fsm.clone(),
                     });
                 }
             } else {
@@ -377,6 +386,22 @@ pub fn spawn_layout_actor(
             if !actor.is_player {
                 // Non-player creature: attach AI + combat components
                 if actor.has_fight_ai {
+                    if let Some(fsm_data) = assets.fight_fsm_cache.get_or_load(&layout_ctx.entity_base) {
+                        assets.commands.entity(entity).insert(crate::fightai::components::FightRuntime {
+                            fsm: crate::statemachine::core::SmRuntime::new(fsm_data, 0),
+                            ctx: crate::statemachine::drivers::fight::FightCtx::default(),
+                        });
+                    }
+
+                    if let Some(table) = &actor.attack_table {
+                        if let Some(atk_data) = assets.attack_fsm_cache.get_or_load(table, &layout_ctx.entity_base) {
+                            assets.commands.entity(entity).insert(crate::fightai::components::AttackRuntime {
+                                fsm: crate::statemachine::core::SmRuntime::new(atk_data, 0),
+                                ctx: crate::statemachine::drivers::attack::AttackCtx::default(),
+                            });
+                        }
+                    }
+
                     assets
                         .commands
                         .entity(entity)
@@ -395,22 +420,15 @@ pub fn spawn_layout_actor(
                         .entity(entity)
                         .insert(crate::combat::components::DestroyOnDeath(destroy_time));
                 }
-                assets.commands.entity(entity).insert((
-                    crate::combat::components::AttackState::default(),
-                    crate::combat::components::ComboTracker::default(),
-                    crate::combat::components::HitReaction::default(),
-                    crate::combat::components::AboutToBeHit::default(),
-                ));
-                // High-fidelity fight bundle — mirrors what setup_scene puts
-                // on the player.  Every creature with a combat loadout needs
-                // these components so the fight pipeline (react_data_apply,
-                // block_success/failed, grapple, super meter, successive
-                // attacks, hit eta, fight stance timer) engages for AI too.
-                assets.commands.entity(entity).insert((
-                    crate::fight::components::FighterState::default(),
-                    crate::fight::components::FighterType::default(),
-                    crate::fight::components::BlockLibrary::default(),
-                ));
+                // Full combat + fight loadout for AI creatures — mirrors
+                // what setup_scene puts on the player so the fight
+                // pipeline (react_data_apply, block_success/failed,
+                // grapple, super meter, successive attacks, hit eta,
+                // fight stance timer) engages for AI too.
+                assets
+                    .commands
+                    .entity(entity)
+                    .insert(crate::combat::FighterBundle::default());
                 assets
                     .commands
                     .entity(entity)

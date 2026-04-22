@@ -17,6 +17,36 @@
 use bevy::prelude::*;
 
 use super::components::{ActionResult, HeadIkMode, MainAction};
+use crate::oni2_loader::animation::AnimId;
+
+// ---------------------------------------------------------------------------
+// AnimStartedMessage — anim-transition edge as an event
+// ---------------------------------------------------------------------------
+
+/// Fired once per entity per tick when a new animation has begun playing
+/// via `Oni2AnimLibrary::play` / `play_id`.  Replaces the old
+/// `Oni2AnimState.anim_just_started` shared-bool edge which required a
+/// dedicated `Last`-scheduled reset system and was vulnerable to
+/// schedule-mismatch data loss.
+///
+/// Producer: `anim_start_emit_system` drains the per-component intention
+/// bit that `play_id` sets and fans it out to this Message.
+///
+/// Consumers use `EventReader<AnimStartedMessage>` — Bevy's cursor
+/// tracking makes them immune to execution-order with the producer.  Even
+/// a consumer that runs BEFORE the producer this tick will see the event
+/// next tick; no events are lost.
+#[derive(Message, Clone, Debug)]
+pub struct AnimStartedMessage {
+    pub entity: Entity,
+    /// The anim that just started.  `None` only in degenerate cases
+    /// (play called but `current_anim_id` wasn't set).
+    pub anim_id: Option<AnimId>,
+    /// The anim that was playing just before this one.  Useful for
+    /// consumers that care about transitions specifically (e.g. clearing
+    /// per-attack hit logs when moving to a fresh attack anim).
+    pub previous: Option<AnimId>,
+}
 
 // ---------------------------------------------------------------------------
 // Action dispatch

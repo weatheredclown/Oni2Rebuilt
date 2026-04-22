@@ -1,30 +1,30 @@
 /*
  * statemachine/mod.rs — StateMachinePlugin: player animation FSM.
  *
- * Loads player.fsm at Startup into PlayerFsmData (shared Arc<SmData<InputDriver>>).
- * Attaches FsmRuntime to any newly spawned Player entity via insert_player_fsm.
+ * insert_player_fsm attaches `FsmRuntime` to any newly spawned Player entity
+ * using the FSM name carried in its `PadFsmName` component (sourced from the
+ * actor XML's `<Pad FSM="..."/>` attribute).  Input-side FSMs — player, enemy,
+ * enemy_combo, etc. — all flow through the shared `EnemyFsmCache` since they
+ * share the legacy `aiInputStateMachineData` loader.
+ *
  * fsm_update_system (in PlayerPlugin) evaluates input pad flags each frame
  * and drives ONI2 animation transitions.
  */
 pub mod core;
 pub mod drivers;
+pub mod enemy_fsm;
 pub mod runtime;
 pub mod types;
 
+pub use enemy_fsm::EnemyFsmCache;
 pub use runtime::{FsmRuntime, fsm_update_system, AnimatorRuntime, animator_update_system, AnimatorBroadcastEvent};
 
 use bevy::prelude::*;
 use std::sync::Arc;
 
-use crate::player::components::Player;
+use crate::player::components::{PadFsmName, Player};
 
 use core::SmData;
-use drivers::input::{INPUT_ACTION_PARSER, INPUT_EVENT_PARSER, InputDriver};
-use drivers::parse::parse_sm;
-
-/// Bevy resource wrapping the shared player FSM data.
-#[derive(Resource)]
-pub struct PlayerFsmData(pub Arc<SmData<InputDriver>>);
 
 /// Bevy resource wrapping the top-level embedded orchestration FSM data.
 #[derive(Resource)]
@@ -35,7 +35,8 @@ pub struct StateMachinePlugin;
 impl Plugin for StateMachinePlugin {
     fn build(&self, app: &mut App) {
         app.add_message::<AnimatorBroadcastEvent>();
-        app.add_systems(Startup, (load_player_fsm, load_animator_fsm));
+        app.init_resource::<EnemyFsmCache>();
+        app.add_systems(Startup, load_animator_fsm);
         app.add_systems(Update, insert_player_fsm);
     }
 }
@@ -55,46 +56,36 @@ fn load_animator_fsm(mut commands: Commands) {
     }
 }
 
-fn load_player_fsm(mut commands: Commands) {
-    let text = match crate::vfs::read_to_string("Statemachine", "player.fsm") {
-        Ok(t) => t,
-        Err(e) => {
-            error!("FSM: failed to read player.fsm: {}", e);
-            return;
-        }
-    };
-
-    match parse_sm::<InputDriver>(&text, INPUT_EVENT_PARSER, INPUT_ACTION_PARSER) {
-        Ok(data) => {
-            let n = data.states.len();
-            commands.insert_resource(PlayerFsmData(Arc::new(data)));
-            info!("FSM: player.fsm loaded — {} states", n);
-        }
-        Err(e) => error!("FSM: failed to parse player.fsm: {}", e),
-    }
-}
-
-/// Attach FsmRuntime to any player entity that was just spawned.
+/// Attach FsmRuntime + AnimatorRuntime to any player entity that was just
+/// spawned.  The input FSM name comes from the entity's `PadFsmName`
+/// component; falls back to `"player"` if one is missing (sandbox path).
 fn insert_player_fsm(
-    query: Query<Entity, Added<Player>>,
-    fsm_res: Option<Res<PlayerFsmData>>,
+    query: Query<(Entity, Option<&PadFsmName>), Added<Player>>,
     animator_res: Option<Res<PlayerAnimatorData>>,
+    mut enemy_cache: ResMut<EnemyFsmCache>,
     mut pad_mapper: ResMut<crate::control_map::PadMapper>,
     mut commands: Commands,
 ) {
-    let fsm_opt = fsm_res.map(|r| r.0.clone());
     let animator_opt = animator_res.map(|r| r.0.clone());
 
     let mut spawned = false;
-    for entity in &query {
+    for (entity, pad_fsm) in &query {
+        let fsm_name = pad_fsm
+            .map(|p| p.0.as_str())
+            .unwrap_or("player");
+
+        let fsm_arc = enemy_cache.get_or_load(fsm_name);
+
         let mut ec = commands.entity(entity);
-        if let Some(fsm) = fsm_opt.clone() {
+        if let Some(fsm) = fsm_arc {
             ec.insert(FsmRuntime::new(fsm));
+        } else {
+            warn!("FSM: could not load '{}.fsm' for player {:?}", fsm_name, entity);
         }
         if let Some(animator) = animator_opt.clone() {
             ec.insert(AnimatorRuntime::new(animator));
         }
-        info!("FSM: FsmRuntimes attached to player {:?}", entity);
+        info!("FSM: runtimes attached to player {:?} (pad_fsm='{}')", entity, fsm_name);
         spawned = true;
     }
 

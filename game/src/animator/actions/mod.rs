@@ -46,6 +46,11 @@ pub struct ActionCtx<'a> {
     pub anim_state: &'a mut Oni2AnimState,
     pub lib: &'a Oni2AnimLibrary,
     pub jump_controller: Option<&'a JumpController>,
+    /// Stack-of-overrides for gravity.  Actions that want to modify the
+    /// character's gravity push a keyed layer on `on_enter` and remove
+    /// it on `on_exit` — see `super::gravity::GravityModifiers`.  None
+    /// when the entity has no gravity (a static prop, say).
+    pub gravity: Option<&'a mut super::gravity::GravityModifiers>,
 
     // --- Physics / world contact (one-tick edges from the animator tick) ---
     pub is_grounded: bool,
@@ -193,6 +198,7 @@ pub fn action_start_dispatch_system(
         &mut Oni2AnimState,
         &Oni2AnimLibrary,
         Option<&JumpController>,
+        Option<&mut super::gravity::GravityModifiers>,
     )>,
     mut broadcast_writer: MessageWriter<AnimatorBroadcastEvent>,
     mut end_writer: MessageWriter<EndActionMessage>,
@@ -202,7 +208,7 @@ pub fn action_start_dispatch_system(
             // Leave unported actions to action_start_system.
             continue;
         }
-        let Ok((mut ap, mut active, mut schedule, mut anim_state, lib, jc)) =
+        let Ok((mut ap, mut active, mut schedule, mut anim_state, lib, jc, gravity_opt)) =
             query.get_mut(msg.entity)
         else {
             continue;
@@ -221,6 +227,7 @@ pub fn action_start_dispatch_system(
         // moves into ctx — the borrow checker rejects a simultaneous
         // shared + exclusive borrow on the same component.
         let is_grounded = anim_state.is_grounded;
+        let mut gravity_mut = gravity_opt.map(|g| g.into_inner());
         let mut ctx = ActionCtx {
             entity: msg.entity,
             ap: &mut ap,
@@ -228,6 +235,7 @@ pub fn action_start_dispatch_system(
             anim_state: &mut anim_state,
             lib,
             jump_controller: jc,
+            gravity: gravity_mut.as_deref_mut(),
             // Physics flags aren't needed at entry time (update-only);
             // default them here rather than querying.
             is_grounded,
@@ -304,6 +312,7 @@ pub fn action_dispatch_system(
         &Oni2AnimLibrary,
         Option<&JumpController>,
         Option<&AnimatorRuntime>,
+        Option<&mut super::gravity::GravityModifiers>,
     )>,
     mut broadcast_writer: MessageWriter<AnimatorBroadcastEvent>,
     mut end_writer: MessageWriter<EndActionMessage>,
@@ -319,6 +328,7 @@ pub fn action_dispatch_system(
         lib,
         jc,
         animator_opt,
+        gravity_opt,
     ) in &mut query
     {
         // Derive ground edges locally so we don't depend on
@@ -350,6 +360,7 @@ pub fn action_dispatch_system(
 
         let mut broadcasts: Vec<String> = Vec::new();
         let is_grounded = anim_state.is_grounded;
+        let mut gravity_mut = gravity_opt.map(|g| g.into_inner());
         let mut ctx = ActionCtx {
             entity,
             ap: &mut ap,
@@ -357,6 +368,7 @@ pub fn action_dispatch_system(
             anim_state: &mut anim_state,
             lib,
             jump_controller: jc,
+            gravity: gravity_mut.as_deref_mut(),
             is_grounded,
             ground_just_regained,
             ground_just_lost,
@@ -449,6 +461,16 @@ pub fn action_dispatch_system(
 /// the schedule component pre-attached, a fresh entity's first
 /// StartActionMessage would silently miss the query and never fire
 /// `on_enter`.  Idempotent — filtered on `Without<...>`.
+///
+/// Safety net, not the canonical path.  `AnimatorBundle` in
+/// `animator/mod.rs` is the one-stop spawn for every animator-driven
+/// entity and already includes `ActiveAction` + `AnimSchedule`.  This
+/// system catches stragglers that grow an `ActionPlayer` at runtime
+/// (or old spawn paths that slipped through migration) so they still
+/// get the dispatch components before the next tick — but prefer
+/// adding `AnimatorBundle` at spawn time whenever you can, since
+/// `commands.insert` here flushes at end-of-stage and the first
+/// dispatch after the add still misses.
 pub fn ensure_active_action_component(
     mut commands: Commands,
     missing_active: Query<Entity, (With<ActionPlayer>, Without<ActiveAction>)>,

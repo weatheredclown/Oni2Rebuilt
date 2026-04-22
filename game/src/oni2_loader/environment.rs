@@ -63,7 +63,7 @@ pub struct LayoutContext {
 }
 
 /// A struct to bundle all asset mutators required for spawning entities.
-pub struct SpawnAssets<'a, 'commands, 'c1, 'c2, 'c3, 'c4, 'c5, 'c6, 'c7> {
+pub struct SpawnAssets<'a, 'commands, 'c1, 'c2, 'c3, 'c4, 'c5, 'c6, 'c7, 'c8, 'c9> {
     pub commands: &'a mut Commands<'commands, 'c1>,
     pub meshes: &'a mut ResMut<'c2, Assets<Mesh>>,
     pub materials: &'a mut ResMut<'c3, Assets<StandardMaterial>>,
@@ -72,6 +72,8 @@ pub struct SpawnAssets<'a, 'commands, 'c1, 'c2, 'c3, 'c4, 'c5, 'c6, 'c7> {
     pub entity_lib: &'a mut ResMut<'c6, crate::oni2_loader::registries::EntityLibrary>,
     pub anim_registry: &'a mut ResMut<'c7, crate::oni2_loader::registries::AnimRegistry>,
     pub texture_collections: &'a mut TextureCollections,
+    pub fight_fsm_cache: &'a mut ResMut<'c8, crate::fightai::FightFsmCache>,
+    pub attack_fsm_cache: &'a mut ResMut<'c9, crate::fightai::AttackFsmCache>,
 }
 
 /// Marker resource: fog rendering is enabled (--fog flag).

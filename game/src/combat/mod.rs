@@ -6,11 +6,14 @@
  * FixedUpdate chain: ground detection → attack sync → hit detection → about-to-
  * be-hit → hit reaction → combo tracking → death → telemetry → cleanup → timers.
  */
+pub mod bundles;
 pub mod components;
 pub mod events;
 pub mod faction;
 pub mod hitbox;
 pub mod systems;
+
+pub use bundles::{CreaturePhysicsBundle, FighterBundle};
 
 use bevy::prelude::*;
 

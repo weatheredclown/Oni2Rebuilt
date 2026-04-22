@@ -1,20 +1,17 @@
 /*
  * ai/components.rs — AI component types.
  *
- * AiState enum (Idle, Pursuing, Circling, Attacking, Recovering).
- * AiFighter: per-entity AI config (attack range, patience, preferred distance)
- * and runtime state (current AiState, target entity, timers).
+ * `AiFighter`: per-entity marker for AI-controlled creatures.  Carries the
+ *   current combat `target` (written by scripts via `SetAiTarget`/`TriggerFight`,
+ *   read by the fight FSM) and `manual_target` to lock out auto-acquisition.
+ *   Mirrors `aiFighter` in rb/src/aifight/fighter.h — the data surface (target,
+ *   mode) lives here; behavior lives in the FSM runtimes (`AiFsmRuntime`,
+ *   `FightRuntime`, `AttackRuntime`).
+ *
+ * `ActorFollower`, `ActorRetreating`: navigation glue used by ScrOni
+ *   `FollowActor` and retreat-steering systems — independent of the fight FSM.
  */
 use bevy::prelude::*;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum AiState {
-    Idle,
-    Pursuing,
-    Circling,
-    Attacking,
-    Recovering,
-}
 
 #[derive(Component)]
 pub struct ActorFollower {
@@ -27,29 +24,8 @@ pub struct ActorRetreating {
     pub avoid_target: Option<Entity>,
 }
 
-#[derive(Component)]
+#[derive(Component, Default)]
 pub struct AiFighter {
-    pub state: AiState,
     pub target: Option<Entity>,
     pub manual_target: bool,
-    pub decision_timer: f32,
-    pub aggression: f32,
-    pub preferred_range: f32,
-    pub circle_direction: f32,
-    pub circle_switch_timer: f32,
-}
-
-impl Default for AiFighter {
-    fn default() -> Self {
-        Self {
-            state: AiState::Idle,
-            target: None,
-            manual_target: false,
-            decision_timer: 0.5,
-            aggression: 0.5,
-            preferred_range: 3.0,
-            circle_direction: 1.0,
-            circle_switch_timer: 2.0,
-        }
-    }
 }

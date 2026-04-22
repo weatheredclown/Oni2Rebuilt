@@ -17,6 +17,8 @@
 
 pub mod animator;
 pub mod attack;
+pub mod behavior;
 pub mod fight;
 pub mod input;
 pub mod parse;
+pub mod squad;

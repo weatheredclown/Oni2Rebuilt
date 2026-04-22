@@ -128,6 +128,34 @@ impl Action for JumpAction {
         };
         ctx.ap.jump_index = jump_index_for_substate(subaction);
 
+        // Push the jump's gravity factor onto the modifier stack.  Remove
+        // happens in on_exit (whether we Finish naturally via Landing or
+        // get overridden by another action via HandoffTo).  Using a stack
+        // instead of a mutable field means a cutscene freeze, stun, or
+        // other sibling override can coexist without either side fighting
+        // the other's "reset."
+        let jump_idx = jump_index_for_substate(subaction);
+        let factor = ctx
+            .jump_controller
+            .and_then(|jc| jc.jumps.get(jump_idx as usize))
+            .map(|j| j.gravity_factor.max(0.01))
+            .unwrap_or(1.0);
+        if let Some(g) = ctx.gravity.as_deref_mut() {
+            bevy::log::info!(
+                "JumpAction on_enter: about to push 'jump'={:.2} on entity {:?} (prior layer_count={})",
+                factor,
+                ctx.entity,
+                g.0.layer_count(),
+            );
+            g.push("jump", factor);
+        } else {
+            bevy::log::warn!(
+                "JumpAction on_enter: ctx.gravity is None for entity {:?} — jump physics \
+                 won't apply a gravity factor (entity missing GravityModifiers component?)",
+                ctx.entity,
+            );
+        }
+
         if first_played {
             *ctx.schedule = schedule;
         } else {
@@ -216,5 +244,23 @@ impl Action for JumpAction {
         // STANDING_JUMP all at once.
         ctx.ap.flags &= !action_flags::CLEARLIST_JUMP;
         ctx.ap.jump_index = -1;
+        // Remove our gravity layer.  `gravity_sync_system` will reflect
+        // the resolved stack into Avian's `GravityScale` next tick.  If
+        // another action pushed its own layer while this jump was
+        // running (slow-time fx, cutscene), that layer stays active —
+        // no fight over "who resets last."
+        if let Some(g) = ctx.gravity.as_deref_mut() {
+            bevy::log::info!(
+                "JumpAction on_exit: about to remove 'jump' from entity {:?} (prior layer_count={})",
+                ctx.entity,
+                g.0.layer_count(),
+            );
+            g.remove("jump");
+        } else {
+            bevy::log::warn!(
+                "JumpAction on_exit: ctx.gravity is None for entity {:?} — can't remove 'jump' layer",
+                ctx.entity,
+            );
+        }
     }
 }

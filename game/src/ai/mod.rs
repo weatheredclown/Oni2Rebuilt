@@ -1,14 +1,15 @@
 /*
- * ai/mod.rs — AiPlugin: enemy AI decision loop.
+ * ai/mod.rs — AiPlugin: FSM-driven enemy AI.
  *
- * Runs in FixedUpdate before combat: target selection, behavioural state machine
- * (Idle / Pursuing / Circling / Attacking / Recovering), movement steering, and
- * A* path following.  Scheduled before ground_detection_system so physics sees
- * intent-derived velocity each tick.
+ * Per-entity FSM attach + tick (via `AiFsmRuntime`, `AiPadCommands`) for the
+ * input-driven side, plus A* path following and ScrOni-driven actor following /
+ * retreat steering.  The cooperative fight coordinator (`FightRuntime` against
+ * fight.fsm) runs from the `fightai` module.  Scheduled before
+ * `ground_detection_system` so physics sees intent-derived velocity each tick.
  */
 pub mod components;
+pub mod fsm;
 pub mod navigation;
-pub mod systems;
 
 use bevy::prelude::*;
 
@@ -21,9 +22,8 @@ impl Plugin for AiPlugin {
         app.add_systems(
             FixedUpdate,
             (
-                systems::ai_target_system,
-                systems::ai_decision_system,
-                systems::ai_movement_system,
+                fsm::ai_attach_fsm_system,
+                fsm::ai_fsm_update_system,
                 navigation::path_following_system,
                 navigation::actor_follower_system,
                 navigation::retreat_steering_system,
