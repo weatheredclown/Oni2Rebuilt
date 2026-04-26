@@ -26,6 +26,463 @@ pub struct LayoutPlayerInfo {
     pub pad_fsm: Option<String>,
 }
 
+/// Who initiated a chunked layout load — determines cleanup scope and
+/// post-finalize routing.  `InGame` is the default path: the loading
+/// screen UI drives the load and on completion transitions to
+/// `AppState::InGame` via `LoadedLayoutPlayer`.  `Frontend` is the
+/// PAGE_3D backdrop path: the frontend `rebuild_current_page` kicks
+/// the load while staying in `AppState::FrontEnd`, spawned entities
+/// are additionally tagged `FrontendBackdrop` so `teardown_frontend`
+/// sweeps them on page/state exit (and the per-page rebuild leaves
+/// them alone), and the player-info transition is suppressed (the
+/// backdrop isn't the player's level).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum LayoutLoadScope {
+    #[default]
+    InGame,
+    Frontend,
+}
+
+/// Chunked-load state held across frames during a layout load.
+/// Populated once by `begin_chunked_layout_load`, drained a handful of
+/// actors at a time by `drive_chunked_actor_spawn`, and closed out by
+/// `finalize_chunked_layout_load` (the post-actor phase: camera
+/// packages, lights).  Exists as a Resource so caller systems can
+/// watch `cursor` / `actor_names.len()` for progress.
+///
+/// The driver is no longer gated by `AppState::LoadingLayout` — it
+/// runs whenever this resource exists, which lets the frontend drive
+/// a layout load for the PAGE_3D backdrop without AppState churn.
+#[derive(Resource)]
+pub struct PendingLayoutLoad {
+    pub actor_names: Vec<String>,
+    pub cursor: usize,
+    pub layout_dir: String,
+    pub layout_ctx: LayoutContext,
+    pub layout_paths: LayoutPaths,
+    pub texture_collections: TextureCollections,
+    pub player_info: Option<LayoutPlayerInfo>,
+    pub spawned: u32,
+    pub creatures: u32,
+    pub skipped: u32,
+    /// Set once `finalize_chunked_layout_load` has run so the driver
+    /// system doesn't call it a second time while waiting for the
+    /// state transition.
+    pub post_done: bool,
+    /// Which code path kicked the load — controls cleanup-marker
+    /// tagging + the finalize-phase routing.
+    pub scope: LayoutLoadScope,
+}
+
+/// Resource produced by the chunked loader once finalized, carrying
+/// the player info out to `setup_scene` (OnEnter InGame) where the
+/// player entity gets its combat / camera / FSM bundles.
+#[derive(Resource)]
+pub struct LoadedLayoutPlayer(pub LayoutPlayerInfo);
+
+/// Pre-actor phase of a chunked load: parse `layout.et`, `layout.paths`,
+/// `layout.graphs`, insert those as resources, then read
+/// `layout.actors` into the returned state's `actor_names` queue.
+/// Does NOT spawn any actors — those get drained one per tick by
+/// `spawn_next_layout_actor`.
+pub fn begin_chunked_layout_load(
+    commands: &mut Commands,
+    layout_dir: &str,
+    entity_base_dir: &str,
+) -> Option<PendingLayoutLoad> {
+    crate::oni2_loader::parsers::actor_xml::clear_xml_cache();
+
+    let layout_path = layout_dir;
+    let entity_base = entity_base_dir;
+
+    // Parse layout.et to find which types are BASICENTITY
+    let mut basic_types = std::collections::HashSet::new();
+    if let Ok(et_content) = crate::vfs::read_to_string(layout_path, "layout.et") {
+        for line in et_content.lines() {
+            let trimmed = line.trim();
+            if trimmed.starts_with("BASICENTITY") {
+                let parts: Vec<&str> = trimmed.split_whitespace().collect();
+                if parts.len() >= 2 {
+                    basic_types.insert(parts[1].to_string());
+                }
+            }
+        }
+    }
+    info!("Layout: {} basic entity types", basic_types.len());
+
+    let layout_paths = LayoutPaths {
+        curves: parsers::layout::parse_layout_paths(layout_path),
+    };
+    if !layout_paths.curves.is_empty() {
+        info!("Layout: loaded {} path curves", layout_paths.curves.len());
+    }
+
+    let nav_graphs = crate::oni2_loader::parsers::graph::parse_layout_graphs(layout_path);
+    let nav_graph = crate::ai::navigation::NavGraph::new(nav_graphs);
+    info!(
+        "Layout: generated NavGraph with {} points",
+        nav_graph.points.len()
+    );
+    commands.insert_resource(nav_graph);
+    commands.insert_resource(layout_paths.clone());
+
+    let actors_content = match crate::vfs::read_to_string(layout_path, "layout.actors") {
+        Ok(c) => c,
+        Err(e) => {
+            warn!("Failed to read layout.actors: {}", e);
+            return None;
+        }
+    };
+
+    let layout_ctx = LayoutContext {
+        layout_dir: layout_path.to_string(),
+        entity_base: entity_base.to_string(),
+        basic_types,
+    };
+    commands.insert_resource(layout_ctx.clone());
+
+    // Extract actor names (skip the count line and blanks).
+    let actor_names: Vec<String> = actors_content
+        .lines()
+        .filter_map(|line| {
+            let trimmed = line.trim();
+            if trimmed.is_empty() || trimmed.parse::<u32>().is_ok() {
+                None
+            } else {
+                Some(trimmed.to_string())
+            }
+        })
+        .collect();
+
+    Some(PendingLayoutLoad {
+        actor_names,
+        cursor: 0,
+        layout_dir: layout_path.to_string(),
+        layout_ctx,
+        layout_paths,
+        texture_collections: TextureCollections::default(),
+        player_info: None,
+        spawned: 0,
+        creatures: 0,
+        skipped: 0,
+        post_done: false,
+        scope: LayoutLoadScope::InGame,
+    })
+}
+
+/// Frontend-scope variant of `begin_chunked_layout_load`.  Identical
+/// parse behavior; the only difference is the scope tag that drives
+/// cleanup marker insertion + suppresses the LoadedLayoutPlayer →
+/// InGame transition.  Used by `rebuild_current_page` when a PAGE_3D
+/// with a `LAYOUT` directive is entered.
+pub fn begin_frontend_layout_load(
+    commands: &mut Commands,
+    layout_dir: &str,
+    entity_base_dir: &str,
+) -> Option<PendingLayoutLoad> {
+    let mut pending = begin_chunked_layout_load(commands, layout_dir, entity_base_dir)?;
+    pending.scope = LayoutLoadScope::Frontend;
+    Some(pending)
+}
+
+/// Resource marker: `finalize_chunked_layout_load` has completed for
+/// a frontend-scope load.  The frontend input dispatcher watches for
+/// this to un-gate navigation events after the backdrop is ready.
+/// Carries the layout name so the frontend can tell which backdrop
+/// is currently mounted (used to skip re-loading when the user
+/// navigates away and back to the same PAGE_3D page).
+#[derive(Resource, Clone, Debug)]
+pub struct FrontendLayoutReady {
+    pub layout_name: String,
+}
+
+/// Tagging system: while a frontend-scope chunked load is in flight,
+/// every freshly-spawned `InGameEntity` picks up `FrontendBackdrop`
+/// so the frontend teardown sweep catches it on page/state exit.
+/// Also catches the camera/light entities the finalize phase spawns.
+///
+/// `FrontendBackdrop` (not `FrontendUiEntity`) is used deliberately —
+/// `rebuild_current_page` despawns every `FrontendUiEntity` on each
+/// rebuild, but the backdrop scene must persist across rebuilds (a
+/// SET_VISIBLE handler triggered by arrow nav would otherwise wipe
+/// the uitest scene). `teardown_frontend` sweeps both markers.
+///
+/// Runs every frame — cheap because the `Without<FrontendBackdrop>`
+/// filter + `Without<ChildOf>` on the outer query narrows to new,
+/// top-level layout spawns.  Nested children get swept by Bevy's
+/// recursive despawn when the root goes.
+pub fn tag_frontend_layout_spawns_system(
+    mut commands: Commands,
+    pending: Option<Res<PendingLayoutLoad>>,
+    ready: Option<Res<FrontendLayoutReady>>,
+    untagged: Query<
+        Entity,
+        (
+            With<crate::menu::InGameEntity>,
+            Without<crate::frontend::render::FrontendBackdrop>,
+        ),
+    >,
+) {
+    // Only tag while a frontend-scope load is in flight OR has just
+    // finished (covers the frame where finalize spawned lights /
+    // camera packages after the pending resource was dropped).
+    let frontend_active = matches!(
+        pending.as_deref(),
+        Some(p) if p.scope == LayoutLoadScope::Frontend,
+    );
+    let frontend_ready = ready.is_some();
+    if !frontend_active && !frontend_ready {
+        return;
+    }
+    for entity in &untagged {
+        commands
+            .entity(entity)
+            .insert(crate::frontend::render::FrontendBackdrop);
+    }
+}
+
+/// Result record from one chunked spawn call — used to fold
+/// bookkeeping into `PendingLayoutLoad` from the caller side (rather
+/// than passing `&mut state` alongside SpawnAssets, which would
+/// double-borrow `state.texture_collections`).
+pub struct ChunkedSpawnResult {
+    /// `Some` if an actor reference was consumed from the queue this
+    /// call; `None` when the queue was already empty.
+    pub spawned_entity: Option<Entity>,
+    /// `Some` if the spawned actor was flagged Player="1" and no
+    /// player info had been recorded yet.  Caller should store this
+    /// in `state.player_info`.
+    pub player_info: Option<LayoutPlayerInfo>,
+    pub is_creature: bool,
+    pub is_basic_entity: bool,
+    pub failed: bool,
+}
+
+/// Spawn the actor at `index` in the queue.  Caller handles cursor
+/// advancement and the counter/field updates on `PendingLayoutLoad`
+/// — we can't take `&mut state` here because SpawnAssets already
+/// borrows `state.texture_collections`.
+pub fn spawn_queued_layout_actor(
+    actor_name: &str,
+    layout_ctx: &LayoutContext,
+    layout_paths: &LayoutPaths,
+    assets: &mut SpawnAssets,
+) -> ChunkedSpawnResult {
+    match spawn_layout_actor(
+        assets,
+        actor_name,
+        layout_ctx,
+        layout_paths,
+        None,
+        false,
+        None,
+    ) {
+        Some((entity, actor)) => {
+            let player_info = if actor.is_creature && actor.is_player {
+                Some(LayoutPlayerInfo {
+                    entity,
+                    position: actor.position,
+                    entity_type: actor.entity_type.clone(),
+                    animator_type: actor.animator_type.clone().unwrap_or_default(),
+                    max_hitpoints: actor.max_hitpoints,
+                    faction: actor.faction.clone(),
+                    pad_fsm: actor.pad_fsm.clone(),
+                })
+            } else {
+                None
+            };
+            ChunkedSpawnResult {
+                spawned_entity: Some(entity),
+                player_info,
+                is_creature: actor.is_creature,
+                is_basic_entity: !actor.is_creature,
+                failed: false,
+            }
+        }
+        None => ChunkedSpawnResult {
+            spawned_entity: None,
+            player_info: None,
+            is_creature: false,
+            is_basic_entity: false,
+            failed: true,
+        },
+    }
+}
+
+/// Standalone chunked actor-spawn driver.  Runs whenever
+/// `PendingLayoutLoad` exists, drains up to `CHUNK_SIZE` actors per
+/// tick, and calls `finalize_chunked_layout_load` once the queue
+/// empties.  Replaces the former `drive_chunked_actor_spawn` in
+/// `menu.rs` — this version is AppState-agnostic so the frontend
+/// (PAGE_3D backdrop load) and the normal loading screen can both
+/// drive the same machinery.
+///
+/// For the InGame scope, we move the finalized player info into a
+/// `LoadedLayoutPlayer` resource so `setup_scene` consumes it
+/// OnEnter(InGame).  For the Frontend scope, there's no player — the
+/// backdrop load drops the info on the floor and instead inserts
+/// `FrontendLayoutReady` so the frontend input dispatcher knows the
+/// backdrop is mounted.
+pub fn drive_chunked_actor_spawn_system(
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    mut images: ResMut<Assets<Image>>,
+    mut skinned_mesh_ibp: ResMut<Assets<SkinnedMeshInverseBindposes>>,
+    mut entity_lib: ResMut<crate::oni2_loader::registries::EntityLibrary>,
+    mut anim_registry: ResMut<crate::oni2_loader::registries::AnimRegistry>,
+    mut fight_fsm_cache: ResMut<crate::fightai::FightFsmCache>,
+    mut attack_fsm_cache: ResMut<crate::fightai::AttackFsmCache>,
+    mut pending: Option<ResMut<PendingLayoutLoad>>,
+) {
+    const CHUNK_SIZE: usize = 8;
+    let Some(ref mut state) = pending else {
+        return;
+    };
+
+    for _ in 0..CHUNK_SIZE {
+        if state.cursor >= state.actor_names.len() {
+            break;
+        }
+        let actor_name = state.actor_names[state.cursor].clone();
+        state.cursor += 1;
+        let layout_ctx = state.layout_ctx.clone();
+        let layout_paths = state.layout_paths.clone();
+        let result = {
+            let mut assets = crate::oni2_loader::environment::SpawnAssets {
+                commands: &mut commands,
+                meshes: &mut meshes,
+                materials: &mut materials,
+                images: &mut images,
+                skinned_mesh_ibp: &mut skinned_mesh_ibp,
+                entity_lib: &mut entity_lib,
+                anim_registry: &mut anim_registry,
+                fight_fsm_cache: &mut fight_fsm_cache,
+                attack_fsm_cache: &mut attack_fsm_cache,
+                texture_collections: &mut state.texture_collections,
+            };
+            spawn_queued_layout_actor(&actor_name, &layout_ctx, &layout_paths, &mut assets)
+        };
+        if result.is_creature {
+            state.creatures += 1;
+            if state.player_info.is_none() && result.player_info.is_some() {
+                state.player_info = result.player_info;
+            }
+        } else if result.is_basic_entity {
+            state.spawned += 1;
+        }
+        if result.failed {
+            state.skipped += 1;
+        }
+    }
+
+    if state.cursor >= state.actor_names.len() && !state.post_done {
+        finalize_chunked_layout_load(
+            state,
+            &mut commands,
+            &mut meshes,
+            &mut materials,
+            &mut images,
+        );
+        match state.scope {
+            LayoutLoadScope::InGame => {
+                if let Some(player_info) = state.player_info.take() {
+                    commands.insert_resource(LoadedLayoutPlayer(player_info));
+                }
+            }
+            LayoutLoadScope::Frontend => {
+                // Signal the frontend dispatcher that the backdrop is
+                // mounted — it watches for this to un-gate input.  The
+                // player info (if any) gets dropped: a backdrop isn't
+                // a playable level.  Drop the pending resource too so
+                // the tagging system can stop watching for new spawns;
+                // `FrontendLayoutReady` carries the information that
+                // "a backdrop exists" for teardown logic and the skip-
+                // reload check in `rebuild_current_page`.
+                commands.insert_resource(FrontendLayoutReady {
+                    layout_name: state.layout_dir.clone(),
+                });
+                commands.remove_resource::<PendingLayoutLoad>();
+            }
+        }
+    }
+}
+
+/// Post-actor phase: insert TextureCollections / camera packages /
+/// camera parameter sets, and load lights.  Mirrors the tail end of
+/// the legacy monolithic `load_layout`.  Consumes the `TextureCollections`
+/// from the state.
+pub fn finalize_chunked_layout_load(
+    state: &mut PendingLayoutLoad,
+    commands: &mut Commands,
+    meshes: &mut ResMut<Assets<Mesh>>,
+    materials: &mut ResMut<Assets<StandardMaterial>>,
+    images: &mut ResMut<Assets<Image>>,
+) {
+    if state.post_done {
+        return;
+    }
+    info!(
+        "Layout: spawned {} entities, {} creatures, skipped {}",
+        state.spawned, state.creatures, state.skipped
+    );
+    if let Some(ref pi) = state.player_info {
+        info!(
+            "Layout: player creature found: type={} animator={}",
+            pi.entity_type, pi.animator_type
+        );
+    }
+
+    // Insert LayoutPaths again for legacy symmetry (the monolithic path
+    // re-inserted them after the actor loop — harmless double-insert).
+    if !state.layout_paths.curves.is_empty() {
+        commands.insert_resource(state.layout_paths.clone());
+    }
+    // Transfer texture collections out of the pending state.
+    commands.insert_resource(std::mem::take(&mut state.texture_collections));
+
+    // Camera packages + parameters.
+    let camera_packages = CameraPackages {
+        packages: crate::oni2_loader::parsers::camera::parse_campacknew(&state.layout_dir),
+    };
+    let mut camera_sets = CameraParameterSets::default();
+    let mut files_to_load = std::collections::HashSet::new();
+    for pkg in camera_packages.packages.values() {
+        if !pkg.navigation.is_empty() {
+            files_to_load.insert(pkg.navigation.clone());
+        }
+        if !pkg.targeting.is_empty() {
+            files_to_load.insert(pkg.targeting.clone());
+        }
+        if !pkg.fighting.is_empty() {
+            files_to_load.insert(pkg.fighting.clone());
+        }
+    }
+    for file_base in files_to_load {
+        let xml_name = format!("{}.xml", file_base);
+        if let Some(params) =
+            crate::oni2_loader::parsers::camera::parse_camera_xml(&state.layout_dir, &xml_name)
+        {
+            camera_sets.sets.insert(file_base, params);
+        } else {
+            warn!("Failed to load camera xml: {}", xml_name);
+        }
+    }
+    info!(
+        "Layout: loaded {} camera packages, {} parameter sets",
+        camera_packages.packages.len(),
+        camera_sets.sets.len()
+    );
+    commands.insert_resource(camera_packages);
+    commands.insert_resource(camera_sets);
+    commands.insert_resource(ActiveCameraPackage::default());
+
+    // Lights, fog, skyhat.
+    load_layout_lights(commands, meshes, materials, images, &state.layout_dir);
+
+    state.post_done = true;
+}
+
 /// Load an ONI2 layout directory, spawning all entities and creatures.
 /// Returns info about the player creature if one was found (Player="1").
 pub fn load_layout(
@@ -265,7 +722,7 @@ pub fn spawn_layout_actor(
             .iter()
             .any(|t| t.eq_ignore_ascii_case(&actor.entity_type));
 
-    let is_trigger = actor.broadcast_radius.is_some() || actor.checkpoint_radius.is_some();
+    let is_trigger = actor.broadcast_radius.is_some() || actor.checkpoint_radius.is_some() || actor.fvt_radius.is_some();
     if !is_basic && !is_trigger && !actor.is_creature {
         is_basic = true;
     }
@@ -593,9 +1050,26 @@ pub fn spawn_layout_actor(
                         if let Some(ref update) = actor.updatestate
                             && update.eq_ignore_ascii_case("Asleep")
                         {
-                            // TODO: Tease out asleep/awake lifecycle. For now, do not respect updatestate="Asleep".
-                            // exec.active = false;
-                            // assets.commands.entity(entity).insert(crate::oni2_loader::components::ActorAsleep);
+                            // Intentionally no-op.  Layout XML
+                            // `updatestate="Asleep"` is common but we've
+                            // opted to treat it as a hint, not a hard
+                            // command: auto-inserting `ActorAsleep` here
+                            // froze every such actor's animator, physics,
+                            // and AI at spawn (so they stood in bind pose
+                            // until something explicitly woke them),
+                            // which didn't match intent — many of those
+                            // actors need to at least animate.
+                            //
+                            // Dormancy is now entirely scroni-driven:
+                            // scripts call `setupdatestate Asleep` or
+                            // `sendaction deactivate`, which takes the
+                            // `ActorAsleep` path through
+                            // `scroni::system_bindings::SetUpdateState`
+                            // and `scroni::vm` message delivery.  The
+                            // `AsleepPlugin` (gravity layer + velocity
+                            // pin + tick gates) handles those explicit
+                            // deactivations correctly.
+                            let _ = update;
                         }
                         assets
                             .commands
@@ -687,6 +1161,24 @@ pub fn spawn_layout_actor(
             info!(
                 "Attached CheckpointTrigger (index {}, radius {}) to {}",
                 index, radius, actor.entity_type
+            );
+        }
+
+        // Attach FightVectorTrigger if present
+        if let Some(radius) = actor.fvt_radius {
+            let attack_alias = actor.fvt_attack.clone().unwrap_or_default();
+            assets.commands.entity(entity).insert(crate::fight_vector::FightVectorTrigger {
+                radius,
+                directional: actor.fvt_directional.unwrap_or(true),
+                offset: actor.fvt_offset.unwrap_or(Vec3::ZERO),
+                attack_alias: attack_alias.clone(),
+                enabled: true,
+            });
+            info!(
+                "Attached FightVectorTrigger (radius {}, attack {}) to {}",
+                radius,
+                attack_alias,
+                actor.entity_type
             );
         }
 

@@ -20,6 +20,11 @@ pub enum EffectDef {
     Particle(ParticleEffectDef),
     ChunkEmitter(ChunkEmitterDef),
     BulletCasing(BulletCasingFxDef), // Often found in .fx
+    Laser(LaserFxDef),
+    BlastFire(BlastFireDef),
+    LightGlow(LightGlowDef),
+    Charge(ChargeDef),
+    Flash(FlashDef),
 }
 
 #[derive(Debug, Clone)]
@@ -112,6 +117,81 @@ pub struct BulletCasingFxDef {
     pub projectile_type: String, // References ProjectileDef
     pub initial_velocity: Vec3,
 }
+
+#[derive(Debug, Clone)]
+pub struct LaserFxDef {
+    pub name: String,
+    /// Beam cross-section width in world units (meters).
+    pub width: f32,
+    /// Head sprite scale multiplier (applied as `0.5 * width * head_scale`
+    /// per rb/src/fx/laser.cpp:280).
+    pub head_scale: f32,
+    /// Size of the ring-buffer of past positions — how many frames of tail
+    /// are retained.  C++ `Length` (int) at rb/src/fx/laser.cpp:43.  NOT a
+    /// spatial length; the beam's visible length depends on projectile
+    /// speed × `length` × frame time.
+    pub length: usize,
+    pub head_texture: String,
+    pub tail_texture: String,
+    pub head_texture_handle: Option<Handle<Image>>,
+    pub tail_texture_handle: Option<Handle<Image>>,
+    /// Max point-light intensity at the head (raw C++ value — used to
+    /// drive the `intensity *= 2` ramp in laser.rs).
+    pub light_max: f32,
+    pub light_color: Color,
+}
+
+#[derive(Debug, Clone)]
+pub struct BlastFireDef {
+    pub name: String,
+    pub speed: f32,
+    pub rotation: Vec3,
+    pub scale: Vec3,
+    pub path0: Vec3,
+    pub path1: Vec3,
+    pub path2: Vec3,
+}
+
+#[derive(Debug, Clone)]
+pub struct LightGlowDef {
+    pub name: String,
+    pub glow_texture_name: String,
+    pub glow_look_at: i32,
+    pub glow_billboard: i32,
+    pub occlude_glow: i32,
+    pub radial_attenuate: i32,
+    pub screen_rotate: i32,
+    pub glow_intensity: f32,
+    pub glow_intensity_rate_of_change: f32,
+    pub glow_color: Color,
+}
+
+#[derive(Debug, Clone)]
+pub struct ChargeDef {
+    pub name: String,
+    pub scale: f32,
+    pub color1: Color,
+    pub color2: Color,
+    pub color3: Color,
+    pub amplitude: f32,
+    pub frequency: f32,
+    pub rate: f32,
+    pub offset: f32,
+}
+
+#[derive(Debug, Clone)]
+pub struct FlashDef {
+    pub name: String,
+    pub duration: f32,
+    pub rate: f32,
+    pub fade: f32,
+    pub scale_min: f32,
+    pub scale_max: f32,
+    pub color1: Color,
+    pub color2: Color,
+    pub color3: Color,
+}
+
 
 pub fn parse_particle_ref(block: &SettingsBlock) -> Option<ParticleSystemRef> {
     if let Some(sys_name) = block.get_string("ParticleSystem") {
@@ -229,6 +309,91 @@ pub fn parse_effect(
             name: name.to_string(),
             projectile_type: block.get_string("ProjectileType").unwrap_or_default(),
             initial_velocity: block.get_vec3("InitialVelocity", Vec3::ZERO),
+        })),
+        "LASER" => {
+            // Legacy laser textures live under Entity/GunFx (see
+            // rb/src/fx/laser.cpp:140 `RBPushFolder("entity/gunfx")`).
+            // Fall back to the generic texture/ tree if not found there.
+            let head_name = block.get_string("HeadTexture").unwrap_or_default();
+            let tail_name = block.get_string("TailTexture").unwrap_or_default();
+            let head_handle = if head_name.is_empty() || head_name.eq_ignore_ascii_case("none") {
+                None
+            } else {
+                Some(crate::oni2_loader::parsers::texture::load_tga_texture(
+                    "Entity/GunFx",
+                    &head_name,
+                    images,
+                )
+                .map(|(h, _)| h)
+                .unwrap_or_else(|| asset_server.load(format!("texture/{}.tga", head_name))))
+            };
+            
+            let tail_handle = if tail_name.is_empty() || tail_name.eq_ignore_ascii_case("none") {
+                None
+            } else {
+                Some(crate::oni2_loader::parsers::texture::load_tga_texture(
+                    "Entity/GunFx",
+                    &tail_name,
+                    images,
+                )
+                .map(|(h, _)| h)
+                .unwrap_or_else(|| asset_server.load(format!("texture/{}.tga", tail_name))))
+            };
+            Some(EffectDef::Laser(LaserFxDef {
+                name: name.to_string(),
+                width: block.get_f32("Width", 1.0),
+                head_scale: block.get_f32("HeadScale", 1.0),
+                length: block.get_f32("Length", 16.0).max(2.0) as usize,
+                head_texture: head_name,
+                tail_texture: tail_name,
+                head_texture_handle: head_handle,
+                tail_texture_handle: tail_handle,
+                light_max: block.get_f32("LightMax", 32.0),
+                light_color: block.get_color("LightColor", Color::WHITE),
+            }))
+        }
+        "BLASTFIRE" => Some(EffectDef::BlastFire(BlastFireDef {
+            name: name.to_string(),
+            speed: block.get_f32("Speed", 1.0),
+            rotation: block.get_vec3("Rotation", Vec3::ZERO),
+            scale: block.get_vec3("Scale", Vec3::ONE),
+            path0: block.get_vec3("path0", Vec3::ZERO),
+            path1: block.get_vec3("path1", Vec3::ZERO),
+            path2: block.get_vec3("path2", Vec3::ZERO),
+        })),
+        "LIGHTGLOW" => Some(EffectDef::LightGlow(LightGlowDef {
+            name: name.to_string(),
+            glow_texture_name: block.get_string("GlowTextureName").unwrap_or_default(),
+            glow_look_at: block.get_i32("GlowLookAt", 0),
+            glow_billboard: block.get_i32("GlowBillboard", 0),
+            occlude_glow: block.get_i32("OccludeGlow", 0),
+            radial_attenuate: block.get_i32("RadialAttenuate", 0),
+            screen_rotate: block.get_i32("ScreenRotate", 0),
+            glow_intensity: block.get_f32("GlowIntensity", 1.0),
+            glow_intensity_rate_of_change: block.get_f32("GlowIntensityRateOfChange", 0.0),
+            glow_color: block.get_color("GlowColor", Color::WHITE),
+        })),
+        "CHARGE" => Some(EffectDef::Charge(ChargeDef {
+            name: name.to_string(),
+            scale: block.get_f32("Scale", 1.0),
+            color1: block.get_color("Color1", Color::WHITE),
+            color2: block.get_color("Color2", Color::WHITE),
+            color3: block.get_color("Color3", Color::WHITE),
+            amplitude: block.get_f32("Amplitude", 0.5),
+            frequency: block.get_f32("Frequency", 0.5),
+            rate: block.get_f32("Rate", 1.0),
+            offset: block.get_f32("Offset", 0.0),
+        })),
+        "FLASH" => Some(EffectDef::Flash(FlashDef {
+            name: name.to_string(),
+            duration: block.get_f32("Duration", 1.0),
+            rate: block.get_f32("Rate", 1.0),
+            fade: block.get_f32("Fade", 0.5),
+            scale_min: block.get_f32("ScaleMin", 0.8),
+            scale_max: block.get_f32("ScaleMax", 1.2),
+            color1: block.get_color("Color1", Color::WHITE),
+            color2: block.get_color("Color2", Color::WHITE),
+            color3: block.get_color("Color3", Color::WHITE),
         })),
         _ => None,
     }

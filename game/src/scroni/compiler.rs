@@ -15,12 +15,17 @@ use super::tokenizer::Tokenizer;
 pub struct CompileError {
     pub line: usize,
     pub col: usize,
+    pub script_name: Option<String>,
     pub message: String,
 }
 
 impl std::fmt::Display for CompileError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "line {}:{}: {}", self.line, self.col, self.message)
+        if let Some(ref s) = self.script_name {
+            write!(f, "[script '{}'] line {}:{}: {}", s, self.line, self.col, self.message)
+        } else {
+            write!(f, "line {}:{}: {}", self.line, self.col, self.message)
+        }
     }
 }
 
@@ -30,6 +35,7 @@ pub struct Compiler {
     pos: usize,
     pub errors: Vec<CompileError>,
     pub current_inline_vars: Vec<VarDecl>,
+    pub current_script_name: Option<String>,
 }
 
 impl Compiler {
@@ -42,6 +48,7 @@ impl Compiler {
             pos: 0,
             errors: Vec::new(),
             current_inline_vars: Vec::new(),
+            current_script_name: None,
         };
         let file = compiler.parse_file();
         if compiler.errors.is_empty() {
@@ -100,6 +107,7 @@ impl Compiler {
         self.errors.push(CompileError {
             line: tok.line,
             col: tok.col,
+            script_name: self.current_script_name.clone(),
             message: msg,
         });
     }
@@ -151,6 +159,8 @@ impl Compiler {
             self.error("expected script name".into());
             return None;
         };
+
+        self.current_script_name = Some(name.clone());
 
         if !self.expect(TokenCode::Begin) {
             return None;
@@ -411,18 +421,34 @@ impl Compiler {
             TokenCode::Face => self.parse_face(),
             TokenCode::Goto => self.parse_goto(),
             TokenCode::Fight => {
+                // `fight [<guid>] [leader (support|attack)] [for <duration>]`
+                // (rb/src/scroni/BlockingCommand.cpp:394).  The leader-mode
+                // and duration modifiers aren't surfaced to the runtime
+                // yet — just consume them so they don't dangle as hanging
+                // values (seen in gruntsC.oni `fight tgtActor leader
+                // support` and `fight tgtActor leader attack for 10`).
                 self.advance();
                 let target = if is_expr_start(self.code()) {
                     Some(self.parse_expr())
                 } else {
                     None
                 };
+                if self.skip_if(TokenCode::Leader) {
+                    // Expect one of support / attack.
+                    match self.code() {
+                        TokenCode::Support | TokenCode::Attack => {
+                            self.advance();
+                        }
+                        _ => {}
+                    }
+                }
+                if self.skip_if(TokenCode::For) {
+                    let _ = self.parse_expr();
+                }
                 Stmt::Fight(target)
             }
-            TokenCode::Shoot => {
-                self.advance();
-                Stmt::Shoot
-            }
+            TokenCode::Shoot => self.parse_shoot(),
+            TokenCode::Look => self.parse_look(),
             TokenCode::Hit => self.parse_hit(),
             TokenCode::MakeExplosion => self.parse_make_explosion(),
             TokenCode::Patrol => {
@@ -508,15 +534,18 @@ impl Compiler {
             }
             TokenCode::ChildDone => {
                 self.advance();
-                Stmt::ChildDone
+                let var = self.parse_optional_child_var();
+                Stmt::ChildDone { var }
             }
             TokenCode::ChildHome => {
                 self.advance();
-                Stmt::ChildHome
+                let var = self.parse_optional_child_var();
+                Stmt::ChildHome { var }
             }
             TokenCode::ChildStop => {
                 self.advance();
-                Stmt::ChildStop
+                let var = self.parse_optional_child_var();
+                Stmt::ChildStop { var }
             }
 
             // Lists
@@ -590,8 +619,16 @@ impl Compiler {
                 Stmt::CameraReset
             }
             TokenCode::CameraMode => {
+                // `cameramode (script|game) [time <value>]`
+                // (rb/src/scroni/cameracommand.cpp:44).
                 self.advance();
-                Stmt::CameraMode(self.parse_expr())
+                let mode = self.parse_expr();
+                let time = if self.skip_if(TokenCode::Time) {
+                    Some(self.parse_expr())
+                } else {
+                    None
+                };
+                Stmt::CameraMode { mode, time }
             }
             TokenCode::CameraLetterbox => {
                 self.advance();
@@ -705,6 +742,174 @@ impl Compiler {
                 self.advance();
                 Stmt::DrawText(self.parse_expr())
             }
+            TokenCode::Color => {
+                // `color R,G,B,A` — sets the current debug-draw color.
+                // Legacy scripts write it on the same line as drawtext.
+                self.advance();
+                let r = self.parse_expr();
+                self.skip_if(TokenCode::Comma);
+                let g = self.parse_expr();
+                self.skip_if(TokenCode::Comma);
+                let b = self.parse_expr();
+                self.skip_if(TokenCode::Comma);
+                let a = self.parse_expr();
+                Stmt::Color { r, g, b, a }
+            }
+            TokenCode::Clear => {
+                // `clear <listvar>` — empty an actor-list variable
+                // (rb/src/scroni/Command.cpp:868).
+                self.advance();
+                let list = self.peek().text.clone().to_lowercase();
+                self.advance();
+                Stmt::ClearList { list }
+            }
+            TokenCode::Normalize => {
+                // `normalize <vectorvar>` — normalize in-place
+                // (rb/src/scroni/Command.cpp:1200).
+                self.advance();
+                let var = self.peek().text.clone().to_lowercase();
+                self.advance();
+                Stmt::Normalize { var }
+            }
+            TokenCode::SetHud => {
+                // `sethud <value>` (rb/src/scroni/Command.cpp:1430).  HUD
+                // rendering isn't wired yet; consume the arg.
+                self.advance();
+                let arg = self.parse_expr();
+                Stmt::Unimplemented {
+                    command: "sethud".to_string(),
+                    args: vec![arg],
+                }
+            }
+            TokenCode::SetFogRange => {
+                // `setFogRange <a> <b> <c>` three numeric args
+                // (rb/src/scroni/LevelCommand.cpp:75).  Fog isn't wired.
+                self.advance();
+                let mut args = Vec::new();
+                for _ in 0..3 {
+                    if is_expr_start(self.code()) {
+                        args.push(self.parse_expr());
+                    }
+                }
+                Stmt::Unimplemented {
+                    command: "setfogrange".to_string(),
+                    args,
+                }
+            }
+            TokenCode::LevelComplete => {
+                self.advance();
+                Stmt::Unimplemented {
+                    command: "levelcomplete".to_string(),
+                    args: Vec::new(),
+                }
+            }
+            TokenCode::EndGrapple => {
+                self.advance();
+                Stmt::Unimplemented {
+                    command: "endgrapple".to_string(),
+                    args: Vec::new(),
+                }
+            }
+            TokenCode::Form => {
+                // `form <string>` (rb/src/scroni/Command.cpp:1481).
+                self.advance();
+                let arg = self.parse_expr();
+                Stmt::Unimplemented {
+                    command: "form".to_string(),
+                    args: vec![arg],
+                }
+            }
+            TokenCode::PadRumbleLargeMotor => {
+                // `padRumbleLargeMotor [totaltime N] [rampuptime N]
+                //    [dampentime N] [frequency N] [min N] [max N]`
+                // (rb/src/scroni/padrumblecommand.cpp:17).
+                self.advance();
+                let mut args = Vec::new();
+                loop {
+                    let tag = match self.code() {
+                        TokenCode::TotalTime => "totaltime",
+                        TokenCode::RampUpTime => "rampuptime",
+                        TokenCode::DampenTime => "dampentime",
+                        TokenCode::Frequency => "frequency",
+                        TokenCode::Min => "min",
+                        TokenCode::Max => "max",
+                        _ => break,
+                    };
+                    self.advance();
+                    args.push(Expr::StringLit(tag.to_string()));
+                    if is_expr_start(self.code()) {
+                        args.push(self.parse_expr());
+                    }
+                }
+                Stmt::Unimplemented {
+                    command: "padrumblelargemotor".to_string(),
+                    args,
+                }
+            }
+            TokenCode::PadRumbleSmallMotor => {
+                // `padRumbleSmallMotor time <value>`
+                self.advance();
+                let mut args = Vec::new();
+                if self.skip_if(TokenCode::Time) && is_expr_start(self.code()) {
+                    args.push(self.parse_expr());
+                }
+                Stmt::Unimplemented {
+                    command: "padrumblesmallmotor".to_string(),
+                    args,
+                }
+            }
+            TokenCode::PadRumbleLargeMotorStop
+            | TokenCode::PadRumblePause
+            | TokenCode::PadRumbleResume
+            | TokenCode::PadRumbleSmallMotorStop
+            | TokenCode::PadRumbleStopMotors => {
+                let name = self.peek().text.clone().to_lowercase();
+                self.advance();
+                Stmt::Unimplemented {
+                    command: name,
+                    args: Vec::new(),
+                }
+            }
+            TokenCode::Jump => {
+                // `jump [index <val> | onlyrunning | onlystanding]
+                //    [from <vec>] to <vec>`
+                // or `jump [index <val>] [from <vec>] [to <vec>]`
+                // (rb/src/scroni/BlockingCommand.cpp:302).  Consume all
+                // modifiers.  Runtime effect is stubbed — the AI jump
+                // pathing isn't wired yet.
+                self.advance();
+                let mut args = Vec::new();
+                match self.code() {
+                    TokenCode::Index => {
+                        self.advance();
+                        args.push(Expr::StringLit("index".to_string()));
+                        if is_expr_start(self.code()) {
+                            args.push(self.parse_expr());
+                        }
+                    }
+                    TokenCode::OnlyRunning => {
+                        self.advance();
+                        args.push(Expr::StringLit("onlyrunning".to_string()));
+                    }
+                    TokenCode::OnlyStanding => {
+                        self.advance();
+                        args.push(Expr::StringLit("onlystanding".to_string()));
+                    }
+                    _ => {}
+                }
+                if self.skip_if(TokenCode::From) {
+                    args.push(Expr::StringLit("from".to_string()));
+                    args.push(self.parse_expr());
+                }
+                if self.skip_if(TokenCode::To) {
+                    args.push(Expr::StringLit("to".to_string()));
+                    args.push(self.parse_expr());
+                }
+                Stmt::Unimplemented {
+                    command: "jump".to_string(),
+                    args,
+                }
+            }
 
             TokenCode::PlayerTaskBegin => {
                 self.advance();
@@ -724,9 +929,33 @@ impl Compiler {
                 Stmt::PlayerTaskFailure
             }
 
+            TokenCode::RunGame => {
+                // `RunGame [Level <expr> [SavePoint <expr>]]` — mirrors
+                // `scrCompiler::ParseRunGame` (rb/src/scroni/Command.cpp:1550).
+                // Bare `RunGame` re-runs the current level; `Level <n>`
+                // sets the index; `SavePoint <n>` is only valid after
+                // `Level`.
+                self.advance(); // skip 'RunGame'
+                let mut level = None;
+                let mut save_point = None;
+                if self.code() == TokenCode::Level {
+                    self.advance(); // skip 'Level'
+                    level = Some(self.parse_expr());
+                    if self.code() == TokenCode::SavePoint {
+                        self.advance(); // skip 'SavePoint'
+                        save_point = Some(self.parse_expr());
+                    }
+                }
+                Stmt::RunGame { level, save_point }
+            }
+
             _ => {
                 // Unknown command — skip token and collect trailing exprs until next command
                 let cmd = self.peek().text.clone();
+                
+                // CRASH ON UNIMPLEMENTED/HANGING VALUES
+                self.error(format!("Hanging value or unrecognized command: '{}'. Fatal error enabled for debugging.", cmd));
+
                 self.advance();
                 let mut args = Vec::new();
                 while is_expr_start(self.code()) {
@@ -804,26 +1033,32 @@ impl Compiler {
 
     fn parse_add(&mut self) -> Stmt {
         self.advance(); // skip 'add'
-        let expr = self.parse_expr();
+        let mut exprs = vec![self.parse_expr()];
+        while self.skip_if(TokenCode::Comma) {
+            exprs.push(self.parse_expr());
+        }
         self.skip_if(TokenCode::To); // skip 'to'
 
         // Target list can be an identifier or a keyword
         let list = self.peek().text.clone().to_lowercase();
         self.advance();
 
-        Stmt::AddToList { expr, list }
+        Stmt::AddToList { exprs, list }
     }
 
     fn parse_remove(&mut self) -> Stmt {
         self.advance(); // skip 'remove'
-        let expr = self.parse_expr();
+        let mut exprs = vec![self.parse_expr()];
+        while self.skip_if(TokenCode::Comma) {
+            exprs.push(self.parse_expr());
+        }
         self.skip_if(TokenCode::From); // skip 'from'
 
         // Target list can be an identifier or a keyword
         let list = self.peek().text.clone().to_lowercase();
         self.advance();
 
-        Stmt::RemoveFromList { expr, list }
+        Stmt::RemoveFromList { exprs, list }
     }
 
     fn parse_if(&mut self) -> Stmt {
@@ -1231,19 +1466,20 @@ impl Compiler {
     }
 
     fn parse_make_explosion(&mut self) -> Stmt {
+        // `makeExplosion <name> [orientation <vec>] at <vec>`
+        // `at` and `orientation` are dedicated keyword tokens
+        // (TokenCode::At / TokenCode::Orientation), NOT Identifier — the
+        // prior `skip_if(TokenCode::Identifier)` calls never consumed them
+        // so downstream `parse_expr` choked on the trailing var refs like
+        // `blastPos` / `blastOrientation` (seen in DoMovieBlast / DoBlast).
         self.advance(); // skip 'makeexplosion'
         let name = self.parse_expr();
-        let mut orientation = None;
-        if self.skip_if(TokenCode::Identifier) {
-            // Check if identifier is `orientation`
-            if self.tokens[self.pos - 1]
-                .text
-                .eq_ignore_ascii_case("orientation")
-            {
-                orientation = Some(self.parse_expr());
-            }
-        }
-        self.skip_if(TokenCode::Identifier); // skip `at`
+        let orientation = if self.skip_if(TokenCode::Orientation) {
+            Some(self.parse_expr())
+        } else {
+            None
+        };
+        self.skip_if(TokenCode::At);
         let at = self.parse_expr();
         Stmt::MakeExplosion {
             name,
@@ -1274,6 +1510,88 @@ impl Compiler {
         }
     }
 
+    /// Consume an optional child-variable identifier that follows a
+    /// `childdone`/`childhome`/`childstop` keyword.  Returns `Some(name)`
+    /// when an identifier is next; `None` when the next token is a
+    /// statement keyword / comment / EOF.  Ensures grunt2.oni's `childdone
+    /// awareChild` / `childhome actionChild` style parses cleanly rather
+    /// than leaving `awareChild` as a hanging token.
+    fn parse_optional_child_var(&mut self) -> Option<String> {
+        if self.code() == TokenCode::Identifier {
+            let name = self.peek().text.clone().to_lowercase();
+            self.advance();
+            Some(name)
+        } else {
+            None
+        }
+    }
+
+    /// Parse `shoot <target> [miss] [bullets|rate <expr>] [for <expr>]`.
+    ///
+    /// Same structural shape as `parse_ambient_sound`: slurp a variable-
+    /// length arg list where dedicated keyword tokens (`Miss`, `Bullets`,
+    /// `Rate`, `For`) are captured as string literals and other tokens
+    /// flow through `parse_expr`.  Keyword tokens MUST be matched
+    /// explicitly — `is_expr_start` returns false for them, so without
+    /// this the arg loop breaks after the first expression and the
+    /// remaining tokens fall through the stmt dispatcher as "Hanging
+    /// value" errors (see feedback memory `feedback_scroni_keyword_tokens`).
+    /// Parse `look <listvar> status <state>, <state>, ...` (AI awareness
+    /// scan in grunt2.oni `Awareness_LookAndListen` script).  Treats
+    /// `Status`, `Alive`, `Enemy`, `Friendly`, `Dead` keyword tokens as
+    /// string-literal action words so they don't trip the catch-all
+    /// "Hanging value" error.  See the feedback memory on ScrOni keyword-
+    /// token parsing — this is the same structural pattern as
+    /// `parse_ambient_sound` and `parse_shoot`.
+    fn parse_look(&mut self) -> Stmt {
+        self.advance(); // skip 'look'
+        let mut args = Vec::new();
+        while !self.at_end() {
+            let mut is_kw = true;
+            match self.code() {
+                TokenCode::Status => args.push(Expr::StringLit("status".to_string())),
+                TokenCode::Alive => args.push(Expr::StringLit("alive".to_string())),
+                TokenCode::Enemy => args.push(Expr::StringLit("enemy".to_string())),
+                _ => is_kw = false,
+            }
+            if is_kw {
+                self.advance();
+            } else {
+                if !is_expr_start(self.code()) {
+                    break;
+                }
+                args.push(self.parse_expr());
+            }
+            self.skip_if(TokenCode::Comma);
+        }
+        Stmt::Look { args }
+    }
+
+    fn parse_shoot(&mut self) -> Stmt {
+        self.advance(); // skip 'shoot'
+        let mut args = Vec::new();
+        while !self.at_end() {
+            let mut is_kw = true;
+            match self.code() {
+                TokenCode::Miss => args.push(Expr::StringLit("miss".to_string())),
+                TokenCode::Bullets => args.push(Expr::StringLit("bullets".to_string())),
+                TokenCode::Rate => args.push(Expr::StringLit("rate".to_string())),
+                TokenCode::For => args.push(Expr::StringLit("for".to_string())),
+                _ => is_kw = false,
+            }
+            if is_kw {
+                self.advance();
+            } else {
+                if !is_expr_start(self.code()) {
+                    break;
+                }
+                args.push(self.parse_expr());
+            }
+            self.skip_if(TokenCode::Comma);
+        }
+        Stmt::Shoot { args }
+    }
+
     fn parse_ambient_sound(&mut self) -> Stmt {
         self.advance(); // skip 'ambientsound'
         let mut args = Vec::new();
@@ -1285,6 +1603,11 @@ impl Compiler {
                 TokenCode::Pitch => args.push(Expr::StringLit("pitch".to_string())),
                 TokenCode::PitchRamp => args.push(Expr::StringLit("pitchramp".to_string())),
                 TokenCode::VolumeRamp => args.push(Expr::StringLit("volumeramp".to_string())),
+                // `Stop` / `Play` are dedicated keyword tokens but inside
+                // an `AmbientSound X Stop` statement they act as action
+                // literals — mirror how `Stmt::Sound` handles them.
+                TokenCode::Stop => args.push(Expr::StringLit("stop".to_string())),
+                TokenCode::Play => args.push(Expr::StringLit("play".to_string())),
                 _ => is_kw = false,
             }
 
@@ -1302,31 +1625,55 @@ impl Compiler {
     }
 
     fn parse_control_head(&mut self) -> Stmt {
+        // Grammar (rb/src/scroni/Command.cpp:1611):
+        //   controlhead trackactor <guid>
+        //   controlhead trackpos <vector>
+        //   controlhead trackclosest
+        //   controlhead scan [range <value>] [in <value>]
+        //   controlhead set <value>
+        //   controlhead disable
+        // Exactly one mode keyword follows the verb.  Earlier versions of
+        // this parser looped over keyword tokens indefinitely and swallowed
+        // unrelated `set`/`in`/`range` from later statements (e.g. the
+        // `set rand to RandomRange(0,1)` on the next line of
+        // scavenger.oni:Scv_Recognition).
         self.advance(); // skip 'controlhead'
         let mut args = Vec::new();
-        while !self.at_end() {
-            let mut is_keyword = true;
-            match self.code() {
-                TokenCode::TrackActor => args.push(Expr::StringLit("trackactor".to_string())),
-                TokenCode::TrackPos => args.push(Expr::StringLit("trackpos".to_string())),
-                TokenCode::TrackClosest => args.push(Expr::StringLit("trackclosest".to_string())),
-                TokenCode::Scan => args.push(Expr::StringLit("scan".to_string())),
-                TokenCode::Set => args.push(Expr::StringLit("set".to_string())),
-                TokenCode::Disable => args.push(Expr::StringLit("disable".to_string())),
-                TokenCode::In => args.push(Expr::StringLit("in".to_string())),
-                TokenCode::Range => args.push(Expr::StringLit("range".to_string())),
-                _ => is_keyword = false,
+        let mode = self.code();
+        let mode_str = match mode {
+            TokenCode::TrackActor => "trackactor",
+            TokenCode::TrackPos => "trackpos",
+            TokenCode::TrackClosest => "trackclosest",
+            TokenCode::Scan => "scan",
+            TokenCode::Set => "set",
+            TokenCode::Disable => "disable",
+            _ => {
+                // Unknown mode — leave args empty, don't advance.  The
+                // fallthrough dispatcher will report it if needed.
+                return Stmt::ControlHead { args };
             }
+        };
+        args.push(Expr::StringLit(mode_str.to_string()));
+        self.advance();
 
-            if is_keyword {
-                self.advance();
-            } else {
-                if !is_expr_start(self.code()) {
-                    break;
+        match mode {
+            TokenCode::TrackActor | TokenCode::TrackPos | TokenCode::Set => {
+                if is_expr_start(self.code()) {
+                    args.push(self.parse_expr());
                 }
-                args.push(self.parse_expr());
             }
-            self.skip_if(TokenCode::Comma);
+            TokenCode::Scan => {
+                if self.skip_if(TokenCode::Range) {
+                    args.push(Expr::StringLit("range".to_string()));
+                    args.push(self.parse_expr());
+                }
+                if self.skip_if(TokenCode::In) {
+                    args.push(Expr::StringLit("in".to_string()));
+                    args.push(self.parse_expr());
+                }
+            }
+            // trackclosest / disable — no args
+            _ => {}
         }
         Stmt::ControlHead { args }
     }
@@ -1446,14 +1793,70 @@ impl Compiler {
                 TokenCode::Greater => BinOp::Greater,
                 TokenCode::GreaterOrEqual => BinOp::GreaterOrEqual,
                 TokenCode::Is => {
-                    // `status X is alive` pattern — treat "is" as equality
                     self.advance();
-                    let right = self.parse_additive();
-                    left = Expr::BinOp {
-                        op: BinOp::Equal,
-                        left: Box::new(left),
-                        right: Box::new(right),
-                    };
+                    let first = self.parse_additive();
+
+                    // Special-case `status <actor> is <state>[, <state>...]`.
+                    // Legacy C++ (rb/src/scroni/PreDefFunc.cpp:203
+                    // `ParseStatusList`) parses the RHS as a comma-separated
+                    // list where each entry is an independent boolean
+                    // PREDICATE against the actor (alive/enemy/knockeddown/
+                    // etc.) — AND-reduced.  Equality-against-single-string
+                    // can't express this because `status(X)` returns one
+                    // state; rewrite the LHS expression tree so each state
+                    // becomes `status_is(actor, "<state>")` and AND them.
+                    //
+                    // Detection: the LHS we just built is `Expr::Call { name:
+                    // "status", args: [actor_expr] }` (see parse_call_expr
+                    // for the `Status` token branch).  Pull the actor out
+                    // and build per-state predicates.  Other `is` uses fall
+                    // through to equality.
+                    if let Expr::Call { name, args } = &left
+                        && name.eq_ignore_ascii_case("status")
+                        && args.len() == 1
+                    {
+                        let actor = args[0].clone();
+                        let state_to_name = |e: Expr| match e {
+                            Expr::StringLit(s) => s,
+                            Expr::Var(s) => s,
+                            Expr::Call { name, .. } => name,
+                            other => format!("{:?}", other),
+                        };
+                        let first_state = state_to_name(first);
+                        let mut acc = Expr::Call {
+                            name: "status_is".to_string(),
+                            args: vec![
+                                actor.clone(),
+                                Expr::StringLit(first_state),
+                            ],
+                        };
+                        while self.skip_if(TokenCode::Comma) {
+                            let more = self.parse_additive();
+                            let more_state = state_to_name(more);
+                            let pred = Expr::Call {
+                                name: "status_is".to_string(),
+                                args: vec![
+                                    actor.clone(),
+                                    Expr::StringLit(more_state),
+                                ],
+                            };
+                            acc = Expr::BinOp {
+                                op: BinOp::And,
+                                left: Box::new(acc),
+                                right: Box::new(pred),
+                            };
+                        }
+                        left = acc;
+                    } else {
+                        // Non-status `is`: plain equality.  No comma tail
+                        // expected here — if one appears, let the outer
+                        // parser handle it.
+                        left = Expr::BinOp {
+                            op: BinOp::Equal,
+                            left: Box::new(left),
+                            right: Box::new(first),
+                        };
+                    }
                     continue;
                 }
                 _ => break,
@@ -1765,10 +2168,20 @@ impl Compiler {
         let mut args = Vec::new();
         if self.code() == TokenCode::LeftParen {
             self.advance();
-            if self.code() != TokenCode::RightParen {
+            // Legacy ScrOni accepts both comma- and whitespace-
+            // separated argument lists inside `( ... )`.  E.g.
+            // `GetUIItemValue( "Choose_Level" "LevelList" )` from
+            // newGame.oni:68 has no commas.  We consume optional
+            // commas between args and stop at the closing paren or
+            // EOF.  Each iteration must make progress (parse_expr
+            // advances the token stream) — bail if it doesn't, to
+            // avoid infinite loops on malformed input.
+            while self.code() != TokenCode::RightParen && !self.at_end() {
+                let pos_before = self.pos;
                 args.push(self.parse_expr());
-                while self.skip_if(TokenCode::Comma) {
-                    args.push(self.parse_expr());
+                self.skip_if(TokenCode::Comma);
+                if self.pos == pos_before {
+                    break;
                 }
             }
             self.skip_if(TokenCode::RightParen);
@@ -1951,12 +2364,74 @@ fn is_command_start(code: TokenCode) -> bool {
             | TokenCode::SetShaderLocal
             | TokenCode::SetLightParameter
             | TokenCode::Intensity
+            | TokenCode::RunGame
     )
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn vector_literal_with_plus() {
+        let src = r#"
+Script Q
+begin
+sequence
+    vector p = location(player)
+    set p to {p.x+1, p.y+2, p.z+3}
+end
+"#;
+        Compiler::compile(src).expect("should compile");
+    }
+
+    #[test]
+    fn vector_literal_with_minus() {
+        let src = r#"
+Script Q
+begin
+sequence
+    vector p = location(player)
+    set p to {p.x-1, p.y-2, p.z-3}
+end
+"#;
+        Compiler::compile(src).expect("should compile");
+    }
+
+    #[test]
+    fn vector_literal_simple_field_access() {
+        // Narrower: just `{p.x, p.y, p.z}` — no arithmetic.
+        let src = r#"
+Script Q
+begin
+sequence
+    vector p = location(player)
+    set p to {p.x, p.y, p.z}
+end
+"#;
+        let file = Compiler::compile(src).expect("should compile");
+        assert_eq!(file.scripts.len(), 1);
+    }
+
+    #[test]
+    fn vector_literal_with_field_access_and_arith() {
+        // Reproduction for movies.oni BossDefeated line ~93:
+        //   CameraMoveToPoint {player_loc.x-5, player_loc.y+5, player_loc.z+5} time 5
+        // Each element is `var.field ± literal`.  This used to fail at the
+        // second comma / closing brace because something in the expression
+        // chain swallowed a `,` it shouldn't.
+        let src = r#"
+Script BossDefeated
+begin
+sequence
+    vector player_loc = location(player)
+    CameraMoveToPoint {player_loc.x-5, player_loc.y+5, player_loc.z+5} time 5
+end
+"#;
+        let file = Compiler::compile(src).expect("should compile");
+        assert_eq!(file.scripts.len(), 1);
+        assert!(file.scripts[0].sequence.len() >= 2);
+    }
 
     #[test]
     fn compile_road_script() {
@@ -2042,6 +2517,64 @@ end
     }
 
     #[test]
+    fn compile_rungame_bare() {
+        let src = r#"
+Script S
+begin
+sequence
+    do 1 times
+    begin
+        RunGame
+        exit
+    end
+end
+"#;
+        Compiler::compile(src).expect("should compile");
+    }
+
+    #[test]
+    fn compile_rungame_level_savepoint_with_getuiitemvalue() {
+        // Reproduction for newGame.oni:68 — the form was failing
+        // because (a) RunGame wasn't a recognized statement, and
+        // (b) parse_call_expr required commas between arguments,
+        // but the legacy author used whitespace-only separation.
+        let src = r#"
+Script RunLoadedLevel
+begin
+sequence
+    do 1 times
+    begin
+        RunGame Level GetUIItemValue( "Choose_Level" "LevelList" ) SavePoint GetUIItemValue( "Choose_Level_Save_Point" "LevelSavePointList" )
+        exit
+    end
+end
+"#;
+        Compiler::compile(src).expect("should compile");
+    }
+
+    #[test]
+    fn compile_newgame_oni_real() {
+        // The shipped newGame.oni for uitest layout — whole file used
+        // to fail because of unrecognized RunGame/GetUIItemValue, and
+        // because the file contains comma-less function calls and a
+        // mix of CameraMotion / DoNothing / RunGame variants.
+        crate::set_assets_path("../../oni2/zips/assets");
+        let path = format!(
+            "{}/layout/uitest/scripts/NewGame.oni",
+            crate::get_assets_path()
+        );
+        let content = std::fs::read_to_string(path).unwrap();
+        if let Err(errs) = Compiler::compile(&content) {
+            let joined = errs
+                .iter()
+                .map(|e| e.to_string())
+                .collect::<Vec<_>>()
+                .join("\n");
+            panic!("Failed to compile:\n{joined}");
+        }
+    }
+
+    #[test]
     fn test_compile_konoko_oni() {
         crate::set_assets_path("../../oni2/zips/assets");
         let path = format!(
@@ -2049,14 +2582,13 @@ end
             crate::get_assets_path()
         );
         let content = std::fs::read_to_string(path).unwrap();
-        match Compiler::compile(&content) {
-            Ok(_) => println!("COMPILE SUCCESS"),
-            Err(e) => {
-                for err in &e {
-                    println!("COMPILE ERROR: {}", err);
-                }
-                panic!("Failed to compile");
-            }
+        if let Err(errs) = Compiler::compile(&content) {
+            let joined = errs
+                .iter()
+                .map(|e| e.to_string())
+                .collect::<Vec<_>>()
+                .join("\n");
+            panic!("Failed to compile:\n{joined}");
         }
     }
     #[test]

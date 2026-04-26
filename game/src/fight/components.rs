@@ -163,8 +163,18 @@ pub struct FighterState {
     // --- Rotation tracking ---
     /// Radians of the last attack heading (for 20° strike-target clear check).
     pub last_attack_angle: f32,
-    /// Turn interpolation lerp parameter [0..1].
+    /// Turn interpolation lerp parameter [0..1].  1.0 = no turn pending
+    /// (at rest); < 1.0 = actively lerping each frame by
+    /// `dt * TURN_LERP_SCALE` until it reaches 1.0.  Mirrors
+    /// `crFighter::TurnLerper` (rb/src/fight/fighter.h:373).
     pub turn_lerper: f32,
+    /// Target facing direction the fighter is interpolating toward (XZ
+    /// plane — Y component ignored).  Only meaningful while
+    /// `turn_lerper < 1.0`.  Mirrors `TurnFinalTarget.LookAt(...)` in
+    /// rb/src/fight/fighter.cpp:1607-1609 (only the Y-rotation is
+    /// extracted, so a direction vector is equivalent to a matrix for
+    /// our purposes).
+    pub turn_final_target_dir: Vec3,
     /// Face-and-react rotation notches queued for the rotation system.
     pub fr_notches: i32,
     /// Initial-rotation notches to apply at attack start.
@@ -204,7 +214,24 @@ pub struct FighterState {
     /// `record_attack_hit` appends; `reset_attack_hits` clears at attack
     /// start.  Used by `has_hit_class` for combo-class predicates.
     pub attack_hit_classes: Vec<u32>,
+
+    // --- Per-frame pending-hit dedup list ---
+    /// Targets scheduled to be hit by the current strike frame.  Legacy
+    /// `crFighter::TargetsPending` (rb/src/fight/fighter.h:405) —
+    /// populated by `AddTargetPending` as strike probes detect hits,
+    /// reset to empty at the start of each frame (fighter.cpp:1332).
+    /// Used to dedup multi-probe strikes that overlap onto the same
+    /// target, and to queue the follow-up per-target damage / FX
+    /// pipeline on the next tick.  Capped at 10 (MAX_FIGHTTARGET_CREATURES
+    /// in fighter.h:116).
+    pub targets_pending: Vec<Entity>,
 }
+
+/// Cap on `FighterState::targets_pending` — mirrors
+/// `MAX_FIGHTTARGET_CREATURES` (rb/src/fight/fighter.h:116).  Strikes
+/// that would hit more than this many creatures in one frame silently
+/// drop the overflow (the C++ logs a `Warningf` in dev builds).
+pub const MAX_FIGHT_TARGET_CREATURES: usize = 10;
 
 impl Default for FighterState {
     fn default() -> Self {
@@ -232,7 +259,9 @@ impl Default for FighterState {
             cur_combo_index: 0,
             queue_attacks: true,
             last_attack_angle: 0.0,
-            turn_lerper: 0.0,
+            // 1.0 = "no turn pending" (legacy default, rb/src/fight/fighter.cpp:257).
+            turn_lerper: 1.0,
+            turn_final_target_dir: Vec3::NEG_Z,
             fr_notches: 0,
             ir_notches: 0,
             counter_rotation_notches: 0,
@@ -247,6 +276,7 @@ impl Default for FighterState {
             pending_getup_anim: None,
             pending_end_rotation_notches: 0,
             attack_hit_classes: Vec::new(),
+            targets_pending: Vec::new(),
         }
     }
 }
@@ -267,6 +297,50 @@ impl FighterState {
         } else {
             self.clear_flag(flag);
         }
+    }
+
+    /// Add a target to this frame's pending-hit list.  Deduplicated —
+    /// a second call with the same entity is a no-op.  Cap at
+    /// `MAX_FIGHT_TARGET_CREATURES`.  Mirrors `crFighter::AddTargetPending`
+    /// at rb/src/fight/fighter.cpp:1281.
+    pub fn add_target_pending(&mut self, target: Entity) {
+        if self.targets_pending.contains(&target) {
+            return;
+        }
+        if self.targets_pending.len() >= MAX_FIGHT_TARGET_CREATURES {
+            return;
+        }
+        self.targets_pending.push(target);
+    }
+
+    /// Clear the per-frame pending-hit list.  Called once at the start
+    /// of each fighter update tick (mirrors `NumPending = 0;` at
+    /// rb/src/fight/fighter.cpp:1332).
+    pub fn reset_targets_pending(&mut self) {
+        self.targets_pending.clear();
+    }
+
+    /// Begin a smooth turn toward `direction` (XZ-plane facing vector).
+    /// Resets `turn_lerper` to 0 so `fighter_turn_lerp_system` will
+    /// interpolate the fighter's facing from the current value to
+    /// `direction` over ~`1/TURN_LERP_SCALE` seconds.  Mirrors the
+    /// setup at rb/src/fight/fighter.cpp:1607-1610:
+    ///   TurnFinalTarget.LookAt(target)
+    ///   TurnLerper = 0.0f;
+    pub fn start_turn_to(&mut self, direction: Vec3) {
+        let flat = Vec3::new(direction.x, 0.0, direction.z);
+        if flat.length_squared() > 1e-8 {
+            self.turn_final_target_dir = flat.normalize();
+            self.turn_lerper = 0.0;
+        }
+    }
+
+    /// Cancel any pending turn lerp — clamps `turn_lerper` to 1.0 so
+    /// the system skips this fighter.  Called when an animation starts
+    /// playing or throttle exceeds 0.25 in the legacy
+    /// (rb/src/fight/fighter.cpp:1619-1620).
+    pub fn cancel_turn_lerp(&mut self) {
+        self.turn_lerper = 1.0;
     }
 
     pub fn is_grappling(&self) -> bool {

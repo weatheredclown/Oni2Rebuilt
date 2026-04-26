@@ -289,8 +289,18 @@ pub fn parse_atdt_content(content: &str) -> AtdtData {
                                     p.read_i32(&a_key, if strike.can_redirect { 1 } else { 0 }) != 0
                             }
                             "endrotationnotches" => {
-                                strike.end_rotation_notches =
-                                    p.read_i32(&a_key, strike.end_rotation_notches);
+                                // Notches are integer counts of NOTCH_RADIANS (PI/4) yaw
+                                // applied via `Quat::from_rotation_y(n * NOTCH_RADIANS)` in
+                                // rotation_notches_system.  Since the same PI/4 constant is
+                                // used as a raw Bevy angle downstream, we must flip the sign
+                                // here to match the Oni2→Bevy yaw inversion
+                                // (`oni2_to_bevy_yaw_rads` negates) — same pattern as the
+                                // sibling `slicestartradians`/`sliceendradians`/
+                                // `sliceheadingradiansb` conversions above.  Authored Oni2
+                                // CCW notches thus come out as Bevy-correct notches at every
+                                // use site with no additional conversion.
+                                let raw = p.read_i32(&a_key, -strike.end_rotation_notches);
+                                strike.end_rotation_notches = -raw;
                             }
                             "stoptrackframe" => {
                                 strike.stop_track_frame =

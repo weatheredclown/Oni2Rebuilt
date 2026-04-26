@@ -54,10 +54,17 @@ impl Plugin for WeaponPlugin {
                     systems::aim_system,
                     systems::ammo_system,
                     systems::accuracy_system,
+                    // Body-turn component of aim IK — rotates wielder's
+                    // facing toward the aim target so firing at wide
+                    // angles doesn't shoot past the character's nose.
+                    // Must run BEFORE weapon_update_system so the updated
+                    // facing is reflected in this tick's firing_dir.
+                    systems::weapon_aim_body_turn_system.after(systems::aim_system),
                     systems::weapon_update_system
                         .after(systems::fire_weapon_system)
                         .after(systems::stop_firing_system)
-                        .after(systems::aim_system),
+                        .after(systems::aim_system)
+                        .after(systems::weapon_aim_body_turn_system),
                 )
                     .run_if(in_state(AppState::InGame)),
             )

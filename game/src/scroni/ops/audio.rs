@@ -52,9 +52,19 @@ pub fn exec(ctx: &mut OpsCtx, stmt: &Stmt) -> bool {
         }
         Stmt::AmbientSound { args } => {
             if args.len() == 2 {
-                let handle = ctx.eval_int(&args[0]);
+                // "all" is the shorthand for stop-every-running-ambient
+                // (M03 LevelMgr.oni:1517 `AmbientSound all Stop`).
+                // Detect it by looking at the raw arg — it comes through
+                // as either an identifier or a string "all", which
+                // `eval_int` would collapse to 0 (matching no handle).
                 let action = ctx.eval_string(&args[1]);
-                if action.eq_ignore_ascii_case("stop") {
+                let first_as_str = ctx.eval_string(&args[0]);
+                let first_is_all = first_as_str.eq_ignore_ascii_case("all");
+                if action.eq_ignore_ascii_case("stop") && first_is_all {
+                    ctx.sys_request(SysRequest::AmbientSoundStopAll);
+                    info!("VM: AmbientSound all Stop");
+                } else if action.eq_ignore_ascii_case("stop") {
+                    let handle = ctx.eval_int(&args[0]);
                     ctx.sys_request(SysRequest::AmbientSoundStop(handle));
                     info!("VM: AmbientSound Stop {}", handle);
                 } else {

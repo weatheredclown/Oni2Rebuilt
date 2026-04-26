@@ -172,11 +172,12 @@ pub fn moving_platform_system(
         &mut avian3d::prelude::Rotation,
         &mut PlatformRider,
         &avian3d::prelude::ShapeHits,
+        Option<&mut crate::combat::components::Fighter>,
     )>,
     platforms: Query<(&Transform, &avian3d::prelude::RigidBody)>,
     parents: Query<&ChildOf>,
 ) {
-    for (rider_entity, mut pos, mut rider_rot, mut rider, hits) in &mut riders {
+    for (rider_entity, mut pos, mut rider_rot, mut rider, hits, fighter_opt) in &mut riders {
         // Find first ground contact that is on a kinematic or static body (important for ScrOni mutated static props).
         let new_platform: Option<Entity> = hits.iter().find_map(|hit| {
             if hit.entity == rider_entity {
@@ -221,10 +222,26 @@ pub fn moving_platform_system(
             pos.0 = new_world_pos;
 
             // Apply yaw-only rotation to the rider's facing so they
-            // turn with the platform (e.g. a spinning disk).
+            // turn with the platform (e.g. a spinning disk).  Two
+            // targets:
+            //  1. `rider_rot.0` (Avian's Rotation) — keeps the physics
+            //     body in sync.
+            //  2. `fighter.facing` (if the rider is a Fighter) — this
+            //     is the *authoritative* source of truth read every
+            //     tick by `fighter_rotation_sync_system` (combat/
+            //     systems.rs:898), which overwrites both Transform.
+            //     rotation AND Rotation from facing.  Without
+            //     rotating facing here, the sync system would stomp
+            //     the platform's yaw back to the pre-platform pose on
+            //     every tick — the translation would move with the
+            //     platform but rotation would appear frozen.
             let (yaw, _, _) = rot_delta.to_euler(EulerRot::YXZ);
             if yaw.abs() > 1e-6 {
-                rider_rot.0 = Quat::from_rotation_y(yaw) * rider_rot.0;
+                let yaw_q = Quat::from_rotation_y(yaw);
+                rider_rot.0 = yaw_q * rider_rot.0;
+                if let Some(mut fighter) = fighter_opt {
+                    fighter.facing = yaw_q * fighter.facing;
+                }
             }
         }
 

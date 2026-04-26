@@ -12,6 +12,7 @@
  */
 use avian3d::prelude::*;
 use bevy::prelude::*;
+use bevy::ecs::relationship::Relationship;
 use rb_shared::events::CombatEvent;
 
 use crate::fight::components::{BlockLibrary, BlockStatus, FighterState};
@@ -42,13 +43,15 @@ pub fn attack_sync_system(
     mut query: Query<(
         &mut AttackState,
         &crate::oni2_loader::animation::Oni2AnimState,
+        Option<&mut crate::animator::components::ActionPlayer>,
     )>,
     mut rotation_writer: MessageWriter<ApplyRotationNotchesEvent>,
 ) {
     for msg in reader.read() {
-        let Ok((mut attack_state, anim_state)) = query.get_mut(msg.entity) else {
+        let Ok((mut attack_state, anim_state, ap_opt)) = query.get_mut(msg.entity) else {
             continue;
         };
+        let mut has_fire = false;
 
         // New animation started!
         if let Some(ref mut active) = attack_state.active_attack {
@@ -67,11 +70,8 @@ pub fn attack_sync_system(
             if let Some(data) = &anim_state.anim.attack_data {
                 if let Some(strike) = &data.strike {
                     active.end_rotation_notches = strike.end_rotation_notches;
-                } else {
-                    active.end_rotation_notches = 0;
+                    has_fire = strike.fire;
                 }
-            } else {
-                active.end_rotation_notches = 0;
             }
         } else {
             let mut new_active = ActiveAttack::default();
@@ -79,8 +79,15 @@ pub fn attack_sync_system(
                 && let Some(strike) = &data.strike
             {
                 new_active.end_rotation_notches = strike.end_rotation_notches;
+                has_fire = strike.fire;
             }
             attack_state.active_attack = Some(new_active);
+        }
+
+        if has_fire {
+            if let Some(mut ap) = ap_opt {
+                ap.weapon_state = crate::animator::components::WeaponState::Drawn;
+            }
         }
     }
 }
@@ -114,6 +121,9 @@ pub fn hit_detection_system(
     mut block_success_writer: MessageWriter<BlockSuccessEvent>,
     _block_failed_writer: MessageWriter<BlockFailedEvent>,
     mut strike_connected_writer: MessageWriter<StrikeConnectedEvent>,
+    query_inventory: Query<&crate::inventory::components::Inventory>,
+    query_weapon: Query<&crate::weapons::components::Weapon>,
+    query_global_transform: Query<&GlobalTransform>,
 ) {
     let now = time.elapsed_secs_f64();
 
@@ -154,12 +164,58 @@ pub fn hit_detection_system(
                 .active_attack
                 .get_or_insert_with(ActiveAttack::default);
             if !active_attack.has_fired_projectile {
+                let mut weapon_name_to_fire = "default".to_string();
+                let mut muzzle_bevy_pos = None;
+                let mut muzzle_bevy_dir: Option<Vec3> = None;
+
+                if let Ok(inv) = query_inventory.get(attacker_entity) {
+                    if let Some(weap_ent) = inv.current_weapon_entity() {
+                        if let Ok(weap_tf) = query_global_transform.get(weap_ent) {
+                            if let Ok(weap) = query_weapon.get(weap_ent) {
+                                if !weap.ty.op_modes.is_empty() && !weap.ty.op_modes[0].first_state.projectiles.is_empty() {
+                                    weapon_name_to_fire = weap.ty.op_modes[0].first_state.projectiles[0].projectile_name.clone();
+
+                                    // Spawn at the weapon entity's world origin
+                                    // (the grip point on the hand) — skipping the
+                                    // un-converted Oni2-space muzzle_offset for
+                                    // now.  Direction comes from the weapon's
+                                    // OWN world forward so side-shots, high/low
+                                    // shots, etc. actually match the animated
+                                    // gun pose.  The legacy mesh loader negates
+                                    // X and Z on vertex positions
+                                    // (oni2_loader/parsers/mesh.rs:106), which
+                                    // effectively rotates the weapon model 180°
+                                    // around Y — so what was +Z (Oni2 barrel
+                                    // forward) becomes -Z in Bevy's mesh-local
+                                    // frame, and `weapon_rot * Vec3::NEG_Z` is
+                                    // the intuitive "forward".  Empirically
+                                    // that fires backwards; the mesh must be
+                                    // imported with the barrel along +Z in the
+                                    // weapon entity's local frame (likely the
+                                    // grip_rot/bone basis eats an extra flip).
+                                    // Use +Z — bullets now match the visible
+                                    // gun direction, including side-shots.
+                                    muzzle_bevy_pos = Some(weap_tf.translation());
+                                    let weapon_rot = weap_tf.compute_transform().rotation;
+                                    muzzle_bevy_dir =
+                                        Some((weapon_rot * Vec3::Z).normalize_or_zero());
+                                }
+                            }
+                        }
+                    }
+                }
+
+                let legacy_spawn_pos = attacker_tf.translation + Vec3::Y * 1.5;
+                let actual_spawn_pos = muzzle_bevy_pos.unwrap_or(legacy_spawn_pos);
+                let actual_spawn_dir = muzzle_bevy_dir
+                    .unwrap_or_else(|| attacker_fighter.facing.normalize_or_zero());
+
                 commands.trigger(SpawnProjectileEvent {
-                    name: "default".to_string(), // Stubbed weapon name until Weapon loadouts are added
-                    position: attacker_tf.translation + Vec3::Y * 1.5,
-                    velocity: attacker_fighter.facing * 30.0,
+                    name: weapon_name_to_fire,
+                    position: actual_spawn_pos,
+                    velocity: actual_spawn_dir * 30.0,
                     owner: attacker_entity,
-                    team: 0,
+                    team: 0, // Fallback team since team system isn't ported
                 });
                 active_attack.has_fired_projectile = true;
             }
@@ -170,6 +226,17 @@ pub fn hit_detection_system(
         let active_attack = attack_state
             .active_attack
             .get_or_insert_with(ActiveAttack::default);
+
+        let attacker_feet_y = attacker_tf.translation.y - CAPSULE_CENTER_HEIGHT;
+        let attacker_base = Vec3::new(attacker_tf.translation.x, attacker_feet_y, attacker_tf.translation.z);
+
+        let wedge = crate::combat::hitbox::EvaluatedWedge::evaluate(
+            strike,
+            attacker_base,
+            attacker_forward,
+            frame,
+            anim_state.anim.num_frames as f32,
+        );
 
         for (
             target_entity,
@@ -209,95 +276,16 @@ pub fn hit_detection_system(
                 }
             }
 
-            // Angular slice with SweepHeading
-            let swept_heading = if strike.sweepheading != 0 {
-                let sweep_t = if strike.frameduration > 0.0 {
-                    ((frame - strike.framenum) / strike.frameduration).clamp(0.0, 1.0)
-                } else {
-                    1.0
-                };
-                sweep_t * strike.sliceheadingradiansb
-            } else {
-                strike.sliceheadingradiansb
-            };
-
-            let slice_heading = Quat::from_rotation_y(swept_heading) * attacker_forward;
-            let slice_heading_xz =
-                Vec3::new(slice_heading.x, 0.0, slice_heading.z).normalize_or_zero();
-
-            // Shift origin backward by vanishingpoint
-            let shifted_origin = attacker_tf.translation - slice_heading_xz * strike.vanishingpoint;
-            let diff = target_tf.translation - shifted_origin;
-
-            // XZ distance with Expanding Radius
-            let radius = if strike.use_expanding_radius {
-                let num_frames = anim_state.anim.num_frames as f32;
-                let min_phase = strike.minradiusframe / num_frames.max(1.0);
-                let max_phase = strike.maxradiusframe / num_frames.max(1.0);
-
-                if phase <= min_phase {
-                    strike.minreactdiskradius
-                } else if phase >= max_phase {
-                    strike.reactdiskradius
-                } else if max_phase > min_phase {
-                    let t = (phase - min_phase) / (max_phase - min_phase);
-                    strike.minreactdiskradius
-                        + t * (strike.reactdiskradius - strike.minreactdiskradius)
-                } else {
-                    strike.reactdiskradius
-                }
-            } else {
-                strike.reactdiskradius
-            };
-
-            let dist_sq = diff.x * diff.x + diff.z * diff.z;
-            if dist_sq > radius * radius {
-                debug!(
-                    "hit miss: dist {:.2} > radius {:.2}",
-                    dist_sq.sqrt(),
-                    radius
-                );
-                continue;
-            }
-
-            // Reject if inside the vanishing point inner cut
-            if dist_sq < strike.vanishingpoint * strike.vanishingpoint {
-                debug!(
-                    "hit miss: dist {:.2} < vanishing point {:.2}",
-                    dist_sq.sqrt(),
-                    strike.vanishingpoint
-                );
-                continue;
-            }
-
-            // Height band
-            let attacker_feet_y = attacker_tf.translation.y - CAPSULE_CENTER_HEIGHT;
-            let disk_min_y =
-                attacker_feet_y + strike.reactdiskheight - strike.reactdiskheighttolerance;
-            let disk_max_y =
-                attacker_feet_y + strike.reactdiskheight + strike.reactdiskheighttolerance;
             let target_lo_y = target_tf.translation.y - CAPSULE_HALF_HEIGHT;
             let target_hi_y = target_tf.translation.y + CAPSULE_HALF_HEIGHT;
-            if target_lo_y > disk_max_y || target_hi_y < disk_min_y {
-                debug!(
-                    "hit miss: target Y [{:.2}, {:.2}] misses disk Y [{:.2}, {:.2}]",
-                    target_lo_y, target_hi_y, disk_min_y, disk_max_y
-                );
+
+            if !wedge.contains_target(target_tf.translation, target_lo_y, target_hi_y) {
+                // To keep legacy debug logging here if needed, but it's cleaner without it,
+                // or we can add it inside `contains_target` later.
                 continue;
             }
 
-            let dir_to_target = Vec3::new(diff.x, 0.0, diff.z).normalize_or_zero();
-            let dot = slice_heading_xz.dot(dir_to_target);
-            let angle = dot.clamp(-1.0, 1.0).acos();
-            let cross_y = slice_heading_xz.cross(dir_to_target).y;
-            let signed_angle = if cross_y > 0.0 { angle } else { -angle };
-            if signed_angle < strike.slicestartradians || signed_angle > strike.sliceendradians {
-                debug!(
-                    "hit miss: angle {:.3}rad outside [{:.3}, {:.3}]",
-                    signed_angle, strike.slicestartradians, strike.sliceendradians
-                );
-                continue;
-            }
+            // Wedge check done above; hit confirmed!
 
             // ── Hit confirmed ─────────────────────────────────────────────
 
@@ -432,6 +420,11 @@ pub fn process_strike_connections_system(
         if let Ok(mut fs) = fs_query.get_mut(ev.attacker) {
             fs.strike_target = Some(ev.target);
             fs.clear_st_after_first_use = ev.headingnotlockedtotarget;
+            // Dedup-add the hit target to this frame's pending list
+            // (mirrors AddTargetPending in rb/src/fight/strike.cpp:630).
+            // The list is cleared each frame in fighter_state_update_system,
+            // so entries here are short-lived and cheap.
+            fs.add_target_pending(ev.target);
         }
     }
 }

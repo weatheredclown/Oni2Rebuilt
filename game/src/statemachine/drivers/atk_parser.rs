@@ -70,18 +70,16 @@ struct AtkOption {
     id: String,
     #[allow(dead_code)]
     display_name: String,
+    /// Group identifier from the source file (e.g. "move", "attack",
+    /// "event", "block").  Stored as a string because the grammar treats
+    /// group names as arbitrary identifiers — the C++ loader reads the
+    /// token straight into `aiAtkActionGroup::Identifier` without a fixed
+    /// whitelist (see rb/src/aifight/attackstatemachine.cpp:1228).
     #[allow(dead_code)]
-    category: AtkCategory,
+    category: String,
     verb: String,
     /// The rest of the body following the verb (space-separated).
     args: String,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum AtkCategory {
-    Move,
-    Attack,
-    Event,
 }
 
 #[derive(Debug, Default)]
@@ -282,19 +280,14 @@ impl<'a> Parser<'a> {
         let mut options = Vec::new();
         loop {
             match self.peek() {
-                Some(Tok::Word(w)) => {
-                    let cat = match w.as_str() {
-                        "move" => AtkCategory::Move,
-                        "attack" => AtkCategory::Attack,
-                        "event" => AtkCategory::Event,
-                        other => {
-                            return Err(format!("atk parse: unknown category '{}'", other));
-                        }
-                    };
-                    self.advance();
+                Some(Tok::Word(_)) => {
+                    // Any identifier is a valid group name — the grammar
+                    // doesn't fix the set (tim_attacks.atk adds "block"
+                    // beyond the common move/attack/event trio).
+                    let cat = self.expect_any_word()?;
                     let _count = self.expect_int()?;
                     self.expect_lbrace()?;
-                    self.parse_group_entries(cat, &mut options)?;
+                    self.parse_group_entries(&cat, &mut options)?;
                     self.expect_rbrace()?;
                 }
                 _ => break,
@@ -305,7 +298,7 @@ impl<'a> Parser<'a> {
 
     fn parse_group_entries(
         &mut self,
-        cat: AtkCategory,
+        cat: &str,
         options: &mut Vec<AtkOption>,
     ) -> Result<(), String> {
         while let Some(tok) = self.peek() {
@@ -320,7 +313,7 @@ impl<'a> Parser<'a> {
             options.push(AtkOption {
                 id,
                 display_name: name,
-                category: cat,
+                category: cat.to_string(),
                 verb,
                 args,
             });
@@ -380,35 +373,28 @@ impl<'a> Parser<'a> {
             }
             let kw = self.expect_any_word()?;
             let num = self.expect_int()?;
-            match kw.as_str() {
-                "move" | "attack" | "event" => {
-                    let cat_weight = num as f32;
-                    self.expect_lbrace()?;
-                    while let Some(inner) = self.peek() {
-                        if matches!(inner, Tok::RBrace) {
-                            break;
-                        }
-                        let opt_id = self.expect_any_word()?;
-                        let sub_weight = self.expect_int()? as f32;
-                        let effective = cat_weight * sub_weight;
-                        if effective > 0.0 {
-                            row.entries.push((opt_id, effective));
-                        }
-                    }
-                    self.expect_rbrace()?;
+            if kw.eq_ignore_ascii_case("end") {
+                // `end N` — trailing marker on each row.  Ignored: we
+                // don't need a fallthrough weight today (normalized
+                // weights cover the distribution already).
+                continue;
+            }
+            // Any other identifier is a category row: `{cat} N { opt W ... }`.
+            // Category names are user-defined (see parse_groups).
+            let cat_weight = num as f32;
+            self.expect_lbrace()?;
+            while let Some(inner) = self.peek() {
+                if matches!(inner, Tok::RBrace) {
+                    break;
                 }
-                "end" => {
-                    // `end N` — trailing marker on each row.  Ignored: we
-                    // don't need a fallthrough weight today (normalized
-                    // weights cover the distribution already).
-                }
-                other => {
-                    return Err(format!(
-                        "atk parse: unknown row keyword '{}' in cookie/no_cookie row",
-                        other
-                    ));
+                let opt_id = self.expect_any_word()?;
+                let sub_weight = self.expect_int()? as f32;
+                let effective = cat_weight * sub_weight;
+                if effective > 0.0 {
+                    row.entries.push((opt_id, effective));
                 }
             }
+            self.expect_rbrace()?;
         }
         Ok(row)
     }
@@ -708,6 +694,28 @@ mod tests {
             AttackEvent::Probability(p) => assert!((p - 1.0).abs() < 0.001),
             other => panic!("expected Probability, got {:?}", other),
         }
+    }
+
+    #[test]
+    fn real_tim_attacks_parses() {
+        // Integration: tim_attacks.atk adds a `block` group beyond the
+        // move/attack/event trio — exercises the arbitrary-identifier
+        // group parser (see parse_groups / parse_row).
+        let content =
+            std::fs::read_to_string("../oni2/zips/assets/Statemachine/tim_attacks.atk");
+        let Ok(content) = content else {
+            return;
+        };
+        let data = parse_atk(&content).expect("tim_attacks.atk parses");
+        // 8 move + 3 attack + 2 block = 13 options × 3 states = 39.
+        assert_eq!(
+            data.states.len(),
+            39,
+            "got {} states, want 39",
+            data.states.len()
+        );
+        assert!(data.state_index.contains_key("BU_RUN"));
+        assert!(data.state_index.contains_key("BS_RUN"));
     }
 
     #[test]

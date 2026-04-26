@@ -218,7 +218,10 @@ pub enum SysRequest {
     },
     CameraSetPackage(String),
     CameraReset,
-    CameraMode(String),
+    /// `cameramode (script|game) [time <seconds>]` — mode name + optional
+    /// transition duration (rb/src/scroni/cameracommand.cpp:44).  `None`
+    /// means snap-switch with no fade.
+    CameraMode(String, Option<f32>),
     CameraSetFOV(f32, f32), // Target FOV, Duration
     CameraShake,
     CameraFollowActor(Entity),
@@ -227,6 +230,14 @@ pub enum SysRequest {
     CameraMoveToActor(Entity, f32), // Target, Duration
     CameraMoveToPoint(Vec3, f32),
     CameraMoveAlongRail(String, f32),
+    /// Leave the frontend and run a level.  `None` for `level` means
+    /// re-run the current layout (matches legacy
+    /// `GAMEDATA.GetCurrentLayoutIndex()` fallback at
+    /// rb/src/scroni/XCommand.cpp:1480).  `save_point` defaults to 0.
+    RunGame {
+        level: Option<i32>,
+        save_point: i32,
+    },
     DrawText(String),
     At(f32, f32),
     MakeFx {
@@ -273,6 +284,9 @@ pub enum SysRequest {
         Option<(f32, f32, f32)>,
     ),
     AmbientSoundStop(i32),
+    /// Stop every running ambient sound on the script's owner (matches the
+    /// `AmbientSound all Stop` shorthand used by e.g. M03 LevelMgr.oni:1517).
+    AmbientSoundStopAll,
     AmbientSoundVolumeRamp(i32, f32, f32),
     AmbientSoundPitchRamp(i32, f32, f32),
     PlaySound(Option<String>, String),
@@ -349,7 +363,10 @@ pub enum ScrOniSysEvent {
     },
     CameraSetPackage(String),
     CameraReset,
-    CameraMode(String),
+    /// `cameramode (script|game) [time <seconds>]` — mode name + optional
+    /// transition duration (rb/src/scroni/cameracommand.cpp:44).  `None`
+    /// means snap-switch with no fade.
+    CameraMode(String, Option<f32>),
     CameraSetFOV(f32, f32), // Target FOV, Duration
     CameraShake,
     CameraFollowActor(Entity),
@@ -358,6 +375,13 @@ pub enum ScrOniSysEvent {
     CameraMoveToActor(Entity, f32),
     CameraMoveToPoint(Vec3, f32),
     CameraMoveAlongRail(String, f32),
+    /// Leave the frontend and run a level — `None` for `level`
+    /// re-runs the current layout, otherwise the int is interpreted
+    /// as an index into `FrontendLevelList.entries`.
+    RunGame {
+        level: Option<i32>,
+        save_point: i32,
+    },
     DrawText(String),
     At(f32, f32),
     MakeFx {
@@ -412,6 +436,7 @@ pub enum ScrOniSysEvent {
         script_entity: Entity,
         handle: i32,
     },
+    AmbientSoundStopAll,
     AmbientSoundVolumeRamp {
         script_entity: Entity,
         handle: i32,
@@ -561,6 +586,15 @@ pub struct ScroniContext<'a, 'w_e, 's_e, 'w_t, 's_t> {
     pub actor_statuses: &'a std::collections::HashMap<Entity, String>,
     /// Optional line-of-sight checker: (from, to, exclude_a, exclude_b) -> bool.
     pub line_of_sight: Option<&'a dyn Fn(Vec3, Vec3, Entity, Entity) -> bool>,
+    pub is_enemy: Option<&'a dyn Fn(Entity, Entity) -> bool>,
+    pub get_perception_radius: Option<&'a dyn Fn(Entity) -> f32>,
+    pub get_perception_fov: Option<&'a dyn Fn(Entity) -> f32>,
+    /// `GetUIItemValue(<page>, <item>) -> f32`.  Resolves the
+    /// numeric value of a frontend UI item — for `LevelList` this
+    /// is the selected row index.  Mirrors `DoGetUIItemValue`
+    /// (rb/src/scroni/XPreDefFunc.cpp:334).  `None` when the
+    /// frontend isn't loaded (no-frontend builds, in-game scripts).
+    pub get_ui_item_value: Option<&'a dyn Fn(&str, &str) -> f32>,
 }
 
 impl<'a, 'w_e, 's_e, 'w_t, 's_t> ScroniContext<'a, 'w_e, 's_e, 'w_t, 's_t> {
@@ -1491,6 +1525,26 @@ impl ScriptExec {
                         }
                         Value::None
                     }
+                    "getuiitemvalue" => {
+                        // `GetUIItemValue(<pageName>, <itemName>) -> float`.
+                        // Mirrors DoGetUIItemValue: pop itemName then
+                        // pageName, look up the page+item in the UI
+                        // manager, return `item->GetValue()` as float.
+                        // For our LevelList that's the selected row index.
+                        let page = args
+                            .first()
+                            .map(|e| self.eval_expr(tid, e, now, ctx).as_string())
+                            .unwrap_or_default();
+                        let item = args
+                            .get(1)
+                            .map(|e| self.eval_expr(tid, e, now, ctx).as_string())
+                            .unwrap_or_default();
+                        let v = ctx
+                            .get_ui_item_value
+                            .map(|f| f(&page, &item))
+                            .unwrap_or(0.0);
+                        Value::Float(v)
+                    }
                     "exists" => {
                         let target = args.first().map(|e| self.eval_expr(tid, e, now, ctx));
                         if let Some(t) = target {
@@ -1525,6 +1579,18 @@ impl ScriptExec {
                     "notdying" => Value::String("notdying".to_string()),
                     "knockeddown" => Value::String("knockeddown".to_string()),
                     "attacking" => Value::String("attacking".to_string()),
+                    // Faction-relation keywords used in `status X is enemy`-
+                    // style predicates (grunt2.oni:296).  Evaluator returns
+                    // the literal back as a string so the comparison path
+                    // has something to match against — real faction-aware
+                    // status querying (returning "enemy" from status(X) when
+                    // X is hostile to the script owner) needs coordinated
+                    // changes in `status` and `actor_statuses`; until then
+                    // scripts that AND "alive, enemy" will short-circuit
+                    // false on the enemy leg.  Still parses and runs without
+                    // panics — that's the immediate bar.
+                    "enemy" => Value::String("enemy".to_string()),
+                    "friendly" => Value::String("friendly".to_string()),
                     "location" => {
                         let target = args.first().map(|e| self.eval_expr(tid, e, now, ctx));
                         if let Some(Value::Actor(act)) = target
@@ -1797,6 +1863,71 @@ impl ScriptExec {
                         }
                         Value::Int(1)
                     }
+                    "ishome" => {
+                        // `ishome <childvar>` — true iff the child thread's
+                        // PC has been rewound to its home script's entry
+                        // (seq_pc=0, empty call_stack, empty loop_stack).
+                        // Matches the legacy semantics where `childhome`
+                        // resets the thread and `ishome` asks "has it
+                        // settled back to the starting point?".
+                        let target_var = args.first().map(|e| self.eval_expr(tid, e, now, ctx));
+                        if let Some(Value::Int(target_tid)) = target_var
+                            && target_tid > 0
+                        {
+                            for ct in &self.child_threads {
+                                if ct.thread_id == target_tid as u32 {
+                                    let at_home = ct.seq_pc == 0
+                                        && ct.call_stack.is_empty()
+                                        && ct.loop_stack.is_empty();
+                                    return Value::Int(if at_home { 1 } else { 0 });
+                                }
+                            }
+                        }
+                        // Missing child → treat as "home" (nothing running).
+                        Value::Int(1)
+                    }
+                    "status_is" => {
+                        // `status_is(actor, state)` — one predicate leg of a
+                        // `status X is A, B, ...` list (see compiler's
+                        // parse_comparison desugar).  Mirrors the legacy
+                        // ParseStatusList in rb/src/scroni/PreDefFunc.cpp:203,
+                        // which AND's per-state predicates.  Returns 1/0.
+                        let actor_val = args.first().map(|e| self.eval_expr(tid, e, now, ctx));
+                        let state_val = args.get(1).map(|e| self.eval_expr(tid, e, now, ctx));
+                        let state = state_val
+                            .as_ref()
+                            .map(|v| v.as_string().to_lowercase())
+                            .unwrap_or_default();
+                        if let Some(val) = actor_val {
+                            let ents = ctx.resolve_targets(&val);
+                            if let Some(&ent) = ents.first() {
+                                let cur =
+                                    ctx.actor_statuses.get(&ent).map(|s| s.as_str()).unwrap_or("");
+                                let matches = match state.as_str() {
+                                    "alive" => !cur.is_empty() && cur != "dead",
+                                    "dead" => cur == "dead" || cur.is_empty(),
+                                    "fighting" => cur == "fighting",
+                                    "notdying" => cur != "dying" && cur != "dead",
+                                    "player" => ctx.player == Some(ent),
+                                    // Faction-relation stubs — no faction
+                                    // plumbing yet, so approximate: anyone
+                                    // not the script owner is an enemy from
+                                    // the owner's perspective.  `friendly`
+                                    // narrows to "is the script owner or the
+                                    // player the owner is cooperating with"
+                                    // — we can only answer the self leg.
+                                    "enemy" => ent != self.owner,
+                                    "friendly" => ent == self.owner,
+                                    // States we don't track yet — be honest
+                                    // and return false rather than inventing
+                                    // a truthy answer the script will act on.
+                                    _ => false,
+                                };
+                                return Value::Int(if matches { 1 } else { 0 });
+                            }
+                        }
+                        Value::Int(0)
+                    }
                     "navpoint" | "path" => {
                         // navpoint("Name") or path("Name") -> return the name as a string so that
                         // the goto resolver can look it up in nav.names or path configs.
@@ -1999,19 +2130,31 @@ pub fn scroni_tick_system(
     time: Res<Time>,
     player_query: Query<Entity, With<crate::player::components::Player>>,
     current_checkpoint: Res<crate::oni2_loader::components::CurrentCheckpointIndex>,
-    layout_context: Option<Res<crate::oni2_loader::environment::LayoutContext>>,
     health_query: Query<(
         Entity,
         &mut crate::combat::components::Health,
         Option<&crate::ai::components::AiFighter>,
     )>,
-    nav_graph_opt: Option<Res<crate::ai::navigation::NavGraph>>,
-    layout_paths: Option<Res<crate::oni2_loader::environment::LayoutPaths>>,
     spatial_query: avian3d::prelude::SpatialQuery,
     mut injure_writer: MessageWriter<crate::combat::events::InjureMessage>,
     mut behavior_runtime_query: Query<&mut crate::behavior::BehaviorRuntime>,
     mut end_behavior_reader: MessageReader<crate::behavior::EndBehaviorMessage>,
+    faction_query: Query<(Entity, &crate::combat::faction::Faction)>,
+    opt_res: (
+        Option<Res<crate::oni2_loader::environment::LayoutContext>>,
+        Option<Res<crate::ai::navigation::NavGraph>>,
+        Option<Res<crate::oni2_loader::environment::LayoutPaths>>,
+        Option<Res<crate::combat::faction::FactionManager>>,
+        Option<Res<crate::frontend::runtime::FrontendLevelList>>,
+    ),
 ) {
+    let (
+        layout_context,
+        nav_graph_opt,
+        layout_paths,
+        faction_manager_opt,
+        frontend_levels,
+    ) = opt_res;
     let now = time.elapsed_secs_f64();
     let delta_time = time.delta_secs();
 
@@ -2073,6 +2216,61 @@ pub fn scroni_tick_system(
                 .is_none()
         };
         let los_ref: &dyn Fn(Vec3, Vec3, Entity, Entity) -> bool = &los_checker;
+        
+        let is_enemy = |a: Entity, b: Entity| -> bool {
+            if let Ok((_, f_a)) = faction_query.get(a) {
+                if let Ok((_, f_b)) = faction_query.get(b) {
+                    if let Some(fm) = faction_manager_opt.as_ref() {
+                        return fm.get_status(&f_a.0, &f_b.0) == crate::combat::faction::FactionStatus::Enemy;
+                    }
+                }
+            }
+            a != b
+        };
+        let is_enemy_ref: &dyn Fn(Entity, Entity) -> bool = &is_enemy;
+
+        let get_rad = |e: Entity| -> f32 {
+            if let Ok((_, _, Some(ai))) = health_query.get(e) {
+                ai.perception_radius()
+            } else {
+                30.0
+            }
+        };
+        let get_rad_ref: &dyn Fn(Entity) -> f32 = &get_rad;
+
+        let get_fov = |e: Entity| -> f32 {
+            if let Ok((_, _, Some(ai))) = health_query.get(e) {
+                ai.perception_fov()
+            } else {
+                45.0_f32.to_radians()
+            }
+        };
+        let get_fov_ref: &dyn Fn(Entity) -> f32 = &get_fov;
+
+        // GetUIItemValue resolver — currently the only "values" we
+        // have are LevelList row indices on the frontend.  Future UI
+        // items (sliders, etc.) extend this match.  Returns 0.0 for
+        // unknown page/item or when no frontend is loaded.
+        let get_ui_item_value = |page: &str, item: &str| -> f32 {
+            let Some(ref levels) = frontend_levels else {
+                return 0.0;
+            };
+            match (page, item) {
+                ("Choose_Level", "LevelList") => levels.selected as f32,
+                // The Save_Point sub-page has no separate state yet;
+                // returning 0 matches the legacy "no save data" path.
+                ("Choose_Level_Save_Point", "LevelSavePointList") => 0.0,
+                _ => {
+                    warn!(
+                        "scroni GetUIItemValue: unknown page/item ('{}','{}')",
+                        page, item
+                    );
+                    0.0
+                }
+            }
+        };
+        let get_ui_item_value_ref: &dyn Fn(&str, &str) -> f32 = &get_ui_item_value;
+
         let mut ctx = ScroniContext {
             all_entities: &all_entities,
             triggers: &triggers,
@@ -2084,6 +2282,10 @@ pub fn scroni_tick_system(
                 .unwrap_or_default(),
             actor_statuses: &actor_statuses,
             line_of_sight: Some(los_ref),
+            is_enemy: Some(is_enemy_ref),
+            get_perception_radius: Some(get_rad_ref),
+            get_perception_fov: Some(get_fov_ref),
+            get_ui_item_value: Some(get_ui_item_value_ref),
         };
         script.exec.tick(now, delta_time, &mut ctx);
 
@@ -2290,8 +2492,8 @@ pub fn scroni_tick_system(
                 SysRequest::CameraReset => {
                     commands.trigger(ScrOniSysEvent::CameraReset);
                 }
-                SysRequest::CameraMode(mode) => {
-                    commands.trigger(ScrOniSysEvent::CameraMode(mode));
+                SysRequest::CameraMode(mode, time) => {
+                    commands.trigger(ScrOniSysEvent::CameraMode(mode, time));
                 }
                 SysRequest::CameraSetFOV(fov, dur) => {
                     commands.trigger(ScrOniSysEvent::CameraSetFOV(fov, dur));
@@ -2316,6 +2518,9 @@ pub fn scroni_tick_system(
                 }
                 SysRequest::CameraMoveAlongRail(r, dur) => {
                     commands.trigger(ScrOniSysEvent::CameraMoveAlongRail(r, dur));
+                }
+                SysRequest::RunGame { level, save_point } => {
+                    commands.trigger(ScrOniSysEvent::RunGame { level, save_point });
                 }
                 SysRequest::At(x, y) => {
                     commands.trigger(ScrOniSysEvent::At(x, y));
@@ -2439,6 +2644,9 @@ pub fn scroni_tick_system(
                         handle,
                     });
                 }
+                SysRequest::AmbientSoundStopAll => {
+                    commands.trigger(ScrOniSysEvent::AmbientSoundStopAll);
+                }
                 SysRequest::Destroy(ent) => {
                     commands.trigger(ScrOniSysEvent::Destroy(ent));
                 }
@@ -2458,15 +2666,31 @@ pub fn scroni_tick_system(
 
         if is_done {
             let is_placeholder = script.exec.owner == Entity::PLACEHOLDER;
-            commands.queue(move |world: &mut World| {
-                if let Ok(mut e) = world.get_entity_mut(entity) {
-                    if is_placeholder {
+            if is_placeholder {
+                // Detached scripts (no actor owner) are despawned
+                // entirely — there's nothing else to attach them to.
+                commands.queue(move |world: &mut World| {
+                    if let Ok(mut e) = world.get_entity_mut(entity) {
                         e.despawn();
-                    } else {
-                        e.remove::<ScrOniScript>();
                     }
-                }
-            });
+                });
+            } else {
+                // Actor-bound scripts: keep the component, just mark
+                // the executor inactive so `tick()` early-returns next
+                // frame.  Removing it broke the legacy `Reset()`
+                // semantic — `scrScrOniComponent` lives as long as the
+                // actor (rb/src/scroni/scronicomponent.cpp:146), and
+                // a later SCRIPT handler from the frontend / a SCRIPT
+                // op from another script needs to find this component
+                // to swap in a new main thread.  Concrete trigger:
+                // actor_Tunnel1's `MainScript=DoNothing` (an empty
+                // script) finishes on its first tick, the component
+                // got dropped, and Main_Menu's
+                // `SCRIPT "actor_Tunnel1" "$newgame:CameraMotion"`
+                // had nothing to swap.  Set `active=false`; the swap
+                // path resets it back to true.
+                script.exec.active = false;
+            }
         }
     }
 
@@ -2477,20 +2701,39 @@ pub fn scroni_tick_system(
         let target_entity = msg.to;
         if let Ok((_, mut target_script, _, _, _)) = query.get_mut(target_entity) {
             target_script.exec.message_queue.push(msg);
-        } else {
-            // "sendaction activate" and "sendaction deactivate" target raw props without script components
-            // regularly in Oni level scripts. So silence the warning if the message was sent as an action.
-            if is_action {
-                // "sendaction activate" targets static props, we specifically want to silence the target missing warning here.
-                // We should NOT actually remove ActorAsleep natively via script actions for raw props because it forces continuous physics simulation on things like gears and drops the FPS massively.
-                // TODO: ensure we actually send activate and deactivate messages to static props in the engine *somewhere*
-                // this will control particles/sounds/scroni/animations/etc on that actor
-            } else {
-                warn!(
-                    "VM: Failed to deliver message '{}' to {:?}: target not found or has no ScrOniScript",
-                    msg_text, target_entity
-                );
+        } else if is_action {
+            // `sendaction activate` / `sendaction deactivate` commonly
+            // target static props (gears, particle emitters, lights,
+            // ambient-sound sources, etc.) that have no ScrOniScript
+            // attached.  Drive those through the ActorAsleep pipeline:
+            //   activate   → remove ActorAsleep (wake — animator,
+            //                fx observers, physics gravity all resume)
+            //   deactivate → insert ActorAsleep (quiescent)
+            // The AsleepPlugin handles the physics-side bookkeeping
+            // (gravity layer + velocity pin), so it's safe to toggle
+            // asleep on physics-bearing props without the FPS blowout
+            // the legacy note warned about.  Unknown action words are
+            // silently ignored — they may target subsystems we haven't
+            // ported (e.g. `sendaction destroy`) that aren't asleep-
+            // related.
+            match msg_text.to_ascii_lowercase().as_str() {
+                "activate" => {
+                    commands
+                        .entity(target_entity)
+                        .remove::<crate::oni2_loader::components::ActorAsleep>();
+                }
+                "deactivate" => {
+                    commands
+                        .entity(target_entity)
+                        .insert(crate::oni2_loader::components::ActorAsleep);
+                }
+                _ => {}
             }
+        } else {
+            warn!(
+                "VM: Failed to deliver message '{}' to {:?}: target not found or has no ScrOniScript",
+                msg_text, target_entity
+            );
         }
     }
 }

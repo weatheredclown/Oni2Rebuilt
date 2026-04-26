@@ -52,13 +52,19 @@ pub fn add_weapon_system(
     mut reader: MessageReader<AddWeaponByNameMessage>,
     mut out: MessageWriter<WeaponPickedUpMessage>,
     mut commands: Commands,
-    mut query: Query<&mut Inventory>,
+    mut query: Query<(&mut Inventory, Option<&mut crate::animator::components::ActionPlayer>)>,
     inv_registry: Res<WeaponItemRegistry>,
     weap_registry: Res<WeaponRegistry>,
     ammo_registry: Res<AmmoRegistry>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    mut images: ResMut<Assets<Image>>,
+    mut skinned_mesh_ibp: ResMut<Assets<bevy::mesh::skinning::SkinnedMeshInverseBindposes>>,
+    mut entity_lib: ResMut<crate::oni2_loader::registries::EntityLibrary>,
+    mut anim_registry: ResMut<crate::oni2_loader::registries::AnimRegistry>,
 ) {
     for msg in reader.read() {
-        let Ok(mut inv) = query.get_mut(msg.entity) else {
+        let Ok((mut inv, mut ap_opt)) = query.get_mut(msg.entity) else {
             continue;
         };
         let Some(inv_ty) = inv_registry.get(&msg.weapon_name).cloned() else {
@@ -84,14 +90,72 @@ pub fn add_weapon_system(
         };
 
         // Spawn the Weapon component onto a dedicated sibling entity.
+        // Include Visibility explicitly so the inherited-visibility chain
+        // reaches the child weapon mesh spawned below — without a
+        // `Visibility` on this entity, the mesh child's `ViewVisibility`
+        // resolves to hidden even though its own `Visibility::Visible`
+        // is set by `spawn_oni2_entity`.
         let weapon_entity = commands
             .spawn((
                 Name::new(format!("Weapon:{}", inv_ty.base.name)),
                 Transform::default(),
                 GlobalTransform::default(),
+                Visibility::default(),
                 Weapon::new(weap_ty.clone(), msg.entity),
             ))
             .id();
+
+        if let Some(ref entity_type) = weap_ty.entity_type {
+            let dir = format!("Entity/{}", entity_type);
+            if let Some(mesh_entity) = crate::oni2_loader::spawn::spawn_oni2_entity(
+                &mut commands,
+                &mut meshes,
+                &mut materials,
+                &mut images,
+                &mut skinned_mesh_ibp,
+                &mut entity_lib,
+                &mut anim_registry,
+                &dir,
+                Vec3::ZERO,
+                &weap_ty.name,
+            ) {
+                // Attach the spawned mesh correctly
+                commands.entity(weapon_entity).add_child(mesh_entity);
+                
+                // Strip colliders from the spawned weapon so it doesn't push the player around
+                commands.queue(move |world: &mut World| {
+                    let mut queue = vec![mesh_entity];
+                    while let Some(e) = queue.pop() {
+                        if let Some(children) = world.get::<Children>(e) {
+                            for child in children {
+                                queue.push(*child);
+                            }
+                        }
+                        if let Ok(mut emut) = world.get_entity_mut(e) {
+                            emut.remove::<avian3d::prelude::Collider>();
+                            emut.remove::<avian3d::prelude::RigidBody>();
+                        }
+                    }
+                });
+            } else {
+                warn!(
+                    "inventory: weapon '{}' failed to spawn entity_type='{}' (dir='{}') — weapon entity will exist without a visible mesh",
+                    weap_ty.name, entity_type, dir
+                );
+            }
+        } else {
+            warn!(
+                "inventory: weapon '{}' has no entity_type set — no mesh will be spawned",
+                weap_ty.name
+            );
+        }
+
+        // Set to Holstered if it was previously completely hidden, triggering attachment
+        if let Some(ref mut ap) = ap_opt {
+            if ap.weapon_state == crate::animator::components::WeaponState::Invisible {
+                ap.weapon_state = crate::animator::components::WeaponState::Holstered;
+            }
+        }
 
         // Seed initial ammo.
         if !inv_ty.ammo_type_name.is_empty()

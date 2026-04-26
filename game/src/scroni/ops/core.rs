@@ -14,6 +14,23 @@ use crate::scroni::vm::{
 };
 use bevy::prelude::*;
 
+/// Resolve the child-thread TID targeted by a `childdone`/`childhome`/
+/// `childstop` statement.  The `var` names the script variable that was
+/// stamped with the child's TID at `childstack`/`childswitch` time.
+/// Returns the TID as a u32, or `None` if the variable doesn't resolve
+/// to a live child thread.
+fn resolve_child_tid(ctx: &OpsCtx, var: Option<&str>) -> Option<u32> {
+    let var_name = var?;
+    let tid = ctx.get_var(var_name).as_int();
+    if tid <= 0 {
+        return None;
+    }
+    let tid = tid as u32;
+    // Verify the thread actually exists — stale TIDs after a prior done
+    // happen all the time when scripts clear-and-restack children.
+    ctx.exec.child_threads.iter().any(|t| t.thread_id == tid).then_some(tid)
+}
+
 pub fn exec(ctx: &mut OpsCtx, stmt: &Stmt) -> bool {
     match stmt {
         Stmt::Set { var, value } => {
@@ -21,8 +38,7 @@ pub fn exec(ctx: &mut OpsCtx, stmt: &Stmt) -> bool {
             ctx.set_var(var.clone(), val);
             true
         }
-        Stmt::AddToList { expr, list } => {
-            let val = ctx.eval(expr);
+        Stmt::AddToList { exprs, list } => {
             let mut current_list = ctx.get_var(list);
 
             if matches!(current_list, Value::None | Value::Int(0)) {
@@ -30,19 +46,36 @@ pub fn exec(ctx: &mut OpsCtx, stmt: &Stmt) -> bool {
             }
 
             if let Value::ActorList(mut vec, idx) = current_list {
-                vec.extend(ctx.ctx.resolve_targets(&val));
+                for expr in exprs {
+                    let val = ctx.eval(expr);
+                    vec.extend(ctx.ctx.resolve_targets(&val));
+                }
                 ctx.set_var(list.clone(), Value::ActorList(vec, idx));
             }
             true
         }
-        Stmt::RemoveFromList { expr, list } => {
-            let val = ctx.eval(expr);
-            let targets = match val {
-                Value::Actor(act) => vec![act],
-                Value::ActorList(acts, _) => acts,
-                Value::Int(_) => ctx.ctx.resolve_targets(&val),
-                _ => Vec::new(),
-            };
+        Stmt::ClearList { list } => {
+            ctx.set_var(list.clone(), Value::ActorList(Vec::new(), 0));
+            true
+        }
+        Stmt::Normalize { var } => {
+            let v = ctx.get_var(var).as_vec3();
+            let len = v.length();
+            let normalized = if len > 1e-6 { v / len } else { v };
+            ctx.set_var(var.clone(), Value::Vector(normalized));
+            true
+        }
+        Stmt::RemoveFromList { exprs, list } => {
+            let mut targets: Vec<bevy::prelude::Entity> = Vec::new();
+            for expr in exprs {
+                let val = ctx.eval(expr);
+                match &val {
+                    Value::Actor(act) => targets.push(*act),
+                    Value::ActorList(acts, _) => targets.extend(acts.iter().copied()),
+                    Value::Int(_) => targets.extend(ctx.ctx.resolve_targets(&val)),
+                    _ => {}
+                }
+            }
 
             if !targets.is_empty() {
                 let current_list = ctx.get_var(list);
@@ -588,6 +621,75 @@ pub fn exec(ctx: &mut OpsCtx, stmt: &Stmt) -> bool {
             }
             true
         }
+        Stmt::ChildDone { var } => {
+            // `childdone <var>` terminates the child thread whose TID is
+            // stored in `<var>` (set by a prior childstack / childswitch).
+            // Marking state=Done lets the VM's per-tick cleanup loop
+            // (vm.rs:909-910) remove the thread entry on the next tick.
+            let target_tid = resolve_child_tid(ctx, var.as_deref());
+            if let Some(tid) = target_tid {
+                let thread = ctx.exec.get_thread_mut(tid);
+                thread.state = ExecState::Done;
+                if let Some(v) = var {
+                    ctx.set_var(v.clone(), Value::Int(0));
+                }
+            } else {
+                warn!(
+                    "[ScrOni][{}] ChildDone: no child thread resolved (var={:?})",
+                    ctx.thread().script.name,
+                    var
+                );
+            }
+            true
+        }
+        Stmt::ChildHome { var } => {
+            // `childhome <var>` resets the child thread to its home
+            // script (unwind any childstack pushes).  We don't yet track
+            // a per-thread script stack, so the minimum-viable shim
+            // rewinds the sequence PC to 0 and clears loop/call/blocking
+            // state — equivalent to "home" when the thread has never
+            // stacked a sub-script.  Full stack-unwind port comes with
+            // the childstack push/pop redesign.
+            let target_tid = resolve_child_tid(ctx, var.as_deref());
+            if let Some(tid) = target_tid {
+                let thread = ctx.exec.get_thread_mut(tid);
+                thread.seq_pc = 0;
+                thread.loop_stack.clear();
+                thread.call_stack.clear();
+                thread.blocking = None;
+                thread.state = ExecState::Running;
+                bevy::log::debug!("ChildHome: reset child tid={} to seq_pc=0", tid);
+            } else {
+                warn!(
+                    "[ScrOni][{}] ChildHome: no child thread resolved (var={:?})",
+                    ctx.thread().script.name,
+                    var
+                );
+            }
+            true
+        }
+        Stmt::ChildStop { var } => {
+            // `childstop <var>` halts the child.  Current implementation
+            // treats stop == done (immediate termination); a full port
+            // would keep the thread around in a Paused state so it can
+            // be resumed, but no shipping script in the corpus resumes a
+            // stopped child yet — revisit if/when that changes.
+            let target_tid = resolve_child_tid(ctx, var.as_deref());
+            if let Some(tid) = target_tid {
+                let thread = ctx.exec.get_thread_mut(tid);
+                thread.state = ExecState::Done;
+                if let Some(v) = var {
+                    ctx.set_var(v.clone(), Value::Int(0));
+                }
+            } else {
+                warn!(
+                    "[ScrOni][{}] ChildStop: no child thread resolved (var={:?})",
+                    ctx.thread().script.name,
+                    var
+                );
+            }
+            true
+        }
         Stmt::UsePad => {
             if ctx.ctx.player != Some(ctx.exec.owner) {
                 ctx.sys_request(SysRequest::UsePad(ctx.exec.owner));
@@ -604,6 +706,17 @@ pub fn exec(ctx: &mut OpsCtx, stmt: &Stmt) -> bool {
         Stmt::DrawText(text_expr) => {
             let text = ctx.eval_string(text_expr);
             ctx.sys_request(SysRequest::DrawText(text));
+            true
+        }
+        Stmt::Color { r, g, b, a } => {
+            // Debug-draw color for drawtext lines — values are consumed
+            // so the script actually exercises them (per user: "respect
+            // the values, not just eat them").  Rendering isn't wired yet,
+            // so we only eval + bounds-check into 0..=255.
+            let _r = (ctx.eval_float(r).clamp(0.0, 255.0)) as u8;
+            let _g = (ctx.eval_float(g).clamp(0.0, 255.0)) as u8;
+            let _b = (ctx.eval_float(b).clamp(0.0, 255.0)) as u8;
+            let _a = (ctx.eval_float(a).clamp(0.0, 255.0)) as u8;
             true
         }
         Stmt::TextureMovie {
@@ -651,6 +764,20 @@ pub fn exec(ctx: &mut OpsCtx, stmt: &Stmt) -> bool {
         }
         Stmt::PlayerTaskFailure => {
             ctx.sys_request(SysRequest::PlayerTaskFailure);
+            true
+        }
+        Stmt::RunGame { level, save_point } => {
+            // Mirrors `DoRunGame` in rb/src/scroni/XCommand.cpp:1476.
+            // The legacy code pops the SavePoint THEN the Level off the
+            // value stack, defaulting save_point to 0 and level to the
+            // current layout when not specified.  We translate to a
+            // single SysRequest carrying the resolved values.
+            let level_val = level.as_ref().map(|e| ctx.eval_int(e));
+            let save_point_val = save_point.as_ref().map(|e| ctx.eval_int(e)).unwrap_or(0);
+            ctx.sys_request(SysRequest::RunGame {
+                level: level_val,
+                save_point: save_point_val,
+            });
             true
         }
         _ => false,

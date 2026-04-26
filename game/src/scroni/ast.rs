@@ -164,8 +164,18 @@ pub enum Stmt {
     },
     /// `fight [expr]`
     Fight(Option<Expr>),
-    /// `shoot`
-    Shoot,
+    /// `shoot <target> [miss] [bullets|rate <expr>] [for <expr>]`.  Args
+    /// arrive as a flat Vec of actor target + string literals ("miss"/
+    /// "bullets"/"rate"/"for") interleaved with numeric expressions —
+    /// same shape as `Stmt::AmbientSound`.  Downstream handler
+    /// (`ops/combat.rs::Stmt::Shoot`) walks the list to pull out target,
+    /// flags, and modifiers.
+    Shoot { args: Vec<Expr> },
+    /// `look <listvar> status <state>, <state>, ...` — AI awareness scan.
+    /// Parsed as a flat arg list (listvar + "status" literal + state
+    /// identifiers); handler (not yet wired) fills the list variable
+    /// with visible actors matching the state filter.
+    Look { args: Vec<Expr> },
     /// `hit <expr> <expr> for <expr>`
     Hit {
         hit_type: Expr,
@@ -203,12 +213,14 @@ pub enum Stmt {
         var: String,
         script: Expr,
     },
-    /// `childdone`
-    ChildDone,
-    /// `childhome`
-    ChildHome,
-    /// `childstop`
-    ChildStop,
+    /// `childdone [<var>]` — optional child-variable target (grunt2.oni
+    /// uses forms like `childdone awareChild` / `childdone fightChild`).
+    /// None = operate on the current script's default child slot.
+    ChildDone { var: Option<String> },
+    /// `childhome [<var>]` — optional child-variable target.
+    ChildHome { var: Option<String> },
+    /// `childstop [<var>]` — optional child-variable target.
+    ChildStop { var: Option<String> },
 
     /// `spawn <string> [assign to <var>] [at <expr>] [name <string>]`
     Spawn {
@@ -296,7 +308,12 @@ pub enum Stmt {
 
     /// Camera commands
     CameraReset,
-    CameraMode(Expr),
+    /// `cameraMode (script|game) [time <seconds>]` — `time` is the
+    /// transition duration (rb/src/scroni/cameracommand.cpp:44).
+    CameraMode {
+        mode: Expr,
+        time: Option<Expr>,
+    },
     CameraLetterbox(Expr),
     CameraFollowActor {
         args: Vec<Expr>,
@@ -388,15 +405,26 @@ pub enum Stmt {
         args: Vec<Expr>,
     },
 
-    /// `add <expr> to <list>`
+    /// `add <expr>[, <expr>]* to <list>` — each expr contributes entries.
     AddToList {
-        expr: Expr,
+        exprs: Vec<Expr>,
         list: String,
     },
-    /// `remove <expr> from <list>`
+    /// `remove <expr>[, <expr>]* from <list>`
     RemoveFromList {
-        expr: Expr,
+        exprs: Vec<Expr>,
         list: String,
+    },
+    /// `clear <listvar>` — reset an actor-list variable to empty.  Legacy
+    /// semantic: ADDINST(ClearList) on the named symbol
+    /// (rb/src/scroni/Command.cpp:868).
+    ClearList {
+        list: String,
+    },
+    /// `normalize <vectorvar>` — normalize a vector variable in-place
+    /// (rb/src/scroni/Command.cpp:1200).
+    Normalize {
+        var: String,
     },
 
     /// Inline variable declaration: `integer x = <expr>`
@@ -406,6 +434,17 @@ pub enum Stmt {
     At(Expr, Expr),
     /// `drawtext <expr>`
     DrawText(Expr),
+    /// `color R,G,B,A` — sets current debug-draw color.  Used by drawtext
+    /// lines in debug/legacy scripts (e.g. `drawtext "..." at x,y color
+    /// r,g,b,a`) where `at` and `color` are separate statements sharing
+    /// the line with the draw verb.  Currently a parser passthrough with
+    /// no runtime effect — debug text isn't rendered yet.
+    Color {
+        r: Expr,
+        g: Expr,
+        b: Expr,
+        a: Expr,
+    },
     /// `usepad`
     UsePad,
 
@@ -415,6 +454,15 @@ pub enum Stmt {
     PlayerTaskSuccessful,
     /// `PlayerTaskFailure` — marks the current player task as failed
     PlayerTaskFailure,
+
+    /// `RunGame [Level <expr> [SavePoint <expr>]]` — leaves the
+    /// frontend and starts gameplay at the given level (and save
+    /// point).  Bare `RunGame` re-runs the current level.  Mirrors
+    /// `scrCompiler::ParseRunGame` (rb/src/scroni/Command.cpp:1550).
+    RunGame {
+        level: Option<Expr>,
+        save_point: Option<Expr>,
+    },
 
     /// Catch-all for commands we parse but don't fully implement yet.
     /// Stores the command name and any trailing arguments.

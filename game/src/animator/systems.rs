@@ -1319,3 +1319,95 @@ pub fn anim_start_emit_system(
         state.anim_just_started = false;
     }
 }
+
+// ---------------------------------------------------------------------------
+// SetPickupMatrix / Drop handlers
+// ---------------------------------------------------------------------------
+//
+// Mirror animElbowCraneHitchComponent::HandlePickupMatrix / HandleDrop
+// (rb/src/animator/elbowcranehitch.cpp:101-154).  On SetPickupMatrix:
+// stash the claw's world transform on a PickupHitched component so
+// `pickup_sync_system` can force the entity's transform to track the
+// claw each tick; also start the CRANESTRUGGLE action.  On Drop: teleport
+// the entity to the last claw position (minus the pickup offset),
+// remove the hitch component, and end the struggle action.
+//
+// Legacy also toggles `mvrMoverComponent::SetUseHotdogTests` to suppress
+// collision while hitched.  Our Avian-based mover doesn't have a direct
+// equivalent; we instead lean on the sync system force-writing Transform
+// each tick, which dominates whatever the physics solver was going to do.
+// If/when a real opt-out is needed, this is where to plumb it.
+
+pub fn pickup_matrix_system(
+    mut commands: Commands,
+    mut reader: bevy::prelude::MessageReader<super::events::SetPickupMatrixMessage>,
+    mut writer: bevy::prelude::MessageWriter<super::events::StartActionMessage>,
+    existing: Query<&super::components::PickupHitched>,
+) {
+    for msg in reader.read() {
+        if existing.get(msg.entity).is_ok() {
+            // Already hitched — just refresh the claw pose.
+            commands
+                .entity(msg.entity)
+                .insert(super::components::PickupHitched {
+                    claw_translation: msg.claw_translation,
+                    claw_rotation: msg.claw_rotation,
+                    offset: Vec3::ZERO,
+                });
+        } else {
+            // First attach — insert the component and start the struggle
+            // action (mirror `StartAction(ACT_CRANESTRUGGLE)` in the C++
+            // HandlePickupMatrix).
+            commands
+                .entity(msg.entity)
+                .insert(super::components::PickupHitched {
+                    claw_translation: msg.claw_translation,
+                    claw_rotation: msg.claw_rotation,
+                    offset: Vec3::ZERO,
+                });
+            writer.write(super::events::StartActionMessage {
+                entity: msg.entity,
+                action: super::components::MainAction::CraneStruggle,
+                substate: -1,
+            });
+        }
+    }
+}
+
+pub fn drop_message_system(
+    mut commands: Commands,
+    mut reader: bevy::prelude::MessageReader<super::events::DropMessage>,
+    mut end_writer: bevy::prelude::MessageWriter<super::events::EndActionMessage>,
+    mut query: Query<(&super::components::PickupHitched, &mut Transform)>,
+) {
+    for msg in reader.read() {
+        let Ok((hitch, mut tf)) = query.get_mut(msg.entity) else {
+            continue;
+        };
+        // Place the entity at the claw's position minus the offset.  Mirrors
+        // `mat.d -= GetOffset()` + the aMsgTeleport broadcast in
+        // elbowcranehitch.cpp HandleDrop.
+        tf.translation = hitch.claw_translation - hitch.claw_rotation * hitch.offset;
+        tf.rotation = hitch.claw_rotation;
+        end_writer.write(super::events::EndActionMessage {
+            entity: msg.entity,
+            action: super::components::MainAction::CraneStruggle,
+            subaction: -1,
+        });
+        commands
+            .entity(msg.entity)
+            .remove::<super::components::PickupHitched>();
+    }
+}
+
+/// Per-tick: while an entity has PickupHitched, force its Transform to
+/// track the claw matrix.  Runs AFTER `pickup_matrix_system` so newly-
+/// hitched entities snap on the same frame they're picked up.
+pub fn pickup_sync_system(
+    mut query: Query<(&super::components::PickupHitched, &mut Transform)>,
+) {
+    for (hitch, mut tf) in &mut query {
+        tf.translation = hitch.claw_translation - hitch.claw_rotation * hitch.offset;
+        tf.rotation = hitch.claw_rotation;
+    }
+}

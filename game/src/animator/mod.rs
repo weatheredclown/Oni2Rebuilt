@@ -197,6 +197,13 @@ impl Plugin for AnimatorPlugin {
                         // Top-level FSM broadcast handler
                         systems::animator_broadcast_handler,
                         anim_fx::anim_fx_system,
+                        // Pickup / Drop handlers for carrier hitching
+                        // (mirrors animElbowCraneHitchComponent).  Sync
+                        // must run AFTER the inserter so the same-frame
+                        // Transform snap works.
+                        systems::pickup_matrix_system,
+                        systems::drop_message_system,
+                        systems::pickup_sync_system.after(systems::pickup_matrix_system),
                     ),
                 )
                     .run_if(in_state(AppState::InGame)),

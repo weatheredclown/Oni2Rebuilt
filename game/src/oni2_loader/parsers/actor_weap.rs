@@ -3,6 +3,7 @@ use std::collections::HashMap;
 
 use super::block_parser::BlockParser;
 use crate::inventory::components::{ActorWeaponMounts, WeaponMount};
+use crate::oni2_loader::utils::space;
 
 pub fn parse_actor_weap(content: &str) -> ActorWeaponMounts {
     let mut mounts = HashMap::new();
@@ -40,10 +41,15 @@ pub fn parse_actor_weap(content: &str) -> ActorWeaponMounts {
                                                     p.read_i32(&a_key, 0) as usize
                                             }
                                             "gripoffset" => {
-                                                out_mount.offset = p.read_vec3(&a_key, Vec3::ZERO)
+                                                // Convert from Oni2 (left-handed)
+                                                // to Bevy (right-handed) at parse.
+                                                let v = p.read_vec3(&a_key, Vec3::ZERO);
+                                                out_mount.offset = space::to_bevy_space_pos(v);
                                             }
                                             "gripeulers" => {
-                                                out_mount.eulers = p.read_vec3(&a_key, Vec3::ZERO)
+                                                let e = p.read_vec3(&a_key, Vec3::ZERO);
+                                                out_mount.rot =
+                                                    space::to_bevy_space_rot_rad(e);
                                             }
                                             _ => {
                                                 p.next();
@@ -64,10 +70,13 @@ pub fn parse_actor_weap(content: &str) -> ActorWeaponMounts {
                                                     p.read_i32(&a_key, 0) as usize
                                             }
                                             "gripoffset" => {
-                                                away_mount.offset = p.read_vec3(&a_key, Vec3::ZERO)
+                                                let v = p.read_vec3(&a_key, Vec3::ZERO);
+                                                away_mount.offset = space::to_bevy_space_pos(v);
                                             }
                                             "gripeulers" => {
-                                                away_mount.eulers = p.read_vec3(&a_key, Vec3::ZERO)
+                                                let e = p.read_vec3(&a_key, Vec3::ZERO);
+                                                away_mount.rot =
+                                                    space::to_bevy_space_rot_rad(e);
                                             }
                                             _ => {
                                                 p.next();
@@ -82,7 +91,14 @@ pub fn parse_actor_weap(content: &str) -> ActorWeaponMounts {
                         }
                     }
 
-                    mounts.insert(weapon_type, (out_mount, away_mount));
+                    // Key by lowercase so the `weapon_attachment_system`
+                    // lookup (`weapon.ty.name.to_lowercase()`) finds the
+                    // mount regardless of case in the .weap source file
+                    // (kno.weap uses `"Pistol"`, the weapon ty name is
+                    // also `"Pistol"` — a case-sensitive match here
+                    // silently failed and the weapon fell back to the
+                    // default bone 11 / 0).
+                    mounts.insert(weapon_type.to_lowercase(), (out_mount, away_mount));
                 }
             } else {
                 break;

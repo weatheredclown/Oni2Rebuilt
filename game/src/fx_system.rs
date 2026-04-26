@@ -493,6 +493,8 @@ fn handle_spawn_fx(
     mut effects: ResMut<Assets<EffectAsset>>,
     mut effect_cache: Local<std::collections::HashMap<String, Handle<EffectAsset>>>,
     actor_sleep_query: Query<&crate::oni2_loader::components::ActorAsleep>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
     let ev = trigger.event();
     let lower_name = ev.name.to_lowercase();
@@ -541,6 +543,34 @@ fn handle_spawn_fx(
                     commands.entity(parent).add_child(child_id);
                 }
             }
+        } else if let crate::oni2_loader::parsers::effect::EffectDef::Laser(ld) = fx_def {
+            // Skip spawn entirely if the parent is asleep — the laser
+            // would just retract immediately otherwise.
+            let is_asleep = ev
+                .parent
+                .and_then(|p| actor_sleep_query.get(p).ok())
+                .is_some();
+            if !ev.start_active || is_asleep {
+                // Without start_active the legacy laser just sits dormant;
+                // our trail has no inactive state, so just don't spawn.
+                // (If a hypothetical SetFx-true is later sent, the laser
+                // won't materialize — matches nothing we've seen in the
+                // wild yet, can be added if a real case shows up.)
+                return;
+            }
+            let Some(source) = ev.parent else {
+                warn!("SpawnFx Laser '{}' has no parent — skipped", ev.name);
+                return;
+            };
+            crate::laser::spawn_laser(
+                &mut commands,
+                &mut meshes,
+                &mut materials,
+                ld,
+                source,
+                ev.at.unwrap_or(Vec3::ZERO),
+                &ev.name,
+            );
         }
     } else {
         warn!("SpawnFx: Effect '{}' not found in FxLibrary", ev.name);

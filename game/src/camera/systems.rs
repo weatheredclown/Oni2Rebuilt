@@ -14,6 +14,29 @@ use bevy::prelude::*;
 use super::channel::CameraChannel;
 use super::components::{ActiveCameraMode, CameraController, PrototypeElement, PrototypeVisible};
 
+/// Ticks down a pending mode transition started by ScrOni
+/// `cameraMode <mode> time <secs>`.  When the timer expires, commits
+/// `next_mode` as `active_mode`.  Legacy behavior (rb/src/camera/manager.cpp:706)
+/// effectively forces transitionTime to 0 for CameraMode — we honor the
+/// requested duration as a delayed-switch (the old mode keeps running
+/// until the timer elapses) rather than a cross-blend, which matches
+/// intent without needing a real mode-mixer.
+pub fn camera_mode_transition_tick(time: Res<Time>, mut q: Query<&mut CameraController>) {
+    let dt = time.delta_secs();
+    for mut c in &mut q {
+        if c.next_mode.is_some() && c.transition_time_remaining > 0.0 {
+            c.transition_time_remaining -= dt;
+            if c.transition_time_remaining <= 0.0 {
+                if let Some(next) = c.next_mode.take() {
+                    c.active_mode = next;
+                }
+                c.transition_time = 0.0;
+                c.transition_time_remaining = 0.0;
+            }
+        }
+    }
+}
+
 /// Toggle camera mode with Tab key or F5 (FreeCam).
 pub fn camera_mode_toggle_system(
     keyboard: Res<ButtonInput<KeyCode>>,

@@ -44,6 +44,45 @@ Optionally, you can also inject custom raw files to override the `RB.DAT` archiv
 cargo run --bin rb-game -- --dat path/to/extracted/iso/dir --path path/to/raw/assets/dir
 ```
 
+## Command-line flags
+
+By default the game boots into the dev test-layout picker — a list of every
+layout folder on disk with descriptions from `Settings/rb.gamedata`. Esc from
+a level returns there. The shipped `rbfrontend.ui` menu (Rockstar/Angel
+intros → Oni2 logo → Main Menu → Choose Level) is being rebuilt and is
+opt-in via `--ogmenu` until it's polished.
+
+### Asset sources
+- `--dat <path>` &mdash; mount a `RB.DAT` (or `STREAMS.DAT` / `BANKS.DAT`)
+  archive. Pass the flag multiple times to mount more than one. Defaults to
+  `RB.DAT`, `STREAMS.DAT`, `BANKS.DAT` in the working directory.
+- `--path <dir>` &mdash; mount a loose-files directory as a higher-priority
+  overlay on top of any `--dat` mounts. Pass multiple times to overlay more
+  than one. Defaults to `oni2/zips/assets` and `oni2/zips/streams`.
+
+### Startup mode (mutually exclusive)
+- *(no flag)* &mdash; boot into the dev test-layout picker (formerly
+  `--testlayout`). Esc from in-game returns here.
+- `--ogmenu` &mdash; opt into the in-progress `rbfrontend.ui` menu graph.
+  Esc from in-game returns to the menu instead of the picker.
+- `--testlayout` &mdash; accepted as a no-op alias for the default; kept so
+  existing run scripts keep working.
+- `--layout <name>` &mdash; skip the menu and load the named layout directly,
+  e.g. `--layout M03_A01_Blast_Chambers`.
+- `--testanim <path>` / `--animtest <path>` &mdash; jump straight into the
+  animation viewer. If `<path>` ends in `.anim` it boots in-game; otherwise it
+  opens the anim picker pre-filtered to the entity name.
+- `--testentity <name>` / `--entitytest <name>` &mdash; load a single entity
+  for inspection. Omit `<name>` to open the entity picker.
+- `--sandbox` &mdash; boot into the sandbox scene.
+- `--formation` &mdash; boot into the formation/AI test scene with a free
+  camera (`oni2_loader::free_camera_system`).
+
+### Toggles
+- `--fog` &mdash; enable layout fog (disabled by default).
+- `--diagnostics` &mdash; install Bevy's `LogDiagnosticsPlugin` (frame-time
+  / FPS log spam).
+
 ## Repo Layout
 
 ```

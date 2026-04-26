@@ -573,21 +573,17 @@ pub fn load_anim_library(
         // Priority 1: entity.tune/kno/..
         // Priority 2: Entity/kno/..
         // Priority 3: fallback to prefix folder (e.g. if the mesh name differs from anim prefix)
-        let mut loaded_from = tune_atdt.clone();
         let mut atdt_content = crate::vfs::read_to_string("", &tune_atdt);
         if atdt_content.is_err() {
-            loaded_from = base_atdt.clone();
             atdt_content = crate::vfs::read_to_string("", &base_atdt);
         }
         if atdt_content.is_err()
             && let Some(prefix) = anim_name.split('_').next()
         {
             let fallback_tune = format!("entity.tune/{}/{}.atdt", prefix, anim_name);
-            loaded_from = fallback_tune.clone();
             atdt_content = crate::vfs::read_to_string("", &fallback_tune);
             if atdt_content.is_err() {
                 let fallback_base = format!("Entity/{}/{}.atdt", prefix, anim_name);
-                loaded_from = fallback_base.clone();
                 atdt_content = crate::vfs::read_to_string("", &fallback_base);
             }
         }
@@ -988,7 +984,7 @@ pub fn debug_draw_attack_wedges(
 
     let _color = Color::srgba(1.0, 0.0, 0.0, 0.8);
 
-    for (transform, anim_state, _fighter, _offset_opt) in &query {
+    for (transform, anim_state, fighter, _offset_opt) in &query {
         let Some(data) = &anim_state.anim.attack_data else {
             // ATDT not loaded for this animation — check VFS path if wedge is expected
             // debug!("debug_draw_attack_wedges: no attack_data for anim id={:?}", anim_state.current_anim_id);
@@ -1020,109 +1016,133 @@ pub fn debug_draw_attack_wedges(
         };
 
         // Character physics capsule centers are hardcoded to ground + 1.1m.
-        // Oni combat definitions evaluate height (reactdiskheight) originating from the ground floor.
-        let base_translation = transform.translation - Vec3::new(0.0, 1.1, 0.0);
+        let attacker_feet_y = transform.translation.y - 1.1;
+        let attacker_base = Vec3::new(transform.translation.x, attacker_feet_y, transform.translation.z);
 
-        // Compute swept heading up to the current frame
-        let swept_heading = if strike.sweepheading != 0 {
-            let sweep_t = if strike.frameduration > 0.0 {
-                ((frame - strike.framenum) / strike.frameduration).clamp(0.0, 1.0)
-            } else {
-                1.0
-            };
-            sweep_t * strike.sliceheadingradiansb
-        } else {
-            strike.sliceheadingradiansb
-        };
+        let wedge = crate::combat::hitbox::EvaluatedWedge::evaluate(
+            strike,
+            attacker_base,
+            fighter.facing,
+            frame,
+            num_frames,
+        );
 
-        let attacker_forward = transform.rotation * Vec3::NEG_Z;
-        let slice_heading = Quat::from_rotation_y(swept_heading) * attacker_forward;
-        let slice_heading_xz = Vec3::new(slice_heading.x, 0.0, slice_heading.z).normalize_or_zero();
-
-        // Shift origin backward by vanishingpoint
-        let center = base_translation + Vec3::Y * strike.reactdiskheight
-            - slice_heading_xz * strike.vanishingpoint;
-
-        let radius = strike.reactdiskradius;
-        if radius <= 0.01 {
+        if !wedge.is_active {
             continue;
         }
 
-        let start_rad = strike.slicestartradians;
-        let end_rad = strike.sliceendradians;
+        // `wedge.center.y` comes from `attacker_base.y` (= feet).  The
+        // actual hit VOLUME lives between `wedge.min_y` and `wedge.max_y`
+        // (attacker feet + reactdiskheight ± tolerance).  Draw the arcs
+        // at BOTH those heights + vertical risers so the gizmo reflects
+        // the cylinder slice the hit-test actually evaluates — otherwise
+        // the wedge renders flat on the floor and looks like it's missing.
+        let radius = wedge.max_radius;
+        let inner_r = wedge.inner_radius.max(0.0);
+        let start_rad = wedge.start_rad;
+        let end_rad = wedge.end_rad;
 
-        // If the slice covers a full circle (or has degenerate equal angles), draw a full ring.
         let sweep = end_rad - start_rad;
         let full_circle = sweep.abs() < 1e-4 || sweep.abs() >= std::f32::consts::TAU * 0.99;
 
-        // Draw an arc at a specific radius
-        let draw_wedge_arc = |gizmos: &mut Gizmos, r: f32, color: Color| {
+        // Anchor the debug drawing at the hit band's actual Y range, not
+        // at the wedge's feet-anchored `center`.
+        let center_xz = Vec3::new(wedge.center.x, 0.0, wedge.center.z);
+        let bottom_center = center_xz + Vec3::Y * wedge.min_y;
+        let top_center = center_xz + Vec3::Y * wedge.max_y;
+
+        let get_point = |anchor: Vec3, angle: f32, r: f32| -> Vec3 {
+            // Both slice_heading_xz and the angle limits are in Bevy space.
+            let dir = Quat::from_rotation_y(angle) * wedge.slice_heading_xz;
+            anchor + Vec3::new(dir.x, 0.0, dir.z).normalize_or_zero() * r
+        };
+
+        let draw_wedge_arc = |gizmos: &mut Gizmos, anchor: Vec3, r: f32, color: Color| {
             if r <= 0.01 {
                 return;
             }
             let segments = 24;
             if full_circle {
-                // Draw a full horizontal ring
                 let step = std::f32::consts::TAU / segments as f32;
-                let mut prev_pt = center + Vec3::new(r, 0.0, 0.0);
+                let mut prev_pt = anchor + Vec3::new(r, 0.0, 0.0);
                 for i in 1..=segments {
                     let a = i as f32 * step;
-                    let next_pt = center + Vec3::new(a.cos() * r, 0.0, a.sin() * r);
+                    let next_pt = anchor + Vec3::new(a.cos() * r, 0.0, a.sin() * r);
                     gizmos.line(prev_pt, next_pt, color);
                     prev_pt = next_pt;
                 }
             } else {
                 let angle_step = sweep / segments as f32;
-                let get_point = |angle: f32| -> Vec3 {
-                    // Match the runtime dot-product logic: the angle spans from slice_heading.
-                    let total_angle = swept_heading + angle;
-                    let local_dir = Quat::from_rotation_y(total_angle) * Vec3::NEG_Z;
-                    center + (transform.rotation * local_dir) * r
-                };
-                let pt_start = get_point(start_rad);
+                let pt_start = get_point(anchor, start_rad, r);
                 let mut prev_pt = pt_start;
                 for i in 1..=segments {
                     let angle = start_rad + angle_step * i as f32;
-                    let next_pt = get_point(angle);
+                    let next_pt = get_point(anchor, angle, r);
                     gizmos.line(prev_pt, next_pt, color);
                     prev_pt = next_pt;
                 }
             }
         };
 
-        let inner_r = strike.vanishingpoint.max(0.0);
+        // Draw outer arc at both heights.
+        draw_wedge_arc(&mut gizmos, bottom_center, radius, draw_color);
+        draw_wedge_arc(&mut gizmos, top_center, radius, draw_color);
 
-        // Draw outer arc
-        draw_wedge_arc(&mut gizmos, radius, draw_color);
-
-        // Draw inner arc boundary if it exists
+        // Draw inner cut at both heights.
         if inner_r > 0.01 {
-            draw_wedge_arc(&mut gizmos, inner_r, Color::srgba(0.0, 1.0, 1.0, 0.8)); // Cyan for inner cut
+            let cyan = Color::srgba(0.0, 1.0, 1.0, 0.8);
+            draw_wedge_arc(&mut gizmos, bottom_center, inner_r, cyan);
+            draw_wedge_arc(&mut gizmos, top_center, inner_r, cyan);
         }
 
-        // Draw connecting side walls if not a full circle
+        // Side walls connecting the two height arcs (inner + outer edges
+        // at start/end angles) make the volume readable.
         if !full_circle {
-            let get_point = |angle: f32, r: f32| -> Vec3 {
-                let total_angle = swept_heading + angle;
-                let local_dir = Quat::from_rotation_y(total_angle) * Vec3::NEG_Z;
-                center + (transform.rotation * local_dir) * r
+            let b_outer_start = get_point(bottom_center, start_rad, radius);
+            let b_outer_end = get_point(bottom_center, end_rad, radius);
+            let t_outer_start = get_point(top_center, start_rad, radius);
+            let t_outer_end = get_point(top_center, end_rad, radius);
+            let b_inner_start = if inner_r > 0.01 {
+                get_point(bottom_center, start_rad, inner_r)
+            } else {
+                bottom_center
+            };
+            let b_inner_end = if inner_r > 0.01 {
+                get_point(bottom_center, end_rad, inner_r)
+            } else {
+                bottom_center
+            };
+            let t_inner_start = if inner_r > 0.01 {
+                get_point(top_center, start_rad, inner_r)
+            } else {
+                top_center
+            };
+            let t_inner_end = if inner_r > 0.01 {
+                get_point(top_center, end_rad, inner_r)
+            } else {
+                top_center
             };
 
-            let outer_start = get_point(start_rad, radius);
-            let outer_end = get_point(end_rad, radius);
-            let inner_start = if inner_r > 0.01 {
-                get_point(start_rad, inner_r)
-            } else {
-                center
-            };
-            let inner_end = if inner_r > 0.01 {
-                get_point(end_rad, inner_r)
-            } else {
-                center
-            };
+            // Start-angle radial lines (bottom & top).
+            gizmos.line(b_inner_start, b_outer_start, draw_color);
+            gizmos.line(t_inner_start, t_outer_start, draw_color);
+            // End-angle radial lines (bottom & top).
+            gizmos.line(b_inner_end, b_outer_end, draw_color);
+            gizmos.line(t_inner_end, t_outer_end, draw_color);
 
-            gizmos.line(inner_start, outer_start, draw_color);
-            gizmos.line(inner_end, outer_end, draw_color);
+            // Vertical risers at the four corners of the slice.
+            gizmos.line(b_outer_start, t_outer_start, draw_color);
+            gizmos.line(b_outer_end, t_outer_end, draw_color);
+            gizmos.line(b_inner_start, t_inner_start, draw_color);
+            gizmos.line(b_inner_end, t_inner_end, draw_color);
+        } else {
+            // Full-circle case: four vertical risers at cardinal directions
+            // so the ring's vertical extent is still visible.
+            for (dx, dz) in [(radius, 0.0), (-radius, 0.0), (0.0, radius), (0.0, -radius)] {
+                let b = bottom_center + Vec3::new(dx, 0.0, dz);
+                let t = top_center + Vec3::new(dx, 0.0, dz);
+                gizmos.line(b, t, draw_color);
+            }
         }
     }
 }

@@ -102,6 +102,11 @@ pub fn load_global_registries(
     mut ammo_lib: ResMut<AmmoRegistry>,
     mut item_lib: ResMut<ItemRegistry>,
     mut weapon_item_lib: ResMut<WeaponItemRegistry>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    mut skinned_mesh_ibp: ResMut<Assets<SkinnedMeshInverseBindposes>>,
+    mut entity_lib: ResMut<EntityLibrary>,
+    mut anim_registry: ResMut<AnimRegistry>,
 ) {
     // 1. Load rb.proj
     if let Ok(content) = vfs::read_to_string("Settings", "rb.proj") {
@@ -110,6 +115,26 @@ pub fn load_global_registries(
             if let Some(parsed) =
                 parse_projectile(&def.def_type, &def.name, &def.block, &asset_server)
             {
+                if let ProjectileDef::Model(ref m) = parsed {
+                    let entity_dir = format!("Entity/{}", m.model_name);
+                    if !entity_lib.entities.contains_key(&entity_dir) {
+                        if let Some(e) = crate::oni2_loader::spawn::load_oni2_entity_type(
+                            &mut meshes,
+                            &mut materials,
+                            &mut images,
+                            &mut skinned_mesh_ibp,
+                            &mut anim_registry,
+                            &entity_dir,
+                            &m.model_name,
+                            None,
+                        ) {
+                            entity_lib.entities.insert(entity_dir.clone(), e);
+                            info!("Pre-loaded entity type for projectile: {}", m.model_name);
+                        } else {
+                            warn!("Failed to load entity type for projectile: {}", m.model_name);
+                        }
+                    }
+                }
                 proj_lib.projectiles.insert(def.name.to_lowercase(), parsed);
             }
         }

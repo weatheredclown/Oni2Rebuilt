@@ -18,7 +18,22 @@ pub struct Tokenizer {
     line: usize,
     col: usize,
     keywords: HashMap<String, TokenCode>,
-    last_token_code: TokenCode,
+    /// True if the previous token ends an expression and a following `-`
+    /// must therefore be the binary subtraction operator, not a sign
+    /// prefix.  Widened beyond just `Identifier/IntConstant/FloatConstant/
+    /// RightParen` because:
+    ///   • `}` ends a vector literal (a value).
+    ///   • After a `.`, the next token is a field name — regardless of
+    ///     whether it lexed as `Identifier` or a keyword like `X`/`Y`/`Z`
+    ///     (which `x`/`y`/`z` are in our keyword table) — it too is a
+    ///     value.  Prior to this, `{p.x-1, p.y-2}` tokenized the `-1` as
+    ///     a single `IntegerConstant(-1)` because `TokenCode::X` was not
+    ///     in the "produces a value" set, so the `-` was swallowed as a
+    ///     sign prefix.
+    last_token_ends_expr: bool,
+    /// Set when the previous token was `.` — the NEXT token is a field
+    /// name and should always be treated as ending an expression.
+    after_period: bool,
 }
 
 impl Tokenizer {
@@ -29,7 +44,8 @@ impl Tokenizer {
             line: 1,
             col: 1,
             keywords: keyword_table(),
-            last_token_code: TokenCode::Eof, // sentinel: "nothing before"
+            last_token_ends_expr: false,
+            after_period: false,
         }
     }
 
@@ -38,7 +54,20 @@ impl Tokenizer {
         loop {
             let tok = self.next_token();
             let is_eof = tok.code == TokenCode::Eof;
-            self.last_token_code = tok.code;
+            // Compute whether this token ends an expression for the sake
+            // of the *next* token's sign-vs-subtraction decision.
+            let this_ends_expr = self.after_period
+                || matches!(
+                    tok.code,
+                    TokenCode::Identifier
+                        | TokenCode::IntegerConstant
+                        | TokenCode::FloatConstant
+                        | TokenCode::StringConstant
+                        | TokenCode::RightParen
+                        | TokenCode::RightCurlyBracket
+                );
+            self.last_token_ends_expr = this_ends_expr;
+            self.after_period = tok.code == TokenCode::Period;
             tokens.push(tok);
             if is_eof {
                 break;
@@ -131,24 +160,16 @@ impl Tokenizer {
         }
 
         // Negative number: minus followed by digit or dot-digit, but ONLY when
-        // the previous token could not have produced a value (i.e. not after an
-        // identifier, number literal, or closing paren — in those cases `-` is
-        // the binary subtraction operator, not a sign prefix).
-        if ch == '-' {
-            let prev_is_value = matches!(
-                self.last_token_code,
-                TokenCode::Identifier
-                    | TokenCode::IntegerConstant
-                    | TokenCode::FloatConstant
-                    | TokenCode::RightParen
-            );
-            if !prev_is_value {
-                let next = self.peek_at(1);
-                if next.is_some_and(|c| c.is_ascii_digit())
-                    || (next == Some('.') && self.peek_at(2).is_some_and(|c| c.is_ascii_digit()))
-                {
-                    return self.read_number(line, col);
-                }
+        // the previous token could not have produced a value (in which case
+        // `-` is binary subtraction).  See the doc comment on
+        // `last_token_ends_expr` for why the legacy prev-code check was
+        // too narrow (missed `}`, field-name keywords after `.`, etc.).
+        if ch == '-' && !self.last_token_ends_expr {
+            let next = self.peek_at(1);
+            if next.is_some_and(|c| c.is_ascii_digit())
+                || (next == Some('.') && self.peek_at(2).is_some_and(|c| c.is_ascii_digit()))
+            {
+                return self.read_number(line, col);
             }
         }
 

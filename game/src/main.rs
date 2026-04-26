@@ -22,10 +22,12 @@ mod explosion;
 mod fight;
 mod fight_vector;
 mod fightai;
+mod frontend;
 mod filesystem;
 mod fx_system;
 mod hud;
 mod inventory;
+mod laser;
 mod menu;
 mod oni2_loader;
 mod player;
@@ -139,6 +141,14 @@ fn main() {
     let formation_mode = args.iter().any(|a| a == "--formation");
     let diagnostics_mode = args.iter().any(|a| a == "--diagnostics");
     let fog_enabled = args.iter().any(|a| a == "--fog");
+    // `--ogmenu` opts into the in-progress `rbfrontend.ui` page graph
+    // (Rockstar/Angel/Oni2 intros → Main Menu → Choose Level).  It's
+    // not yet polished enough to be the default — without this flag
+    // the game boots into the dev test-layout picker (the former
+    // `--testlayout`-only behaviour).  `--testlayout` is kept as a
+    // no-op alias so existing scripts keep working.
+    let ogmenu_mode = args.iter().any(|a| a == "--ogmenu");
+    let _testlayout_alias = args.iter().any(|a| a == "--testlayout");
 
     // --- VFS setup ---
     let mut multi_vfs = vfs::MultiVfs::new();
@@ -205,13 +215,15 @@ fn main() {
     .add_plugins(camera::CameraPlugin)
     .add_plugins(hud::HudPlugin)
     .add_plugins(fx_system::FxPlugin)
+    .add_plugins(laser::LaserPlugin)
     .add_plugins(projectile_system::ProjectilePlugin)
     .add_plugins(weapons::WeaponPlugin)
     .add_plugins(inventory::InventoryPlugin)
     .add_plugins(oni2_loader::Oni2LoaderPlugin)
     .add_plugins(scroni::ScroniPlugin)
     .add_plugins(door::DoorPlugin)
-    .add_plugins(debug::DebugPlugin);
+    .add_plugins(debug::DebugPlugin)
+    .add_plugins(frontend::FrontendPlugin);
 
     if fog_enabled {
         app.insert_resource(oni2_loader::FogEnabled);
@@ -278,7 +290,12 @@ fn main() {
         app.insert_state(AppState::InGame);
     } else if cli_layout.is_some() {
         app.insert_state(AppState::LoadingLayout);
+    } else if ogmenu_mode {
+        app.insert_resource(menu::OgMenuMode);
+        app.insert_state(AppState::FrontEnd);
     } else {
+        // Default: dev test-layout picker (`AppState::Menu` is now
+        // the `#[default]` variant).
         app.init_state::<AppState>();
     }
 
@@ -299,6 +316,7 @@ fn setup_scene(
     combat_materials: Res<CombatMaterials>,
     selected_layout: Option<Res<SelectedLayout>>,
     sandbox: Option<Res<SandboxMode>>,
+    loaded_player: Option<Res<crate::oni2_loader::layout_loader::LoadedLayoutPlayer>>,
 ) {
     let scoped = InGameEntity;
 
@@ -348,21 +366,34 @@ fn setup_scene(
         );
         None
     } else {
-        let entity_base_str = "Entity".to_string();
-        oni2_loader::load_layout(
-            &mut commands,
+        // Chunked layout load already ran during LoadingLayout.  The
+        // player info (if any) was stashed in `LoadedLayoutPlayer` by
+        // the driver's finalize step — extract it here.  Silence unused-
+        // mut warnings on the args that were only needed for the legacy
+        // monolithic `load_layout`.
+        let _ = (
             &asset_server,
-            &mut meshes,
-            &mut materials,
-            &mut images,
             &mut skinned_mesh_ibp,
             &mut entity_lib,
             &mut anim_registry,
             &mut fight_fsm_cache,
             &mut attack_fsm_cache,
             &layout_path,
-            &entity_base_str,
-        )
+        );
+        let info = loaded_player.map(|r| crate::oni2_loader::layout_loader::LayoutPlayerInfo {
+            entity: r.0.entity,
+            position: r.0.position,
+            entity_type: r.0.entity_type.clone(),
+            animator_type: r.0.animator_type.clone(),
+            max_hitpoints: r.0.max_hitpoints,
+            faction: r.0.faction.clone(),
+            pad_fsm: r.0.pad_fsm.clone(),
+        });
+        // Clean up the transient state used by the chunked loader so
+        // the next layout load starts fresh.
+        commands.remove_resource::<crate::oni2_loader::layout_loader::PendingLayoutLoad>();
+        commands.remove_resource::<crate::oni2_loader::layout_loader::LoadedLayoutPlayer>();
+        info
     };
 
     // Fallback lights for sandbox

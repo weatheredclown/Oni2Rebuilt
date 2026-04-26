@@ -334,7 +334,6 @@ pub fn parse_projectile(
         "MODELPROJECTILE" => {
             let model_name = block.get_string("ModelName").unwrap_or_default();
             // Oni2 model names refer to Entity folders. Store the name to spawn later.
-            // TODO: make sure the Oni2EntityType is loaded for this model_name immediately right here
 
             // Model configs actually nest the basic projectile params inside an anonymous block `{...}`
             // We'll search for it if we see one.

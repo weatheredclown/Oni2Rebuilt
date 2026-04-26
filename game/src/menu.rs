@@ -12,6 +12,15 @@ use bevy::prelude::*;
 
 #[derive(States, Debug, Clone, PartialEq, Eq, Hash, Default)]
 pub enum AppState {
+    /// Drives the legacy `rbfrontend.ui` page graph (Rockstar intro
+    /// → Angel intro → Oni2 title → Main Menu → Level Select →
+    /// into game).  This is the polished player-facing menu; while
+    /// it's still being wired up it's hidden behind `--ogmenu`.
+    FrontEnd,
+    /// Default startup state — the dev-friendly debug picker
+    /// (formerly `--testlayout`).  Lists every layout folder on disk
+    /// + descriptions from `Settings/rb.gamedata`, and is what the
+    /// game also drops back into on Escape from a level.
     #[default]
     Menu,
     AnimMenu,
@@ -27,6 +36,66 @@ pub struct MenuScrollState {
     pub entity: f32,
 }
 
+/// Per-layout actor-load progress.  `total_actors` is read from
+/// `layout.actors` (first line is the count) at the start of the
+/// LoadingLayout state; `loaded_actors` ticks up at a fixed rate per
+/// frame so the bar fills in a visible, count-proportional way.
+///
+/// Why count-proportional at a fake rate rather than true per-actor:
+/// our Rust layout load is synchronous, runs in a single `setup_scene`
+/// system at OnEnter(InGame), and takes ~100ms — the render loop
+/// doesn't tick during it, so a bar driven by "actually spawned"
+/// would visibly jump from 0 → 100 in one frame.  Ticking at
+/// `PER_ACTOR_SECS` per actor gives a fill whose DURATION scales with
+/// real level size (172 actors → ~1.72s, 30 → ~0.3s), which is what
+/// the user sees and expects.  Legacy ran at 90 seconds for a PS2 disc
+/// load (rb/src/rbgame/loadthread.cpp:75) — totally fake too, but a
+/// constant.
+#[derive(Resource, Default)]
+pub struct LoadingProgress {
+    /// Total actor count parsed from `layout.actors` header.
+    pub total_actors: usize,
+    /// Virtual loaded count — ticks up from 0 to `total_actors` at
+    /// `PER_ACTOR_SECS` per actor during LoadingLayout.
+    pub loaded_actors: usize,
+    /// Fractional carry so sub-tick progress accumulates across frames.
+    pub carry: f32,
+}
+
+impl LoadingProgress {
+    pub fn fraction(&self) -> f32 {
+        if self.total_actors == 0 {
+            1.0
+        } else {
+            (self.loaded_actors as f32 / self.total_actors as f32).clamp(0.0, 1.0)
+        }
+    }
+}
+
+/// Virtual time budget per actor.  Short enough that small levels don't
+/// linger, long enough that big levels give the player a beat to read
+/// the bar.  Legacy used ~90s of fake-time regardless of level size —
+/// this is the per-actor equivalent at a reasonable modern pace.
+pub const PER_ACTOR_SECS: f32 = 0.01;
+
+/// Legacy bar rect on a 512×448 framebuffer: `(348, 56)` origin,
+/// `122×10` pixels (rb/src/rbgame/loadthread.cpp:164).  Normalized
+/// percentages so the bar lands in the same relative screen spot at
+/// any window size.
+pub const LOADING_BAR_X_PCT: f32 = 348.0 / 512.0 * 100.0;
+pub const LOADING_BAR_Y_PCT: f32 = 56.0 / 448.0 * 100.0;
+pub const LOADING_BAR_W_PCT: f32 = 122.0 / 512.0 * 100.0;
+pub const LOADING_BAR_H_PCT: f32 = 10.0 / 448.0 * 100.0;
+
+/// Marker for the foreground (filled) rectangle of the progress bar —
+/// `update_loading_screen` scales its width each frame.
+#[derive(Component)]
+pub struct LoadingBarFill;
+
+/// Marker for the "X / Y actors" text label next to the bar.
+#[derive(Component)]
+pub struct LoadingCountText;
+
 #[derive(Resource)]
 pub struct TestAnimEntity(pub String);
 
@@ -38,6 +107,15 @@ struct AnimButton(String);
 
 #[derive(Resource)]
 pub struct SelectedLayout(pub String);
+
+/// Inserted at startup by `main.rs` when the `--ogmenu` CLI flag is
+/// present — the user is opting into the in-progress `rbfrontend.ui`
+/// menu.  `escape_to_menu` checks for this marker so leaving a level
+/// returns to that frontend rather than the default debug picker.
+/// Absent in normal `--testlayout`-style boots (which is the default
+/// while the frontend is being wired up).
+#[derive(Resource)]
+pub struct OgMenuMode;
 
 #[derive(Component)]
 struct MenuRoot;
@@ -57,6 +135,7 @@ pub struct MenuPlugin;
 impl Plugin for MenuPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<MenuScrollState>()
+            .init_resource::<LoadingProgress>()
             .add_systems(OnEnter(AppState::Menu), setup_menu)
             .add_systems(
                 Update,
@@ -76,6 +155,24 @@ impl Plugin for MenuPlugin {
             )
             .add_systems(OnExit(AppState::EntityMenu), cleanup_entity_menu)
             .add_systems(OnEnter(AppState::LoadingLayout), setup_loading_screen)
+            // Actor-spawn driver lives in the loader module and is
+            // always-on — gated by `PendingLayoutLoad` resource
+            // presence, not AppState.  The frontend (PAGE_3D backdrop
+            // load) drops the resource while in AppState::FrontEnd,
+            // so an in_state gate here would strand the backdrop.
+            .add_systems(
+                Update,
+                crate::oni2_loader::layout_loader::drive_chunked_actor_spawn_system,
+            )
+            // Tag layout spawns with FrontendBackdrop when the load is
+            // scoped to the frontend — runs alongside the driver so
+            // actors spawned mid-chunk get the marker immediately.
+            .add_systems(
+                Update,
+                crate::oni2_loader::layout_loader::tag_frontend_layout_spawns_system
+                    .after(crate::oni2_loader::layout_loader::drive_chunked_actor_spawn_system),
+            )
+            // Loading-screen progress bar is LoadingLayout-only.
             .add_systems(
                 Update,
                 update_loading_screen.run_if(in_state(AppState::LoadingLayout)),
@@ -93,11 +190,50 @@ fn setup_loading_screen(
     mut commands: Commands,
     selected_layout: Option<Res<SelectedLayout>>,
     mut images: ResMut<Assets<Image>>,
+    mut progress: ResMut<LoadingProgress>,
 ) {
+    // Purge any leftovers from a prior load.  If the previous session
+    // left a finished `PendingLayoutLoad` in the ECS and this load
+    // returns None (e.g. sandbox / fallback layout path missing), the
+    // `update_loading_screen` "done" branch reads that stale state,
+    // reports it as complete against the old actor count, and
+    // flashes the old layout's progress numbers before transitioning.
+    // Reset both the sentinel resource and the progress fields so
+    // we always start from a clean slate.
+    commands.remove_resource::<crate::oni2_loader::layout_loader::PendingLayoutLoad>();
+    commands.remove_resource::<crate::oni2_loader::layout_loader::LoadedLayoutPlayer>();
+    *progress = LoadingProgress::default();
+
     let layout_name = selected_layout
         .as_ref()
         .map(|s| s.0.as_str())
         .unwrap_or("tim06");
+
+    // Kick off the chunked layout load.  `begin_chunked_layout_load`
+    // runs the pre-actor phase synchronously (parse layout.et /
+    // layout.paths / layout.graphs, queue actor names) and returns a
+    // `PendingLayoutLoad` state that `drive_chunked_actor_spawn`
+    // drains one actor per tick.  The total actor count we display
+    // on the loading screen comes from the real queue length, not
+    // the first-line integer — that's an authoring hint that doesn't
+    // always match the full list when actors are blank-/comment-
+    // skipped.
+    let layout_dir = format!("layout/{}", layout_name);
+    let pending = crate::oni2_loader::layout_loader::begin_chunked_layout_load(
+        &mut commands,
+        &layout_dir,
+        "Entity",
+    );
+    let total_actors = pending.as_ref().map(|p| p.actor_names.len()).unwrap_or(0);
+    if let Some(p) = pending {
+        commands.insert_resource(p);
+    }
+    *progress = LoadingProgress {
+        total_actors,
+        loaded_actors: 0,
+        carry: 0.0,
+    };
+
     let tex_filename = format!("texture/load_{}.tex", layout_name);
     let tga_filename = format!("texture/load_{}.tga", layout_name);
     let mut loaded_handle = None;
@@ -129,61 +265,205 @@ fn setup_loading_screen(
 
     commands.spawn((Camera2d, LoadingScreenEntity));
 
-    if let Some(handle) = loaded_handle {
-        commands
-            .spawn((
-                Node {
-                    width: Val::Percent(100.0),
-                    height: Val::Percent(100.0),
-                    align_items: AlignItems::Center,
-                    justify_content: JustifyContent::Center,
-                    ..default()
-                },
-                BackgroundColor(Color::BLACK),
-                LoadingScreenEntity,
-            ))
-            .with_children(|parent| {
-                parent.spawn((
-                    ImageNode::new(handle),
-                    Node {
-                        width: Val::Percent(100.0),
-                        height: Val::Percent(100.0),
-                        ..default()
-                    },
-                ));
-            });
-    } else {
-        commands.spawn((
+    // Fullscreen root that holds either the layout's load_<layout>.tga
+    // backdrop or a fallback black background, with the progress bar
+    // positioned absolutely in both cases.  Legacy reserved a specific
+    // 122×10-pixel slot on a 512×448 canvas at (348, 56) for the bar;
+    // rendering it at the same normalized position gives authored
+    // `load_<layout>.tga` images (which have a blank area there) the
+    // expected fill, and for layouts without a load image we still show
+    // a small red bar in the same spot so players have a visible
+    // progress cue.
+    let root = commands
+        .spawn((
             Node {
                 width: Val::Percent(100.0),
                 height: Val::Percent(100.0),
+                position_type: PositionType::Relative,
                 ..default()
             },
             BackgroundColor(Color::BLACK),
             LoadingScreenEntity,
-        ));
+        ))
+        .id();
+
+    if let Some(handle) = loaded_handle {
+        commands.entity(root).with_children(|parent| {
+            parent.spawn((
+                ImageNode::new(handle),
+                Node {
+                    width: Val::Percent(100.0),
+                    height: Val::Percent(100.0),
+                    position_type: PositionType::Absolute,
+                    ..default()
+                },
+            ));
+        });
     }
+
+    // Progress bar + "X / Y actors" text label, positioned at the
+    // legacy rect coordinates.  The background rect draws a semi-
+    // transparent container; a red child inside scales its width with
+    // the actual `loaded_actors / total_actors` ratio.  Text sits just
+    // to the right of the bar so the count is readable alongside it.
+    commands.entity(root).with_children(|parent| {
+        parent
+            .spawn((
+                Node {
+                    position_type: PositionType::Absolute,
+                    left: Val::Percent(LOADING_BAR_X_PCT),
+                    top: Val::Percent(LOADING_BAR_Y_PCT),
+                    width: Val::Percent(LOADING_BAR_W_PCT),
+                    height: Val::Percent(LOADING_BAR_H_PCT),
+                    ..default()
+                },
+                BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.5)),
+                LoadingScreenEntity,
+            ))
+            .with_children(|inner| {
+                inner.spawn((
+                    Node {
+                        width: Val::Percent(0.0),
+                        height: Val::Percent(100.0),
+                        ..default()
+                    },
+                    BackgroundColor(Color::srgb(1.0, 0.0, 0.0)),
+                    LoadingBarFill,
+                ));
+            });
+
+        // Count label: "X / Y actors" positioned just below the bar.
+        parent.spawn((
+            Text::new(format!("0 / {} actors", total_actors)),
+            TextFont {
+                font_size: 14.0,
+                ..default()
+            },
+            TextColor(Color::srgba(1.0, 1.0, 1.0, 0.85)),
+            Node {
+                position_type: PositionType::Absolute,
+                left: Val::Percent(LOADING_BAR_X_PCT),
+                top: Val::Percent(LOADING_BAR_Y_PCT + LOADING_BAR_H_PCT + 0.5),
+                ..default()
+            },
+            LoadingCountText,
+            LoadingScreenEntity,
+        ));
+    });
 }
 
 fn update_loading_screen(
-    mut frames_waited: Local<usize>,
+    mut progress: ResMut<LoadingProgress>,
+    pending: Option<Res<crate::oni2_loader::layout_loader::PendingLayoutLoad>>,
+    mut bar_q: Query<&mut Node, With<LoadingBarFill>>,
+    mut text_q: Query<&mut Text, With<LoadingCountText>>,
     mut next_state: ResMut<NextState<AppState>>,
 ) {
-    if *frames_waited >= 2 {
+    // Mirror the real actor-spawn cursor onto `LoadingProgress`
+    // every tick.  `drive_chunked_actor_spawn` (runs just before us
+    // in the chained set) bumps the cursor by the chunk size, then
+    // `post_done` flips once the post-actor phase has run.
+    if let Some(p) = &pending {
+        progress.loaded_actors = p.cursor;
+        if progress.total_actors == 0 {
+            progress.total_actors = p.actor_names.len();
+        }
+    }
+
+    let fraction = progress.fraction();
+    for mut node in &mut bar_q {
+        node.width = Val::Percent(fraction * 100.0);
+    }
+    for mut text in &mut text_q {
+        text.0 = format!(
+            "{} / {} actors",
+            progress.loaded_actors, progress.total_actors
+        );
+    }
+
+    // Only transition once the queue is empty AND the post-actor
+    // phase has finalized — otherwise camera packages / lights would
+    // still be missing on OnEnter(InGame).
+    let done = match pending.as_deref() {
+        Some(p) => p.cursor >= p.actor_names.len() && p.post_done,
+        // No pending load (edge case: layout.actors couldn't be read,
+        // or we're on a sandbox / fallback path).  Fall through to
+        // transition immediately.
+        None => true,
+    };
+    if done {
         next_state.set(AppState::InGame);
-        *frames_waited = 0;
-    } else {
-        *frames_waited += 1;
+        *progress = LoadingProgress::default();
     }
 }
 
-fn cleanup_loading_screen(mut commands: Commands, query: Query<Entity, With<LoadingScreenEntity>>) {
+// NOTE: the chunked actor-spawn driver used to live here as
+// `drive_chunked_actor_spawn`.  It moved to
+// `oni2_loader::layout_loader::drive_chunked_actor_spawn_system`
+// and is now registered at the plugin level above, always-on, so
+// PAGE_3D backdrop loads share the same pipeline without AppState
+// churn.  See that function for behavior + scope semantics.
+
+fn cleanup_loading_screen(
+    mut commands: Commands,
+    mut progress: ResMut<LoadingProgress>,
+    query: Query<Entity, With<LoadingScreenEntity>>,
+) {
     for entity in &query {
         commands.entity(entity).despawn();
     }
+    // Reset the progress bar + drop chunked-loader resources here too,
+    // not just in `setup_scene` (OnEnter InGame).  This path also runs
+    // when we exit LoadingLayout via any OTHER transition — a future
+    // cancel/error path back to FrontEnd or Menu — so relying on
+    // InGame's setup to clean up leaks the resources when the session
+    // never reaches InGame.
+    *progress = LoadingProgress::default();
+    commands.remove_resource::<crate::oni2_loader::layout_loader::PendingLayoutLoad>();
+    commands.remove_resource::<crate::oni2_loader::layout_loader::LoadedLayoutPlayer>();
 }
 
-fn scan_layouts() -> Vec<(String, String)> {
+/// Parse `Settings/rb.gamedata` into `(folder, description)` pairs in
+/// the order the file declares them.  The first line is the entry
+/// count; subsequent lines look like `<folder> DESCRIPTION "<desc>"`.
+/// Returns an empty Vec if the file is missing or unparseable.
+///
+/// This is the legacy "campaign list" — `RunGame Level <N>` indexes
+/// into it, the frontend's `Choose_Level` LevelList renders it in
+/// the same order, and `RunGame` (no args) re-runs the layout at
+/// whichever index was last selected.
+pub fn parse_gamedata_levels() -> Vec<(String, String)> {
+    let mut out = Vec::new();
+    let Ok(content) = crate::vfs::read_to_string("Settings", "rb.gamedata") else {
+        return out;
+    };
+    for line in content.lines() {
+        let Some(desc_idx) = line.find(" DESCRIPTION \"") else {
+            continue;
+        };
+        let folder = line[..desc_idx].trim().to_string();
+        if folder.is_empty() {
+            continue;
+        }
+        let desc_start = desc_idx + " DESCRIPTION \"".len();
+        let Some(desc_end) = line[desc_start..].find('"') else {
+            continue;
+        };
+        let desc = line[desc_start..desc_start + desc_end].to_string();
+        out.push((folder, desc));
+    }
+    out
+}
+
+/// Folder-scan + rb.gamedata description merge.  Returns every layout
+/// folder present on disk, with descriptions filled in where the
+/// gamedata file names them.  Used by the legacy `--testlayout`
+/// picker, which wants to surface every layout (including dev/test
+/// scenes that aren't in rb.gamedata).  The frontend's `Choose_Level`
+/// LevelList does NOT use this — it uses `parse_gamedata_levels`
+/// directly so its ordering and contents match the campaign and
+/// `RunGame Level <idx>` lines up correctly.
+pub fn scan_layouts() -> Vec<(String, String)> {
     let target_dir = "layout".to_string();
     let mut all_folders = Vec::new();
     match crate::vfs::read_dir(&target_dir) {
@@ -201,19 +481,8 @@ fn scan_layouts() -> Vec<(String, String)> {
         }
     }
 
-    let mut descriptions = std::collections::HashMap::new();
-    if let Ok(content) = crate::vfs::read_to_string("Settings", "rb.gamedata") {
-        for line in content.lines() {
-            if let Some(desc_idx) = line.find(" DESCRIPTION \"") {
-                let folder = line[..desc_idx].trim().to_string();
-                let desc_start = desc_idx + " DESCRIPTION \"".len();
-                if let Some(desc_end) = line[desc_start..].find('"') {
-                    let desc = line[desc_start..desc_start + desc_end].to_string();
-                    descriptions.insert(folder, desc);
-                }
-            }
-        }
-    }
+    let descriptions: std::collections::HashMap<String, String> =
+        parse_gamedata_levels().into_iter().collect();
 
     let mut with_desc = Vec::new();
     let mut without_desc = Vec::new();
@@ -359,6 +628,7 @@ fn escape_to_menu(
     mut next_state: ResMut<NextState<AppState>>,
     test_anim_mode: Option<Res<crate::oni2_loader::TestAnimMode>>,
     test_entity_mode: Option<Res<crate::oni2_loader::TestEntityMode>>,
+    ogmenu_mode: Option<Res<OgMenuMode>>,
 ) {
     if keyboard.just_pressed(KeyCode::Escape) {
         if test_anim_mode.is_some() {
@@ -367,7 +637,14 @@ fn escape_to_menu(
         } else if test_entity_mode.is_some() {
             commands.remove_resource::<crate::oni2_loader::TestEntityMode>();
             next_state.set(AppState::EntityMenu);
+        } else if ogmenu_mode.is_some() {
+            // User opted into the new frontend via `--ogmenu` —
+            // return them there.
+            next_state.set(AppState::FrontEnd);
         } else {
+            // Default: drop back to the dev test-layout picker (the
+            // formerly `--testlayout` UI) so iterating on layouts
+            // stays one Esc-press away.
             next_state.set(AppState::Menu);
         }
     }

@@ -47,7 +47,7 @@ impl Default for GravityModifiers {
 
 impl GravityModifiers {
     pub fn push(&mut self, key: impl Into<String>, factor: f32) {
-        self.0.push(key, factor);
+        self.0.push(key.into(), factor);
     }
 
     pub fn remove(&mut self, key: &str) -> Option<f32> {
@@ -77,29 +77,23 @@ impl GravityModifiers {
 /// "nothing changed" path.
 pub fn gravity_sync_system(
     mut commands: Commands,
-    query: Query<(Entity, &GravityModifiers, &GravityScale)>,
+    query: Query<(Entity, &GravityModifiers, Option<&GravityScale>)>,
 ) {
     for (entity, modifiers, current_scale) in &query {
         let target = modifiers.current();
-        if (current_scale.0 - target).abs() > 0.001 {
-            let layer_summary = if modifiers.0.layer_count() == 0 {
-                String::from("[base only]")
-            } else {
-                // Dump every active layer's key for this sync — helps
-                // diagnose "who pushed this?" bugs without needing to
-                // grep through every push call site.
-                let keys: Vec<&str> = modifiers.0.layers_iter().map(|(k, _)| k.as_str()).collect();
-                format!("[{}]", keys.join(", "))
-            };
-            info!(
-                "GRAVITY SYNC: entity {:?} {:.2} → {:.2} (base={:.2}, active layers: {} {})",
-                entity,
-                current_scale.0,
-                target,
-                modifiers.0.base(),
-                modifiers.0.layer_count(),
-                layer_summary,
-            );
+        // Detect delta from whatever scale is currently on the entity.
+        // Treat "no GravityScale component" as "scale is Avian default
+        // 1.0" — if our target differs, we insert one.  Previously this
+        // query required `&GravityScale` and silently skipped entities
+        // without it, which meant `RigidBody::Dynamic` creatures spawned
+        // via CreaturePhysicsBundle (no GravityScale component in that
+        // bundle before this fix) never received the resolved modifier
+        // value — jump's 3.2× multiplier was pushed onto
+        // `GravityModifiers` but never reached Avian, and the character
+        // fell at base gravity.
+        let current = current_scale.map(|s| s.0).unwrap_or(1.0);
+        let missing = current_scale.is_none();
+        if missing || (current - target).abs() > 0.001 {
             commands.entity(entity).insert(GravityScale(target));
         }
     }

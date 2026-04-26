@@ -316,11 +316,27 @@ pub enum Pickup {
 // Actor Weapon Mounts
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct WeaponMount {
     pub parent_bone: usize,
+    /// Grip offset in Bevy-local space relative to the parent bone.
+    /// Converted at parse time from the Oni2-space value in the
+    /// actor's `.weap` file via `space::to_bevy_space_pos`.
     pub offset: Vec3,
-    pub eulers: Vec3,
+    /// Grip rotation as a Bevy quaternion (bone→weapon).  Converted
+    /// at parse time from the Oni2 Euler triple via
+    /// `space::to_bevy_space_rot_rad`.
+    pub rot: Quat,
+}
+
+impl Default for WeaponMount {
+    fn default() -> Self {
+        Self {
+            parent_bone: 0,
+            offset: Vec3::ZERO,
+            rot: Quat::IDENTITY,
+        }
+    }
 }
 
 #[derive(Component, Debug, Clone, Default)]

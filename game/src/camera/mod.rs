@@ -27,6 +27,7 @@ impl Plugin for CameraPlugin {
             .add_systems(
                 Update,
                 (
+                    systems::camera_mode_transition_tick,
                     systems::camera_mode_toggle_system,
                     systems::prototype_toggle_system,
                     systems::debug_render_camera_targets,

@@ -357,6 +357,14 @@ impl<D: SmDriver> SmRuntime<D> {
 
             // Action chain succeeded.  Apply the goto if requested.
             if let Some(target) = adv.goto_request.or(rule.goto_state) {
+                if target != self.current_state {
+                    bevy::log::info!(
+                        "FSM Transition [{}]: {} -> {}",
+                        std::any::type_name::<D>(),
+                        self.data.state_name(self.current_state),
+                        self.data.state_name(target)
+                    );
+                }
                 self.current_state = target;
                 // Cascade: some events (Timeout in InputDriver) want the
                 // destination's rules evaluated immediately so queued input

@@ -273,10 +273,18 @@ impl Default for AiParameters {
 pub struct WeaponTypeData {
     pub name: String,
     pub class: WeaponClass,
-    /// Grip offset from the wielder's hand bone.
+    /// Grip offset from the wielder's hand bone, in Bevy-local space
+    /// relative to the bone.  The .weap source stores this in Oni2 space
+    /// (left-handed, +Z forward) — the parser
+    /// (`oni2_loader::parsers::weap`) converts via
+    /// `space::to_bevy_space_pos` so downstream consumers get Bevy
+    /// coordinates directly and don't have to remember the handedness.
     pub grip_offset: Vec3,
-    /// Grip orientation Euler angles (radians).
-    pub grip_eulers: Vec3,
+    /// Grip orientation as a Bevy quaternion (bone→weapon rotation).
+    /// The .weap source stores Euler angles (radians, YXZ order in the
+    /// Oni2 convention); the parser converts via
+    /// `space::to_bevy_space_rot_rad` at parse time.
+    pub grip_rot: Quat,
     /// Entity/model name (for rendering).
     pub entity_type: Option<String>,
     /// Operational modes.  The active mode is stored by index on the Weapon.
@@ -291,7 +299,7 @@ impl Default for WeaponTypeData {
             name: String::new(),
             class: WeaponClass::BaseWeapon,
             grip_offset: Vec3::ZERO,
-            grip_eulers: Vec3::ZERO,
+            grip_rot: Quat::IDENTITY,
             entity_type: None,
             op_modes: Vec::new(),
             num_ammo_slots: 1,

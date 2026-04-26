@@ -8,6 +8,7 @@
  * helpers (setup_formation_scene, free_camera_system) for use in main.rs.
  */
 pub mod animation;
+pub mod asleep;
 pub mod components;
 pub mod curve;
 pub mod environment;
@@ -61,7 +62,8 @@ impl Plugin for Oni2LoaderPlugin {
     fn build(&self, app: &mut App) {
         use crate::menu::AppState;
 
-        app.insert_resource(DebugBoundsVisible(false))
+        app.add_plugins(asleep::AsleepPlugin)
+            .insert_resource(DebugBoundsVisible(false))
             .insert_resource(DebugSkeletonVisible(false))
             .init_resource::<DebugLightGridState>()
             .init_resource::<registries::EntityLibrary>()
@@ -105,7 +107,17 @@ impl Plugin for Oni2LoaderPlugin {
                     scroni_curve_bridge_system,
                     curve_follower_system,
                 )
-                    .run_if(in_state(AppState::InGame)),
+                    // ScrOni also ticks in FrontEnd because the
+                    // PAGE_3D backdrop (uitest layout) attaches
+                    // `$newgame:CameraMotion` to actor_Tunnel1 — that
+                    // script is what frames the menu camera.  Without
+                    // this, the script gets attached at page-start
+                    // but its `do forever` loop never runs and the
+                    // camera stays on the static CAMERA_INIT pose
+                    // (which lands the projector in the upper-left).
+                    .run_if(
+                        in_state(AppState::InGame).or(in_state(AppState::FrontEnd)),
+                    ),
             )
             .add_systems(
                 Update,

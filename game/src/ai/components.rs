@@ -29,3 +29,13 @@ pub struct AiFighter {
     pub target: Option<Entity>,
     pub manual_target: bool,
 }
+
+impl AiFighter {
+    pub fn perception_radius(&self) -> f32 {
+        30.0 // Default 30 meters
+    }
+
+    pub fn perception_fov(&self) -> f32 {
+        45.0_f32.to_radians() // Default 45 deg half-angle (90 deg total view cone)
+    }
+}

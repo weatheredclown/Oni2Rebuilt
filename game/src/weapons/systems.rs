@@ -111,7 +111,7 @@ fn resolve_aim(
     projectile_speed: f32,
     target_positions: &bevy::ecs::entity::EntityHashMap<Vec3>,
 ) -> Vec3 {
-    let tgt = match aim {
+    let mut tgt = match aim {
         AimTarget::None => return fallback_forward,
         AimTarget::Point(p) => *p,
         AimTarget::Actor { target, .. } | AimTarget::Miss { target, .. } => {
@@ -121,6 +121,22 @@ fn resolve_aim(
             }
         }
     };
+
+    // AimToMiss: offset the aim point by `dist_away` meters in a
+    // horizontal direction perpendicular to the weapon-to-target line,
+    // so the shot passes cleanly beside the target.  Legacy semantics
+    // — `dist_away` is an absolute miss distance, authored per
+    // AttackData for "scare shots" and AI-miss behaviour.
+    if let AimTarget::Miss { dist_away, .. } = aim
+        && *dist_away > 0.0
+    {
+        let to_target = tgt - weapon_pos;
+        let horiz = Vec3::new(to_target.x, 0.0, to_target.z);
+        let perp = Vec3::new(-horiz.z, 0.0, horiz.x);
+        if perp.length_squared() > 1e-6 {
+            tgt += perp.normalize() * *dist_away;
+        }
+    }
 
     match (aim, aimer) {
         (_, Aimer::Simple) => simple_aim(weapon_pos, tgt),
@@ -245,6 +261,56 @@ pub fn ammo_system(
     }
 }
 
+/// Body-turn component of aim IK.  Mirrors the "rotate character so
+/// the aim is within the arm's reach" branch of
+/// `animAnimatorComponent::TargetWithArm` at
+/// rb/src/animator/animator.cpp:1733-1742:
+///
+///     mv->ApplyWorldYRotation(extra);  // rotate body if arm can't cover
+///
+/// Full arm / spine IK (the actual bone solver) still TODO — that
+/// requires per-skeleton bone IDs and tuning data from .animatortype
+/// files.  This system covers the body-turn contribution so the
+/// character at least faces the aim target when firing at a wide
+/// angle.
+///
+/// Uses `FighterState::start_turn_to` (fight/components.rs) which
+/// feeds the existing `fighter_turn_lerp_system` — matches the legacy
+/// turn-lerp rate of `15.0` rad/s.
+pub fn weapon_aim_body_turn_system(
+    weapon_q: Query<&Weapon>,
+    transforms: Query<&GlobalTransform>,
+    mut fighter_q: Query<&mut crate::fight::components::FighterState>,
+) {
+    for weapon in &weapon_q {
+        let target_pos = match &weapon.aim {
+            AimTarget::None => continue,
+            AimTarget::Point(p) => *p,
+            AimTarget::Actor { target, .. } | AimTarget::Miss { target, .. } => {
+                match transforms.get(*target) {
+                    Ok(gt) => gt.translation(),
+                    Err(_) => continue,
+                }
+            }
+        };
+        // Owner is the wielder — turn their body to face the aim point
+        // (XZ only — vertical aim is handled by spine IK in the C++,
+        // deferred until bone-level IK lands).
+        let Ok(owner_tf) = transforms.get(weapon.owner) else {
+            continue;
+        };
+        let dir = target_pos - owner_tf.translation();
+        let dir_xz = Vec3::new(dir.x, 0.0, dir.z);
+        if dir_xz.length_squared() < 1e-4 {
+            continue;
+        }
+        let Ok(mut fs) = fighter_q.get_mut(weapon.owner) else {
+            continue;
+        };
+        fs.start_turn_to(dir_xz);
+    }
+}
+
 pub fn accuracy_system(
     mut reader: MessageReader<SetShooterAccuracyMessage>,
     mut query: Query<&mut Weapon>,
@@ -285,17 +351,19 @@ pub fn weapon_attachment_system(
 
         let mut bone_idx = 11;
         let mut grip_offset = weapon.ty.grip_offset;
-        let mut grip_eulers = weapon.ty.grip_eulers;
+        let mut grip_rot = weapon.ty.grip_rot;
 
         if let Some(mounts) = mounts {
             if let Some((out_mount, away_mount)) = mounts.mounts.get(&weapon.ty.name.to_lowercase())
             {
                 let mount = if is_drawn { out_mount } else { away_mount };
                 bone_idx = mount.parent_bone;
-                if mount.offset != Vec3::ZERO || mount.eulers != Vec3::ZERO {
-                    grip_offset = mount.offset;
-                    grip_eulers = mount.eulers;
-                }
+                // Always take the mount's Bevy-space values when present.
+                // (Previously guarded on "non-zero" to fall back to
+                // weapon-type defaults — but Quat::IDENTITY is a valid
+                // "no rotation" case and we shouldn't fall back from it.)
+                grip_offset = mount.offset;
+                grip_rot = mount.rot;
             } else if !is_drawn {
                 bone_idx = 0;
             }
@@ -307,9 +375,9 @@ pub fn weapon_attachment_system(
         {
             let (_, bone_rot, bone_pos) = joint_gtf.to_scale_rotation_translation();
 
-            let local_grip_rot =
-                Quat::from_euler(EulerRot::XYZ, grip_eulers.x, grip_eulers.y, grip_eulers.z);
-            let world_rot = bone_rot * local_grip_rot;
+            // grip_offset and grip_rot are already in Bevy space (converted
+            // at parse time — see `parsers::actor_weap` / `parsers::weap`).
+            let world_rot = bone_rot * grip_rot;
             let world_pos = bone_pos + bone_rot * grip_offset;
 
             weapon_tf.translation = world_pos;
@@ -470,18 +538,45 @@ pub fn weapon_update_system(
                 proj.muzzle_eulers,
             );
 
-            // The aim system has computed the desired firing_dir on the
-            // weapon; blend it with the muzzle's local orientation so the
-            // projectile still respects per-muzzle offsets.
-            let aim_blend = match &weapon.aim {
-                AimTarget::None => muzzle_dir_local,
-                _ => weapon.firing_dir,
+            // Since spine IK is not fully implemented yet, blending with the crosshair aim 
+            // direction causes bullets to shoot sideways out of the barrel if the player 
+            // aims up or down. Locking the firing direction to the muzzle's world orientation 
+            // ensures bullets always visually fire straight out of the gun.
+            let aim_blend = muzzle_dir_local;
+
+            // Apply shooter inaccuracy (rb/src/weapons/weapontype.cpp:1401-
+            // 1412).  accX/accY are independent random angles in
+            // [-inaccuracy, +inaccuracy] (radians).  accX rotates the
+            // direction around world-Y (horizontal spread), accY tilts
+            // it up/down.  The C++ also adds a muzzle-inherent
+            // inaccuracy component from ComputeInaccuracy(target-range,
+            // hit-prob) — we skip that for now since AccTargetRange /
+            // AccTargetHitProb aren't plumbed through the ProjectileInfo
+            // registry yet.
+            let perturbed = if weapon.shooter_inaccuracy > 0.0 {
+                let r = weapon.shooter_inaccuracy;
+                // Random accX/accY in [-r, +r].
+                let acc_x = (rand::random::<f32>() * 2.0 - 1.0) * r;
+                let acc_y = (rand::random::<f32>() * 2.0 - 1.0) * r;
+                // Horizontal rotation around Y: (x,z) spread perpendicular
+                // to firing dir's XZ component.
+                let mut d = Vec3::new(
+                    aim_blend.x + acc_x * aim_blend.z,
+                    aim_blend.y + acc_y,
+                    aim_blend.z - acc_x * aim_blend.x,
+                );
+                if d.length_squared() > 1e-8 {
+                    d = d.normalize();
+                }
+                d
+            } else {
+                aim_blend
             };
 
             commands.trigger(SpawnProjectileEvent {
                 name: proj.projectile_name.clone(),
                 position: muzzle_pos,
-                velocity: aim_blend * proj.speed,
+                velocity: perturbed * proj.speed,
                 owner: weapon.owner,
                 team: 0,
             });
@@ -498,7 +593,7 @@ pub fn weapon_update_system(
                 owner: weapon.owner,
                 projectile_name: proj.projectile_name.clone(),
                 muzzle_position: muzzle_pos,
-                muzzle_direction: aim_blend,
+                muzzle_direction: perturbed,
                 ammo_remaining: weapon.ammo_count(ammo_slot),
             });
         }

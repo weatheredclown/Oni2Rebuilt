@@ -25,8 +25,6 @@ pub struct FightVectorPlugin;
 
 impl Plugin for FightVectorPlugin {
     fn build(&self, _app: &mut App) {
-        // TODO: load FightVectorTrigger entities from level layout files.
-        // Until then, DoTriggerAtk falls back to AttackData.forward_combo (standing combo chain).
         // Triggers are passive query targets — no per-frame systems needed here.
     }
 }

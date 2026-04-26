@@ -86,6 +86,10 @@ impl Plugin for FightPlugin {
                     systems::fight_stance_timer_system,
                     // Track heading during attack for locked fighting targets
                     systems::update_fighter_strike_facing_system,
+                    // Interpolate Fighter.facing toward
+                    // FighterState.turn_final_target_dir each frame
+                    // (crFighter::TurnLerper; fighter.cpp:1377-1387).
+                    systems::fighter_turn_lerp_system,
                     // Fight stance entry/exit orchestration.  `sync` must
                     // run first so FighterState.FIGHT_MODE reflects the
                     // animator's FIGHTSTANCE flag before entry/exit read it.

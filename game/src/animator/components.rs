@@ -504,3 +504,32 @@ impl ActionPlayer {
         *self = ActionPlayer::default();
     }
 }
+
+/// Marks an entity as currently hitched to a carrier — overhead claw,
+/// crane, etc.  Mirrors the `m_PickupMtx != NULL` state of
+/// `animElbowCraneHitchComponent` (rb/src/animator/elbowcranehitch.cpp).
+/// While this component is present:
+///   • the entity's transform is force-synced to `claw_translation +
+///     claw_rotation` (minus `offset`) each frame,
+///   • physics integration should be suppressed (handled by the consumer;
+///     we store `saved_gravity_scale` so the sync system can restore it
+///     on drop),
+///   • the CRANESTRUGGLE action is expected to be playing (started by the
+///     carrier; ends when the component is removed).
+///
+/// Inserted by `animator::systems::pickup_matrix_system` on receipt of
+/// `SetPickupMatrixMessage`; removed by `drop_system` on `DropMessage`.
+#[derive(Component, Debug, Clone, Copy)]
+pub struct PickupHitched {
+    /// Carrier's current world-space translation (updated every tick the
+    /// carrier sends a fresh SetPickupMatrixMessage).
+    pub claw_translation: bevy::prelude::Vec3,
+    /// Carrier's current world-space rotation.
+    pub claw_rotation: bevy::prelude::Quat,
+    /// Local offset on the picked-up entity that the claw grabs onto —
+    /// the claw's world position lands at `entity.pos + claw_rotation *
+    /// offset`.  Defaults to ZERO if the carrier doesn't specify.  C++
+    /// reference: `mat.d -= GetOffset()` in HandleDrop.
+    pub offset: bevy::prelude::Vec3,
+}
+

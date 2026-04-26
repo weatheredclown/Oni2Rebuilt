@@ -56,6 +56,13 @@ pub struct CreaturePhysicsBundle {
     pub locked_axes: LockedAxes,
     pub linear_velocity: LinearVelocity,
     pub shape_caster: ShapeCaster,
+    /// Explicit GravityScale so `animator::gravity::gravity_sync_system`
+    /// can see and update it.  Without this component, Avian still uses
+    /// a default 1.0 scale but the sync query skips the entity — so
+    /// jump's `jump=3.2` gravity multiplier never reaches Avian and the
+    /// character falls at base gravity (floaty).  Default 1.0 here
+    /// mirrors the `GravityModifiers` base.
+    pub gravity_scale: GravityScale,
 }
 
 impl CreaturePhysicsBundle {
@@ -79,6 +86,7 @@ impl CreaturePhysicsBundle {
                 Dir3::NEG_Y,
             )
             .with_max_distance(0.3),
+            gravity_scale: GravityScale(1.0),
         }
     }
 }

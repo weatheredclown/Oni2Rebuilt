@@ -95,6 +95,14 @@ pub struct LayoutActor {
     /// `SUB_ATTRIBUTE(Pad, FSM)` / `bhPadTuningData::FSM` pipeline.  `.fsm`
     /// extension is stripped at parse time.
     pub pad_fsm: Option<String>,
+    /// Fight vector trigger radius
+    pub fvt_radius: Option<f32>,
+    /// Fight vector trigger directional mode
+    pub fvt_directional: Option<bool>,
+    /// Fight vector trigger offset vector
+    pub fvt_offset: Option<Vec3>,
+    /// Fight vector trigger attack alias
+    pub fvt_attack: Option<String>,
 }
 
 /// Resolve the full template chain for an actor XML file.
@@ -239,6 +247,7 @@ pub fn parse_actor_xml(dir: &str, filename: &str, template_dir: &str) -> Option<
     let broadcast_block = extract_component(&chain, has_components_xml, "BroadcastTrigger");
     let fight_ai_block = extract_component(&chain, has_components_xml, "FightAI")
         .or_else(|| extract_component(&chain, has_components_xml, "FightAi"));
+    let fight_vector_block = extract_component(&chain, has_components_xml, "FightVectorTrigger");
 
     // Extract Animator props
     let mut animator_type: Option<String> = None;
@@ -418,6 +427,27 @@ pub fn parse_actor_xml(dir: &str, filename: &str, template_dir: &str) -> Option<
         attack_table = Some(v);
     }
 
+    let mut fvt_radius: Option<f32> = None;
+    let mut fvt_directional: Option<bool> = None;
+    let mut fvt_offset: Option<Vec3> = None;
+    let mut fvt_attack: Option<String> = None;
+    if let Some(block) = fight_vector_block {
+        if let Some(v) = extract_xml_attr(&block, "Radius") {
+            fvt_radius = v.parse().ok();
+        }
+        if let Some(v) = extract_xml_attr(&block, "Directional") {
+            fvt_directional = Some(v == "1" || v.eq_ignore_ascii_case("true"));
+        } else {
+            fvt_directional = Some(true); // Default to directional
+        }
+        if let Some(v) = extract_xml_attr(&block, "Offset").and_then(|s| parse_vec3(&s)) {
+            fvt_offset = Some(space::to_bevy_space_pos(v));
+        }
+        if let Some(v) = extract_xml_attr(&block, "Attack") {
+            fvt_attack = Some(v);
+        }
+    }
+
     Some(LayoutActor {
         entity_type,
         position,
@@ -452,5 +482,9 @@ pub fn parse_actor_xml(dir: &str, filename: &str, template_dir: &str) -> Option<
         parent_bone,
         weapon_string,
         pad_fsm,
+        fvt_radius,
+        fvt_directional,
+        fvt_offset,
+        fvt_attack,
     })
 }

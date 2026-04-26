@@ -335,7 +335,10 @@ pub fn behavior_attach_system(
 /// `BehaviorOutput.started_behavior` into a `StartBehaviorMessage`, then
 /// clears the per-tick request flags (pulse semantics).
 pub fn behavior_fsm_tick_system(
-    mut query: Query<(Entity, &mut BehaviorRuntime)>,
+    mut query: Query<
+        (Entity, &mut BehaviorRuntime),
+        Without<crate::oni2_loader::components::ActorAsleep>,
+    >,
     mut start_writer: MessageWriter<StartBehaviorMessage>,
 ) {
     for (entity, mut rt) in &mut query {
@@ -512,19 +515,22 @@ pub fn behavior_start_dispatch_system(
 /// authored graph.
 pub fn behavior_update_dispatch_system(
     time: Res<Time>,
-    mut query: Query<(
-        Entity,
-        &mut BehaviorRuntime,
-        &mut ActiveBehavior,
-        &mut Transform,
-        &mut LinearVelocity,
-        &mut Fighter,
-        Option<&mut crate::ai::components::AiFighter>,
-        Option<&mut crate::ai::fsm::AiPadCommands>,
-        Option<&crate::oni2_loader::animation::Oni2AnimLibrary>,
-        Option<&mut crate::oni2_loader::animation::Oni2AnimState>,
-        Option<&mut crate::fightai::components::AttackRuntime>,
-    )>,
+    mut query: Query<
+        (
+            Entity,
+            &mut BehaviorRuntime,
+            &mut ActiveBehavior,
+            &mut Transform,
+            &mut LinearVelocity,
+            &mut Fighter,
+            Option<&mut crate::ai::components::AiFighter>,
+            Option<&mut crate::ai::fsm::AiPadCommands>,
+            Option<&crate::oni2_loader::animation::Oni2AnimLibrary>,
+            Option<&mut crate::oni2_loader::animation::Oni2AnimState>,
+            Option<&mut crate::fightai::components::AttackRuntime>,
+        ),
+        Without<crate::oni2_loader::components::ActorAsleep>,
+    >,
     target_transforms: Query<&GlobalTransform>,
     mut end_writer: MessageWriter<EndBehaviorMessage>,
 ) {

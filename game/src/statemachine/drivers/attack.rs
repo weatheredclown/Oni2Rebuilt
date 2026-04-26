@@ -124,12 +124,7 @@ impl AtkAction for ActionAttack {
         "attack"
     }
     fn start(&mut self, _ctx: &mut AttackCtx, output: &mut AttackOutput) -> bool {
-        let anim = self
-            .args
-            .split_whitespace()
-            .next()
-            .unwrap_or("")
-            .to_string();
+        let anim = parse_string_arg(&self.args);
         if anim.is_empty() {
             bevy::log::warn!("ActionAttack: missing anim alias in args '{}'", self.args);
             return false;
@@ -159,6 +154,19 @@ impl AtkAction for ActionAttack {
     }
 }
 
+/// Utility to extract the first string token from an action argument string.
+pub fn parse_string_arg(args: &str) -> String {
+    args.split_whitespace().next().unwrap_or("").to_string()
+}
+
+/// Utility to extract the first f32 from an action argument string.
+pub fn parse_f32_arg(args: &str, default_val: f32) -> f32 {
+    args.split_whitespace()
+        .next()
+        .and_then(|s| s.parse::<f32>().ok())
+        .unwrap_or(default_val)
+}
+
 // ActionWait — elapsed-time wait with dt accumulation.
 pub struct ActionWait {
     pub args: String,
@@ -179,12 +187,7 @@ impl AtkAction for ActionWait {
         "wait"
     }
     fn start(&mut self, _ctx: &mut AttackCtx, _output: &mut AttackOutput) -> bool {
-        self.duration = self
-            .args
-            .split_whitespace()
-            .next()
-            .and_then(|s| s.parse::<f32>().ok())
-            .unwrap_or(0.0);
+        self.duration = parse_f32_arg(&self.args, 0.0);
         self.elapsed = 0.0;
         true
     }
@@ -194,13 +197,46 @@ impl AtkAction for ActionWait {
     }
 }
 
+pub struct ActionDistance {
+    pub args: String,
+    target_distance: f32,
+}
+impl ActionDistance {
+    fn new(args: String) -> Self {
+        Self {
+            args,
+            target_distance: 1.0,
+        }
+    }
+}
+
+impl AtkAction for ActionDistance {
+    fn name(&self) -> &str {
+        "distance"
+    }
+    fn start(&mut self, _ctx: &mut AttackCtx, output: &mut AttackOutput) -> bool {
+        self.target_distance = parse_f32_arg(&self.args, 0.0);
+        // Dispatch edge request that we should begin following the target
+        output.start_following_distance = Some(self.target_distance);
+        true
+    }
+    fn update(&mut self, ctx: &mut AttackCtx, _output: &mut AttackOutput, _dt: f32) -> bool {
+        // Complete the state once we get within the requested distance
+        if let Some(dist) = ctx.target_distance_current {
+            if dist <= self.target_distance {
+                return true;
+            }
+        }
+        false
+    }
+}
+
 atk_action_stub!(ActionCombo, "combo");
 atk_action_stub!(ActionGrapple, "grapple");
 atk_action_stub!(ActionCtrlGrapple, "ctrlgrapple");
 atk_action_stub!(ActionGrapplePush, "grapplepush");
 atk_action_stub!(ActionEvade, "evade");
 atk_action_stub!(ActionJump, "jump");
-atk_action_stub!(ActionDistance, "distance");
 atk_action_stub!(ActionSideMove, "sidemove");
 atk_action_stub!(ActionAnim, "anim");
 // ActionWait has its own real impl above.
@@ -249,7 +285,7 @@ pub fn build_atk_action(name: &str, args: &str) -> Box<dyn AtkAction> {
         "grapplepush" => Box::new(ActionGrapplePush { args }),
         "evade" => Box::new(ActionEvade { args }),
         "jump" => Box::new(ActionJump { args }),
-        "distance" => Box::new(ActionDistance { args }),
+        "distance" => Box::new(ActionDistance::new(args)),
         "sidemove" => Box::new(ActionSideMove { args }),
         "anim" => Box::new(ActionAnim { args }),
         "wait" => Box::new(ActionWait::new(args)),
@@ -351,6 +387,8 @@ pub struct AttackCtx {
     pub anim_num_frames: i32,
     pub anim_current_time: f32,
     pub anim_looping: bool,
+    /// Distance to the entity's fight target, updated by the host system before tick()
+    pub target_distance_current: Option<f32>,
 }
 
 impl Default for AttackCtx {
@@ -364,6 +402,7 @@ impl Default for AttackCtx {
             anim_num_frames: 0,
             anim_current_time: 0.0,
             anim_looping: false,
+            target_distance_current: None,
         }
     }
 }
@@ -394,6 +433,8 @@ pub struct AttackOutput {
     pub evade_anim: Option<(String, bool)>,
     /// Script-requested custom animation alias for the current tick.
     pub custom_anim: Option<String>,
+    /// Script-requested intent for pathfinding/steering toward a target distance.
+    pub start_following_distance: Option<f32>,
 }
 
 // ---------------------------------------------------------------------------
@@ -496,6 +537,7 @@ impl SmDriver for AttackDriver {
         output.block_anim = None;
         output.evade_anim = None;
         output.custom_anim = None;
+        output.start_following_distance = None;
         output.events.clear();
 
         let Some(mut action) = ctx.current_action.take() else {

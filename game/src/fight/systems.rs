@@ -14,7 +14,6 @@
  * fight_stance_timer_system    — leave fight stance after inactivity
  * rotation_notches_system      — apply queued rotation notch events to transforms
  */
-use avian3d::prelude::*;
 use bevy::prelude::*;
 
 use crate::combat::components::{
@@ -34,6 +33,11 @@ use super::events::{
 /// Radians per notch (PI/4 = 45°).
 pub const NOTCH_RADIANS: f32 = std::f32::consts::FRAC_PI_4;
 
+/// Rate at which TurnLerper advances each second.  Legacy constant
+/// `scale = 15.0f` in rb/src/fight/fighter.cpp:1381 — gives a ~67ms
+/// settle time from turn-start to alignment.
+pub const TURN_LERP_SCALE: f32 = 15.0;
+
 // ---------------------------------------------------------------------------
 // fighter_state_update_system
 // ---------------------------------------------------------------------------
@@ -47,16 +51,25 @@ pub const NOTCH_RADIANS: f32 = std::f32::consts::FRAC_PI_4;
 ///     invulnerability_start_phase
 pub fn fighter_state_update_system(
     time: Res<Time>,
-    mut query: Query<(
-        &mut FighterState,
-        Option<&FighterType>,
-        Option<&Oni2AnimState>,
-    )>,
+    mut query: Query<
+        (
+            &mut FighterState,
+            Option<&FighterType>,
+            Option<&Oni2AnimState>,
+        ),
+        Without<crate::oni2_loader::components::ActorAsleep>,
+    >,
 ) {
     let dt = time.delta_secs();
 
     for (mut fs, ft_opt, anim_opt) in &mut query {
         fs.tick_frame_flags(dt);
+        // New frame — clear the per-frame pending-hit dedup list.
+        // Mirrors `NumPending = 0;` at rb/src/fight/fighter.cpp:1332
+        // (called once per update before strike probes run).  Keeping
+        // this at the top of fighter_state_update ensures the list is
+        // empty before any strike evaluation this frame populates it.
+        fs.reset_targets_pending();
 
         // Super meter decay
         let decay_rate = ft_opt
@@ -548,6 +561,44 @@ pub fn attack_spin_system(
 
 /// Forces a fighter to face their registered strike_target while an attack
 /// animation is active, ensuring proper locked orientations during combos.
+/// Ticks any pending turn lerp on each FighterState, interpolating
+/// `Fighter.facing` toward `turn_final_target_dir` by
+/// `dt * TURN_LERP_SCALE` per frame.  Mirrors the matrix-interpolation
+/// block at rb/src/fight/fighter.cpp:1377-1387.  Callers invoke
+/// `FighterState::start_turn_to(dir)` to trigger a lerp; this system
+/// drives it to completion.
+pub fn fighter_turn_lerp_system(
+    time: Res<Time>,
+    mut query: Query<
+        (&mut Fighter, &mut FighterState),
+        Without<crate::oni2_loader::components::ActorAsleep>,
+    >,
+) {
+    let dt = time.delta_secs();
+    for (mut fighter, mut fs) in &mut query {
+        if fs.turn_lerper >= 1.0 {
+            continue;
+        }
+        let target = fs.turn_final_target_dir;
+        if target.length_squared() < 1e-6 {
+            // Stale / invalid target — just finish.
+            fs.turn_lerper = 1.0;
+            continue;
+        }
+        // Match the C++ exactly: advance the lerper, then lerp from
+        // CURRENT facing toward target by the *new* lerper value.  Each
+        // frame converges further because the starting point is the
+        // previous frame's result (ExponentialSmoothing pattern).
+        fs.turn_lerper = (fs.turn_lerper + dt * TURN_LERP_SCALE).min(1.0);
+        let blended = fighter
+            .facing
+            .lerp(target, fs.turn_lerper)
+            .try_normalize()
+            .unwrap_or(fighter.facing);
+        fighter.facing = blended;
+    }
+}
+
 pub fn update_fighter_strike_facing_system(
     mut transform_query: Query<&mut Transform>,
     mut attackers: Query<(

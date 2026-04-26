@@ -15,9 +15,10 @@ pub fn exec(ctx: &mut OpsCtx, stmt: &Stmt) -> bool {
             ctx.sys_request(SysRequest::CameraReset);
             true
         }
-        Stmt::CameraMode(expr) => {
-            let mode = ctx.eval_string(expr);
-            ctx.sys_request(SysRequest::CameraMode(mode));
+        Stmt::CameraMode { mode, time } => {
+            let mode_str = ctx.eval_string(mode);
+            let dur = time.as_ref().map(|t| ctx.eval_float(t));
+            ctx.sys_request(SysRequest::CameraMode(mode_str, dur));
             true
         }
         Stmt::CameraLetterbox(expr) => {

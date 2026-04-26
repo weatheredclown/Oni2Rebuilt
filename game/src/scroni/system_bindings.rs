@@ -34,6 +34,8 @@ pub fn scroni_sys_event_observer(
     mut scroni_text_state: ResMut<ScroniTextState>,
     time: Res<Time>,
     screen_fade: Option<Res<ScreenFadeState>>,
+    frontend_levels: Option<Res<crate::frontend::runtime::FrontendLevelList>>,
+    mut next_app_state: ResMut<NextState<crate::menu::AppState>>,
     mut ai_target_query: Query<&mut crate::ai::components::AiFighter>,
     mut fight_runtime_query: Query<&mut crate::fightai::components::FightRuntime>,
     mut behavior_runtime_query: Query<&mut crate::behavior::BehaviorRuntime>,
@@ -254,15 +256,32 @@ pub fn scroni_sys_event_observer(
                 channel.script_override_transform = None;
             }
         }
-        ScrOniSysEvent::CameraMode(mode) => {
-            let active = match mode.as_str() {
-                "navigation" => crate::camera::components::ActiveCameraMode::GameNavigation,
+        ScrOniSysEvent::CameraMode(mode, time) => {
+            // Scripts use `script` (scripted camera) / `game` (player
+            // control) — see rb/src/scroni/cameracommand.cpp:50.  The
+            // navigation/fight/targeting strings are legacy internal names
+            // we still honor for back-compat.
+            let active = match mode.to_ascii_lowercase().as_str() {
+                "script" => crate::camera::components::ActiveCameraMode::Script,
+                "game" | "navigation" => {
+                    crate::camera::components::ActiveCameraMode::GameNavigation
+                }
                 "fight" => crate::camera::components::ActiveCameraMode::GameFighting,
                 "targeting" => crate::camera::components::ActiveCameraMode::GameTargeting,
                 _ => crate::camera::components::ActiveCameraMode::GameNavigation,
             };
+            let dur = time.unwrap_or(0.0).max(0.0);
             for (_, mut controller, _, _, _) in &mut camera_query {
-                controller.active_mode = active;
+                if dur > 0.0 {
+                    controller.next_mode = Some(active);
+                    controller.transition_time = dur;
+                    controller.transition_time_remaining = dur;
+                } else {
+                    controller.active_mode = active;
+                    controller.next_mode = None;
+                    controller.transition_time = 0.0;
+                    controller.transition_time_remaining = 0.0;
+                }
             }
         }
         ScrOniSysEvent::CameraSetFOV(fov, dur) => {
@@ -368,6 +387,44 @@ pub fn scroni_sys_event_observer(
                 seq.rail_duration = dur;
                 seq.rail_time_elapsed = 0.0;
                 commands.entity(ent).insert(seq);
+            }
+        }
+        ScrOniSysEvent::RunGame { level, save_point } => {
+            // Mirrors `DoRunGame` (rb/src/scroni/XCommand.cpp:1476).
+            // Legacy `GAMEDATA.SetCurrentLayoutIndex(idx)` +
+            // `RestartLevel()` is, in our world, "look up the layout
+            // folder by index in the FrontendLevelList, stash it as
+            // `SelectedLayout`, and transition to LoadingLayout".
+            //
+            // `level == None` (bare `RunGame`) means re-run the
+            // current layout — we need a `SelectedLayout` already in
+            // place to honor that.  If neither is available, log a
+            // warning and ignore.
+            //
+            // `save_point` is intentionally ignored for now — there's
+            // no save system, and the LevelList path doesn't surface
+            // save-point selection either.  Once a save backend lands
+            // this is where it'd be passed through.
+            let _ = save_point;
+            let resolved_layout: Option<String> = match level {
+                Some(idx) => frontend_levels
+                    .as_ref()
+                    .and_then(|lst| lst.entries.get(idx as usize))
+                    .map(|(folder, _)| folder.clone()),
+                None => None, // re-run current — handled below via existing SelectedLayout
+            };
+            if let Some(folder) = resolved_layout {
+                info!("scroni RunGame: launching '{}' (level idx {:?})", folder, level);
+                commands.insert_resource(crate::menu::SelectedLayout(folder));
+                next_app_state.set(crate::menu::AppState::LoadingLayout);
+            } else if level.is_none() {
+                info!("scroni RunGame: re-running current layout");
+                next_app_state.set(crate::menu::AppState::LoadingLayout);
+            } else {
+                warn!(
+                    "scroni RunGame: level idx {:?} out of range / no FrontendLevelList",
+                    level
+                );
             }
         }
         ScrOniSysEvent::TextureMovie {
@@ -896,10 +953,14 @@ pub fn scroni_sys_event_observer(
                 settings = settings.with_speed(start_pitch);
             }
 
+            // Tag with InGameEntity so the `cleanup_game` system
+            // (menu.rs) despawns them on AppState transitions — prevents
+            // looping ambients from surviving a level unload.
             let mut ent = commands.spawn((
                 bevy::audio::AudioPlayer(source_handle),
                 settings,
                 ActiveAmbientSound { handle },
+                crate::menu::InGameEntity,
             ));
 
             if let Some((start_vol, end_vol, duration)) = volume_ramp {
@@ -966,6 +1027,14 @@ pub fn scroni_sys_event_observer(
                     commands.entity(entity).try_despawn();
                 }
             }
+        }
+        ScrOniSysEvent::AmbientSoundStopAll => {
+            let mut count = 0;
+            for (entity, _active_sound) in &ambient_sound_query {
+                commands.entity(entity).try_despawn();
+                count += 1;
+            }
+            info!("VM: AmbientSound all Stop — despawned {} sound(s)", count);
         }
         ScrOniSysEvent::Destroy(target) => {
             info!(

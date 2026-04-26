@@ -31,7 +31,13 @@ pub fn parse_weap_content(content: &str) -> HashMap<String, Arc<WeaponTypeData>>
 
         if p.start_anonymous() {
             while !p.endblock() {
-                if p.start("OpMode") {
+                // Use `start_if_peek` throughout this parser — `start`
+                // skips unrecognized tokens, which was silently
+                // swallowing `EntityType` / `GripOffset` / `GripEulers`
+                // after the final OpMode was processed (the last
+                // `while p.start("FiringFX")` call would march through
+                // everything looking for one more FiringFX).
+                if p.start_if_peek("OpMode") {
                     let mut mode = OperationalMode::default();
                     mode.ammo_slot = p.read_i32("AmmoSlot", 0);
                     mode.ammo_type = p.read_string_opt("AmmoType");
@@ -65,7 +71,7 @@ pub fn parse_weap_content(content: &str) -> HashMap<String, Arc<WeaponTypeData>>
 
                     mode.shooter_standard_range = p.read_float("ShooterStandardRange", 25.0);
 
-                    if p.start("AIParameters") {
+                    if p.start_if_peek("AIParameters") {
                         let mut ai = AiParameters::default();
                         ai.minimum_range = p.read_float("MinimumRange", ai.minimum_range);
                         ai.maximum_range = p.read_float("MaximumRange", ai.maximum_range);
@@ -89,7 +95,7 @@ pub fn parse_weap_content(content: &str) -> HashMap<String, Arc<WeaponTypeData>>
 
                     mode.first_state.min_charge_time = p.read_float("MinChargeTime", 0.0);
 
-                    if p.start("Projectile") {
+                    if p.start_if_peek("Projectile") {
                         let mut proj = ProjectileInfo::default();
                         proj.projectile_name = p.read_string("ProjectileType", "");
                         proj.muzzle_offset = p.read_vec3("MuzzleOffset", Vec3::ZERO);
@@ -106,7 +112,7 @@ pub fn parse_weap_content(content: &str) -> HashMap<String, Arc<WeaponTypeData>>
                     }
 
                     // Repeated FiringFX
-                    while p.start("FiringFX") {
+                    while p.start_if_peek("FiringFX") {
                         let mut fx = EffectInfo::default();
                         fx.fx_name = p.read_string("FXType", "");
                         fx.offset = p.read_vec3("Offset", Vec3::ZERO);
@@ -117,13 +123,13 @@ pub fn parse_weap_content(content: &str) -> HashMap<String, Arc<WeaponTypeData>>
                         }
                     }
 
-                    if p.start("ChargeStates") {
+                    if p.start_if_peek("ChargeStates") {
                         while !p.endblock() {
                             if p.start_anonymous() {
                                 let mut cs = ChargeState::default();
                                 cs.min_charge_time = p.read_float("MinChargeTime", 0.0);
 
-                                if p.start("Projectile") {
+                                if p.start_if_peek("Projectile") {
                                     let mut proj = ProjectileInfo::default();
                                     proj.projectile_name = p.read_string("ProjectileType", "");
                                     proj.muzzle_offset = p.read_vec3("MuzzleOffset", Vec3::ZERO);
@@ -140,7 +146,7 @@ pub fn parse_weap_content(content: &str) -> HashMap<String, Arc<WeaponTypeData>>
                                     }
                                 }
 
-                                while p.start("FiringFX") {
+                                while p.start_if_peek("FiringFX") {
                                     let mut fx = EffectInfo::default();
                                     fx.fx_name = p.read_string("FXType", "");
                                     fx.offset = p.read_vec3("Offset", Vec3::ZERO);
@@ -151,7 +157,7 @@ pub fn parse_weap_content(content: &str) -> HashMap<String, Arc<WeaponTypeData>>
                                     }
                                 }
 
-                                while p.start("ChargingFX") {
+                                while p.start_if_peek("ChargingFX") {
                                     let mut fx = EffectInfo::default();
                                     fx.fx_name = p.read_string("FXType", "");
                                     fx.offset = p.read_vec3("Offset", Vec3::ZERO);
@@ -178,9 +184,12 @@ pub fn parse_weap_content(content: &str) -> HashMap<String, Arc<WeaponTypeData>>
                 } else if p.peek() == Some("EntityType") {
                     w.entity_type = p.read_string_opt("EntityType");
                 } else if p.peek() == Some("GripOffset") {
-                    w.grip_offset = p.read_vec3("GripOffset", Vec3::ZERO);
+                    // Oni2→Bevy at parse boundary.
+                    let v = p.read_vec3("GripOffset", Vec3::ZERO);
+                    w.grip_offset = crate::oni2_loader::utils::space::to_bevy_space_pos(v);
                 } else if p.peek() == Some("GripEulers") {
-                    w.grip_eulers = p.read_vec3("GripEulers", Vec3::ZERO);
+                    let e = p.read_vec3("GripEulers", Vec3::ZERO);
+                    w.grip_rot = crate::oni2_loader::utils::space::to_bevy_space_rot_rad(e);
                 } else {
                     p.next();
                 }
