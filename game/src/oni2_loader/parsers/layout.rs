@@ -9,15 +9,49 @@ use crate::oni2_loader::utils::parse::parse_vec3;
 use crate::oni2_loader::utils::space;
 use bevy::prelude::*;
 
-/// A parsed layout light entry.
+/// A parsed layout light entry.  Mirrors the legacy
+/// `lvlLight::Load` schema (rb/src/rblevel/lightmgr.cpp:53), which
+/// in turn delegates to `fxLight::Load` (rb/src/fx/light.cpp:302) →
+/// `lgtLight::Load` (rb/src/fx/light.cpp:156).  All vectors are
+/// post-converted to Bevy space (right-handed, -Z forward) inside
+/// `parse_lights_file`.
 pub struct LayoutLight {
     pub name: String,
+    /// Legacy `lgtLightType` name, lowercased.  Possible values:
+    /// `"ambient"`, `"directional"`, `"point"`, `"spot"`.
     pub light_type: String,
     pub position: Vec3,
     pub intensity: f32,
+    /// Unit vector indicating where the light points (only meaningful
+    /// for `directional` and `spot`).
     pub direction: Vec3,
+    /// Half-angle of the spot cone in DEGREES (for `spot` only).
     pub spot_angle: f32,
+    /// Linear-space RGBA, 0–1.
     pub color: [f32; 4],
+    /// `CastShadowRange` from `lvlLight::Load`.  Legacy:
+    /// `bool CastShadow() const { return ( m_CastShadowRange > 0.0f ); }`
+    /// (rb/src/rblevel/lightmgr.h:55).  Zero means the light still
+    /// illuminates surfaces but is NOT registered with the shadow
+    /// manager — designers used this for cheap "fill" lights that
+    /// shine through geometry without paying the per-light shadow
+    /// cost.  Default in legacy ctor is 15.0.
+    pub cast_shadow_range: f32,
+    /// True when the light entry includes the `fxLight` token, which
+    /// means it's also a visible glow source (lens-flare-ish corona)
+    /// in addition to a real light.  See `LightGlowType` /
+    /// `GlowIntensityScale`.  Legacy: `fxLight::Load`
+    /// (rb/src/fx/light.cpp:302).
+    pub fx_light: bool,
+    /// Named `fxLightGlow` effect type (e.g. `"LightConeDown"`).
+    /// Resolved against the legacy `fxEffectTypeManager` registry to
+    /// pick a billboard/sprite for the glow.  Only set when
+    /// `fx_light` is true.
+    pub light_glow_type: Option<String>,
+    /// Multiplier on the glow's render intensity (NOT the light's
+    /// own intensity).  Legacy stores per-fxLight; rendered as
+    /// `intensity * glow_intensity_scale`.
+    pub glow_intensity_scale: f32,
 }
 
 /// A parsed environment file.
@@ -46,6 +80,32 @@ pub struct LayoutFogFile {
     pub lights: Vec<LayoutFogLight>,
 }
 
+/// Parse `<dir>/layout.lights`.  Format mirrors the legacy
+/// `lvlLight::Load` schema (rb/src/rblevel/lightmgr.cpp:53), which
+/// chains through `fxLight::Load` (rb/src/fx/light.cpp:302) →
+/// `lgtLight::Load` (rb/src/fx/light.cpp:156).
+///
+/// Per-light schema (in source order, all whitespace-separated):
+/// ```text
+/// Light <name> {
+///     Type <ambient|directional|point|spot>
+///     Position <x y z>
+///     Intensity <f>
+///     Direction <x y z>
+///     SpotAngle <degrees>
+///     Color <r g b a>
+///     [ fxLight                        # optional glow block
+///       LightGlowType <fx-effect-name>
+///       GlowIntensityScale <f>
+///     ]
+///     CastShadowRange <f>              # 0 = "fill light, no shadows"
+/// }
+/// ```
+///
+/// `Position` and `Direction` are returned in Bevy space (right-handed,
+/// -Z forward) — converted at the parse boundary via
+/// `space::to_bevy_space_pos` per the project's "convert at the
+/// boundary" rule.  Downstream consumers see Bevy-space data only.
 pub fn parse_lights_file(dir: &str) -> Vec<LayoutLight> {
     let content = match crate::vfs::read_to_string(dir, "layout.lights") {
         Ok(c) => c,
@@ -75,16 +135,31 @@ pub fn parse_lights_file(dir: &str) -> Vec<LayoutLight> {
             direction: Vec3::Y,
             spot_angle: 45.0,
             color: [1.0, 1.0, 1.0, 1.0],
+            // Match the legacy `lvlLight` ctor default (lightmgr.cpp:40);
+            // overridden by the file's own `CastShadowRange` line if
+            // present, which it always is in shipped layouts.
+            cast_shadow_range: 15.0,
+            fx_light: false,
+            light_glow_type: None,
+            glow_intensity_scale: 1.0,
         };
 
-        // Parse fields until closing brace
+        // Parse fields until closing brace.
         for line in lines.by_ref() {
             let field = line.trim();
             if field == "}" {
                 break;
             }
+            // The `fxLight` token is a no-value flag — mark and continue.
+            // Subsequent lines are `LightGlowType` and `GlowIntensityScale`.
+            if field == "fxLight" {
+                light.fx_light = true;
+                continue;
+            }
             if let Some(val) = field.strip_prefix("Type ") {
-                light.light_type = val.trim().to_string();
+                // Lowercase so downstream match arms can use a single
+                // canonical form regardless of file casing.
+                light.light_type = val.trim().to_lowercase();
             } else if let Some(val) = field.strip_prefix("Position ") {
                 if let Some(v) = parse_vec3(val.trim()) {
                     light.position = v;
@@ -105,13 +180,18 @@ pub fn parse_lights_file(dir: &str) -> Vec<LayoutLight> {
                 if parts.len() >= 4 {
                     light.color = [parts[0], parts[1], parts[2], parts[3]];
                 }
+            } else if let Some(val) = field.strip_prefix("LightGlowType ") {
+                light.light_glow_type = Some(val.trim().to_string());
+            } else if let Some(val) = field.strip_prefix("GlowIntensityScale ") {
+                light.glow_intensity_scale = val.trim().parse().unwrap_or(1.0);
+            } else if let Some(val) = field.strip_prefix("CastShadowRange ") {
+                light.cast_shadow_range = val.trim().parse().unwrap_or(15.0);
             }
         }
-        // Convert from left-handed to right-handed: 180° Y rotation (negate X and Z)
-        light.position.x = -light.position.x;
-        light.position.z = -light.position.z;
-        light.direction.x = -light.direction.x;
-        light.direction.z = -light.direction.z;
+        // Convert position + direction at the parse boundary so
+        // downstream code sees Bevy-space data only.
+        light.position = space::to_bevy_space_pos(light.position);
+        light.direction = space::to_bevy_space_pos(light.direction);
         lights.push(light);
     }
     lights

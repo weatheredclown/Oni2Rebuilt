@@ -157,6 +157,21 @@ impl Default for DebugLightGridState {
     }
 }
 
+/// OnExit(InGame) cleanup.  `cleanup_game` despawns the lights
+/// themselves (they're tagged InGameEntity), but the
+/// `DebugLightGridState` Resource isn't touched by that — it would
+/// keep its `lights` HashMap of now-stale Entity IDs across the
+/// layout transition.  Next layout's `update_debug_light_grid` would
+/// then try to despawn dead entities (warning spam) and only
+/// re-spawn the cells whose positions don't match the previous
+/// layout's player path, leaving "ghost" cells from old layouts
+/// hanging around the new one.  Clearing the HashMap on exit makes
+/// the next layout's first pass spawn a fresh grid from scratch.
+pub fn reset_debug_light_grid_on_exit(mut state: ResMut<DebugLightGridState>) {
+    state.lights.clear();
+    state.last_player_y = 0.0;
+}
+
 /// System: Toggle procedural light grid on/off using F6
 pub fn toggle_debug_light_grid(
     keyboard: Res<ButtonInput<KeyCode>>,
@@ -252,6 +267,15 @@ pub fn update_debug_light_grid(
                         ..default()
                     },
                     Transform::from_xyz(world_x, height, world_z),
+                    // Without this tag, the procedural-grid lights
+                    // outlive their owning layout — so loading a new
+                    // level inherits stale lights at positions
+                    // anchored to the OLD player path.  Tagging
+                    // makes cleanup_game catch them on InGame exit;
+                    // `reset_debug_light_grid_on_exit` clears the
+                    // companion HashMap so the next session starts
+                    // clean.
+                    crate::menu::InGameEntity,
                 ))
                 .id()
         });

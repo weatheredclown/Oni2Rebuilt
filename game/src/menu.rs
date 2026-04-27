@@ -410,7 +410,7 @@ fn cleanup_loading_screen(
     query: Query<Entity, With<LoadingScreenEntity>>,
 ) {
     for entity in &query {
-        commands.entity(entity).despawn();
+        commands.entity(entity).try_despawn();
     }
     // Reset the progress bar + drop the PendingLayoutLoad resource here.
     // We DO NOT drop LoadedLayoutPlayer here because `setup_scene` (OnEnter InGame)
@@ -649,19 +649,19 @@ fn escape_to_menu(
 
 fn cleanup_game(mut commands: Commands, query: Query<Entity, With<InGameEntity>>) {
     for entity in &query {
-        commands.entity(entity).despawn();
+        commands.entity(entity).try_despawn();
     }
 }
 
 fn cleanup_menu(mut commands: Commands, query: Query<Entity, With<MenuRoot>>) {
     for entity in &query {
-        commands.entity(entity).despawn();
+        commands.entity(entity).try_despawn();
     }
 }
 
 fn cleanup_anim_menu(mut commands: Commands, query: Query<Entity, With<AnimMenuRoot>>) {
     for entity in &query {
-        commands.entity(entity).despawn();
+        commands.entity(entity).try_despawn();
     }
 }
 
@@ -960,6 +960,6 @@ fn entity_menu_interaction(
 
 fn cleanup_entity_menu(mut commands: Commands, query: Query<Entity, With<EntityMenuRoot>>) {
     for entity in &query {
-        commands.entity(entity).despawn();
+        commands.entity(entity).try_despawn();
     }
 }

@@ -26,6 +26,7 @@ mod fightai;
 mod frontend;
 mod filesystem;
 mod fx_system;
+mod fx_visuals;
 mod hud;
 mod inventory;
 mod laser;
@@ -216,6 +217,7 @@ fn main() {
     .add_plugins(camera::CameraPlugin)
     .add_plugins(hud::HudPlugin)
     .add_plugins(fx_system::FxPlugin)
+    .add_plugins(fx_visuals::FxVisualsPlugin)
     .add_plugins(laser::LaserPlugin)
     .add_plugins(projectile_system::ProjectilePlugin)
     .add_plugins(weapons::WeaponPlugin)

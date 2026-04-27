@@ -1202,6 +1202,31 @@ pub fn spawn_layout_actor(
 
 /// Parse layout.lights, default.environment, layout.fog, layout.paths, and skyhat.
 /// Spawns Bevy light entities, fog resource, paths resource, and skyhat mesh.
+/// If this light entry has the `fxLight` flag set, tag its spawned
+/// entity with `PendingGlow` so `resolve_pending_glow_system` will
+/// look up the named `LightGlowDef` from `FxLibrary` next frame and
+/// attach the billboard corona child.  No-op when `fx_light` is false.
+fn attach_pending_glow_if_requested(
+    commands: &mut Commands,
+    light_entity: Entity,
+    light: &crate::oni2_loader::parsers::layout::LayoutLight,
+) {
+    if !light.fx_light {
+        return;
+    }
+    let Some(glow_type_name) = light.light_glow_type.clone() else {
+        // fxLight flag set without a glow type — file malformed; skip.
+        return;
+    };
+    commands.entity(light_entity).insert(
+        crate::oni2_loader::light_glow::PendingGlow {
+            glow_type_name,
+            glow_intensity_scale: light.glow_intensity_scale,
+            light_dir: light.direction,
+        },
+    );
+}
+
 fn load_layout_lights(
     commands: &mut Commands,
     meshes: &mut ResMut<Assets<Mesh>>,
@@ -1329,37 +1354,146 @@ fn load_layout_lights(
         );
     }
 
-    // Spawn point lights from layout.lights
+    // Spawn lights from layout.lights.  Mirrors the legacy
+    // `lvlLightManager::AddLight` (rb/src/rblevel/lightmgr.cpp:122):
+    // the light is always added to the renderer, and ALSO registered
+    // with the shadow manager iff `CastShadow()` (i.e. `CastShadowRange > 0`).
+    // We mirror that with `shadows_enabled = (cast_shadow_range > 0.0)`.
+    //
+    // Intensity scaling: legacy `lgtLight::ContributionTo`
+    // (rb/src/fx/light.cpp:81) uses a `1/r²` falloff with the file's
+    // `Intensity` as the numerator — same shape Bevy's PBR PointLight
+    // uses by default.  But the units differ:
+    //   - Legacy intensity is unitless / scene-tuned, typical 30–300.
+    //   - Bevy `PointLight.intensity` is in candela (luminous intensity).
+    // The 3000× multiplier here lifts the unitless PS2 values into a
+    // candela range that produces visible illumination given Bevy's
+    // tonemapping + our CRT post-process pipeline.  Tweakable; was
+    // tuned against Blast Chambers' 100–300 intensity range.
+    const POINT_INTENSITY_TO_CANDELA: f32 = 3000.0;
+    const SPOT_INTENSITY_TO_CANDELA: f32 = 3000.0;
+    // Bevy's `PointLight.range` is the max distance the light can
+    // illuminate.  Legacy doesn't expose a range directly; in practice
+    // the `1/r²` falloff means contribution drops to ~1% by `r ≈ 10·sqrt(intensity)`.
+    // 3× intensity is a rough heuristic that keeps small fill lights
+    // local while letting hub-style 300-intensity lamps reach across rooms.
+    const POINT_RANGE_FROM_INTENSITY: f32 = 3.0;
+    const POINT_MIN_RANGE: f32 = 25.0;
+
     let mut point_count = 0;
+    let mut spot_count = 0;
     let mut ambient_count = 0;
+    let mut shadow_count = 0;
+    let mut fx_glow_count = 0;
     for light in &lights {
         let pos = light.position;
         let color = Color::srgb(light.color[0], light.color[1], light.color[2]);
+        let casts_shadow = light.cast_shadow_range > 0.0;
+        if casts_shadow {
+            shadow_count += 1;
+        }
+        if light.fx_light {
+            fx_glow_count += 1;
+        }
 
         match light.light_type.as_str() {
             "point" => {
                 if light.intensity <= 0.0 {
                     continue;
                 }
-                // Massively boost procedural light range and intensity.
-                // The CRT shader thrives on high contrast, and dark rooms
-                // rely heavily on these procedural lights to overcome baseline shadows.
-                let range = (light.intensity * 3.0).max(25.0);
-                let lumens = light.intensity * 3000.0;
+                let range =
+                    (light.intensity * POINT_RANGE_FROM_INTENSITY).max(POINT_MIN_RANGE);
+                let lumens = light.intensity * POINT_INTENSITY_TO_CANDELA;
 
+                let entity = commands
+                    .spawn((
+                        PointLight {
+                            color,
+                            intensity: lumens,
+                            range,
+                            shadows_enabled: casts_shadow,
+                            ..default()
+                        },
+                        Transform::from_translation(pos),
+                        InGameEntity,
+                        Name::new(light.name.clone()),
+                    ))
+                    .id();
+                attach_pending_glow_if_requested(commands, entity, light);
+                point_count += 1;
+            }
+            "spot" => {
+                if light.intensity <= 0.0 {
+                    continue;
+                }
+                let range =
+                    (light.intensity * POINT_RANGE_FROM_INTENSITY).max(POINT_MIN_RANGE);
+                let lumens = light.intensity * SPOT_INTENSITY_TO_CANDELA;
+                // Legacy `SpotAngle` is the half-angle of the cone in
+                // degrees (lgtLight stores in degrees, ContributionTo
+                // computes against it).  Bevy's SpotLight wants the
+                // OUTER half-angle in radians; inner is the soft-edge
+                // start, choose 90% of outer for a slight feathering.
+                let outer = light.spot_angle.to_radians().clamp(0.0, std::f32::consts::PI);
+                let inner = outer * 0.9;
+
+                // Bevy's SpotLight points along its local -Z by default.
+                // Build a transform that aligns -Z with the file's
+                // Direction (already converted to Bevy space at parse time).
+                let look = if light.direction.length_squared() > 1e-6 {
+                    pos + light.direction.normalize()
+                } else {
+                    // Defensive fallback: aim down.
+                    pos + Vec3::NEG_Y
+                };
+                let transform = Transform::from_translation(pos).looking_at(look, Vec3::Y);
+
+                let entity = commands
+                    .spawn((
+                        SpotLight {
+                            color,
+                            intensity: lumens,
+                            range,
+                            outer_angle: outer,
+                            inner_angle: inner,
+                            shadows_enabled: casts_shadow,
+                            ..default()
+                        },
+                        transform,
+                        InGameEntity,
+                        Name::new(light.name.clone()),
+                    ))
+                    .id();
+                attach_pending_glow_if_requested(commands, entity, light);
+                spot_count += 1;
+            }
+            "directional" => {
+                // Legacy directional lights from layout.lights are
+                // RARE — the level's main directional usually comes
+                // from `default.environment` (handled above).  When
+                // one IS present here, treat it as a supplementary
+                // sun.  Direction already in Bevy space.
+                let dir = if light.direction.length_squared() > 1e-6 {
+                    light.direction.normalize()
+                } else {
+                    Vec3::NEG_Y
+                };
+                let transform = Transform::from_translation(pos)
+                    .looking_to(dir, Vec3::Y);
                 commands.spawn((
-                    PointLight {
+                    DirectionalLight {
                         color,
-                        intensity: lumens,
-                        range,
-                        shadows_enabled: false,
+                        // Map the unitless intensity into illuminance
+                        // (lux).  20 000 lux ≈ overcast daylight,
+                        // matches the env-light fallback elsewhere.
+                        illuminance: light.intensity * 200.0,
+                        shadows_enabled: casts_shadow,
                         ..default()
                     },
-                    Transform::from_translation(pos),
+                    transform,
                     InGameEntity,
                     Name::new(light.name.clone()),
                 ));
-                point_count += 1;
             }
             "ambient" => {
                 if env.is_none() && fog_data.is_none() {
@@ -1376,13 +1510,15 @@ fn load_layout_lights(
                 }
                 ambient_count += 1;
             }
-            _ => {}
+            other => {
+                warn!("layout light '{}': unknown type '{}'", light.name, other);
+            }
         }
     }
-    if point_count > 0 || ambient_count > 0 {
+    if point_count > 0 || spot_count > 0 || ambient_count > 0 {
         info!(
-            "Layout: loaded {} point lights, {} ambient lights",
-            point_count, ambient_count
+            "Layout: loaded {} point + {} spot + {} ambient lights ({} cast shadows, {} fxLight glows queued for rendering)",
+            point_count, spot_count, ambient_count, shadow_count, fx_glow_count
         );
     }
 

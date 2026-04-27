@@ -15,6 +15,7 @@ pub mod environment;
 pub mod formation;
 pub mod headik;
 pub mod layout_loader;
+pub mod light_glow;
 pub mod parsers;
 pub mod physics;
 pub mod registries;
@@ -74,6 +75,7 @@ impl Plugin for Oni2LoaderPlugin {
             .init_resource::<registries::ExplosionRegistry>()
             .init_resource::<environment::TextureCollections>()
             .init_resource::<components::CurrentCheckpointIndex>()
+            .init_resource::<light_glow::LightGlowMesh>()
             .add_systems(Startup, (load_global_registries, load_global_explosions))
             .add_systems(
                 PhysicsSchedule,
@@ -92,6 +94,13 @@ impl Plugin for Oni2LoaderPlugin {
                     ground_snap_system,
                     apply_fog_to_camera.run_if(resource_exists::<FogEnabled>),
                     update_skyhat,
+                    // fxLightGlow corona pipeline.  resolve runs first
+                    // so freshly-spawned PendingGlow tags get their
+                    // billboard child this frame; the per-frame
+                    // billboard/occlusion update runs after.
+                    light_glow::resolve_pending_glow_system,
+                    light_glow::update_light_glow_billboards
+                        .after(light_glow::resolve_pending_glow_system),
                 )
                     .run_if(in_state(AppState::InGame)),
             )
@@ -127,6 +136,15 @@ impl Plugin for Oni2LoaderPlugin {
                     update_debug_light_grid,
                 )
                     .run_if(in_state(AppState::InGame)),
+            )
+            // Resource cleanup on layout exit — clears the
+            // DebugLightGridState's stale Entity HashMap so the
+            // next layout starts with a fresh grid.  The lights
+            // themselves are despawned by `cleanup_game` via the
+            // InGameEntity tag.
+            .add_systems(
+                OnExit(AppState::InGame),
+                environment::reset_debug_light_grid_on_exit,
             )
             .add_systems(
                 Update,

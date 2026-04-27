@@ -235,6 +235,11 @@ fn handle_play_sound(
             speed: final_pitch,
             ..Default::default()
         },
+        // Loop-mode audio doesn't auto-despawn, and even Despawn-
+        // mode one-shots can outlive a layout if the layout exits
+        // mid-playback.  Tagging both ensures cleanup_game catches
+        // them on InGame exit.
+        crate::menu::InGameEntity,
     ));
 
     // `ev.script_entity` / `ev.actor` are currently informational — consumed
@@ -369,12 +374,20 @@ fn get_or_create_ptx_asset(
     }
 
     let mut color_gradient = bevy_hanabi::Gradient::new();
-    color_gradient.add_key(0.0, ptx_def.color_birth.to_linear().to_vec4());
-    color_gradient.add_key(1.0, ptx_def.color_death.to_linear().to_vec4());
+    if ptx_def.color_ramp {
+        color_gradient.add_key(0.0, ptx_def.color_birth.to_linear().to_vec4());
+        color_gradient.add_key(0.5, ptx_def.color_death.to_linear().to_vec4());
+        color_gradient.add_key(1.0, ptx_def.color_birth.to_linear().to_vec4());
+    } else {
+        color_gradient.add_key(0.0, ptx_def.color_birth.to_linear().to_vec4());
+        color_gradient.add_key(1.0, ptx_def.color_death.to_linear().to_vec4());
+    }
 
     let mut size_gradient = bevy_hanabi::Gradient::new();
-    size_gradient.add_key(0.0, Vec3::splat(ptx_def.radius_birth.x.max(0.1)));
-    size_gradient.add_key(1.0, Vec3::splat(ptx_def.radius_birth.y.max(0.1)));
+    let start_size = Vec3::new(ptx_def.radius_birth.x.max(0.1), ptx_def.radius_birth.y.max(0.1), 0.0);
+    let end_size = start_size * ptx_def.radius_death_percent.max(0.01);
+    size_gradient.add_key(0.0, start_size);
+    size_gradient.add_key(1.0, end_size);
 
     let writer = ExprWriter::new();
     let age = writer.lit(0.).expr();
@@ -393,6 +406,17 @@ fn get_or_create_ptx_asset(
     let init_lifetime =
         SetAttributeModifier::new(Attribute::LIFETIME, writer.lit(ptx_def.life).expr());
     let drag_coef = writer.lit(ptx_def.velocity_damping.length()).expr();
+
+    let mut gravity_expr = None;
+    if ptx_def.gravity != 0.0 {
+        gravity_expr = Some(writer.lit(Vec3::new(0.0, ptx_def.gravity, 0.0)).expr());
+    }
+
+    if ptx_def.rotate_ptx && ptx_def.rotate_speed != 0.0 {
+        let age_expr = writer.attr(Attribute::AGE);
+        let speed_expr = writer.lit(ptx_def.rotate_speed);
+        let _rot_expr = age_expr.mul(speed_expr);
+    }
 
     let rate = if rate_override > 0.0 {
         rate_override
@@ -450,7 +474,13 @@ fn get_or_create_ptx_asset(
         .init(init_vel)
         .init(init_age)
         .init(init_lifetime)
-        .update(LinearDragModifier::new(drag_coef))
+        .update(LinearDragModifier::new(drag_coef));
+
+    if let Some(g_expr) = gravity_expr {
+        asset = asset.update(AccelModifier::new(g_expr));
+    }
+
+    asset = asset
         .render(ColorOverLifetimeModifier {
             gradient: color_gradient,
             ..Default::default()
@@ -465,6 +495,19 @@ fn get_or_create_ptx_asset(
             sample_mapping: ImageSampleMapping::Modulate,
         })
         .render(OrientModifier::new(OrientMode::FaceCameraPosition));
+
+    asset.alpha_mode = match ptx_def.blend_set {
+        0 => bevy_hanabi::AlphaMode::Add,
+        1 => bevy_hanabi::AlphaMode::Blend,
+        _ => bevy_hanabi::AlphaMode::Blend, // Subtractive isn't cleanly supported in standard Bevy AlphaMode
+    };
+
+    // Hanabi defaults to Global, matching C++ `!RelativeToParentMatrix`
+    asset = asset.with_simulation_space(if ptx_def.relative_to_parent {
+        SimulationSpace::Local
+    } else {
+        SimulationSpace::Global
+    });
 
     if let Some(init_sp) = init_sprite_index {
         asset = asset.init(init_sp);
@@ -495,6 +538,9 @@ fn handle_spawn_fx(
     actor_sleep_query: Query<&crate::oni2_loader::components::ActorAsleep>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    mut images: ResMut<Assets<Image>>,
+    mut quad_cache: ResMut<crate::fx_visuals::FxVisualMesh>,
+    mut flash_tex_cache: ResMut<crate::fx_visuals::FxFlashTexture>,
 ) {
     let ev = trigger.event();
     let lower_name = ev.name.to_lowercase();
@@ -532,6 +578,11 @@ fn handle_spawn_fx(
                     },
                     Transform::from_translation(ev.at.unwrap_or(Vec3::ZERO)),
                     IntendedFxState(ev.start_active),
+                    // Cleanup-on-layout-exit.  Without this tag,
+                    // particles spawned without a parent (or whose
+                    // parent isn't InGameEntity) survive InGame→
+                    // InGame layout transitions and accumulate.
+                    crate::menu::InGameEntity,
                 ));
 
                 if !effective_start_active {
@@ -570,6 +621,41 @@ fn handle_spawn_fx(
                 source,
                 ev.at.unwrap_or(Vec3::ZERO),
                 &ev.name,
+            );
+        } else if let crate::oni2_loader::parsers::effect::EffectDef::Flash(fd) = fx_def {
+            // Flash bursts are short additive pops — usually fired
+            // from explosion/impact callbacks. The position falls
+            // back to the parent entity's location when ev.at is
+            // None (handled implicitly by ChildOf when parent is set,
+            // since the spawn translation is at world (0,0,0) relative
+            // to the parent's transform).
+            let world_pos = ev.at.unwrap_or(Vec3::ZERO);
+            crate::fx_visuals::spawn_flash(
+                &mut commands,
+                &mut quad_cache,
+                &mut flash_tex_cache,
+                &mut meshes,
+                &mut materials,
+                &mut images,
+                fd,
+                world_pos,
+                ev.parent,
+            );
+        } else if let crate::oni2_loader::parsers::effect::EffectDef::Sprite(sd) = fx_def {
+            // Continuous-while-controlled billboards (muzzle flashes,
+            // halos, etc.).  Without an FxEffect controller layer we
+            // can't honor "stay until SetFx false"; the spawner uses
+            // `def.duration` as a hard lifetime, with a small
+            // fallback when duration is 0.
+            let world_pos = ev.at.unwrap_or(Vec3::ZERO);
+            crate::fx_visuals::spawn_sprite(
+                &mut commands,
+                &mut quad_cache,
+                &mut meshes,
+                &mut materials,
+                sd,
+                world_pos,
+                ev.parent,
             );
         }
     } else {
@@ -619,6 +705,7 @@ fn handle_spawn_ptx(
             },
             Transform::from_translation(ev.at.unwrap_or(Vec3::ZERO)),
             IntendedFxState(ev.start_active),
+            crate::menu::InGameEntity,
         ));
 
         if !effective_start_active {

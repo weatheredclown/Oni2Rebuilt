@@ -7,7 +7,9 @@
  * attack_sync_system and hit_detection_system.
  */
 use super::block_parser::BlockParser;
-use crate::oni2_loader::utils::space::{bevy_to_oni2_yaw_rads, oni2_to_bevy_yaw_rads};
+use crate::oni2_loader::utils::space::{
+    bevy_to_oni2_yaw_rads, oni2_to_bevy_yaw_rads, wrap_angle_to_pi,
+};
 use bevy::prelude::*;
 
 #[derive(Debug, Clone, Reflect)]
@@ -242,18 +244,21 @@ pub fn parse_atdt_content(content: &str) -> AtdtData {
                             }
                             "slicestartradians" => {
                                 let def_oni2 = bevy_to_oni2_yaw_rads(strike.slicestartradians);
-                                strike.slicestartradians =
-                                    oni2_to_bevy_yaw_rads(p.read_float(&a_key, def_oni2));
+                                strike.slicestartradians = wrap_angle_to_pi(
+                                    oni2_to_bevy_yaw_rads(p.read_float(&a_key, def_oni2)),
+                                );
                             }
                             "sliceendradians" => {
                                 let def_oni2 = bevy_to_oni2_yaw_rads(strike.sliceendradians);
-                                strike.sliceendradians =
-                                    oni2_to_bevy_yaw_rads(p.read_float(&a_key, def_oni2));
+                                strike.sliceendradians = wrap_angle_to_pi(
+                                    oni2_to_bevy_yaw_rads(p.read_float(&a_key, def_oni2)),
+                                );
                             }
                             "sliceheadingradiansb" => {
                                 let def_oni2 = bevy_to_oni2_yaw_rads(strike.sliceheadingradiansb);
-                                strike.sliceheadingradiansb =
-                                    oni2_to_bevy_yaw_rads(p.read_float(&a_key, def_oni2));
+                                strike.sliceheadingradiansb = wrap_angle_to_pi(
+                                    oni2_to_bevy_yaw_rads(p.read_float(&a_key, def_oni2)),
+                                );
                             }
                             "headingnotlockedtotarget" => {
                                 strike.headingnotlockedtotarget = p.read_i32(

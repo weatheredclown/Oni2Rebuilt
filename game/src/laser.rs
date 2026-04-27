@@ -173,6 +173,7 @@ pub fn spawn_laser(
             Transform::from_translation(at),
             Visibility::Visible,
             IntendedFxState(true),
+            crate::menu::InGameEntity,
             // Ribbon Aabb is stale the moment the vertex buffer changes
             // (frustum culler reads the Aabb that was valid at mesh-asset
             // creation, not the one matching the current frame's verts).
@@ -192,7 +193,7 @@ pub fn spawn_laser(
             LaserHead,
             Mesh3d(head_quad),
             MeshMaterial3d(head_mat),
-            Transform::from_scale(Vec3::splat(0.5 * ld.width * ld.head_scale)),
+            Transform::from_scale(Vec3::splat(ld.width * ld.head_scale)),
             Visibility::default(),
             ChildOf(trail_entity),
             // Head glow sprite — a light-emitting billboarded quad,
@@ -328,10 +329,10 @@ fn laser_trail_update(
 /// transform update on a moving projectile.
 fn laser_ribbon_rebuild(
     q: Query<(&LaserTrail, &Transform, &Mesh3d, &mut Visibility), With<LaserRibbon>>,
-    camera: Query<&GlobalTransform, (With<Camera>, Without<LaserRibbon>)>,
+    camera: Query<&GlobalTransform, (With<crate::camera::components::CameraController>, Without<LaserRibbon>)>,
     mut meshes: ResMut<Assets<Mesh>>,
 ) {
-    let Ok(cam_tf) = camera.single() else {
+    let Some(cam_tf) = camera.iter().next() else {
         return;
     };
     let cam_pos = cam_tf.translation();
@@ -361,7 +362,7 @@ fn laser_ribbon_rebuild(
             } else {
                 Vec3::Y
             };
-            let half_w = (0.5 * trail.width).max(0.2); // enforce minimum width so it's always visible
+            let half_w = 0.5 * trail.width;
 
             // Width axis computed ONCE per beam from the head's view
             // vector — matches rb/src/fx/laser.cpp:306-308:
@@ -479,9 +480,9 @@ fn laser_ribbon_rebuild(
 fn laser_head_billboard(
     parent_q: Query<(&LaserTrail, &Children)>,
     mut head_q: Query<(&mut Transform, &mut Visibility), With<LaserHead>>,
-    camera: Query<&GlobalTransform, (With<Camera>, Without<LaserHead>)>,
+    camera: Query<&GlobalTransform, (With<crate::camera::components::CameraController>, Without<LaserHead>)>,
 ) {
-    let Ok(cam_tf) = camera.single() else {
+    let Some(cam_tf) = camera.iter().next() else {
         return;
     };
     let cam_pos = cam_tf.translation();
@@ -506,7 +507,27 @@ fn laser_head_billboard(
             // so its local +Z faces exactly opposite the camera's look direction (-Z).
             let (_, cam_rot, _) = cam_tf.to_scale_rotation_translation();
             tf.rotation = cam_rot;
-            tf.scale = Vec3::splat(0.5 * trail.width * trail.head_scale);
+            tf.scale = Vec3::splat(trail.width * trail.head_scale);
+
+            // --- Debug print requested by user ---
+            let cam_euler = cam_rot.to_euler(EulerRot::YXZ);
+            let head_euler = tf.rotation.to_euler(EulerRot::YXZ);
+            
+            // Just use a simple static to rate limit or only print on change
+            static mut LAST_PRINT: (f32, f32) = (0.0, 0.0);
+            unsafe {
+                let diff_cam = (cam_euler.0 - LAST_PRINT.0).abs();
+                let diff_head = (head_euler.0 - LAST_PRINT.1).abs();
+                if diff_cam > 0.1 || diff_head > 0.1 {
+                    println!(
+                        "LASER DEBUG | Cam Yaw: {:.1}°, Head Yaw: {:.1}°",
+                        cam_euler.0.to_degrees(),
+                        head_euler.0.to_degrees()
+                    );
+                    LAST_PRINT = (cam_euler.0, head_euler.0);
+                }
+            }
+            // -------------------------------------
         }
     }
 }

@@ -15,6 +15,7 @@ pub mod fightai;
 pub mod frontend;
 pub mod filesystem;
 pub mod fx_system;
+pub mod fx_visuals;
 pub mod hud;
 pub mod inventory;
 pub mod laser;

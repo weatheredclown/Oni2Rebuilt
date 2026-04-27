@@ -14,7 +14,8 @@ pub struct ParticleSystemDef {
     pub name: String,
     pub texture: Handle<Image>,
     pub position_var: Vec3,
-    pub radius_birth: Vec2, // Could be min/max
+    pub radius_birth: Vec2, // x = width, y = height
+    pub radius_death_percent: f32,
     pub life: f32,
     pub life_var: f32,
     pub velocity: Vec3,
@@ -23,8 +24,13 @@ pub struct ParticleSystemDef {
     pub gravity: f32,
     pub color_birth: Color,
     pub color_death: Color,
+    pub color_ramp: bool,
     pub rate: f32,
     pub blend_set: i32,
+    pub system_type: i32,
+    pub rotate_ptx: bool,
+    pub rotate_speed: f32,
+    pub relative_to_parent: bool,
     pub frame_rate: f32,
     pub grid_x: u32,
     pub grid_y: u32,
@@ -43,6 +49,7 @@ pub fn parse_ptx(
         texture: asset_server.add(Image::default()), // Placeholder
         position_var: Vec3::ZERO,
         radius_birth: Vec2::ZERO,
+        radius_death_percent: 1.0,
         life: 1.0,
         life_var: 0.0,
         velocity: Vec3::ZERO,
@@ -51,8 +58,13 @@ pub fn parse_ptx(
         gravity: 0.0,
         color_birth: Color::WHITE,
         color_death: Color::WHITE,
+        color_ramp: false,
         rate: 1.0,
         blend_set: 0,
+        system_type: 0,
+        rotate_ptx: false,
+        rotate_speed: 5.0,
+        relative_to_parent: false,
         frame_rate: 0.0,
         grid_x: 1,
         grid_y: 1,
@@ -98,6 +110,9 @@ pub fn parse_ptx(
                 let vec = p.read_vec2("RadiusBirth", def.radius_birth);
                 def.radius_birth = vec;
             }
+            "RadiusDeathPercent" => {
+                def.radius_death_percent = p.read_float("RadiusDeathPercent", def.radius_death_percent)
+            }
             "Life" => def.life = p.read_float("Life", def.life),
             "LifeVar" => def.life_var = p.read_float("LifeVar", def.life_var),
             "Velocity" => def.velocity = p.read_vec3("Velocity", def.velocity),
@@ -122,8 +137,23 @@ pub fn parse_ptx(
                 let a = p.read_float_val(1.0);
                 def.color_death = Color::srgba(r, g, b, a);
             }
+            "ColorRamp" => def.color_ramp = p.read_i32("ColorRamp", if def.color_ramp { 1 } else { 0 }) != 0,
             "Rate" => def.rate = p.read_float("Rate", def.rate),
             "BlendSet" => def.blend_set = p.read_i32("BlendSet", def.blend_set),
+            "Type" => def.system_type = p.read_i32("Type", def.system_type),
+            "ActivateRotate" | "RotatePtx" => {
+                p.next();
+                if let Some(v_str) = p.tokens.next() {
+                    def.rotate_ptx = v_str.parse::<i32>().unwrap_or(0) != 0;
+                }
+            }
+            "RotateSpeed" => def.rotate_speed = p.read_float("RotateSpeed", def.rotate_speed),
+            "RelativeToParentMatrix" => {
+                p.next();
+                if let Some(v_str) = p.tokens.next() {
+                    def.relative_to_parent = v_str.parse::<i32>().unwrap_or(0) != 0;
+                }
+            }
             "FrameRate" => def.frame_rate = p.read_float("FrameRate", def.frame_rate),
             "NumTextureTilesX" => {
                 def.grid_x = p.read_i32("NumTextureTilesX", def.grid_x as i32) as u32
@@ -141,6 +171,18 @@ pub fn parse_ptx(
                 p.next();
             } // skip unknown fields gracefully
         }
+    }
+
+    if def.system_type == 2 {
+        warn!(
+            "ParticleSystem '{}' uses SWARM behavior (Type 2) which is not yet fully implemented.",
+            def.name
+        );
+        // TODO: SWARM particles (Type 2) use sine/cosine oscillation around a base position.
+        // A potential approach in Hanabi would be to use a custom Expr update modifier:
+        // 1. Store the initial un-oscillated position in a custom Attribute (e.g., Attribute::POSITION_BASE).
+        // 2. Add an update modifier that computes: POSITION = POSITION_BASE + sin(AGE * Freq) * Amplitude.
+        // 3. This would require parsing Freq/FreqVar and adding them to the Expr context.
     }
 
     Some(def)

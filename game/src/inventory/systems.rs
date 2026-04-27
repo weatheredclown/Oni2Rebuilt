@@ -102,6 +102,11 @@ pub fn add_weapon_system(
                 GlobalTransform::default(),
                 Visibility::default(),
                 Weapon::new(weap_ty.clone(), msg.entity),
+                // Cleanup-on-layout-exit.  weapon_attachment_system
+                // re-parents the weapon to its wielder's bone every
+                // frame, but if the wielder is despawned mid-frame
+                // the weapon could be orphaned without this tag.
+                crate::menu::InGameEntity,
             ))
             .id();
 

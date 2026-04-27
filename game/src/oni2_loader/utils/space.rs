@@ -140,3 +140,62 @@ pub fn oni2_to_bevy_yaw_rads(rads: f32) -> f32 {
 pub fn bevy_to_oni2_yaw_rads(rads: f32) -> f32 {
     -rads
 }
+
+/// Wrap an angle (radians) into the principal range `[-π, π]`.
+///
+/// Authoring tools and shipped `.atdt` files sometimes store yaw
+/// angles outside this range (e.g. `kno_atk_comb_bak_k_bskckLH.atdt`
+/// uses `slicestartradians = -3.3847` ≈ `-194°`).  Most of our hit-
+/// test math (e.g. `signed_angle = acos(...)` clamped to `[0, π]`
+/// then signed by cross-product Y) operates in `[-π, π]`, so any
+/// bound passed in raw will silently fail the angular range check
+/// and the wedge will never register a hit.  Apply this after
+/// `oni2_to_bevy_yaw_rads` for slice bounds and headings to keep
+/// the comparison space consistent.
+#[inline]
+pub fn wrap_angle_to_pi(rads: f32) -> f32 {
+    use std::f32::consts::{PI, TAU};
+    let mut a = rads % TAU;
+    if a > PI {
+        a -= TAU;
+    } else if a < -PI {
+        a += TAU;
+    }
+    a
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::f32::consts::PI;
+
+    #[test]
+    fn wrap_angle_keeps_in_range() {
+        let eps = 1e-5;
+        assert!((wrap_angle_to_pi(0.0) - 0.0).abs() < eps);
+        assert!((wrap_angle_to_pi(PI - 0.1) - (PI - 0.1)).abs() < eps);
+        assert!((wrap_angle_to_pi(-PI + 0.1) - (-PI + 0.1)).abs() < eps);
+    }
+
+    #[test]
+    fn wrap_angle_folds_back() {
+        // -3.3847 (atdt back-kick start) wraps to +2.8985.
+        let eps = 1e-4;
+        let v = wrap_angle_to_pi(-3.3847);
+        assert!(v.abs() <= PI, "wrapped value {v} should be in [-π, π]");
+        assert!((v - (-3.3847 + 2.0 * PI)).abs() < eps);
+
+        // +3.3847 wraps to -2.8985.
+        let v = wrap_angle_to_pi(3.3847);
+        assert!(v.abs() <= PI);
+        assert!((v - (3.3847 - 2.0 * PI)).abs() < eps);
+    }
+
+    #[test]
+    fn wrap_angle_handles_exact_pi() {
+        // ±π are both valid principal-range outputs; we don't care which one,
+        // only that magnitude stays ≤ π.
+        assert!(wrap_angle_to_pi(PI).abs() <= PI + 1e-6);
+        assert!(wrap_angle_to_pi(-PI).abs() <= PI + 1e-6);
+    }
+}

@@ -152,17 +152,56 @@ pub struct BlastFireDef {
     pub path2: Vec3,
 }
 
+/// Mirrors legacy `fxLightGlow` (rb/src/fx/lightglows.{cpp,h}).  A
+/// named billboard-corona fx-effect-type referenced by Light entries
+/// in `layout.lights` (when they include the `fxLight` flag) and by
+/// per-effect `LIGHTGLOW` blocks in `rb.fx`.  Fields map 1:1 to the
+/// flag bits + intensity values legacy reads in
+/// `fxLightGlow::Load` (lightglows.cpp:245+).
 #[derive(Debug, Clone)]
 pub struct LightGlowDef {
     pub name: String,
+    /// Name of the texture file under `texture/` (no extension).
     pub glow_texture_name: String,
+    /// Pre-loaded handle for the glow texture.  Eagerly resolved at
+    /// parse time so spawn-time costs are zero.  `None` if the
+    /// texture didn't load (then we'll skip rendering this glow).
+    pub glow_texture_handle: Option<Handle<Image>>,
+    /// `kGlowLookAt` flag — if 1, orient the quad toward the camera
+    /// using the camera's full orientation matrix (full screen-space
+    /// billboard).  Mutually overridden by `glow_billboard` below.
     pub glow_look_at: i32,
+    /// `kGlowBillboard` flag — if 1, Y-axis billboard: face the camera
+    /// horizontally (rotate around world Y) but keep "up" pointing at
+    /// world Y.  Cylindrical billboard.  Takes priority over
+    /// `glow_look_at` (legacy lightglows.cpp:166).
     pub glow_billboard: i32,
+    /// `kOccludeGlow` flag — if 1, ray-cast from glow to camera.  When
+    /// blocked by physical geometry, fade the glow alpha down (at
+    /// `glow_intensity_rate_of_change` speed) toward zero; when
+    /// unblocked, fade back up toward `glow_intensity`.  Also disables
+    /// depth-test so the glow renders over occluders during the fade
+    /// (legacy lightglows.cpp:198).
     pub occlude_glow: i32,
+    /// `kRadialAttenuate` flag — if 1, scale glowsize by
+    /// `dot(-light_dir, lightToCam)`, i.e. fade out as the camera
+    /// moves outside the light's forward cone.  Used for spot-style
+    /// lights where the glow should only be visible from in front.
     pub radial_attenuate: i32,
+    /// `kScreenRotate` flag — if 1, rotate the quad around its local Z
+    /// based on the light's screen-space angle (atan2 of projected XY).
+    /// Used for rotational lens-flare effects.
     pub screen_rotate: i32,
+    /// Maximum glow size (also acts as max alpha when occluding).  In
+    /// world units — the quad spans `[-glow_intensity, +glow_intensity]`
+    /// on each axis (so a value of 10 → a 20-unit-wide quad).
     pub glow_intensity: f32,
+    /// Speed of intensity change toward target each frame, scaled by
+    /// `glow_intensity` (legacy lightglows.cpp:130).  Only meaningful
+    /// when `occlude_glow` is enabled.
     pub glow_intensity_rate_of_change: f32,
+    /// Color tint applied to the texture sample.  Alpha is multiplied
+    /// by the per-frame fade (when occluding).
     pub glow_color: Color,
 }
 
@@ -361,18 +400,35 @@ pub fn parse_effect(
             path1: block.get_vec3("path1", Vec3::ZERO),
             path2: block.get_vec3("path2", Vec3::ZERO),
         })),
-        "LIGHTGLOW" => Some(EffectDef::LightGlow(LightGlowDef {
-            name: name.to_string(),
-            glow_texture_name: block.get_string("GlowTextureName").unwrap_or_default(),
-            glow_look_at: block.get_i32("GlowLookAt", 0),
-            glow_billboard: block.get_i32("GlowBillboard", 0),
-            occlude_glow: block.get_i32("OccludeGlow", 0),
-            radial_attenuate: block.get_i32("RadialAttenuate", 0),
-            screen_rotate: block.get_i32("ScreenRotate", 0),
-            glow_intensity: block.get_f32("GlowIntensity", 1.0),
-            glow_intensity_rate_of_change: block.get_f32("GlowIntensityRateOfChange", 0.0),
-            glow_color: block.get_color("GlowColor", Color::WHITE),
-        })),
+        "LIGHTGLOW" => {
+            let glow_texture_name = block.get_string("GlowTextureName").unwrap_or_default();
+            // Eagerly load the texture (mirrors SPRITEEFFECT path
+            // above) so spawn-time of fxLight glows is asset-free.
+            let glow_texture_handle = if glow_texture_name.is_empty() {
+                None
+            } else if let Some((h, _)) = crate::oni2_loader::parsers::texture::load_tga_texture(
+                "texture",
+                &glow_texture_name,
+                images,
+            ) {
+                Some(h)
+            } else {
+                Some(asset_server.load(format!("texture/{}.tga", glow_texture_name)))
+            };
+            Some(EffectDef::LightGlow(LightGlowDef {
+                name: name.to_string(),
+                glow_texture_name,
+                glow_texture_handle,
+                glow_look_at: block.get_i32("GlowLookAt", 0),
+                glow_billboard: block.get_i32("GlowBillboard", 0),
+                occlude_glow: block.get_i32("OccludeGlow", 0),
+                radial_attenuate: block.get_i32("RadialAttenuate", 0),
+                screen_rotate: block.get_i32("ScreenRotate", 0),
+                glow_intensity: block.get_f32("GlowIntensity", 1.0),
+                glow_intensity_rate_of_change: block.get_f32("GlowIntensityRateOfChange", 0.0),
+                glow_color: block.get_color("GlowColor", Color::WHITE),
+            }))
+        }
         "CHARGE" => Some(EffectDef::Charge(ChargeDef {
             name: name.to_string(),
             scale: block.get_f32("Scale", 1.0),
