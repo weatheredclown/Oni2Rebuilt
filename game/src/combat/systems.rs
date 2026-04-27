@@ -104,7 +104,6 @@ pub fn hit_detection_system(
         &Fighter,
         &mut AttackState,
         &Oni2AnimState,
-        Option<&Oni2AnimLibrary>,
     )>,
     mut targets: Query<(
         Entity,
@@ -128,14 +127,8 @@ pub fn hit_detection_system(
 ) {
     let now = time.elapsed_secs_f64();
 
-    for (
-        attacker_entity,
-        attacker_tf,
-        attacker_fighter,
-        mut attack_state,
-        anim_state,
-        anim_lib_opt,
-    ) in &mut attackers
+    for (attacker_entity, attacker_tf, attacker_fighter, mut attack_state, anim_state) in
+        &mut attackers
     {
         let Some(attack_data) = &anim_state.anim.attack_data else {
             continue;
@@ -245,82 +238,6 @@ pub fn hit_detection_system(
             anim_state.anim.num_frames as f32,
         );
 
-        // Diagnostic: log wedge geometry once per active frame.  Compare against
-        // the gizmo from `debug_draw_attack_wedges` — if `wedge.center.xz` here
-        // doesn't match the visible gizmo center, the two schedules are reading
-        // a different `Transform`/`Fighter.facing` snapshot.
-        if wedge.is_active {
-            let anim_name = anim_state
-                .current_anim_id
-                .and_then(|id| anim_lib_opt.and_then(|lib| lib.debug_names.get(&id).cloned()))
-                .unwrap_or_else(|| "<unknown>".to_string());
-            // Wedge band offset RELATIVE to attacker feet — what we actually
-            // care about (the band tracks the attacker, so absolute world Y
-            // moves around when jumping/falling).
-            let band_lo_rel = wedge.min_y - attacker_feet_y;
-            let band_hi_rel = wedge.max_y - attacker_feet_y;
-            // Cross-check: does Fighter.facing agree with the actual model
-            // rotation?  If the model is visibly facing one way but
-            // `fighter.facing` says another, the wedge gizmo is using one
-            // and the visual model the other, and they only LOOK aligned by
-            // accident of the camera angle.
-            // Bevy convention: Transform.forward() = world direction of
-            // local -Z; Transform::back() = world direction of local +Z.
-            // fighter.facing should match `transform.back()` per
-            // player/systems.rs:498 (`fighter.facing = new_rot * Vec3::Z`).
-            let tf_back = attacker_tf.back();
-            let facing_vs_tf_back =
-                attacker_forward.normalize_or_zero().dot(tf_back.into()).clamp(-1.0, 1.0);
-            let facing_drift_deg = facing_vs_tf_back.acos().to_degrees();
-            if facing_drift_deg > 1.0 {
-                warn!(
-                    target: "combat::wedge",
-                    "fighter.facing DRIFT for ATK={:?}: facing=({:.2},{:.2},{:.2}) \
-                     vs transform.back()=({:.2},{:.2},{:.2})  drift={:.1}°",
-                    attacker_entity,
-                    attacker_forward.x, attacker_forward.y, attacker_forward.z,
-                    tf_back.x, tf_back.y, tf_back.z,
-                    facing_drift_deg,
-                );
-            }
-            info!(
-                target: "combat::wedge",
-                "wedge ATK={:?} anim={} frame={:.2}/{} \
-                 attacker=({:.2},{:.2},{:.2}) feet_y={:.2} facing=({:.2},{:.2},{:.2}) \
-                 center_xz=({:.2},{:.2}) heading_xz=({:.2},{:.2}) \
-                 vp={:.3} reactdiskradius={:.3} minreactdiskradius={:.3} \
-                 inner={:.2} outer={:.2} bounds=[{:.3}..{:.3}] \
-                 sliceheading={:.3} reactdiskheight={:.3} reactdiskheighttol={:.3} \
-                 band_rel_to_feet=[{:.2}..{:.2}]",
-                attacker_entity,
-                anim_name,
-                frame, anim_state.anim.num_frames,
-                attacker_tf.translation.x, attacker_tf.translation.y, attacker_tf.translation.z,
-                attacker_feet_y,
-                attacker_forward.x, attacker_forward.y, attacker_forward.z,
-                wedge.center.x, wedge.center.z,
-                wedge.slice_heading_xz.x, wedge.slice_heading_xz.z,
-                strike.vanishingpoint, strike.reactdiskradius, strike.minreactdiskradius,
-                wedge.inner_radius, wedge.max_radius,
-                wedge.start_rad, wedge.end_rad,
-                strike.sliceheadingradiansb,
-                strike.reactdiskheight, strike.reactdiskheighttolerance,
-                band_lo_rel, band_hi_rel,
-            );
-        }
-
-        // Counters: each filter increments when it drops a candidate.  Logged
-        // once per active wedge frame so we can tell whether the per-target
-        // loop is reaching the geometry test at all, and if not, which
-        // filter is shedding everything.
-        let mut cand_total = 0u32;
-        let mut cand_self = 0u32;
-        let mut cand_dedup = 0u32;
-        let mut cand_invuln = 0u32;
-        let mut cand_fs_invuln = 0u32;
-        let mut cand_fs_phase = 0u32;
-        let mut cand_reached_geom = 0u32;
-
         for (
             target_entity,
             target_tf,
@@ -332,24 +249,19 @@ pub fn hit_detection_system(
             target_anim_opt,
         ) in &mut targets
         {
-            cand_total += 1;
             if target_entity == attacker_entity {
-                cand_self += 1;
                 continue;
             }
             if active_attack.hit_entities.contains(&target_entity) {
-                cand_dedup += 1;
                 continue;
             }
             if now < health.invulnerable_until {
-                cand_invuln += 1;
                 continue;
             }
 
             // Check FighterState phase-based invulnerability (crReactData.does_not_take_damage_after_phase)
             if let Some(fs) = target_fs_opt {
                 if fs.in_invuln_phase {
-                    cand_fs_invuln += 1;
                     continue;
                 }
                 // no_react_start_phase: if set, damage only accepted before this phase
@@ -359,67 +271,15 @@ pub fn hit_detection_system(
                 {
                     let tphase = tanim.current_time / (tanim.anim.num_frames as f32 - 1.0).max(1.0);
                     if tphase >= fs.no_react_start_phase {
-                        cand_fs_phase += 1;
                         continue;
                     }
                 }
             }
-            cand_reached_geom += 1;
 
             let target_lo_y = target_tf.translation.y - CAPSULE_HALF_HEIGHT;
             let target_hi_y = target_tf.translation.y + CAPSULE_HALF_HEIGHT;
 
             if !wedge.contains_target(target_tf.translation, target_lo_y, target_hi_y) {
-                // Diagnostic: classify why the target was rejected so the log
-                // pinpoints x/z (radius) vs angle vs height misses.
-                let dx = target_tf.translation.x - wedge.center.x;
-                let dz = target_tf.translation.z - wedge.center.z;
-                let r = (dx * dx + dz * dz).sqrt();
-                let dir_xz = Vec3::new(dx, 0.0, dz).normalize_or_zero();
-                let dot = wedge.slice_heading_xz.dot(dir_xz).clamp(-1.0, 1.0);
-                let ang = dot.acos();
-                let cross_y = wedge.slice_heading_xz.cross(dir_xz).y;
-                let signed = if cross_y > 0.0 { ang } else { -ang };
-                let height_ok = !(target_lo_y > wedge.max_y || target_hi_y < wedge.min_y);
-                let radius_ok = r <= wedge.max_radius && r >= wedge.inner_radius;
-                let angle_ok = signed >= wedge.start_rad && signed <= wedge.end_rad;
-                // Y values reported RELATIVE to attacker feet so jumping/
-                // falling attackers don't look like a height-mismatch when
-                // the target geometry is actually fine.
-                let band_lo_rel = wedge.min_y - attacker_feet_y;
-                let band_hi_rel = wedge.max_y - attacker_feet_y;
-                let tgt_lo_rel = target_lo_y - attacker_feet_y;
-                let tgt_hi_rel = target_hi_y - attacker_feet_y;
-                // Target in the attacker's local frame: forward = +1 along
-                // attacker_forward, "right" = perpendicular cross with +Y.
-                // If `fwd_amt` is positive, target is in front; if negative,
-                // behind.  This is the unambiguous geometric truth — easier
-                // to read than world XZ which depends on camera/orientation.
-                let to_tgt = target_tf.translation - attacker_tf.translation;
-                let fwd_xz = Vec3::new(attacker_forward.x, 0.0, attacker_forward.z)
-                    .normalize_or_zero();
-                let right_xz = Vec3::new(fwd_xz.z, 0.0, -fwd_xz.x); // 90° CW from fwd
-                let fwd_amt = to_tgt.x * fwd_xz.x + to_tgt.z * fwd_xz.z;
-                let right_amt = to_tgt.x * right_xz.x + to_tgt.z * right_xz.z;
-                let tgt_xz_dist = (to_tgt.x * to_tgt.x + to_tgt.z * to_tgt.z).sqrt();
-                info!(
-                    target: "combat::wedge",
-                    "miss tgt={:?} target_xz=({:.2},{:.2}) center_xz=({:.2},{:.2}) \
-                     dist={:.2} (inner={:.2} outer={:.2}) signed_angle={:.3} \
-                     bounds=[{:.3}..{:.3}] band_rel_feet=[{:.2}..{:.2}] tgt_rel_feet=[{:.2}..{:.2}] \
-                     attacker_feet_y={:.2} tgt_y={:.2} \
-                     radius_ok={} angle_ok={} height_ok={} \
-                     attacker_local_xz=(fwd={:.2}m,right={:.2}m,total={:.2}m)",
-                    target_entity,
-                    target_tf.translation.x, target_tf.translation.z,
-                    wedge.center.x, wedge.center.z,
-                    r, wedge.inner_radius, wedge.max_radius,
-                    signed, wedge.start_rad, wedge.end_rad,
-                    band_lo_rel, band_hi_rel, tgt_lo_rel, tgt_hi_rel,
-                    attacker_feet_y, target_tf.translation.y,
-                    radius_ok, angle_ok, height_ok,
-                    fwd_amt, right_amt, tgt_xz_dist,
-                );
                 continue;
             }
 
@@ -506,14 +366,6 @@ pub fn hit_detection_system(
                 let _knockback_dir =
                     (target_tf.translation - attacker_tf.translation).normalize_or_zero();
 
-                info!(
-                    target: "combat::react",
-                    "[1/4 hit_detection] write InjureMessage atk={:?} tgt={:?} damage={:.1} \
-                     react_enum={} ({}) play_react=true",
-                    attacker_entity, target_entity, damage,
-                    react_enum,
-                    ANIMREACT_NAMES.get(react_enum.max(0) as usize).unwrap_or(&"?"),
-                );
                 injure_writer.write(InjureMessage {
                     target: target_entity,
                     attacker: Some(attacker_entity),
@@ -554,19 +406,6 @@ pub fn hit_detection_system(
                         .unwrap_or(&"?")
                 );
             }
-        }
-
-        // Per-wedge-frame candidate accounting.  Useful when the inner loop
-        // appears silent: tells us whether the targets query yielded any
-        // candidates and which filter shed them before the geometry test.
-        if wedge.is_active {
-            info!(
-                target: "combat::wedge",
-                "candidates ATK={:?}: total={} self={} already_hit={} invuln={} fs_invuln={} fs_phase={} reached_geom={}",
-                attacker_entity,
-                cand_total, cand_self, cand_dedup, cand_invuln,
-                cand_fs_invuln, cand_fs_phase, cand_reached_geom,
-            );
         }
     }
 }
@@ -637,14 +476,6 @@ pub fn injure_system(
     let now = time.elapsed_secs_f64();
 
     for msg in events.read() {
-        info!(
-            target: "combat::react",
-            "[2/4 injure_system] InjureMessage received tgt={:?} atk={:?} damage={:.1} \
-             play_react={} react_enum={:?} hit_type='{}'",
-            msg.target, msg.attacker, msg.damage,
-            msg.play_react, msg.strike_react_enum, msg.hit_type,
-        );
-
         let Ok((
             mut health,
             mut fighter_opt,
@@ -654,21 +485,10 @@ pub fn injure_system(
             fighter_type_opt,
         )) = query.get_mut(msg.target)
         else {
-            warn!(
-                target: "combat::react",
-                "[2/4 injure_system] DROPPED — target {:?} not in query \
-                 (missing Health/Fighter/Transform/HitReaction component?)",
-                msg.target,
-            );
             continue;
         };
 
         if now < health.invulnerable_until {
-            info!(
-                target: "combat::react",
-                "[2/4 injure_system] DROPPED — target {:?} invulnerable until {:.2} (now={:.2})",
-                msg.target, health.invulnerable_until, now,
-            );
             continue;
         }
 
@@ -776,13 +596,6 @@ pub fn injure_system(
                 Vec3::X
             };
 
-            info!(
-                target: "combat::react",
-                "[3/4 injure_system] write HitReactionMessage tgt={:?} kind={:?} react_enum={} \
-                 direction=({:.2},{:.2},{:.2})",
-                msg.target, kind, react_enum,
-                knockback_dir.x, knockback_dir.y, knockback_dir.z,
-            );
             reaction_writer.write(HitReactionMessage {
                 entity: msg.target,
                 kind,
@@ -869,74 +682,24 @@ pub fn hit_reaction_system(
 
     // Apply new reactions: play animation + physics impulse.
     for msg in reader.read() {
-        info!(
-            target: "combat::react",
-            "[4/4 hit_reaction_system] HitReactionMessage received tgt={:?} kind={:?} react_enum={}",
-            msg.entity, msg.kind, msg.react_enum,
-        );
-
         let Ok((mut reaction, mut velocity, mut anim_state_opt, lib_opt)) =
             query.get_mut(msg.entity)
         else {
-            warn!(
-                target: "combat::react",
-                "[4/4 hit_reaction_system] DROPPED — target {:?} not in query \
-                 (missing HitReaction/LinearVelocity component?)",
-                msg.entity,
-            );
             continue;
         };
 
         let mut active = ActiveReaction::new(msg.kind, msg.direction, msg.react_enum);
 
         // Play the ANIMREACT_* animation and record its id for completion detection.
-        match (anim_state_opt.as_mut(), lib_opt) {
-            (Some(anim_state), Some(lib)) if msg.react_enum >= 0 => {
-                match ANIMREACT_NAMES.get(msg.react_enum as usize) {
-                    Some(&anim_name) => {
-                        let known = lib.debug_names.values().any(|s| s == anim_name);
-                        if lib.play(anim_name, anim_state) {
-                            active.react_anim_id = AnimId::new(anim_name).0;
-                            info!(
-                                target: "combat::react",
-                                "[4/4 hit_reaction_system] PLAYED react anim '{}' on {:?} \
-                                 (anim_id=0x{:016x})",
-                                anim_name, msg.entity, active.react_anim_id,
-                            );
-                        } else {
-                            warn!(
-                                target: "combat::react",
-                                "[4/4 hit_reaction_system] FAILED — lib.play('{}') returned false on {:?}. \
-                                 lib has alias for this name: {} (debug_names size: {})",
-                                anim_name, msg.entity, known, lib.debug_names.len(),
-                            );
-                        }
-                    }
-                    None => {
-                        warn!(
-                            target: "combat::react",
-                            "[4/4 hit_reaction_system] FAILED — react_enum {} out of range \
-                             (ANIMREACT_NAMES len={}) for tgt={:?}",
-                            msg.react_enum, ANIMREACT_NAMES.len(), msg.entity,
-                        );
-                    }
-                }
+        if let (Some(ref mut anim_state), Some(lib)) = (anim_state_opt.as_mut(), lib_opt)
+            && msg.react_enum >= 0
+            && let Some(&anim_name) = ANIMREACT_NAMES.get(msg.react_enum as usize)
+        {
+            if lib.play(anim_name, anim_state) {
+                active.react_anim_id = AnimId::new(anim_name).0;
+            } else {
+                warn!("hit_reaction: react anim '{}' not in library", anim_name);
             }
-            (None, _) => warn!(
-                target: "combat::react",
-                "[4/4 hit_reaction_system] FAILED — target {:?} has no Oni2AnimState",
-                msg.entity,
-            ),
-            (_, None) => warn!(
-                target: "combat::react",
-                "[4/4 hit_reaction_system] FAILED — target {:?} has no Oni2AnimLibrary",
-                msg.entity,
-            ),
-            _ => warn!(
-                target: "combat::react",
-                "[4/4 hit_reaction_system] FAILED — react_enum {} < 0 for tgt={:?}",
-                msg.react_enum, msg.entity,
-            ),
         }
 
         reaction.active = Some(active);
