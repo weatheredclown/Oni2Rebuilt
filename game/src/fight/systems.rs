@@ -20,7 +20,8 @@ use crate::combat::components::{
     ComboTracker, Fighter, Health, HitReaction, ReactLibrary, ReactionKind,
 };
 use crate::combat::events::{AboutToBeHitMessage, HitReactionMessage};
-use crate::oni2_loader::animation::{Oni2AnimLibrary, Oni2AnimState};
+use crate::oni2_loader::animation::{AnimId, Oni2AnimLibrary, Oni2AnimState};
+use crate::oni2_loader::parsers::rct::ANIMREACT_NAMES;
 
 use super::components::{
     BlockStatus, FighterState, FighterType, GrabAction, GrappleState, fighter_flags, grapple_flags,
@@ -94,28 +95,54 @@ pub fn fighter_state_update_system(
             }
         }
 
-        // Invulnerability phase tracking: once the react animation passes
-        // invulnerability_start_phase, set in_invuln_phase
-        if !fs.in_invuln_phase
-            && fs.invulnerability_start_phase > 0.0
-            && let Some(anim) = anim_opt
-            && anim.anim.num_frames > 1
-        {
-            let phase = anim.current_time / (anim.anim.num_frames as f32 - 1.0).max(1.0);
-            if phase >= fs.invulnerability_start_phase {
-                fs.in_invuln_phase = true;
+        // Invulnerability phase / no-react-after-phase are only meaningful
+        // *while the react anim that set them is playing*.  The original
+        // logic only cleared the flags when the current anim hit its last
+        // frame and was non-looping — but if the react anim is interrupted
+        // (transitioned to idle, walk, or another react before completing)
+        // the flags get orphaned and the entity becomes permanently
+        // invulnerable.  Compute "still playing the react that set these
+        // flags" up front and use that for both setting and clearing.
+        let react_anim_id = if fs.react_anim >= 0 {
+            ANIMREACT_NAMES
+                .get(fs.react_anim as usize)
+                .map(|name| AnimId::new(name))
+        } else {
+            None
+        };
+        let playing_react_anim = match (anim_opt, react_anim_id) {
+            (Some(anim), Some(rid)) => anim.current_anim_id == Some(rid),
+            _ => false,
+        };
+
+        if playing_react_anim {
+            // We're playing the react.  Latch in_invuln_phase once the
+            // animation crosses invulnerability_start_phase.
+            if !fs.in_invuln_phase
+                && fs.invulnerability_start_phase > 0.0
+                && let Some(anim) = anim_opt
+                && anim.anim.num_frames > 1
+            {
+                let phase = anim.current_time / (anim.anim.num_frames as f32 - 1.0).max(1.0);
+                if phase >= fs.invulnerability_start_phase {
+                    fs.in_invuln_phase = true;
+                }
             }
-        }
-        // Clear once the animation ends
-        if let Some(anim) = anim_opt
-            && !anim.looping
+        } else if fs.in_invuln_phase
+            || fs.invulnerability_start_phase > 0.0
+            || fs.no_react_start_phase > 0.0
+            || fs.react_anim >= 0
         {
-            let last = (anim.anim.num_frames as f32 - 1.0).max(0.0);
-            if anim.current_time >= last {
-                fs.in_invuln_phase = false;
-                fs.invulnerability_start_phase = 0.0;
-                fs.no_react_start_phase = 0.0;
-            }
+            // We are NOT playing the react anim that set these flags
+            // anymore — either it ran to completion, was interrupted by
+            // another anim, or no react was ever played.  Either way,
+            // there is no longer a meaningful "react window" and stale
+            // flags would gate this entity out of all hit-detection.
+            // Clear the whole react bookkeeping defensively.
+            fs.in_invuln_phase = false;
+            fs.invulnerability_start_phase = 0.0;
+            fs.no_react_start_phase = 0.0;
+            fs.react_anim = -1;
         }
     }
 }
