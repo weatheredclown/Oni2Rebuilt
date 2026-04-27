@@ -1341,8 +1341,11 @@ fn load_layout_lights(
                 if light.intensity <= 0.0 {
                     continue;
                 }
-                let range = (light.intensity * 1.0).max(10.0);
-                let lumens = light.intensity * 200.0;
+                // Massively boost procedural light range and intensity.
+                // The CRT shader thrives on high contrast, and dark rooms
+                // rely heavily on these procedural lights to overcome baseline shadows.
+                let range = (light.intensity * 3.0).max(25.0);
+                let lumens = light.intensity * 3000.0;
 
                 commands.spawn((
                     PointLight {

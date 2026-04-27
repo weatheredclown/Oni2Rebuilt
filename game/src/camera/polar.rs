@@ -89,13 +89,14 @@ pub fn apply_camera_transform(
         &CameraController,
         &mut CameraChannel,
         &mut Transform,
+        &mut GlobalTransform,
         &mut Projection,
     )>,
     spatial_query: avian3d::prelude::SpatialQuery,
 ) {
     let dt = time.delta_secs();
 
-    for (_controller, mut channel, mut cam_tf, mut projection) in &mut camera_query {
+    for (_controller, mut channel, mut cam_tf, mut cam_gtf, mut projection) in &mut camera_query {
         if let Projection::Perspective(ref mut persp) = *projection {
             persp.fov = channel.current_fov.to_radians();
         }
@@ -104,6 +105,13 @@ pub fn apply_camera_transform(
             cam_tf.translation = script_tf.translation;
             cam_tf.rotation = script_tf.rotation;
             apply_camera_shake(&mut cam_tf, &mut channel, dt);
+            // Mirror onto GlobalTransform so render extract this same
+            // frame sees the new pose — this system runs in PostUpdate
+            // AFTER `TransformSystems::Propagate`, so without this
+            // line the camera's GlobalTransform would lag by one
+            // frame (manifests as the world appearing to "double-jitter"
+            // because the camera view matrix uses the stale GTF).
+            *cam_gtf = GlobalTransform::from(*cam_tf);
             continue;
         }
 
@@ -156,6 +164,11 @@ pub fn apply_camera_transform(
         cam_tf.look_at(target_base, Vec3::Y);
 
         apply_camera_shake(&mut cam_tf, &mut channel, dt);
+        // Mirror onto GlobalTransform — this system runs in PostUpdate
+        // after `TransformSystems::Propagate`, so writing only Transform
+        // would leave GlobalTransform stale until next frame, and
+        // render extract uses GlobalTransform for the view matrix.
+        *cam_gtf = GlobalTransform::from(*cam_tf);
     }
 }
 

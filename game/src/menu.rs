@@ -412,15 +412,12 @@ fn cleanup_loading_screen(
     for entity in &query {
         commands.entity(entity).despawn();
     }
-    // Reset the progress bar + drop chunked-loader resources here too,
-    // not just in `setup_scene` (OnEnter InGame).  This path also runs
-    // when we exit LoadingLayout via any OTHER transition — a future
-    // cancel/error path back to FrontEnd or Menu — so relying on
-    // InGame's setup to clean up leaks the resources when the session
-    // never reaches InGame.
+    // Reset the progress bar + drop the PendingLayoutLoad resource here.
+    // We DO NOT drop LoadedLayoutPlayer here because `setup_scene` (OnEnter InGame)
+    // needs to consume it to spawn the player. `setup_scene` will remove it
+    // once consumed.
     *progress = LoadingProgress::default();
     commands.remove_resource::<crate::oni2_loader::layout_loader::PendingLayoutLoad>();
-    commands.remove_resource::<crate::oni2_loader::layout_loader::LoadedLayoutPlayer>();
 }
 
 /// Parse `Settings/rb.gamedata` into `(folder, description)` pairs in

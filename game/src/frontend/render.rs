@@ -257,6 +257,7 @@ fn spawn_page_chrome(
                 },
                 FrontendUiEntity,
                 FrontendChromeEntity,
+                crate::crt_post::CrtSettings::ps2_crt(),
             ));
         }
     }
@@ -764,6 +765,9 @@ fn spawn_menu_camera_3d(commands: &mut Commands, cam: Option<&CameraInit>) {
         // Camera* event fires cleanly into an existing component
         // instead of the observer's "insert + bail" path.
         super::camera::FrontendMenuCameraSeq::default(),
+        // PS2-CRT-look post-process — gamma curve + black crush +
+        // saturation lift, applied after tonemapping.
+        crate::crt_post::CrtSettings::ps2_crt(),
     ));
 }
 

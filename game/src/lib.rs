@@ -5,6 +5,7 @@ pub mod camera;
 pub mod combat;
 pub mod common;
 pub mod control_map;
+pub mod crt_post;
 pub mod debug;
 pub mod door;
 pub mod explosion;

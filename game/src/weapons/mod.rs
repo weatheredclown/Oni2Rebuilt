@@ -68,10 +68,18 @@ impl Plugin for WeaponPlugin {
                 )
                     .run_if(in_state(AppState::InGame)),
             )
+            // weapon_attachment_system parents each weapon entity to
+            // its wielder's grip bone with a fixed local Transform.
+            // Bevy's `TransformSystems::Propagate` (in PostUpdate)
+            // then computes the weapon's GlobalTransform AND its mesh
+            // child's GlobalTransform from the already-up-to-date bone
+            // hierarchy in a single pass — eliminating the 1-frame
+            // lag and jitter the previous "compute world pose by hand"
+            // design caused.  Running in Update is fine since we no
+            // longer read any GlobalTransforms.
             .add_systems(
                 Update,
                 systems::weapon_attachment_system
-                    .after(crate::oni2_loader::animation::update_oni2_animation)
                     .run_if(in_state(AppState::InGame)),
             );
     }

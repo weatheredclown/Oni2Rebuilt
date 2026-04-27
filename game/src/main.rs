@@ -16,6 +16,7 @@ mod camera;
 mod combat;
 mod common;
 mod control_map;
+mod crt_post;
 mod debug;
 mod door;
 mod explosion;
@@ -223,7 +224,8 @@ fn main() {
     .add_plugins(scroni::ScroniPlugin)
     .add_plugins(door::DoorPlugin)
     .add_plugins(debug::DebugPlugin)
-    .add_plugins(frontend::FrontendPlugin);
+    .add_plugins(frontend::FrontendPlugin)
+    .add_plugins(crt_post::CrtPostPlugin);
 
     if fog_enabled {
         app.insert_resource(oni2_loader::FogEnabled);
@@ -452,6 +454,7 @@ fn setup_scene(
             focus_actor: player_id,
             ..default()
         },
+        crt_post::CrtSettings::ps2_crt(),
     ));
 }
 

@@ -329,16 +329,46 @@ pub fn accuracy_system(
 // weapon_attachment_system
 // ---------------------------------------------------------------------------
 
+/// Parent each active weapon to its wielder's grip bone, with the
+/// weapon's local `Transform` set to the per-mount grip offset /
+/// rotation.  After this runs, Bevy's `TransformSystems::Propagate`
+/// (later this same frame in `PostUpdate`) computes the weapon's
+/// `GlobalTransform` AND its mesh-child's `GlobalTransform` from the
+/// already-updated bone hierarchy — no race conditions, no manual
+/// world-space math, no lag.
+///
+/// Why this hierarchy-based design (rather than the previous
+/// "compute world pose each frame and overwrite weapon's
+/// Transform/GlobalTransform"):
+///
+///   - The previous design treated the weapon as a top-level entity
+///     and read the bone's `GlobalTransform` to compute the weapon's
+///     world pose.  That meant we needed to run AFTER bone GTF was
+///     propagated — i.e. after `TransformSystems::Propagate`.  But
+///     the weapon entity itself owns a child mesh entity (see
+///     `inventory::systems::add_weapon_system`), and writing only
+///     the weapon's GTF leaves the mesh-child's GTF stale until next
+///     frame's propagation.  Result: the visible mesh lagged by one
+///     frame about half the time.
+///   - By parenting the weapon to the bone with a fixed local
+///     transform, propagation walks bone → weapon → mesh in one
+///     pass.  Everything is consistent.
+///
+/// Runs in `Update` (well before `PostUpdate`'s propagation) — see
+/// `WeaponPlugin::build`.  The grip bone choice depends on weapon
+/// state (`Drawn` vs `Holstered`), which is set by the animator's
+/// state machine in `FixedUpdate` and is therefore stable by the time
+/// `Update` runs.
 pub fn weapon_attachment_system(
-    mut weapon_query: Query<(&Weapon, &mut Transform)>,
+    mut commands: Commands,
+    mut weapon_query: Query<(Entity, &Weapon, &mut Transform, Option<&ChildOf>)>,
     wielder_query: Query<(
         Option<&crate::animator::components::ActionPlayer>,
         Option<&crate::inventory::components::ActorWeaponMounts>,
         Option<&crate::oni2_loader::animation::Oni2AnimState>,
     )>,
-    joints: Query<&GlobalTransform>,
 ) {
-    for (weapon, mut weapon_tf) in &mut weapon_query {
+    for (weapon_entity, weapon, mut weapon_tf, current_parent) in &mut weapon_query {
         let Ok((action_player, mounts, anim_state)) = wielder_query.get(weapon.owner) else {
             continue;
         };
@@ -359,9 +389,8 @@ pub fn weapon_attachment_system(
                 let mount = if is_drawn { out_mount } else { away_mount };
                 bone_idx = mount.parent_bone;
                 // Always take the mount's Bevy-space values when present.
-                // (Previously guarded on "non-zero" to fall back to
-                // weapon-type defaults — but Quat::IDENTITY is a valid
-                // "no rotation" case and we shouldn't fall back from it.)
+                // (Quat::IDENTITY is a valid "no rotation" case and we
+                // shouldn't fall back from it to weapon-type defaults.)
                 grip_offset = mount.offset;
                 grip_rot = mount.rot;
             } else if !is_drawn {
@@ -369,20 +398,29 @@ pub fn weapon_attachment_system(
             }
         }
 
-        if let Some(anim_state) = anim_state
-            && let Some(&joint_entity) = anim_state.joint_entities.get(bone_idx)
-            && let Ok(joint_gtf) = joints.get(joint_entity)
-        {
-            let (_, bone_rot, bone_pos) = joint_gtf.to_scale_rotation_translation();
+        let Some(anim_state) = anim_state else {
+            continue;
+        };
+        let Some(&joint_entity) = anim_state.joint_entities.get(bone_idx) else {
+            continue;
+        };
 
-            // grip_offset and grip_rot are already in Bevy space (converted
-            // at parse time — see `parsers::actor_weap` / `parsers::weap`).
-            let world_rot = bone_rot * grip_rot;
-            let world_pos = bone_pos + bone_rot * grip_offset;
-
-            weapon_tf.translation = world_pos;
-            weapon_tf.rotation = world_rot;
+        // Re-parent only when the target bone changes (weapon
+        // drawn ↔ holstered, or different mount picked).  Avoids
+        // queuing a no-op `ChildOf` insert every frame.
+        let needs_reparent = current_parent
+            .map(|cof| cof.0 != joint_entity)
+            .unwrap_or(true);
+        if needs_reparent {
+            commands.entity(weapon_entity).insert(ChildOf(joint_entity));
         }
+
+        // Local transform = grip offset/rot in the BONE's frame.
+        // grip_offset / grip_rot are already in Bevy space (converted
+        // at parse time — see `parsers::actor_weap` / `parsers::weap`).
+        weapon_tf.translation = grip_offset;
+        weapon_tf.rotation = grip_rot;
+        weapon_tf.scale = Vec3::ONE;
     }
 }
 
