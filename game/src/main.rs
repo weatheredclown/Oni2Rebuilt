@@ -18,6 +18,7 @@ mod common;
 mod control_map;
 mod crt_post;
 mod debug;
+mod debug_atdt;
 mod door;
 mod explosion;
 mod fight;
@@ -31,6 +32,7 @@ mod hud;
 mod inventory;
 mod laser;
 mod menu;
+mod mover;
 mod oni2_loader;
 mod player;
 mod projectile_system;
@@ -180,7 +182,13 @@ fn main() {
     vfs::set_vfs(Box::new(multi_vfs));
 
     // --- App setup ---
+    // Mover backend (env var RB_MOVER=tnua to enable A/B path). Resolved
+    // before plugin build so MoverPlugin can pick its system set.
+    let mover_backend = mover::MoverBackend::from_env();
+    println!("Mover backend: {:?}", mover_backend);
+
     let mut app = App::new();
+    app.insert_resource(mover_backend);
 
     app.add_plugins(
         DefaultPlugins
@@ -216,6 +224,7 @@ fn main() {
     .add_plugins(ai::AiPlugin)
     .add_plugins(camera::CameraPlugin)
     .add_plugins(hud::HudPlugin)
+    .add_plugins(mover::MoverPlugin)
     .add_plugins(fx_system::FxPlugin)
     .add_plugins(fx_visuals::FxVisualsPlugin)
     .add_plugins(laser::LaserPlugin)
@@ -226,6 +235,7 @@ fn main() {
     .add_plugins(scroni::ScroniPlugin)
     .add_plugins(door::DoorPlugin)
     .add_plugins(debug::DebugPlugin)
+    .add_plugins(debug_atdt::AtdtDebugPlugin)
     .add_plugins(frontend::FrontendPlugin)
     .add_plugins(crt_post::CrtPostPlugin);
 
@@ -321,6 +331,8 @@ fn setup_scene(
     selected_layout: Option<Res<SelectedLayout>>,
     sandbox: Option<Res<SandboxMode>>,
     loaded_player: Option<Res<crate::oni2_loader::layout_loader::LoadedLayoutPlayer>>,
+    mover_backend: Res<crate::mover::MoverBackend>,
+    shared_mover_config: Option<Res<crate::mover::SharedMoverConfig>>,
 ) {
     let scoped = InGameEntity;
 
@@ -432,6 +444,11 @@ fn setup_scene(
             ),
             crate::player::components::PadFsmName(pad_fsm),
             crate::combat::FighterBundle::default(),
+            // The player is also a defender — AI fighters need to
+            // request slots around the player and grab the player's
+            // cookie to attack.  See `fightai/position.rs`.
+            crate::fightai::position::FightResources::default(),
+            crate::fightai::position::FightSlotState::default(),
         ));
         pi.entity
     } else {
@@ -442,6 +459,8 @@ fn setup_scene(
             &combat_materials,
             fallback_spawn,
             scoped.clone(),
+            *mover_backend,
+            shared_mover_config.as_ref().map(|c| c.0.clone()),
         )
     };
 
@@ -467,23 +486,33 @@ pub fn spawn_fallback_player(
     combat_materials: &CombatMaterials,
     fallback_spawn: Vec3,
     scoped: InGameEntity,
+    mover_backend: crate::mover::MoverBackend,
+    mover_config: Option<Handle<crate::mover::Oni2SchemeConfig>>,
 ) -> Entity {
-    commands
-        .spawn((
-            Mesh3d(meshes.add(Capsule3d::new(0.4, 1.2))),
-            MeshMaterial3d(materials.add(StandardMaterial {
-                base_color: Color::srgb(0.2, 0.4, 0.9),
-                ..default()
-            })),
-            Transform::from_translation(fallback_spawn),
-            scoped,
-            crate::combat::CreaturePhysicsBundle::new(0.4, 1.2),
-            PrototypeElement,
-            crate::player::PlayerIdentityBundle::new("TCTF", 100.0),
-            crate::player::components::PadFsmName("player".to_string()),
-            crate::combat::FighterBundle::default(),
-            crate::animator::AnimatorBundle::default(),
-        ))
+    let mut entity_commands = commands.spawn((
+        Mesh3d(meshes.add(Capsule3d::new(0.4, 1.2))),
+        MeshMaterial3d(materials.add(StandardMaterial {
+            base_color: Color::srgb(0.2, 0.4, 0.9),
+            ..default()
+        })),
+        Transform::from_translation(fallback_spawn),
+        scoped,
+        PrototypeElement,
+        crate::player::PlayerIdentityBundle::new("TCTF", 100.0),
+        crate::player::components::PadFsmName("player".to_string()),
+        crate::combat::FighterBundle::default(),
+        crate::animator::AnimatorBundle::default(),
+        crate::fightai::position::FightResources::default(),
+        crate::fightai::position::FightSlotState::default(),
+    ));
+    crate::mover::insert_creature_physics(
+        &mut entity_commands,
+        0.4,
+        1.2,
+        mover_backend,
+        mover_config,
+    );
+    entity_commands
         .with_children(|parent| {
             parent.spawn((
                 Mesh3d(combat_materials.fist_mesh.clone()),

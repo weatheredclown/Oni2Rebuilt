@@ -189,7 +189,13 @@ impl NavGraph {
             }
         }
 
-        self.a_star(start_idx, end_idx)
+        let path_opt = self.a_star(start_idx, end_idx);
+        path_opt.map(|mut path| {
+            if path.last().map(|&last_pos| last_pos.distance_squared(end) > 0.01).unwrap_or(true) {
+                path.push(end);
+            }
+            path
+        })
     }
 
     fn a_star(&self, start_idx: usize, target_idx: usize) -> Option<Vec<Vec3>> {
@@ -266,12 +272,13 @@ pub fn path_following_system(
         &mut Transform,
         &mut avian3d::prelude::LinearVelocity,
         &mut crate::combat::components::Fighter,
+        Option<&mut crate::ai::components::AiDrivenVelocityThisTick>,
     )>,
 ) {
     let speed_multiplier = 4.5;
     let dt = time.delta_secs();
 
-    for (entity, mut follower, mut tf, mut vel, mut fighter) in &mut query {
+    for (entity, mut follower, mut tf, mut vel, mut fighter, mut driven_opt) in &mut query {
         if follower.current_wp >= follower.path.len() {
             commands.entity(entity).remove::<ActorPathfollower>();
             vel.x = 0.0;
@@ -301,6 +308,9 @@ pub fn path_following_system(
         let desired = dir * speed_multiplier * follower.speed_throttle;
         vel.x = desired.x;
         vel.z = desired.z;
+        if let Some(mut driven) = driven_opt {
+            driven.0 = true;
+        }
 
         fighter.facing = dir;
 
@@ -321,13 +331,14 @@ pub fn actor_follower_system(
         &mut Transform,
         &mut avian3d::prelude::LinearVelocity,
         &mut crate::combat::components::Fighter,
+        Option<&mut crate::ai::components::AiDrivenVelocityThisTick>,
     )>,
     targets: Query<&Transform, Without<crate::ai::components::ActorFollower>>,
 ) {
     let speed_multiplier = 4.5;
     let dt = time.delta_secs();
 
-    for (follower, mut tf, mut vel, mut fighter) in &mut query {
+    for (follower, mut tf, mut vel, mut fighter, mut driven_opt) in &mut query {
         if let Ok(target_tf) = targets.get(follower.target) {
             let mut to_target = target_tf.translation - tf.translation;
             to_target.y = 0.0;
@@ -344,6 +355,9 @@ pub fn actor_follower_system(
             let desired = dir * speed_multiplier;
             vel.x = desired.x;
             vel.z = desired.z;
+            if let Some(mut driven) = driven_opt {
+                driven.0 = true;
+            }
             fighter.facing = dir;
 
             let look_target = tf.translation + dir;
@@ -397,14 +411,13 @@ pub fn retreat_steering_system(
             }
         }
 
-        let mut escape_dir = Vec3::ZERO;
-        if enemies_found > 0 {
+        let mut escape_dir = if enemies_found > 0 {
             // Direction away from enemies
-            escape_dir = -(combined_threat / enemies_found as f32).normalize_or_zero();
+            -(combined_threat / enemies_found as f32).normalize_or_zero()
         } else {
             // No enemies explicitly near? Just run anywhere safe. Pick forward
-            escape_dir = tf.local_z().normalize_or_zero();
-        }
+            tf.local_z().normalize_or_zero()
+        };
 
         if let Some(target) = retreating.avoid_target
             && let Ok((_, target_tf, _)) = all_factions.get(target)
@@ -454,5 +467,36 @@ pub fn retreat_steering_system(
         commands
             .entity(entity)
             .remove::<crate::ai::components::ActorRetreating>();
+    }
+}
+
+pub fn ai_velocity_residual_clamp_system(
+    mut query: Query<(
+        &mut avian3d::prelude::LinearVelocity,
+        &mut crate::ai::components::AiDrivenVelocityThisTick,
+        Option<&crate::animator::components::ActionPlayer>,
+        Option<&crate::oni2_loader::animation::Oni2AnimState>,
+    ), With<crate::ai::components::AiFighter>>,
+) {
+    for (mut vel, mut driven, ap_opt, anim_state_opt) in &mut query {
+        let mut is_reacting_or_airborne = false;
+        
+        if let Some(ap) = ap_opt {
+            if ap.sub_state_1 == crate::animator::components::sub_state_1::REACT {
+                is_reacting_or_airborne = true;
+            }
+        }
+        
+        if let Some(anim_state) = anim_state_opt {
+            if !anim_state.is_grounded {
+                is_reacting_or_airborne = true;
+            }
+        }
+
+        if !driven.0 && !is_reacting_or_airborne {
+            vel.x = 0.0;
+            vel.z = 0.0; // leave y for gravity
+        }
+        driven.0 = false;
     }
 }

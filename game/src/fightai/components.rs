@@ -11,6 +11,7 @@ use crate::statemachine::drivers::fight::{FightCtx, FightDriver};
 pub struct FightRuntime {
     pub fsm: SmRuntime<FightDriver>,
     pub ctx: FightCtx,
+    pub last_log: String,
 }
 
 /// The runtime state for an actor's individual attacks (`*.atk`).
@@ -20,4 +21,5 @@ pub struct FightRuntime {
 pub struct AttackRuntime {
     pub fsm: SmRuntime<AttackDriver>,
     pub ctx: AttackCtx,
+    pub last_log: String,
 }

@@ -174,7 +174,13 @@ impl Plugin for AnimatorPlugin {
                         // `gravity_sync_system` reflects the resolved
                         // stack into Avian's `GravityScale` each tick.
                         // This system only applies the velocity impulse.
-                        systems::jump_impulse_apply_system.after(systems::jump_impulse_emit_system),
+                        // Dynamic-only: writes `LinearVelocity.y` directly,
+                        // which would fight Tnua's float spring. Tnua mode
+                        // routes the same `JumpImpulseMessage` through
+                        // `mover::bridge::tnua_jump_from_message` instead.
+                        systems::jump_impulse_apply_system
+                            .after(systems::jump_impulse_emit_system)
+                            .run_if(crate::mover::backend_is_dynamic),
                         // Idempotently attach `GravityModifiers` to any
                         // entity with `GravityScale` that doesn't have
                         // one yet.  Runs first so downstream sync has

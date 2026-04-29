@@ -419,10 +419,11 @@ pub fn player_movement_system(
         ),
     >,
     _start_action_writer: MessageWriter<crate::animator::StartActionMessage>,
+    mut jump_writer: MessageWriter<crate::animator::JumpImpulseMessage>,
 ) {
     let camera_tf_opt = camera_query.iter().next();
 
-    for (_entity, input, transform, mut velocity, mut fighter, fsm_opt, anim_state_opt) in
+    for (entity, input, transform, mut velocity, mut fighter, fsm_opt, anim_state_opt) in
         &mut query
     {
         if let Some(fsm) = fsm_opt {
@@ -438,10 +439,21 @@ pub fn player_movement_system(
 
         let is_grounded = anim_state_opt.is_none_or(|s| s.is_grounded);
         // Debug/Placeholder players have no Animator/Oni2AnimState — they can't
-        // run the data-driven jump schedule, so they get an instant hardcoded impulse.
+        // run the data-driven jump schedule, so they emit a JumpImpulseMessage
+        // directly. Both backends subscribe: Dynamic via
+        // `jump_impulse_apply_system` (writes velocity.y), Tnua via
+        // `mover::bridge::tnua_jump_from_message` (fires TnuaBuiltinJump).
         let is_placeholder = anim_state_opt.is_none();
         if is_placeholder && input.jump && is_grounded {
-            velocity.y = JUMP_IMPULSE;
+            jump_writer.write(crate::animator::JumpImpulseMessage {
+                entity,
+                vertical: JUMP_IMPULSE,
+                forward: 0.0,
+                lateral: 0.0,
+                gravity_factor: 1.0,
+                time: 0.0,
+                heading_adjust: 0.0,
+            });
         }
 
         if input.movement.length_squared() < 0.001 {

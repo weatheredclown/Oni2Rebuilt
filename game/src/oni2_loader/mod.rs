@@ -153,6 +153,7 @@ impl Plugin for Oni2LoaderPlugin {
                     debug_draw_capsules,
                     debug_draw_curves,
                     debug_draw_attack_wedges,
+                    environment::debug_draw_light_grid,
                 )
                     .run_if(in_state(AppState::InGame))
                     .run_if(|v: Res<DebugBoundsVisible>| v.0),

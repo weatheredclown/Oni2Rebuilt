@@ -25,6 +25,9 @@ pub struct ActorRetreating {
 }
 
 #[derive(Component, Default)]
+pub struct AiDrivenVelocityThisTick(pub bool);
+
+#[derive(Component, Default)]
 pub struct AiFighter {
     pub target: Option<Entity>,
     pub manual_target: bool,

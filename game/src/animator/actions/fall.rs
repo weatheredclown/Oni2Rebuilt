@@ -65,7 +65,12 @@ impl Action for FallAction {
             AnimScheduleEntry::new("ANIMJUMP_VERTICAL_3_EXT", sub_state_1::IDLE).with_hold();
         if ctx.lib.play(&entry.alias, ctx.anim_state) {
             ctx.anim_state.speed_multiplier = entry.rate;
-            ctx.anim_state.looping = entry.hold_at_end;
+            // `hold_at_end` clamps on last frame (no wrap).  The fall
+            // pose holds visually until ground contact advances the
+            // schedule into LAND.  Without this override the .anim
+            // file's own `is_loop` (true for VERTICAL_3_EXT) would make
+            // the pose wrap and produce a visible pop on the seam.
+            ctx.anim_state.looping = false;
             ctx.ap.record_new_substate_1(entry.substate_1);
             let mut schedule = AnimSchedule::single(entry);
             schedule.mark_first_played();
@@ -103,7 +108,11 @@ impl Action for FallAction {
                         AnimScheduleEntry::new("ANIMJUMP_VERTICAL_4", sub_state_1::JUMP_LAND);
                     if ctx.lib.play(&land_entry.alias, ctx.anim_state) {
                         ctx.anim_state.speed_multiplier = land_entry.rate;
-                        ctx.anim_state.looping = land_entry.hold_at_end;
+                        // LAND plays once and the Landing branch (below)
+                        // detects anim end via current_time clamp.  See
+                        // AnimScheduleEntry::hold_at_end for why this
+                        // is `false` rather than `land_entry.hold_at_end`.
+                        ctx.anim_state.looping = false;
                         ctx.ap.record_new_substate_1(land_entry.substate_1);
                         let mut schedule = AnimSchedule::single(land_entry);
                         schedule.mark_first_played();

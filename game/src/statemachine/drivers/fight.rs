@@ -52,7 +52,28 @@ pub enum FightEvent {
     CookieOffered,
     /// The attack we were running just finished.
     AttackFinished,
-    /// Coordinator asked us to step up as the next attacker.
+    /// "Yield the cookie so the next queued attacker can swing."
+    ///
+    /// Despite the name, this fires on the CURRENT attacker — not the
+    /// next one.  When this is true the fight FSM's S_ATTACK state
+    /// runs `A_RELEASE_COOKIE` and transitions to S_PREPARE_NEXT_ATTACKER,
+    /// which then waits for `E_ATTACK_FINISHED` before returning to
+    /// S_STARTING_FIGHT for another loop.  Without this firing, an
+    /// attacker that grabbed the cookie holds it forever and the
+    /// other queued attackers never get offered the cookie — combat
+    /// degenerates to one fighter swinging in a tight loop.
+    ///
+    /// Legacy formula (rb/src/aifight/fighter.cpp:2797):
+    /// ```cpp
+    /// bool aiFighter::PrepareNextAttacker() const {
+    ///     return !IsAttacking() || AttackStateMachine->IsDelayingCookie();
+    /// }
+    /// ```
+    /// I.e. yield when EITHER (a) our swing animation has ended, OR
+    /// (b) the inner attack-FSM voluntarily set its `FLAG_DELAYED_COOKIE`
+    /// bit (a script-level "let someone else attack" hint emitted by
+    /// `.atk` action steps that want to chain via a peer instead of
+    /// re-grabbing the cookie themselves).
     PrepareNextAttacker,
     /// We were just hit (attacked) by the target.
     Attacked,
@@ -106,6 +127,37 @@ pub struct FightCtx {
     pub position_offered: bool,
     pub cookie_offered: bool,
     pub attack_finished: bool,
+    /// Drives `E_PREPARE_NEXT_ATTACKER` — see the variant doc on
+    /// `FightEvent::PrepareNextAttacker` for the full picture.
+    ///
+    /// **Currently always false** because no host system writes it.
+    /// The fight FSM still functions: in S_ATTACK the fall-through
+    /// rule fires `A_ATK_ATTACK` every tick, and the inner
+    /// `AttackRuntime` ends the swing when its anim completes.  The
+    /// downside is that the cookie is held until something external
+    /// forces a release, so multi-attacker rotation around a single
+    /// target doesn't time-share the way the legacy did.
+    ///
+    /// To wire this properly, populate from `fight_runtime_update_system`
+    /// with the legacy formula `!is_attacking || is_delaying_cookie`:
+    ///   - `!is_attacking` ≈ `ctx.attack_finished` (we already compute
+    ///     this from `Oni2AnimState::current_time` reaching the end).
+    ///   - `is_delaying_cookie` needs a new bool on `AttackCtx`
+    ///     (`delaying_cookie: bool`) flipped on by an `.atk` action
+    ///     step like `delay_cookie` / `yield_cookie` (legacy
+    ///     `aiAtkAction` subclasses set `FLAG_DELAYED_COOKIE` on the
+    ///     attack state machine).  No such action is parsed yet, so
+    ///     until that lands the formula collapses to `attack_finished`,
+    ///     which is a reasonable first cut: yields the cookie on swing
+    ///     end so the next queued attacker can grab it.
+    ///
+    /// One additional legacy nuance the formula above doesn't capture:
+    /// `aiAttackStateMachine::Update` (rb/src/aifight/
+    /// attackstatemachine.cpp:399) ALSO force-yields the cookie when
+    /// a fighter has held it longer than `FIGHTMGR.CookieHogTime`
+    /// without swinging.  That's a watchdog timer separate from this
+    /// flag — port it as a duration check on `FightResources` rather
+    /// than threading it through here.
     pub prepare_next_attacker: bool,
     pub attacked: bool,
     /// String mode tag used by `EMode("foo")` events.
@@ -136,7 +188,13 @@ impl SmDriver for FightDriver {
         match event {
             FightEvent::HasTarget => ctx.has_target,
             FightEvent::Reacting => ctx.is_reacting,
-            FightEvent::HasPosition => ctx.has_position,
+            FightEvent::HasPosition => {
+                bevy::log::trace!(
+                    "FightDriver eval_event: E_HAS_POSITION -> {}",
+                    ctx.has_position
+                );
+                ctx.has_position
+            }
             FightEvent::CanAttack => ctx.can_attack,
             FightEvent::TargetKilled => ctx.target_killed,
             FightEvent::Timer(t) => runtime.elapsed - runtime.timer_start >= *t,
@@ -145,7 +203,28 @@ impl SmDriver for FightDriver {
             FightEvent::AttackFinished => ctx.attack_finished,
             FightEvent::PrepareNextAttacker => ctx.prepare_next_attacker,
             FightEvent::Attacked => ctx.attacked,
-            FightEvent::Mode(m) => ctx.mode.eq_ignore_ascii_case(m),
+            FightEvent::Mode(m) => {
+                let ctx_lower = ctx.mode.to_ascii_lowercase();
+                let result = m
+                    .split(',')
+                    .map(|s| s.trim().to_ascii_lowercase())
+                    .any(|m_lower| {
+                        if (m_lower == "fight" || m_lower == "attack")
+                            && (ctx_lower == "fight" || ctx_lower == "attack")
+                        {
+                            true
+                        } else {
+                            ctx_lower == m_lower
+                        }
+                    });
+                bevy::log::trace!(
+                    "FightDriver eval_event: E_MODE({}) against ctx.mode='{}' -> {}",
+                    m,
+                    ctx.mode,
+                    result
+                );
+                result
+            }
             FightEvent::Always => true,
         }
     }
@@ -162,8 +241,11 @@ impl SmDriver for FightDriver {
         // is needed.
         match action {
             FightAction::Check(idx) => adv.check(*idx),
-            FightAction::Display(msg) => bevy::log::info!("fight FSM: {}", msg),
-            other => output.requested_actions.push(other.clone()),
+            FightAction::Display(msg) => bevy::log::trace!("fight FSM: {}", msg),
+            other => {
+                bevy::log::trace!("fight FSM requested: {:?}", other);
+                output.requested_actions.push(other.clone());
+            }
         }
     }
 }
@@ -180,19 +262,19 @@ pub fn parse_fight_event(
     let (name, args) = split_call(text);
 
     Ok(match name {
-        "EHasTarget" | "HasTarget" => FightEvent::HasTarget,
-        "EReacting" | "Reacting" => FightEvent::Reacting,
-        "EHasPosition" | "HasPosition" => FightEvent::HasPosition,
-        "ECanAttack" | "CanAttack" => FightEvent::CanAttack,
-        "ETargetKilled" | "TargetKilled" => FightEvent::TargetKilled,
-        "ETimer" | "Timer" => FightEvent::Timer(args.parse::<f32>().unwrap_or(1.0)),
-        "EPositionOffered" | "PositionOffered" => FightEvent::PositionOffered,
-        "ECookieOffered" | "CookieOffered" => FightEvent::CookieOffered,
-        "EAttackFinished" | "AttackFinished" => FightEvent::AttackFinished,
-        "EPrepareNextAttacker" | "PrepareNextAttacker" => FightEvent::PrepareNextAttacker,
-        "EAttacked" | "Attacked" => FightEvent::Attacked,
-        "EMode" | "Mode" => FightEvent::Mode(args.trim_matches('"').to_string()),
-        "EAlways" | "Always" | "True" => FightEvent::Always,
+        "E_HAS_TARGET" => FightEvent::HasTarget,
+        "E_REACTING" => FightEvent::Reacting,
+        "E_HAS_POSITION" => FightEvent::HasPosition,
+        "E_CAN_ATTACK" => FightEvent::CanAttack,
+        "E_TARGET_KILLED" => FightEvent::TargetKilled,
+        "E_TIMER" => FightEvent::Timer(args.parse::<f32>().unwrap_or(1.0)),
+        "E_POSITION_OFFERED" => FightEvent::PositionOffered,
+        "E_COOKIE_OFFERED" => FightEvent::CookieOffered,
+        "E_ATTACK_FINISHED" => FightEvent::AttackFinished,
+        "E_PREPARE_NEXT_ATTACKER" => FightEvent::PrepareNextAttacker,
+        "E_ATTACKED" => FightEvent::Attacked,
+        "E_MODE" => FightEvent::Mode(args.trim_matches('"').to_string()),
+        "E_ALWAYS" | "" => FightEvent::Always,
         other => return Err(format!("fight: unknown event '{}'", other)),
     })
 }
@@ -206,27 +288,27 @@ pub fn parse_fight_action(
     let arg = parts.next().unwrap_or("").trim();
 
     Ok(Some(match verb {
-        "AIdle" | "Idle" => FightAction::Idle,
-        "AAtkIdle" | "AtkIdle" => FightAction::AtkIdle,
-        "AAtkAttack" | "AtkAttack" => FightAction::AtkAttack,
-        "AMoveToPosition" | "MoveToPosition" => FightAction::MoveToPosition,
-        "ARequestPosition" | "RequestPosition" => FightAction::RequestPosition,
-        "AGrabPosition" | "GrabPosition" => FightAction::GrabPosition,
-        "AUpgradePosition" | "UpgradePosition" => FightAction::UpgradePosition,
-        "AUpgradePositionInFront" | "UpgradePositionInFront" => FightAction::UpgradePositionInFront,
-        "AUpgradePositionBehind" | "UpgradePositionBehind" => FightAction::UpgradePositionBehind,
-        "AUpgradePositionLeft" | "UpgradePositionLeft" => FightAction::UpgradePositionLeft,
-        "AUpgradePositionRight" | "UpgradePositionRight" => FightAction::UpgradePositionRight,
-        "AReleasePosition" | "ReleasePosition" => FightAction::ReleasePosition,
-        "ARequestCookie" | "RequestCookie" => FightAction::RequestCookie,
-        "AGrabCookie" | "GrabCookie" => FightAction::GrabCookie,
-        "AReleaseCookie" | "ReleaseCookie" => FightAction::ReleaseCookie,
-        "AAttack" | "Attack" => FightAction::Attack,
-        "AParry" | "Parry" => FightAction::Parry,
-        "AJoinFormation" | "JoinFormation" => FightAction::JoinFormation,
-        "ALeaveFormation" | "LeaveFormation" => FightAction::LeaveFormation,
-        "AResetTimer" | "ResetTimer" => FightAction::ResetTimer,
-        "Display" => FightAction::Display(arg.to_string()),
+        "A_IDLE" => FightAction::Idle,
+        "A_ATK_IDLE" => FightAction::AtkIdle,
+        "A_ATK_ATTACK" => FightAction::AtkAttack,
+        "A_MOVE_TO_POSITION" => FightAction::MoveToPosition,
+        "A_REQUEST_POSITION" => FightAction::RequestPosition,
+        "A_GRAB_POSITION" => FightAction::GrabPosition,
+        "A_UPGRADE_POSITION" => FightAction::UpgradePosition,
+        "A_UPGRADE_POSITION_IN_FRONT" => FightAction::UpgradePositionInFront,
+        "A_UPGRADE_POSITION_BEHIND" => FightAction::UpgradePositionBehind,
+        "A_UPGRADE_POSITION_LEFT" => FightAction::UpgradePositionLeft,
+        "A_UPGRADE_POSITION_RIGHT" => FightAction::UpgradePositionRight,
+        "A_RELEASE_POSITION" => FightAction::ReleasePosition,
+        "A_REQUEST_COOKIE" => FightAction::RequestCookie,
+        "A_GRAB_COOKIE" => FightAction::GrabCookie,
+        "A_RELEASE_COOKIE" => FightAction::ReleaseCookie,
+        "A_ATTACK" => FightAction::Attack,
+        "A_PARRY" => FightAction::Parry,
+        "A_JOIN_FORMATION" => FightAction::JoinFormation,
+        "A_LEAVE_FORMATION" => FightAction::LeaveFormation,
+        "A_RESET_TIMER" => FightAction::ResetTimer,
+        "Display" => FightAction::Display(arg.to_string()), // Retaining Display as an internal engine debug tool
         "Check" => match state_index.get(arg) {
             Some(&idx) => FightAction::Check(idx),
             None => return Ok(None),

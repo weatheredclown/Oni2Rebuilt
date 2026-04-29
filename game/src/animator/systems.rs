@@ -1011,14 +1011,19 @@ pub fn jump_impulse_emit_system(
 /// Advances a jump schedule from JUMP_MAIN (or JUMP_SOMERSAULT) into JUMP_LAND
 /// the moment the character reconnects with ground.
 ///
-/// `build_jump_schedule` now marks every MAIN/SOMERSAULT entry as
-/// `hold_at_end=true`, which writes `looping=true` into the anim state and
-/// keeps the airborne FLOAT anim looping forever.  That's the right visual
-/// for an in-flight character — the loop is effectively a fall animation —
-/// but something has to break the loop when they touch down.  This system
-/// is that hook: on a `false → true` edge in `is_grounded`, if the schedule
-/// is parked on MAIN/SOMERSAULT, call `schedule.advance()` so LAND kicks in
-/// on the next tick.
+/// `build_jump_schedule` marks every MAIN/SOMERSAULT entry as
+/// `hold_at_end=true`, which (post-fix) clamps `current_time` at the
+/// final frame and disables auto-advance — the airborne FLOAT pose
+/// holds visibly until something explicitly moves the cursor on.
+/// This system is that "explicitly move the cursor on" hook: on a
+/// `false → true` edge in `is_grounded`, if the schedule is parked on
+/// MAIN/SOMERSAULT, call `schedule.advance()` so LAND kicks in on the
+/// next tick.
+///
+/// (Earlier, `hold_at_end` was incorrectly mapped to `looping=true`,
+/// which caused the FALL anim to wrap and produce a visible pop on the
+/// seam.  Fixed by setting `state.looping = false` on hold entries —
+/// see AnimScheduleEntry::hold_at_end.)
 ///
 /// Matches the C++ animator.cpp loop: it holds a FALL anim while airborne
 /// and on ground contact transitions the action to LAND.

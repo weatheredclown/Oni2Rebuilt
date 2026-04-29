@@ -391,8 +391,10 @@ pub fn behavior_start_dispatch_system(
         Option<&crate::oni2_loader::animation::Oni2AnimLibrary>,
         Option<&mut crate::oni2_loader::animation::Oni2AnimState>,
         Option<&mut crate::fightai::components::AttackRuntime>,
+        Option<&mut crate::ai::components::AiDrivenVelocityThisTick>,
     )>,
     target_transforms: Query<&GlobalTransform>,
+    player_query: Query<Entity, With<crate::player::components::Player>>,
     mut end_writer: MessageWriter<EndBehaviorMessage>,
 ) {
     for msg in reader.read() {
@@ -407,6 +409,7 @@ pub fn behavior_start_dispatch_system(
             anim_lib_opt,
             anim_state_opt,
             attack_runtime_opt,
+            mut driven_opt,
         )) = query.get_mut(msg.entity)
         else {
             continue;
@@ -426,6 +429,15 @@ pub fn behavior_start_dispatch_system(
             && prev.kind() == msg.kind
         {
             continue;
+        }
+
+        // FSMs and Behaviors should never enter Fight without a target.
+        // Fall back to the player if no target is present.
+        if msg.kind == BehaviorKind::Fight && runtime.pending_params.target_entity.is_none() {
+            let has_target = ai_fighter_opt.as_ref().is_some_and(|af| af.target.is_some());
+            if !has_target {
+                runtime.pending_params.target_entity = player_query.single().ok();
+            }
         }
 
         let Some(mut new_behavior) = registry.make(msg.kind) else {
@@ -492,6 +504,11 @@ pub fn behavior_start_dispatch_system(
         }
 
         new_behavior.on_enter(&mut ctx);
+
+        if let Some(mut driven) = driven_opt {
+            driven.0 = true;
+        }
+
         active.0 = Some(new_behavior);
 
         // Side-effects are currently empty (no variants); the match is a
@@ -528,6 +545,7 @@ pub fn behavior_update_dispatch_system(
             Option<&crate::oni2_loader::animation::Oni2AnimLibrary>,
             Option<&mut crate::oni2_loader::animation::Oni2AnimState>,
             Option<&mut crate::fightai::components::AttackRuntime>,
+            Option<&mut crate::ai::components::AiDrivenVelocityThisTick>,
         ),
         Without<crate::oni2_loader::components::ActorAsleep>,
     >,
@@ -548,6 +566,7 @@ pub fn behavior_update_dispatch_system(
         anim_lib_opt,
         anim_state_opt,
         attack_runtime_opt,
+        mut driven_opt,
     ) in &mut query
     {
         let Some(mut current) = active.0.take() else {
@@ -582,6 +601,10 @@ pub fn behavior_update_dispatch_system(
         };
 
         let outcome = current.update(&mut ctx, dt);
+
+        if let Some(mut driven) = driven_opt {
+            driven.0 = true;
+        }
 
         match outcome {
             BehaviorUpdate::Continue => {

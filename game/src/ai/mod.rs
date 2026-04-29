@@ -32,5 +32,11 @@ impl Plugin for AiPlugin {
                 .before(crate::combat::systems::ground_detection_system)
                 .run_if(in_state(AppState::InGame)),
         );
+        app.add_systems(
+            FixedPostUpdate,
+            navigation::ai_velocity_residual_clamp_system
+                .after(avian3d::prelude::PhysicsSet::StepSimulation)
+                .run_if(in_state(AppState::InGame)),
+        );
     }
 }

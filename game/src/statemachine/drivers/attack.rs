@@ -503,6 +503,7 @@ impl SmDriver for AttackDriver {
             }
             AttackAction::Action(name, args) => {
                 end_current(ctx);
+                bevy::log::info!("atk: Starting action {} '{}'", name, args);
                 let mut new_action = build_atk_action(name, args);
                 if call_action_start(ctx, output, &mut *new_action) {
                     ctx.current_action = Some(new_action);

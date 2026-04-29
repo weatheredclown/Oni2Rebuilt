@@ -334,6 +334,8 @@ pub fn drive_chunked_actor_spawn_system(
     mut fight_fsm_cache: ResMut<crate::fightai::FightFsmCache>,
     mut attack_fsm_cache: ResMut<crate::fightai::AttackFsmCache>,
     mut pending: Option<ResMut<PendingLayoutLoad>>,
+    mover_backend: Res<crate::mover::MoverBackend>,
+    shared_mover_config: Option<Res<crate::mover::SharedMoverConfig>>,
 ) {
     const CHUNK_SIZE: usize = 8;
     let Some(ref mut state) = pending else {
@@ -360,6 +362,8 @@ pub fn drive_chunked_actor_spawn_system(
                 fight_fsm_cache: &mut fight_fsm_cache,
                 attack_fsm_cache: &mut attack_fsm_cache,
                 texture_collections: &mut state.texture_collections,
+                mover_backend: *mover_backend,
+                mover_config: shared_mover_config.as_ref().map(|c| c.0.clone()),
             };
             spawn_queued_layout_actor(&actor_name, &layout_ctx, &layout_paths, &mut assets)
         };
@@ -590,6 +594,11 @@ pub fn load_layout(
             fight_fsm_cache: &mut *fight_fsm_cache,
             attack_fsm_cache: &mut *attack_fsm_cache,
             texture_collections: &mut texture_collections,
+            // Legacy monolithic loader path (unused — chunked loader replaces
+            // it). Mover backend toggle is wired through the chunked driver
+            // only; if this path is revived, plumb a Res<MoverBackend> here.
+            mover_backend: crate::mover::MoverBackend::Dynamic,
+            mover_config: None,
         };
 
         if let Some((entity, actor)) = spawn_layout_actor(
@@ -836,6 +845,8 @@ pub fn spawn_layout_actor(
             &actor.entity_type,
             actor.animator_type.as_deref(),
             &layout_ctx.entity_base,
+            assets.mover_backend,
+            assets.mover_config.clone(),
         ) {
             if !actor.is_player {
                 // Non-player creature: attach AI + combat components
@@ -847,6 +858,7 @@ pub fn spawn_layout_actor(
                             crate::fightai::components::FightRuntime {
                                 fsm: crate::statemachine::core::SmRuntime::new(fsm_data, 0),
                                 ctx: crate::statemachine::drivers::fight::FightCtx::default(),
+                                last_log: String::new(),
                             },
                         );
                     }
@@ -860,6 +872,7 @@ pub fn spawn_layout_actor(
                             crate::fightai::components::AttackRuntime {
                                 fsm: crate::statemachine::core::SmRuntime::new(atk_data, 0),
                                 ctx: crate::statemachine::drivers::attack::AttackCtx::default(),
+                                last_log: String::new(),
                             },
                         );
                     }
@@ -868,6 +881,17 @@ pub fn spawn_layout_actor(
                         .commands
                         .entity(entity)
                         .insert(crate::ai::components::AiFighter::default());
+                    // Position/cookie coordinator state.  Both
+                    // components live on every fighter — defender
+                    // resources (slots/cookie) AND attacker state
+                    // (held slot, offered queue, cookie held).
+                    // Mirrors `aiFighter::Resources` +
+                    // `CurrentPosition`/`ResourceTarget` fields in
+                    // rb/src/aifight/fighter.h:771-789.
+                    assets.commands.entity(entity).insert((
+                        crate::fightai::position::FightResources::default(),
+                        crate::fightai::position::FightSlotState::default(),
+                    ));
                 }
                 assets.commands.entity(entity).insert((
                     crate::combat::components::Enemy,

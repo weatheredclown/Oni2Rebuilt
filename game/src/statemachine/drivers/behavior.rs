@@ -173,7 +173,7 @@ impl SmDriver for BehaviorDriver {
     }
 
     fn apply_action(
-        _ctx: &mut Self::Context,
+        ctx: &mut Self::Context,
         action: &Self::Action,
         output: &mut Self::Output,
         adv: &mut SmAdvance<Self>,
@@ -181,6 +181,9 @@ impl SmDriver for BehaviorDriver {
         match action {
             BehaviorAction::StartBehavior(kind) => {
                 output.started_behavior = Some(*kind);
+                // Clear the behavior_done flag immediately so that the FSM doesn't 
+                // instantly cascade and kill the newly started behavior on the same tick.
+                ctx.behavior_done = false;
             }
             BehaviorAction::Check(idx) => adv.check(*idx),
             BehaviorAction::Display(msg) => bevy::log::info!("behavior: {}", msg),
@@ -272,24 +275,24 @@ pub const BEHAVIOR_FSM: &str = r#"
 if EAlways       { Check BEHAVIOR_SWITCHES }
 
 #FIGHT_STATE
-if EBehaviorDone { StartBehavior Idle;    goto IDLE_STATE }
 if EAlways       { Check BEHAVIOR_SWITCHES }
+if EBehaviorDone { StartBehavior Idle;    goto IDLE_STATE }
 
 #FOLLOW_STATE
-if EBehaviorDone { StartBehavior Idle;    goto IDLE_STATE }
 if EAlways       { Check BEHAVIOR_SWITCHES }
+if EBehaviorDone { StartBehavior Idle;    goto IDLE_STATE }
 
 #GOTO_STATE
-if EBehaviorDone { StartBehavior Idle;    goto IDLE_STATE }
 if EAlways       { Check BEHAVIOR_SWITCHES }
+if EBehaviorDone { StartBehavior Idle;    goto IDLE_STATE }
 
 #PATROL_STATE
-if EBehaviorDone { StartBehavior Patrol;  goto PATROL_STATE }
 if EAlways       { Check BEHAVIOR_SWITCHES }
+if EBehaviorDone { StartBehavior Patrol;  goto PATROL_STATE }
 
 #RETREAT_STATE
-if EBehaviorDone { StartBehavior Idle;    goto IDLE_STATE }
 if EAlways       { Check BEHAVIOR_SWITCHES }
+if EBehaviorDone { StartBehavior Idle;    goto IDLE_STATE }
 
 #PAD_STATE
 ; Player has the pad.  No EAlways/Check here — PAD is a dead-end until the

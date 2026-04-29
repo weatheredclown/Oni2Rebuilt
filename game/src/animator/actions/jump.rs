@@ -108,7 +108,10 @@ impl Action for JumpAction {
         let first_played = if let Some(first) = schedule.entries.first().cloned() {
             if ctx.lib.play(&first.alias, ctx.anim_state) {
                 ctx.anim_state.speed_multiplier = first.rate;
-                ctx.anim_state.looping = first.hold_at_end;
+                // `hold_at_end` means clamp-on-last-frame, not wrap.  Force
+                // `looping=false` to override the `.anim` file's own
+                // `is_loop` byte (see AnimScheduleEntry::hold_at_end doc).
+                ctx.anim_state.looping = false;
                 ctx.ap.record_new_substate_1(first.substate_1);
                 schedule.mark_first_played();
                 true

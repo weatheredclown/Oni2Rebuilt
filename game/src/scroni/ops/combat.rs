@@ -143,34 +143,50 @@ pub fn exec(ctx: &mut OpsCtx, stmt: &Stmt) -> bool {
 
                 // Get caller's perception info
                 let owner = ctx.exec.owner;
-                let looker_rad = ctx.ctx.get_perception_radius.as_ref().map(|f| f(owner)).unwrap_or(30.0);
-                let looker_fov = ctx.ctx.get_perception_fov.as_ref().map(|f| f(owner)).unwrap_or(45.0_f32.to_radians());
+                let looker_rad = ctx
+                    .ctx
+                    .get_perception_radius
+                    .as_ref()
+                    .map(|f| f(owner))
+                    .unwrap_or(30.0);
+                let looker_fov = ctx
+                    .ctx
+                    .get_perception_fov
+                    .as_ref()
+                    .map(|f| f(owner))
+                    .unwrap_or(45.0_f32.to_radians());
 
                 if let Ok((_, looker_tf, _)) = ctx.ctx.all_entities.get(owner) {
                     let looker_pos = looker_tf.translation();
-                    let looker_forward = looker_tf.forward().normalize_or_zero();
+                    // Use OniTransformExt to get the true visual forward of the ONI model
+                    use crate::oni2_loader::utils::space::OniTransformExt;
+                    let looker_forward = looker_tf.oni_forward().xz().normalize_or_zero();
 
                     for (ent, tgt_tf, _) in ctx.ctx.all_entities.iter() {
                         if ent == owner {
                             continue;
                         }
 
-                        // Spatial checks
-                        let tgt_pos = tgt_tf.translation();
-                        let dist = looker_pos.distance(tgt_pos);
-                        if dist > looker_rad {
-                            continue;
-                        }
-
-                        let dir_to_tgt = (tgt_pos - looker_pos).normalize_or_zero();
-                        let angle = looker_forward.angle_between(dir_to_tgt);
-                        if angle > looker_fov {
-                            continue;
-                        }
-
-                        // Status checks
-                        let cur_status = ctx.ctx.actor_statuses.get(&ent).map(|s| s.as_str()).unwrap_or("");
+                        // Status checks first (so we can see if player is recognized as enemy even if behind them)
+                        let cur_status = ctx
+                            .ctx
+                            .actor_statuses
+                            .get(&ent)
+                            .map(|s| s.as_str())
+                            .unwrap_or("");
                         let mut passes_filter = true;
+
+                        let is_player = ctx.ctx.player == Some(ent);
+                        let dir_to_tgt =
+                            (tgt_tf.translation() - looker_pos).xz().normalize_or_zero();
+                        if is_player {
+                            info!(
+                                "  -> checking PLAYER entity {:?} (dist: {:.1}, angle: {:.1} deg)",
+                                ent,
+                                looker_pos.distance(tgt_tf.translation()),
+                                looker_forward.angle_between(dir_to_tgt).to_degrees()
+                            );
+                        }
 
                         for required_state in &states {
                             let matches = match required_state.as_str() {
@@ -178,15 +194,31 @@ pub fn exec(ctx: &mut OpsCtx, stmt: &Stmt) -> bool {
                                 "dead" => cur_status == "dead" || cur_status.is_empty(),
                                 "fighting" => cur_status == "fighting",
                                 "notdying" => cur_status != "dying" && cur_status != "dead",
-                                "player" => ctx.ctx.player == Some(ent),
-                                "enemy" => ctx.ctx.is_enemy.as_ref().map(|f| f(owner, ent)).unwrap_or(ent != owner),
+                                "player" => is_player,
+                                "enemy" => ctx
+                                    .ctx
+                                    .is_enemy
+                                    .as_ref()
+                                    .map(|f| f(owner, ent))
+                                    .unwrap_or(ent != owner),
                                 "friendly" => {
-                                    let is_enemy = ctx.ctx.is_enemy.as_ref().map(|f| f(owner, ent)).unwrap_or(ent != owner);
+                                    let is_enemy = ctx
+                                        .ctx
+                                        .is_enemy
+                                        .as_ref()
+                                        .map(|f| f(owner, ent))
+                                        .unwrap_or(ent != owner);
                                     !is_enemy
-                                },
+                                }
                                 _ => false,
                             };
                             if !matches {
+                                if is_player {
+                                    info!(
+                                        "  -> PLAYER {:?} failed status: required {}, had {}",
+                                        ent, required_state, cur_status
+                                    );
+                                }
                                 passes_filter = false;
                                 break;
                             }
@@ -196,14 +228,48 @@ pub fn exec(ctx: &mut OpsCtx, stmt: &Stmt) -> bool {
                             continue;
                         }
 
+                        // Spatial checks
+                        let tgt_pos = tgt_tf.translation();
+                        let dist = looker_pos.distance(tgt_pos);
+                        if dist > looker_rad {
+                            if is_player {
+                                info!(
+                                    "  -> PLAYER {:?} failed dist: {:.1} > {:.1}",
+                                    ent, dist, looker_rad
+                                );
+                            }
+                            continue;
+                        }
+
+                        let dir_to_tgt = (tgt_pos - looker_pos).xz().normalize_or_zero();
+                        let angle = looker_forward.angle_between(dir_to_tgt).abs();
+                        if angle > looker_fov {
+                            if is_player {
+                                info!(
+                                    "  -> PLAYER {:?} failed FOV: {:.1} > {:.1}",
+                                    ent,
+                                    angle.to_degrees(),
+                                    looker_fov.to_degrees()
+                                );
+                            }
+                            continue;
+                        }
+
                         // Optional LOS check - aim a bit higher (chest level)
                         if let Some(los_checker) = ctx.ctx.line_of_sight.as_ref() {
                             let head_offset = Vec3::Y * 1.5;
-                            if !los_checker(looker_pos + head_offset, tgt_pos + head_offset, owner, ent) {
+                            if !los_checker(
+                                looker_pos + head_offset,
+                                tgt_pos + head_offset,
+                                owner,
+                                ent,
+                            ) {
+                                trace!("  -> ent {:?} failed LOS", ent);
                                 continue;
                             }
                         }
 
+                        trace!("  -> ent {:?} passed all checks!", ent);
                         found_actors.push(ent);
                     }
                 }
@@ -215,16 +281,15 @@ pub fn exec(ctx: &mut OpsCtx, stmt: &Stmt) -> bool {
                 }
 
                 let log_msg = format!(
-                    "VM: Look {} status {:?} → found {} actors",
-                    name, states, found_actors.len()
+                    "VM: Look {} status {:?} (rad: {:.1}, fov: {:.1}) → found {} actors",
+                    name,
+                    states,
+                    looker_rad,
+                    looker_fov.to_degrees(),
+                    found_actors.len()
                 );
-                static LAST_LOOK_LOG: std::sync::Mutex<String> = std::sync::Mutex::new(String::new());
-                if let Ok(mut last) = LAST_LOOK_LOG.lock() {
-                    if *last != log_msg {
-                        info!("{}", log_msg);
-                        *last = log_msg;
-                    }
-                }
+                // ALWAYS print this for debugging
+                info!("{}", log_msg);
             } else {
                 warn!("VM: Look had no listvar target (args={:?})", args);
             }

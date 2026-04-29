@@ -18,6 +18,9 @@ use crate::statemachine::drivers::parse::parse_sm;
 use crate::statemachine::drivers::squad::{SQUAD_ACTION_PARSER, SQUAD_EVENT_PARSER, SquadDriver};
 
 pub mod components;
+pub mod position;
+
+pub use position::{FightResources, FightSlotState, ResourceOp};
 
 // ---------------------------------------------------------------------------
 // Caches
@@ -44,7 +47,7 @@ impl FightFsmCache {
             Ok(content) => {
                 match parse_sm::<FightDriver>(&content, FIGHT_EVENT_PARSER, FIGHT_ACTION_PARSER) {
                     Ok(sm_data) => {
-                        bevy::log::info!("fightai: Successfully loaded {}", filename);
+                        bevy::log::info!("fightai: Successfully loaded {} ({} states)", filename, sm_data.states.len());
                         let arc = Arc::new(sm_data);
                         self.data = Some(Arc::clone(&arc));
                         Some(arc)
@@ -123,7 +126,7 @@ impl SquadFsmCache {
             Ok(content) => {
                 match parse_sm::<SquadDriver>(&content, SQUAD_EVENT_PARSER, SQUAD_ACTION_PARSER) {
                     Ok(sm_data) => {
-                        bevy::log::info!("fightai: Successfully loaded {}", filename);
+                        bevy::log::info!("fightai: Successfully loaded {} ({} states)", filename, sm_data.states.len());
                         let arc = Arc::new(sm_data);
                         self.data = Some(Arc::clone(&arc));
                         Some(arc)
@@ -212,13 +215,22 @@ impl Plugin for FightAiPlugin {
             .add_systems(
                 FixedUpdate,
                 (
-                    // Fight coordinator ticker must run BEFORE attack
-                    // so any `AtkAttack`/`AtkIdle` requests translate
-                    // into the next AttackRuntime tick's decisions.
-                    // (Today it's a no-op because the coordinator
-                    // isn't ported — see the comment on
-                    // `fight_runtime_update_system`.)
-                    fight_runtime_update_system,
+                    // Resources offer pass clears stale offers and
+                    // distributes new ones.  Must run BEFORE the FSM
+                    // tick so `E_POSITION_OFFERED` / `E_COOKIE_OFFERED`
+                    // see fresh offers this frame.
+                    position::fight_resources_offer_system,
+                    // Fight coordinator ticker reads FightSlotState
+                    // (now populated by the offer pass above) into
+                    // its FSM context, then collects requested
+                    // FightActions into per-actor `pending_ops` queues.
+                    fight_runtime_update_system
+                        .after(position::fight_resources_offer_system),
+                    // Apply pass drains pending_ops and mutates other
+                    // fighters' FightResources.  Must run AFTER the
+                    // FSM tick.
+                    position::fight_resource_apply_system
+                        .after(fight_runtime_update_system),
                     attack_runtime_update_system.after(fight_runtime_update_system),
                 )
                     .run_if(in_state(crate::menu::AppState::InGame)),
@@ -263,6 +275,16 @@ pub fn attack_runtime_update_system(
         // Split the two mutable borrows — `runtime.fsm.tick(&mut runtime.ctx)`
         // would alias `runtime` to itself.  Go through `as_mut`.
         let rt_mut = runtime.as_mut();
+        
+        let log_msg = format!("AttackRuntime: entity={:?}, state={}, got_cookie={}", 
+            entity, 
+            rt_mut.fsm.data.state_name(rt_mut.fsm.current_state),
+            rt_mut.ctx.got_cookie);
+        if log_msg != rt_mut.last_log {
+            bevy::log::info!("{}", log_msg);
+            rt_mut.last_log = log_msg;
+        }
+
         let mut output = rt_mut.fsm.tick(&mut rt_mut.ctx);
 
         if let Some(anim_name) = &output.attack_anim {
@@ -319,21 +341,54 @@ pub fn attack_runtime_update_system(
 ///     "we were just hit this frame" — good enough to gate reaction
 ///     transitions until a proper hit-this-frame edge lands
 ///
-/// Inputs STILL STUBBED (require the position/cookie/formation
-/// coordinator, which isn't ported):
-///   • `has_position`, `can_attack`, `position_offered`,
-///     `cookie_offered`, `prepare_next_attacker`, `mode` — left at
-///     the context's default values.
+/// Inputs wired by the position/cookie coordinator
+/// (`game/src/fightai/position.rs`):
+///   • `has_position` ← `FightSlotState.current_position >= 0` and the
+///     held slot's owner matches the current AI target
+///   • `can_attack`   ← `has_position` (legacy `CanAttackFromHere`
+///     literally returns true; left as a 1:1 alias here).  Will be
+///     refined when range/heading checks land.
+///   • `position_offered` ← `!FightSlotState.offered_positions.is_empty()`
+///   • `cookie_offered`   ← `FightSlotState.cookie_offered_by ==
+///                         Some(resource_target)`
+///
+/// Inputs STILL STUBBED:
+///   • `prepare_next_attacker` — left at `false`.  Drives the cookie
+///     hand-off in S_ATTACK: when true, the fight FSM releases the
+///     cookie via `A_RELEASE_COOKIE` and steps to
+///     S_PREPARE_NEXT_ATTACKER so a queued peer can swing.  Without it
+///     a single AI fighter monopolizes the cookie forever (only
+///     released externally on death / target switch / squad teardown),
+///     so multi-attacker pressure on the same target serializes onto
+///     whoever grabbed first.
+///
+///     Wiring sketch (legacy formula:
+///     `!IsAttacking() || AttackStateMachine->IsDelayingCookie()` —
+///     rb/src/aifight/fighter.cpp:2797):
+///       1. The "anim-ended" half is already in `ctx.attack_finished` —
+///          set `prepare_next_attacker = ctx.attack_finished` and
+///          combat will at least round-robin on swing end.
+///       2. The "voluntary yield" half needs a new `delaying_cookie`
+///          bool on `AttackCtx` plus an `.atk` action step that flips
+///          it (legacy `aiAtkAction` subclasses set FLAG_DELAYED_COOKIE
+///          on the attack state machine).  Read that flag out of the
+///          attached `AttackRuntime.ctx` here.
+///       3. Independently, port `FIGHTMGR.CookieHogTime` as a watchdog
+///          on `FightResources` (offer-system can force-clear
+///          `cookie_holder` if the holder has held longer than the
+///          timeout without an `IsAttacking` window) — that's the
+///          legacy safety net at attackstatemachine.cpp:399.
+///
+///     See also `FightCtx::prepare_next_attacker` and
+///     `FightEvent::PrepareNextAttacker` for the field/event docs.
 ///
 /// Outputs: the FSM writes `FightAction` requests into
-/// `FightOutput.requested_actions`.  Most requests (Move/Grab/Release
-/// position, Cookie handoff) have no runtime consumer yet — we log
-/// them at trace level so you can watch the coordinator "think".
-/// `AtkAttack` / `AtkIdle` / `Attack` DO have a real effect: they
-/// flip `AttackRuntime.ctx.got_cookie`, which is how the attack FSM
-/// decides between cookie vs no-cookie rows on its next tick.  That
-/// path at least gives the fight coordinator influence over the
-/// per-actor attack pattern even without the full position system.
+/// `FightOutput.requested_actions`.  We translate the coordinator
+/// actions into `ResourceOp`s pushed onto `FightSlotState.pending_ops`,
+/// drained next frame by `fight_resource_apply_system`.  `AtkAttack`
+/// / `AtkIdle` / `Attack` also flip `AttackRuntime.ctx.got_cookie`,
+/// which is how the attack FSM decides between cookie vs no-cookie
+/// rows on its next tick.
 pub fn fight_runtime_update_system(
     time: Res<Time>,
     mut query: Query<
@@ -346,6 +401,7 @@ pub fn fight_runtime_update_system(
             Option<&crate::fight::components::FighterState>,
             Option<&crate::oni2_loader::animation::Oni2AnimState>,
             Option<&mut crate::behavior::BehaviorRuntime>,
+            Option<&mut crate::fightai::position::FightSlotState>,
         ),
         Without<crate::oni2_loader::components::ActorAsleep>,
     >,
@@ -362,17 +418,42 @@ pub fn fight_runtime_update_system(
         fs_opt,
         anim_opt,
         mut behavior_rt_opt,
+        mut slot_state_opt,
     ) in &mut query
     {
         runtime.fsm.advance_clock(dt);
 
         // --- Populate context inputs ---
-        runtime.ctx.has_target = ai_opt.and_then(|a| a.target).is_some();
+        let ai_target: Option<Entity> = ai_opt.and_then(|a| a.target);
+        runtime.ctx.has_target = ai_target.is_some();
         runtime.ctx.is_reacting = action_player_opt.is_some_and(|ap| ap.is_reacting());
-        runtime.ctx.target_killed = ai_opt
-            .and_then(|a| a.target)
+        runtime.ctx.target_killed = ai_target
             .and_then(|t| target_health.get(t).ok())
             .is_some_and(|h| h.current <= 0.0);
+
+        // Position/cookie inputs from the coordinator.  We treat
+        // `has_position` as "we hold a slot AROUND the current AI
+        // target" — ResourceTarget on the slot state must match the
+        // AI target the fight FSM is acting on, otherwise the slot
+        // is stale.
+        if let Some(slot) = slot_state_opt.as_deref() {
+            runtime.ctx.has_position =
+                slot.current_position >= 0 && slot.resource_target == ai_target && ai_target.is_some();
+            // Legacy `CanAttackFromHere` returns true unconditionally
+            // (rb/src/aifight/fighter.cpp:2226).  Mirror that until
+            // range/heading checks need adding.
+            runtime.ctx.can_attack = runtime.ctx.has_position;
+            runtime.ctx.position_offered = !slot.offered_positions.is_empty();
+            runtime.ctx.cookie_offered = slot
+                .cookie_offered_by
+                .map(|by| Some(by) == ai_target)
+                .unwrap_or(false);
+        } else {
+            runtime.ctx.has_position = false;
+            runtime.ctx.can_attack = false;
+            runtime.ctx.position_offered = false;
+            runtime.ctx.cookie_offered = false;
+        }
 
         // Set `ctx.mode` based on AI state — NOT the current Behavior
         // state.  The fight FSM's `S_STARTUP` only exits via
@@ -420,6 +501,19 @@ pub fn fight_runtime_update_system(
 
         // --- Tick ---
         let rt_mut = runtime.as_mut();
+
+        let log_msg = format!("FightRuntime: entity={:?}, state={}, mode='{}', has_target={}, behavior={}", 
+            entity,
+            rt_mut.fsm.data.state_name(rt_mut.fsm.current_state),
+            rt_mut.ctx.mode,
+            rt_mut.ctx.has_target,
+            behavior_state_name.as_deref().unwrap_or("None")
+        );
+        if log_msg != rt_mut.last_log {
+            bevy::log::info!("{}", log_msg);
+            rt_mut.last_log = log_msg;
+        }
+
         let output = rt_mut.fsm.tick(&mut rt_mut.ctx);
 
         // --- Consume outputs ---
@@ -445,87 +539,141 @@ pub fn fight_runtime_update_system(
         for action in &output.requested_actions {
             use crate::statemachine::drivers::fight::FightAction;
             match action {
-                // --- Cookie state → AttackRuntime ---
-                // These four drive the .atk machine's cookie vs no-cookie
-                // row selection.  Cheap to re-write each tick (same bool
-                // value is a no-op).
-                FightAction::AtkAttack
-                | FightAction::Attack
-                | FightAction::GrabCookie => {
+                // --- Cookie state → AttackRuntime + queue ops ---
+                // GrabCookie / ReleaseCookie also flip the .atk
+                // machine's `got_cookie` row selector.  Cheap to
+                // re-write each tick (same bool value is a no-op).
+                FightAction::GrabCookie => {
+                    if let Some(attack_rt) = attack_rt_opt.as_deref_mut() {
+                        attack_rt.ctx.got_cookie = true;
+                    }
+                    if let Some(slot) = slot_state_opt.as_deref_mut() {
+                        slot.pending_ops.push(position::ResourceOp::GrabCookie);
+                    }
+                }
+                FightAction::ReleaseCookie => {
+                    if let Some(attack_rt) = attack_rt_opt.as_deref_mut() {
+                        attack_rt.ctx.got_cookie = false;
+                    }
+                    if let Some(slot) = slot_state_opt.as_deref_mut() {
+                        slot.pending_ops.push(position::ResourceOp::ReleaseCookie);
+                    }
+                }
+                FightAction::RequestCookie => {
+                    if let (Some(slot), Some(target)) =
+                        (slot_state_opt.as_deref_mut(), ai_target)
+                    {
+                        slot.pending_ops
+                            .push(position::ResourceOp::RequestCookie {
+                                target,
+                                priority: 2,
+                            });
+                    }
+                }
+                FightAction::AtkAttack | FightAction::Attack => {
                     if let Some(attack_rt) = attack_rt_opt.as_deref_mut() {
                         attack_rt.ctx.got_cookie = true;
                     }
                 }
-                FightAction::AtkIdle | FightAction::ReleaseCookie => {
+                FightAction::AtkIdle => {
                     if let Some(attack_rt) = attack_rt_opt.as_deref_mut() {
                         attack_rt.ctx.got_cookie = false;
                     }
                 }
 
-                // --- Position → Goto ---
-                // Fight FSM's S_MOVING / S_STARTING_CHASE fall-through
-                // rules emit MoveToPosition / RequestPosition every tick.
-                // We pulse `requested_goto` ONLY when the actor isn't
-                // already in GOTO_STATE or FIGHT_STATE — the Behavior
-                // FSM's BEHAVIOR_SWITCHES subroutine evaluates EFight
-                // before EGoto, so a goto pulse won't displace an active
-                // FightBehavior.  Without this bridge, AI never
-                // approaches the target (FightBehavior deliberately
-                // holds position until the attack FSM's distance-moves
-                // take over, but those only fire once engagement is
-                // already established).
-                FightAction::MoveToPosition
-                | FightAction::GrabPosition
-                | FightAction::UpgradePosition
+                // --- Position state ops (defender-side queues) ---
+                // RequestPosition pushes self onto the target's slot
+                // queue; the offer pass next frame will surface the
+                // slot via E_POSITION_OFFERED if we win priority.
+                FightAction::RequestPosition => {
+                    if let (Some(slot), Some(target)) =
+                        (slot_state_opt.as_deref_mut(), ai_target)
+                    {
+                        let assigned = slot.assigned_position;
+                        slot.pending_ops
+                            .push(position::ResourceOp::RequestPosition {
+                                target,
+                                slot: assigned,
+                                priority: 2,
+                            });
+                    }
+                }
+                FightAction::GrabPosition => {
+                    if let Some(slot) = slot_state_opt.as_deref_mut() {
+                        slot.pending_ops.push(position::ResourceOp::GrabPosition);
+                    }
+                }
+                FightAction::ReleasePosition => {
+                    if let Some(slot) = slot_state_opt.as_deref_mut() {
+                        slot.pending_ops.push(position::ResourceOp::ReleasePosition);
+                    }
+                }
+                // UpgradePosition* — release current slot and re-request.
+                // Directional bias is currently flat; once we surface
+                // facing into FightCtx the apply system can pick
+                // `slot = (relative_to_target_facing + offset) & 7`.
+                FightAction::UpgradePosition
                 | FightAction::UpgradePositionInFront
                 | FightAction::UpgradePositionBehind
                 | FightAction::UpgradePositionLeft
-                | FightAction::UpgradePositionRight
-                | FightAction::RequestPosition => {
+                | FightAction::UpgradePositionRight => {
+                    if let (Some(slot), Some(target)) =
+                        (slot_state_opt.as_deref_mut(), ai_target)
+                    {
+                        slot.pending_ops.push(position::ResourceOp::ReleasePosition);
+                        slot.pending_ops
+                            .push(position::ResourceOp::RequestPosition {
+                                target,
+                                slot: -1,
+                                priority: 3,
+                            });
+                    }
+                }
+
+                // --- Movement bridge: drive GotoBehavior toward our
+                //     held slot's world position.  Doesn't pre-empt an
+                //     active GOTO_STATE/FIGHT_STATE — the Behavior FSM
+                //     evaluates EFight before EGoto, and we'd just
+                //     strobe.
+                FightAction::MoveToPosition => {
                     let cur = behavior_state_name.as_deref().unwrap_or("");
                     if cur == "GOTO_STATE" || cur == "FIGHT_STATE" {
-                        // Already moving or already engaged — don't
-                        // re-pulse.  Dedup prevents the per-tick
-                        // re-transition strobe; still lets us re-enter
-                        // GOTO from IDLE when the last walk finished.
                         continue;
                     }
-                    let target_entity = ai_opt.and_then(|a| a.target);
-                    let Some(t_tf) =
-                        target_entity.and_then(|t| target_transforms.get(t).ok())
-                    else {
+                    let Some(target_entity) = ai_target else {
                         continue;
                     };
+                    let Ok(t_tf) = target_transforms.get(target_entity) else {
+                        continue;
+                    };
+                    // Walk to OUR held slot if we have one against this
+                    // target; otherwise just walk in (closest dir).
+                    let slot_idx = slot_state_opt
+                        .as_deref()
+                        .and_then(|s| {
+                            if s.current_position >= 0
+                                && s.resource_target == Some(target_entity)
+                            {
+                                Some(s.current_position as usize)
+                            } else {
+                                None
+                            }
+                        })
+                        .unwrap_or(0);
+                    const ENGAGE_RADIUS: f32 = 2.0;
+                    let dest =
+                        position::slot_world_pos(t_tf.translation(), slot_idx, ENGAGE_RADIUS);
                     if let Some(rt) = behavior_rt_opt.as_deref_mut() {
-                        // Ring position around the target — hash of the
-                        // entity bits keeps different actors from
-                        // piling up on the same point.
-                        const ENGAGE_RADIUS: f32 = 2.0;
-                        let bits = entity.to_bits();
-                        let angle = ((bits & 0xFF) as f32) / 255.0
-                            * std::f32::consts::TAU
-                            + match action {
-                                FightAction::UpgradePositionInFront => 0.0,
-                                FightAction::UpgradePositionBehind => std::f32::consts::PI,
-                                FightAction::UpgradePositionLeft => std::f32::consts::FRAC_PI_2,
-                                FightAction::UpgradePositionRight => -std::f32::consts::FRAC_PI_2,
-                                _ => 0.0,
-                            };
-                        let target_pos = t_tf.translation();
-                        let offset =
-                            Vec3::new(angle.cos(), 0.0, angle.sin()) * ENGAGE_RADIUS;
-                        rt.pending_params.target_point = Some(target_pos + offset);
-                        rt.pending_params.target_entity = target_entity;
+                        rt.pending_params.target_point = Some(dest);
+                        rt.pending_params.target_entity = Some(target_entity);
                         rt.pending_params.within = Some(0.5);
                         rt.ctx.requested_goto = true;
                     }
                 }
 
                 // --- Coordinator-only, no consumer yet ---
-                FightAction::ReleasePosition
+                FightAction::Idle
                 | FightAction::Parry
-                | FightAction::Idle
-                | FightAction::RequestCookie
                 | FightAction::JoinFormation
                 | FightAction::LeaveFormation
                 | FightAction::ResetTimer => {

@@ -580,26 +580,34 @@ pub fn exec(ctx: &mut OpsCtx, stmt: &Stmt) -> bool {
         }
         Stmt::ChildStack { var, script } => {
             let script_name = ctx.eval_string(script);
-            if let Some(new_script) = ctx.exec.resolve_script(&script_name, ctx.ctx) {
-                let new_tid = ctx.exec.next_thread_id;
-                ctx.exec.next_thread_id += 1;
-                let mut new_thread = ScrOniThread::new(new_tid, Some(ctx.tid), new_script);
-                for var_decl in &new_thread.script.variables {
-                    if var_decl.is_parent {
-                        continue;
-                    }
-                    new_thread.variables.insert(
-                        var_decl.name.clone(),
-                        Value::default_for_type(&var_decl.var_type),
+            let target_tid = resolve_child_tid(ctx, Some(&var));
+            if let Some(tid) = target_tid {
+                if let Some(new_script) = ctx.exec.resolve_script(&script_name, ctx.ctx) {
+                    let t = ctx.exec.get_thread_mut(tid);
+                    let frame = CallFrame {
+                        script: t.script.clone(),
+                        variables: t.variables.clone(),
+                        seq_pc: t.seq_pc,
+                        loop_stack: t.loop_stack.clone(),
+                    };
+                    t.call_stack.push(frame);
+                    t.script = new_script.clone();
+                    init_variables(&mut t.variables, &t.script.variables);
+                    t.seq_pc = 0;
+                    t.loop_stack.clear();
+                    t.state = ExecState::AbortSequence;
+                } else {
+                    warn!(
+                        "[ScrOni][{}] ChildStack: Target Script '{}' not found",
+                        ctx.thread().script.name,
+                        script_name
                     );
                 }
-                ctx.exec.child_threads.push(new_thread);
-                ctx.set_var(var.clone(), Value::Int(new_tid as i32));
             } else {
                 warn!(
-                    "[ScrOni][{}] ChildStack: Target Script '{}' not found",
+                    "[ScrOni][{}] ChildStack: no child thread resolved (var={:?})",
                     ctx.thread().script.name,
-                    script_name
+                    var
                 );
             }
             true
@@ -607,6 +615,12 @@ pub fn exec(ctx: &mut OpsCtx, stmt: &Stmt) -> bool {
         Stmt::ChildSwitch { var, script } => {
             let script_name = ctx.eval_string(script);
             if let Some(new_script) = ctx.exec.resolve_script(&script_name, ctx.ctx) {
+                // Terminate any existing thread in this variable first
+                if let Some(old_tid) = resolve_child_tid(ctx, Some(&var)) {
+                    let old_thread = ctx.exec.get_thread_mut(old_tid);
+                    old_thread.state = ExecState::Done;
+                }
+
                 let new_tid = ctx.exec.next_thread_id;
                 ctx.exec.next_thread_id += 1;
                 let new_thread = ScrOniThread::new(new_tid, Some(ctx.tid), new_script);

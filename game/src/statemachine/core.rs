@@ -257,6 +257,9 @@ pub struct SmRuntime<D: SmDriver> {
     /// xorshift seed.  Pub so the host can synchronize a shadow runtime to a
     /// production one for parity testing.
     pub rng_seed: u64,
+
+    /// Last debug log string emitted by this FSM (used for edge-triggered dedup).
+    pub last_log: String,
 }
 
 impl<D: SmDriver> SmRuntime<D> {
@@ -269,6 +272,7 @@ impl<D: SmDriver> SmRuntime<D> {
             random_pct: 0.0,
             random_budget: AtomicU32::new(0_f32.to_bits()),
             rng_seed: 0xdeadbeef_cafebabe,
+            last_log: String::new(),
         }
     }
 
@@ -358,12 +362,16 @@ impl<D: SmDriver> SmRuntime<D> {
             // Action chain succeeded.  Apply the goto if requested.
             if let Some(target) = adv.goto_request.or(rule.goto_state) {
                 if target != self.current_state {
-                    bevy::log::info!(
+                    let log_msg = format!(
                         "FSM Transition [{}]: {} -> {}",
                         std::any::type_name::<D>(),
                         self.data.state_name(self.current_state),
                         self.data.state_name(target)
                     );
+                    if log_msg != self.last_log {
+                        bevy::log::info!("{}", log_msg);
+                        self.last_log = log_msg;
+                    }
                 }
                 self.current_state = target;
                 // Cascade: some events (Timeout in InputDriver) want the

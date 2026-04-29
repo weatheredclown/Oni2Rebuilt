@@ -164,6 +164,57 @@ pub fn wrap_angle_to_pi(rads: f32) -> f32 {
     a
 }
 
+/// Extension trait for Bevy's `Transform` and `GlobalTransform` to abstract away
+/// the fact that ONI models inherently face their local `+Z` axis.
+pub trait OniTransformExt {
+    /// Returns the true visual forward vector of the ONI model (local +Z).
+    fn oni_forward(&self) -> bevy::math::Dir3;
+    /// Returns the true visual backward vector of the ONI model (local -Z).
+    fn oni_back(&self) -> bevy::math::Dir3;
+    /// Returns the true visual left vector of the ONI model (local +X).
+    fn oni_left(&self) -> bevy::math::Dir3;
+    /// Returns the true visual right vector of the ONI model (local -X).
+    fn oni_right(&self) -> bevy::math::Dir3;
+}
+
+impl OniTransformExt for bevy::prelude::Transform {
+    #[inline]
+    fn oni_forward(&self) -> bevy::math::Dir3 {
+        self.back()
+    }
+    #[inline]
+    fn oni_back(&self) -> bevy::math::Dir3 {
+        self.forward()
+    }
+    #[inline]
+    fn oni_left(&self) -> bevy::math::Dir3 {
+        self.right()
+    }
+    #[inline]
+    fn oni_right(&self) -> bevy::math::Dir3 {
+        self.left()
+    }
+}
+
+impl OniTransformExt for bevy::prelude::GlobalTransform {
+    #[inline]
+    fn oni_forward(&self) -> bevy::math::Dir3 {
+        self.back()
+    }
+    #[inline]
+    fn oni_back(&self) -> bevy::math::Dir3 {
+        self.forward()
+    }
+    #[inline]
+    fn oni_left(&self) -> bevy::math::Dir3 {
+        self.right()
+    }
+    #[inline]
+    fn oni_right(&self) -> bevy::math::Dir3 {
+        self.left()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

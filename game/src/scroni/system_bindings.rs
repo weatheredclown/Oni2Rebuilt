@@ -29,6 +29,8 @@ pub fn scroni_sys_event_observer(
     layout_data: (
         Option<Res<crate::oni2_loader::LayoutContext>>,
         Option<Res<crate::oni2_loader::LayoutPaths>>,
+        Res<crate::mover::MoverBackend>,
+        Option<Res<crate::mover::SharedMoverConfig>>,
     ),
     active_camera_package: Option<ResMut<crate::oni2_loader::ActiveCameraPackage>>,
     mut scroni_text_state: ResMut<ScroniTextState>,
@@ -66,7 +68,7 @@ pub fn scroni_sys_event_observer(
             Option<&Name>,
             Option<&mut ShaderLocals>,
         )>,
-        Query<(), With<crate::player::components::Player>>,
+        Query<Entity, With<crate::player::components::Player>>,
         Query<(Entity, &ActiveAmbientSound)>,
     ),
 ) {
@@ -497,6 +499,8 @@ pub fn scroni_sys_event_observer(
                     texture_collections: &mut texture_collections,
                     fight_fsm_cache: &mut fight_fsm_cache,
                     attack_fsm_cache: &mut attack_fsm_cache,
+                    mover_backend: *layout_data.2,
+                    mover_config: layout_data.3.as_ref().map(|c| c.0.clone()),
                 };
 
                 // Call the shared spawn function
@@ -676,23 +680,23 @@ pub fn scroni_sys_event_observer(
         }
         ScrOniSysEvent::TriggerFight { actor, target } => {
             // "Fight [target]" — push actor into fight mode; optional
-            // target overrides auto-acquisition.  Same dispatch split as
-            // SetAiTarget — BehaviorRuntime is the authoritative knob;
-            // AiFighter.target + FightCtx.mode are shadow data.
+            // target overrides auto-acquisition. If no target is specified,
+            // default to the player.
+            let resolved_target = target.or_else(|| player_query.single().ok());
             if let Ok(mut ai) = ai_target_query.get_mut(actor) {
-                if let Some(t) = target {
+                if let Some(t) = resolved_target {
                     ai.target = Some(t);
-                    ai.manual_target = true;
+                    ai.manual_target = target.is_some(); // True only if explicit
                 } else {
                     ai.manual_target = false;
                 }
             }
             if let Ok(mut fight) = fight_runtime_query.get_mut(actor) {
                 fight.ctx.mode = "attack".to_string();
-                fight.ctx.has_target = target.is_some();
+                fight.ctx.has_target = resolved_target.is_some();
             }
             if let Ok(mut rt) = behavior_runtime_query.get_mut(actor) {
-                rt.pending_params.target_entity = target;
+                rt.pending_params.target_entity = resolved_target;
                 rt.ctx.requested_fight = true;
             }
         }

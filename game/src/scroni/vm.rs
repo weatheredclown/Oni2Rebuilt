@@ -87,7 +87,7 @@ impl Value {
             Value::Float(f) => f.to_string(),
             Value::Vector(v) => format!("({}, {}, {})", v.x, v.y, v.z),
             Value::ActorList(l, idx) => format!("ActorList[len={} idx={}]", l.len(), idx),
-            Value::Actor(act) => format!("Actor({:?})", act),
+            Value::Actor(act) => format!("{} ({:?})", crate::debug::debug_name(*act), act),
             Value::None => "##UNLOGGABLE##".to_string(),
         }
     }
@@ -589,6 +589,7 @@ pub struct ScroniContext<'a, 'w_e, 's_e, 'w_t, 's_t> {
     pub is_enemy: Option<&'a dyn Fn(Entity, Entity) -> bool>,
     pub get_perception_radius: Option<&'a dyn Fn(Entity) -> f32>,
     pub get_perception_fov: Option<&'a dyn Fn(Entity) -> f32>,
+    pub get_actor_health: Option<&'a dyn Fn(Entity) -> f32>,
     /// `GetUIItemValue(<page>, <item>) -> f32`.  Resolves the
     /// numeric value of a frontend UI item — for `LevelList` this
     /// is the selected row index.  Mirrors `DoGetUIItemValue`
@@ -1575,6 +1576,19 @@ impl ScriptExec {
                     }
                     "alive" => Value::String("alive".to_string()),
                     "dead" => Value::String("dead".to_string()),
+                    "health" => {
+                        let target = args.first().map(|e| self.eval_expr(tid, e, now, ctx));
+                        if let Some(t) = target {
+                            let ents = ctx.resolve_targets(&t);
+                            if let Some(&ent) = ents.first() {
+                                if let Some(get_health) = ctx.get_actor_health {
+                                    return Value::Float(get_health(ent));
+                                }
+                            }
+                        }
+                        Value::Float(0.0)
+                    }
+                    "damage" => Value::Int(0), // Placeholder until injury tracking is wired
                     "fighting" => Value::String("fighting".to_string()),
                     "notdying" => Value::String("notdying".to_string()),
                     "knockeddown" => Value::String("knockeddown".to_string()),
@@ -1598,6 +1612,39 @@ impl ScriptExec {
                         {
                             let p = tf.translation();
                             return Value::Vector(space::to_oni2_space_pos(p));
+                        }
+                        Value::None
+                    }
+                    "direction" => {
+                        let arg1 = args.first().map(|e| self.eval_expr(tid, e, now, ctx));
+                        let resolve_pos = |val: Value| -> Option<Vec3> {
+                            match val {
+                                Value::Vector(v) => Some(space::to_bevy_space_pos(v)),
+                                Value::Actor(act) => {
+                                    if let Ok((_, tf, _)) = ctx.all_entities.get(act) {
+                                        Some(tf.translation())
+                                    } else {
+                                        None
+                                    }
+                                }
+                                _ => None,
+                            }
+                        };
+                        let target_pos = arg1.and_then(resolve_pos);
+                        if let Some(tpos) = target_pos {
+                            if let Ok((_, my_tf, _)) = ctx.all_entities.get(self.owner) {
+                                let diff = tpos - my_tf.translation();
+                                let mut dir = diff.normalize_or_zero();
+                                dir.y = 0.0;
+                                if dir.length_squared() > 0.001 {
+                                    dir = dir.normalize();
+                                    // Fighter.facing computes rotation by Quat::from_rotation_arc(Vec3::Z, dir).
+                                    // To get the Oni yaw, we do the same and use the space conversion utility.
+                                    let q = Quat::from_rotation_arc(Vec3::Z, dir);
+                                    let oni_rot = space::to_oni2_space_rot_rad(q);
+                                    return Value::Float(oni_rot.y.to_degrees());
+                                }
+                            }
                         }
                         Value::None
                     }
@@ -1876,9 +1923,9 @@ impl ScriptExec {
                         {
                             for ct in &self.child_threads {
                                 if ct.thread_id == target_tid as u32 {
-                                    let at_home = ct.seq_pc == 0
-                                        && ct.call_stack.is_empty()
-                                        && ct.loop_stack.is_empty();
+                                    // "home" means the thread is executing its base script
+                                    // (not deep in a childstack call).
+                                    let at_home = ct.call_stack.is_empty();
                                     return Value::Int(if at_home { 1 } else { 0 });
                                 }
                             }
@@ -1901,8 +1948,11 @@ impl ScriptExec {
                         if let Some(val) = actor_val {
                             let ents = ctx.resolve_targets(&val);
                             if let Some(&ent) = ents.first() {
-                                let cur =
-                                    ctx.actor_statuses.get(&ent).map(|s| s.as_str()).unwrap_or("");
+                                let cur = ctx
+                                    .actor_statuses
+                                    .get(&ent)
+                                    .map(|s| s.as_str())
+                                    .unwrap_or("");
                                 let matches = match state.as_str() {
                                     "alive" => !cur.is_empty() && cur != "dead",
                                     "dead" => cur == "dead" || cur.is_empty(),
@@ -2140,6 +2190,7 @@ pub fn scroni_tick_system(
     mut behavior_runtime_query: Query<&mut crate::behavior::BehaviorRuntime>,
     mut end_behavior_reader: MessageReader<crate::behavior::EndBehaviorMessage>,
     faction_query: Query<(Entity, &crate::combat::faction::Faction)>,
+    mut fighter_query: Query<&mut crate::combat::components::Fighter>,
     opt_res: (
         Option<Res<crate::oni2_loader::environment::LayoutContext>>,
         Option<Res<crate::ai::navigation::NavGraph>>,
@@ -2148,13 +2199,8 @@ pub fn scroni_tick_system(
         Option<Res<crate::frontend::runtime::FrontendLevelList>>,
     ),
 ) {
-    let (
-        layout_context,
-        nav_graph_opt,
-        layout_paths,
-        faction_manager_opt,
-        frontend_levels,
-    ) = opt_res;
+    let (layout_context, nav_graph_opt, layout_paths, faction_manager_opt, frontend_levels) =
+        opt_res;
     let now = time.elapsed_secs_f64();
     let delta_time = time.delta_secs();
 
@@ -2216,12 +2262,13 @@ pub fn scroni_tick_system(
                 .is_none()
         };
         let los_ref: &dyn Fn(Vec3, Vec3, Entity, Entity) -> bool = &los_checker;
-        
+
         let is_enemy = |a: Entity, b: Entity| -> bool {
             if let Ok((_, f_a)) = faction_query.get(a) {
                 if let Ok((_, f_b)) = faction_query.get(b) {
                     if let Some(fm) = faction_manager_opt.as_ref() {
-                        return fm.get_status(&f_a.0, &f_b.0) == crate::combat::faction::FactionStatus::Enemy;
+                        return fm.get_status(&f_a.0, &f_b.0)
+                            == crate::combat::faction::FactionStatus::Enemy;
                     }
                 }
             }
@@ -2271,6 +2318,15 @@ pub fn scroni_tick_system(
         };
         let get_ui_item_value_ref: &dyn Fn(&str, &str) -> f32 = &get_ui_item_value;
 
+        let get_health = |e: Entity| -> f32 {
+            if let Ok((_, health, _)) = health_query.get(e) {
+                health.current
+            } else {
+                0.0
+            }
+        };
+        let get_health_ref: &dyn Fn(Entity) -> f32 = &get_health;
+
         let mut ctx = ScroniContext {
             all_entities: &all_entities,
             triggers: &triggers,
@@ -2285,6 +2341,7 @@ pub fn scroni_tick_system(
             is_enemy: Some(is_enemy_ref),
             get_perception_radius: Some(get_rad_ref),
             get_perception_fov: Some(get_fov_ref),
+            get_actor_health: Some(get_health_ref),
             get_ui_item_value: Some(get_ui_item_value_ref),
         };
         script.exec.tick(now, delta_time, &mut ctx);
@@ -2295,6 +2352,7 @@ pub fn scroni_tick_system(
         let mut patrols_to_resolve = Vec::new();
         let mut waiting_for_path = Vec::new();
         let mut waiting_for_behavior = Vec::new();
+        let mut faces_to_resolve = Vec::new();
         for t in script.exec.all_threads_mut() {
             if let Some(BlockingAction::GotoPoint {
                 target,
@@ -2310,6 +2368,8 @@ pub fn scroni_tick_system(
                 waiting_for_path.push(t.thread_id);
             } else if let Some(BlockingAction::WaitingForBehavior { kind }) = t.blocking.clone() {
                 waiting_for_behavior.push((t.thread_id, kind));
+            } else if let Some(BlockingAction::Face { target, seconds }) = t.blocking.clone() {
+                faces_to_resolve.push((t.thread_id, target, seconds));
             }
         }
 
@@ -2358,28 +2418,79 @@ pub fn scroni_tick_system(
             }
         }
 
-        for (tid, target, within, speed, _duration) in gotos_to_resolve {
-            let mut resolved_pos = None;
-            if let Value::Vector(v) = target {
-                resolved_pos = Some(space::to_bevy_space_pos(v)); // Convert to Bevy coords
-            } else if let Value::String(s) = target {
-                if let Some(nav) = &nav_graph_opt
-                    && let Some(idx) = nav.names.get(&s)
-                {
-                    resolved_pos = Some(nav.points[*idx]);
+        for (tid, target, _seconds) in faces_to_resolve {
+            let target_bevy_pos = match target {
+                Value::Vector(v) => Some(space::to_bevy_space_pos(v)),
+                Value::Actor(act) => {
+                    if let Ok((_, tf, _)) = all_entities.get(act) {
+                        Some(tf.translation())
+                    } else {
+                        None
+                    }
                 }
-            } else if let Value::Actor(act) = target
-                && let Ok((_, tf, _)) = all_entities.get(act)
-            {
-                resolved_pos = Some(tf.translation());
-            }
+                Value::Float(f) => {
+                    // It's an angle in degrees (Oni Yaw).
+                    let rads = f.to_radians();
+                    // Use standard space utilities to get a Bevy rotation quaternion.
+                    // The Oni Euler rotations are passed as [pitch, yaw, roll], so yaw is Y.
+                    let oni_ypr = Vec3::new(0.0, rads, 0.0);
+                    let q = space::to_bevy_space_rot_rad(oni_ypr);
+                    // The fighter rotation system uses Quat::from_rotation_arc(Vec3::Z, fighter.facing)
+                    // so facing should just be the local Z vector of this quaternion.
+                    let facing = q * Vec3::Z;
+                    Some(transform.translation() + facing)
+                }
+                _ => None,
+            };
 
-            let path = resolved_pos.and_then(|pos| {
-                nav_graph_opt
-                    .as_ref()
-                    .and_then(|nav| nav.find_path_to_point(transform.translation(), pos))
-                    .or_else(|| Some(vec![pos]))
-            });
+            if let Some(tgt_pos) = target_bevy_pos {
+                let mut dir = (tgt_pos - transform.translation()).normalize_or_zero();
+                dir.y = 0.0; // Keep facing planar
+                if dir.length_squared() > 0.001 {
+                    dir = dir.normalize();
+                    // Send an action to smoothly or instantly rotate the character.
+                    // Right now, instantly update fighter.facing.
+                    // We dispatch a behavior request via BehaviorRuntime if possible.
+                    if let Ok(mut rt) = behavior_runtime_query.get_mut(entity) {
+                        rt.pending_params.target_point = Some(tgt_pos);
+                        // We do not have a dedicated Face behavior yet, so we could just fake it
+                        // by forcing the fighter component's facing directly:
+                    }
+                    if let Ok(mut fighter) = fighter_query.get_mut(entity) {
+                        fighter.facing = dir;
+                    }
+                }
+            }
+            script.exec.clear_blocking(tid);
+            script.exec.tick_thread(tid, now, &mut ctx);
+        }
+
+        for (tid, target, within, speed, _duration) in gotos_to_resolve {
+            let path = match &target {
+                Value::String(s) => nav_graph_opt.as_ref().and_then(|nav| {
+                    nav.find_path(transform.translation(), s)
+                        .or_else(|| nav.names.get(s).map(|&idx| vec![nav.points[idx]]))
+                }),
+                Value::Vector(v) => {
+                    let pos = space::to_bevy_space_pos(v);
+                    nav_graph_opt
+                        .as_ref()
+                        .and_then(|nav| nav.find_path_to_point(transform.translation(), pos))
+                        .or_else(|| Some(vec![pos]))
+                }
+                Value::Actor(act) => {
+                    if let Ok((_, tf, _)) = all_entities.get(*act) {
+                        let pos = tf.translation();
+                        nav_graph_opt
+                            .as_ref()
+                            .and_then(|nav| nav.find_path_to_point(transform.translation(), pos))
+                            .or_else(|| Some(vec![pos]))
+                    } else {
+                        None
+                    }
+                }
+                _ => None,
+            };
 
             if let Some(path) = path {
                 // Route the path through the new BehaviorRuntime pipeline.

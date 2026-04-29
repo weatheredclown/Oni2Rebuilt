@@ -301,6 +301,41 @@ pub fn build_fsm_packet(
         pad |= pad_flags::ACK_TWO_BACKWARD_RIGHT;
     }
 
+    // Reconcile the raw mapper-derived attack pad bits with the gated
+    // InputState produced by `apply_timing_windows`.  The mapper reads
+    // keyboard/gamepad state directly; without this pass, a press during
+    // a no-queue window would still set PADCMD_ATTACK_HIGH and the FSM
+    // would fire the next attack regardless of timing windows.  Symmetric
+    // case: a queued attack auto-firing in the do window has no raw
+    // press, so we OR in PADCMD_ATTACK_HIGH so the FSM actually sees it.
+    const ATTACK_PAD_BITS: u64 = pad_flags::PADCMD_ATTACK_HIGH
+        | pad_flags::ACK
+        | pad_flags::ACK_LEFT
+        | pad_flags::ACK_RIGHT
+        | pad_flags::ACK_FORWARD_LEFT
+        | pad_flags::ACK_FORWARD_RIGHT
+        | pad_flags::ACK_BACKWARD_LEFT
+        | pad_flags::ACK_BACKWARD_RIGHT;
+    const ATTACK_TWO_PAD_BITS: u64 = pad_flags::PADCMD_ATTACK_TWO_HIGH
+        | pad_flags::ACK_TWO
+        | pad_flags::ACK_TWO_LEFT
+        | pad_flags::ACK_TWO_RIGHT
+        | pad_flags::ACK_TWO_FORWARD_LEFT
+        | pad_flags::ACK_TWO_FORWARD_RIGHT
+        | pad_flags::ACK_TWO_BACKWARD_LEFT
+        | pad_flags::ACK_TWO_BACKWARD_RIGHT;
+
+    if !input.attack {
+        pad &= !ATTACK_PAD_BITS;
+    } else if (pad & ATTACK_PAD_BITS) == 0 {
+        pad |= pad_flags::PADCMD_ATTACK_HIGH;
+    }
+    if !input.attack_two {
+        pad &= !ATTACK_TWO_PAD_BITS;
+    } else if (pad & ATTACK_TWO_PAD_BITS) == 0 {
+        pad |= pad_flags::PADCMD_ATTACK_TWO_HIGH;
+    }
+
     if pad
         & (pad_flags::PADCMD_ATTACK_HIGH
             | pad_flags::ACK_FORWARD_LEFT

@@ -15,7 +15,7 @@ use crate::statemachine::drivers::behavior::BehaviorKind;
 use bevy::prelude::*;
 
 const MOVE_SPEED: f32 = 4.5;
-const DEFAULT_WITHIN: f32 = 1.0;
+const DEFAULT_WITHIN: f32 = 1.5;
 const INTER_WAYPOINT_TOLERANCE: f32 = 1.0;
 
 #[derive(Default)]

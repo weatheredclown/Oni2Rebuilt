@@ -99,7 +99,7 @@ pub fn ai_attach_fsm_system(
         };
         commands
             .entity(entity)
-            .insert((AiFsmRuntime::new(data), AiPadCommands::default()));
+            .insert((AiFsmRuntime::new(data), AiPadCommands::default(), crate::ai::components::AiDrivenVelocityThisTick::default()));
     }
 }
 

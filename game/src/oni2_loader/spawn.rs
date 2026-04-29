@@ -8,7 +8,7 @@
  */
 use super::*;
 use crate::oni2_loader::parsers::texture::load_tga_texture;
-use crate::oni2_loader::utils::bone::compute_inverse_bind_poses;
+use crate::oni2_loader::utils::bone::{compute_inverse_bind_poses, is_model_local_heuristic};
 use crate::oni2_loader::utils::space;
 
 #[derive(Component)]
@@ -675,8 +675,13 @@ pub fn load_oni2_entity_type(
         None => None,
     };
 
-    // Read and parse the .mod file
-    let model = if let Some(ref model_file) = entity_type.model_file {
+    // Read and parse the .mod file. `model` stays mutable through the
+    // skeleton + library checks below — `convert_world_to_bone_local` is
+    // deferred until after `use_gpu_skinning` is known so we don't run the
+    // lossy conversion (which collapses each shared vertex to a single
+    // bone) on entities that take the non-skinned mesh path. See
+    // `bone.rs::tests::world_space_seam_vertex_round_trips_through_both_bones`.
+    let mut model = if let Some(ref model_file) = entity_type.model_file {
         let mut m: Option<Oni2Model> = None;
 
         let mut mod_path = format!("{}/{}", dir, model_file);
@@ -714,15 +719,12 @@ pub fn load_oni2_entity_type(
             }
         }
 
-        let mut was_world_space = false;
+        // Skeleton-driven format heuristic: many-bone (>10) meshes are
+        // assumed bone-local even if the file-format guess said otherwise.
+        // Conversion itself is deferred — see the gpu-skinning gate below.
         if let (Some(model), Some(skel)) = (&mut m, &skeleton) {
             if skel.positions.len() > 10 {
-                // this is totally a hack, but a lot of the sophisticated characters have bone local meshes, but we seem to have to guess
-                model.world_space_verts = false; // All multi-bone characters strictly map natively as bone-local!
-            }
-            was_world_space = model.world_space_verts;
-            if model.world_space_verts {
-                convert_world_to_bone_local(model, skel);
+                model.world_space_verts = false;
             }
         }
 
@@ -895,6 +897,41 @@ pub fn load_oni2_entity_type(
     };
 
     let use_gpu_skinning = skeleton.is_some() && library.is_some();
+
+    // Detect entities authored with model-local `.mod` verts (animated
+    // props like sliding doors — IAControlDoor's panels). Without this
+    // the skinned bake would double-add `bone_pos`, drifting the mesh
+    // away from its joint-attached collider. Setting `world_space_verts`
+    // routes the model through the existing convert path, which gives
+    // bone-local verts the skinned bake re-bases correctly.
+    //
+    // Tied to tests:
+    //   `bone::tests::detects_model_local_door_mod` — must keep returning true
+    //   `bone::tests::detects_bone_local_character_mod_stays_bone_local`
+    //     — must keep returning false (else characters break).
+    //   `bone::tests::world_space_seam_vertex_round_trips_through_both_bones`
+    //     — pins the unrelated non-skinned world-space path.
+    if let (Some(ref mut m), Some(ref skel), Some(ref b)) =
+        (model.as_mut(), skeleton.as_ref(), bound.as_ref())
+    {
+        if !m.world_space_verts && is_model_local_heuristic(m, skel, b) {
+            m.world_space_verts = true;
+        }
+    }
+
+    // GPU skinning needs vertices in bone-local space (the GPU multiplies
+    // by the bone matrix), so world-space-vert models are converted here.
+    // Non-skinned paths handle `world_space_verts` natively in mesh.rs and
+    // running the conversion on them collapses shared seam vertices to a
+    // single bone — visible in-game as door panels rendering offset from
+    // their collision bounds. See the bone.rs round-trip test.
+    if use_gpu_skinning {
+        if let (Some(ref mut m), Some(ref skel)) = (model.as_mut(), skeleton.as_ref()) {
+            if m.world_space_verts {
+                convert_world_to_bone_local(m, skel);
+            }
+        }
+    }
 
     let sub_meshes = if let Some(ref m) = model {
         if use_gpu_skinning {
@@ -1419,6 +1456,8 @@ pub fn spawn_oni2_creature(
     entity_type: &str,
     animator_type: Option<&str>,
     entity_base: &str,
+    mover_backend: crate::mover::MoverBackend,
+    mover_config: Option<Handle<crate::mover::Oni2SchemeConfig>>,
 ) -> Option<Entity> {
     let anim_name = animator_type.unwrap_or(entity_type);
 
@@ -1465,9 +1504,17 @@ pub fn spawn_oni2_creature(
         y_offset
     );
 
-    // Every creature gets a physics capsule + render offset + ground snap
-    commands.entity(entity).insert((
-        crate::combat::CreaturePhysicsBundle::new(capsule_radius, capsule_length),
+    // Every creature gets a physics capsule + render offset + ground snap.
+    // Physics bundle is chosen by `MoverBackend` (Dynamic today, Tnua A/B).
+    let mut entity_commands = commands.entity(entity);
+    crate::mover::insert_creature_physics(
+        &mut entity_commands,
+        capsule_radius,
+        capsule_length,
+        mover_backend,
+        mover_config,
+    );
+    entity_commands.insert((
         CreatureRenderOffset {
             y_offset,
             facing: Quat::IDENTITY,

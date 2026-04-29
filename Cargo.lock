@@ -892,6 +892,52 @@ dependencies = [
 ]
 
 [[package]]
+name = "bevy-tnua"
+version = "0.29.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1911f97c182c9ca4ead78b424906965de8bab218529fbbfa28342ad4e9088b91"
+dependencies = [
+ "bevy",
+ "bevy-tnua-macros",
+ "bevy-tnua-physics-integration-layer",
+ "ron 0.12.0",
+ "serde",
+ "thiserror 2.0.18",
+]
+
+[[package]]
+name = "bevy-tnua-avian3d"
+version = "0.10.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "04f715310ce1f19ff3e8215c541a6358217824c3ae62d087010053f0347e45aa"
+dependencies = [
+ "avian3d",
+ "bevy",
+ "bevy-tnua-physics-integration-layer",
+]
+
+[[package]]
+name = "bevy-tnua-macros"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0c798511265ca8d1a9bf32a4ecbdfeab2363560cded168e8a7f073d0c4965b22"
+dependencies = [
+ "convert_case",
+ "proc-macro2",
+ "quote",
+ "syn",
+]
+
+[[package]]
+name = "bevy-tnua-physics-integration-layer"
+version = "0.12.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c187fdd14d306c8bf5369bd2cc4bab39d5056643229389e6663d8a5751f2c4a0"
+dependencies = [
+ "bevy",
+]
+
+[[package]]
 name = "bevy_a11y"
 version = "0.18.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7042,6 +7088,8 @@ dependencies = [
  "anyhow",
  "avian3d",
  "bevy",
+ "bevy-tnua",
+ "bevy-tnua-avian3d",
  "bevy_hanabi",
  "chrono",
  "crossbeam-channel",

@@ -74,6 +74,8 @@ pub struct SpawnAssets<'a, 'commands, 'c1, 'c2, 'c3, 'c4, 'c5, 'c6, 'c7, 'c8, 'c
     pub texture_collections: &'a mut TextureCollections,
     pub fight_fsm_cache: &'a mut ResMut<'c8, crate::fightai::FightFsmCache>,
     pub attack_fsm_cache: &'a mut ResMut<'c9, crate::fightai::AttackFsmCache>,
+    pub mover_backend: crate::mover::MoverBackend,
+    pub mover_config: Option<Handle<crate::mover::Oni2SchemeConfig>>,
 }
 
 /// Marker resource: fog rendering is enabled (--fog flag).
@@ -139,6 +141,9 @@ pub fn toggle_debug_fog(
         }
     }
 }
+
+#[derive(Component)]
+pub struct DebugLightGridNode;
 
 #[derive(Resource)]
 pub struct DebugLightGridState {
@@ -276,8 +281,25 @@ pub fn update_debug_light_grid(
                     // companion HashMap so the next session starts
                     // clean.
                     crate::menu::InGameEntity,
+                    DebugLightGridNode,
                 ))
                 .id()
         });
+    }
+}
+
+/// Draw wireframe spheres to visualize the procedurally placed lightsource grid when F3 is active.
+pub fn debug_draw_light_grid(
+    query: Query<&Transform, With<DebugLightGridNode>>,
+    mut gizmos: Gizmos,
+    visible: Res<crate::oni2_loader::animation::DebugBoundsVisible>,
+) {
+    if !visible.0 {
+        return;
+    }
+    
+    let color = Color::srgb(1.0, 1.0, 0.0); // Yellow for lights
+    for transform in &query {
+        gizmos.sphere(Isometry3d::from_translation(transform.translation), 0.5, color);
     }
 }

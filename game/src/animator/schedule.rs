@@ -44,9 +44,17 @@ pub struct AnimScheduleEntry {
     pub substate_1: i32,
     /// Playback speed multiplier written into `Oni2AnimState.speed_multiplier`.
     pub rate: f32,
-    /// When true: loop this animation indefinitely; auto-advance is disabled.
-    /// The caller must explicitly `AnimSchedule::advance()` or `clear()` to
-    /// move past it.  Matches `crAnimListRecord::SetLoop(true)` semantics.
+    /// When true: park on this entry's final frame and stop auto-advancing.
+    /// `state.looping` is set to `false` so the playback clamps `current_time`
+    /// at `num_frames - 1` (no wrap).  The caller must explicitly
+    /// `AnimSchedule::advance()` or `clear()` to move past it.
+    ///
+    /// Use this for "fall-pose hold until landing" patterns (the airborne
+    /// extension anim is held on its last frame; ground-contact handlers
+    /// advance the schedule into LAND).  If you want a true repeating loop
+    /// (cycling through every frame indefinitely), play the anim outside
+    /// the schedule via `lib.play` and let the `.anim` file's own
+    /// `is_loop` byte drive the wrap.
     pub hold_at_end: bool,
 }
 
@@ -197,7 +205,16 @@ pub fn anim_schedule_tick_system(
                 Some(entry) => {
                     if lib.play(&entry.alias, &mut state) {
                         state.speed_multiplier = entry.rate;
-                        state.looping = entry.hold_at_end;
+                        // `hold_at_end` is "clamp on last frame, don't
+                        // advance" — NOT "wrap forever".  Explicitly set
+                        // `looping=false` to override whatever
+                        // `play_id()` pulled from the `.anim` file's own
+                        // `is_loop` byte.  The schedule's auto-advance
+                        // gate handles the "don't move past this entry"
+                        // half via `if at_end && !hold`; we just need
+                        // the playback to clamp instead of wrap.  See
+                        // the doc on `AnimScheduleEntry::hold_at_end`.
+                        state.looping = false;
                         if let Some(mut ap) = ap_opt {
                             ap.record_new_substate_1(entry.substate_1);
                         }
