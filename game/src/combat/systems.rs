@@ -858,13 +858,27 @@ pub fn telemetry_combat_system(
 }
 
 pub fn ground_detection_system(
+    mut commands: Commands,
     mut query: Query<(
+        Entity,
         &mut crate::oni2_loader::animation::Oni2AnimState,
         &ShapeHits,
+        Option<&mut crate::oni2_loader::spawn::JustGroundSnapped>,
     )>,
     materials: Query<&crate::oni2_loader::components::MaterialType>,
 ) {
-    for (mut anim_state, hits) in &mut query {
+    for (entity, mut anim_state, hits, mut snap_opt) in &mut query {
+        if let Some(mut snap) = snap_opt {
+            if snap.0 > 0 {
+                snap.0 -= 1;
+                anim_state.is_grounded = true;
+                anim_state.material_stood_on = None; // Avoid legacy material until physics hits
+                continue;
+            } else {
+                commands.entity(entity).remove::<crate::oni2_loader::spawn::JustGroundSnapped>();
+            }
+        }
+
         anim_state.is_grounded = !hits.is_empty();
         if let Some(first_hit) = hits.first() {
             if let Ok(material_type) = materials.get(first_hit.entity) {

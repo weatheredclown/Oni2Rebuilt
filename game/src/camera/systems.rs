@@ -194,6 +194,19 @@ pub fn update_camera_channel(
         // The camera must sit BEHIND that direction, so we negate before atan2.
         channel.current_focus_azimuth = (-fighter.facing.x).atan2(-fighter.facing.z);
 
+        if !channel.has_snapped_to_target {
+            channel.desired_azimuth = channel.current_focus_azimuth;
+            channel.current_azimuth = channel.current_focus_azimuth;
+            channel.desired_distance = channel.package_distance;
+            channel.current_distance = channel.package_distance;
+            channel.desired_incline = channel.package_incline_offset;
+            channel.current_incline = channel.package_incline_offset;
+            channel.desired_fov = channel.package_fov;
+            channel.current_fov = channel.package_fov;
+            channel.current_focus_offset = channel.package_focus_offset;
+            channel.previous_focus_pos = target_pos;
+        }
+
         channel.is_moving = input_opt.is_some_and(|i| i.movement.length_squared() > 0.01);
 
         // Accumulate running time natively

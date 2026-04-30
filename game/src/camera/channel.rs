@@ -80,6 +80,7 @@ pub struct CameraChannel {
     pub bump_is_ready_to_use: bool,
     pub rotate_until_desired: bool,
     pub is_colliding: bool,
+    pub has_snapped_to_target: bool,
 
     // Action State Flags (Affect incline/distance automatically later)
     pub is_jumping: bool,
@@ -158,6 +159,7 @@ impl Default for CameraChannel {
             bump_is_ready_to_use: true,
             rotate_until_desired: false,
             is_colliding: false,
+            has_snapped_to_target: false,
 
             is_jumping: false,
             jump_transition_out: false,

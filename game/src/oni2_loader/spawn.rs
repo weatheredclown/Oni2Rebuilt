@@ -22,6 +22,11 @@ pub struct CreatureRenderOffset {
     pub physics_center_height: f32,
 }
 
+/// Temporary marker to force is_grounded=true for a few frames after snapping
+/// to let physics catch up, preventing a 1-frame FALL state.
+#[derive(Component)]
+pub struct JustGroundSnapped(pub u8);
+
 /// Marker for creatures that need to be snapped to the ground after physics initializes.
 /// Stores the original intended spawn position so we can probe around it.
 #[derive(Component)]
@@ -36,10 +41,16 @@ pub struct NeedsGroundSnap {
 /// to a safe position. Tries a spiral pattern within 5m of the spawn origin.
 pub fn ground_snap_system(
     mut commands: Commands,
-    mut query: Query<(Entity, &mut Transform, &mut NeedsGroundSnap)>,
+    mut query: Query<(
+        Entity,
+        &mut Transform,
+        &mut NeedsGroundSnap,
+        Option<&mut crate::statemachine::runtime::AnimatorRuntime>,
+        Option<&mut crate::oni2_loader::animation::Oni2AnimState>,
+    )>,
     spatial_query: SpatialQuery,
 ) {
-    for (entity, mut transform, mut snap) in &mut query {
+    for (entity, mut transform, mut snap, mut animator_opt, mut anim_state_opt) in &mut query {
         // Wait for colliders to be registered in the physics pipeline
         if snap.wait_frames > 0 {
             snap.wait_frames -= 1;
@@ -106,10 +117,10 @@ pub fn ground_snap_system(
         }
 
         if let Some((ground_pos, _)) = best_hit {
-            // Place capsule center above ground (capsule half-height above ground surface)
+            // Place capsule exactly on ground (no extra buffer) so ShapeCaster hits it quickly
             let final_pos = Vec3::new(
                 ground_pos.x,
-                ground_pos.y + capsule_half_height + 0.1, // small buffer
+                ground_pos.y + capsule_half_height + 0.01,
                 ground_pos.z,
             );
             transform.translation = final_pos;
@@ -137,7 +148,18 @@ pub fn ground_snap_system(
         commands
             .entity(entity)
             .remove::<NeedsGroundSnap>()
-            .insert(LinearVelocity::default());
+            .insert((LinearVelocity::default(), JustGroundSnapped(3)));
+
+        // Force animator into IDLE and anim_state to grounded so we skip FALL -> LAND
+        if let Some(mut animator) = animator_opt {
+            let idle_idx = animator.sm.data.index_of_or_zero("IDLE");
+            animator.sm.current_state = idle_idx;
+            animator.previous_grounded = true;
+            animator.sm.last_log.clear();
+        }
+        if let Some(mut anim_state) = anim_state_opt {
+            anim_state.is_grounded = true;
+        }
     }
 }
 

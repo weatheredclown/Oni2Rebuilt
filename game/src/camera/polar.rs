@@ -158,7 +158,12 @@ pub fn apply_camera_transform(
         }
 
         let t = (6.0 * dt).clamp(0.0, 1.0);
-        cam_tf.translation = cam_tf.translation.lerp(desired_pos, t);
+        if !channel.has_snapped_to_target {
+            cam_tf.translation = desired_pos;
+            channel.has_snapped_to_target = true;
+        } else {
+            cam_tf.translation = cam_tf.translation.lerp(desired_pos, t);
+        }
 
         // Lock looking at the target center
         cam_tf.look_at(target_base, Vec3::Y);
