@@ -864,10 +864,11 @@ pub fn ground_detection_system(
         &mut crate::oni2_loader::animation::Oni2AnimState,
         &ShapeHits,
         Option<&mut crate::oni2_loader::spawn::JustGroundSnapped>,
+        Option<&crate::oni2_loader::spawn::NeedsGroundSnap>,
     )>,
     materials: Query<&crate::oni2_loader::components::MaterialType>,
 ) {
-    for (entity, mut anim_state, hits, mut snap_opt) in &mut query {
+    for (entity, mut anim_state, hits, mut snap_opt, needs_snap_opt) in &mut query {
         if let Some(mut snap) = snap_opt {
             if snap.0 > 0 {
                 snap.0 -= 1;
@@ -877,6 +878,12 @@ pub fn ground_detection_system(
             } else {
                 commands.entity(entity).remove::<crate::oni2_loader::spawn::JustGroundSnapped>();
             }
+        }
+
+        if needs_snap_opt.is_some() {
+            anim_state.is_grounded = true;
+            anim_state.material_stood_on = None;
+            continue;
         }
 
         anim_state.is_grounded = !hits.is_empty();
