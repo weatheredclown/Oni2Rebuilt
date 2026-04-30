@@ -176,6 +176,44 @@ impl SmDriver for InputDriver {
 // ---------------------------------------------------------------------------
 
 fn packet_matches(packet: &FsmPacket, cond: &PacketCondition) -> bool {
+    // Guard against an all-empty `PacketCondition`, which would otherwise
+    // match every packet (every guard below short-circuits on `!= 0`).
+    // An empty condition is almost always a parser failure — the source
+    // text said `if Packet(SOMETHING)` but every token in `SOMETHING`
+    // was unrecognized, so all bits ended up zero.  Returning false here
+    // makes the rule reliably never fire instead of always fire.
+    //
+    // Caught a real bug: enemy.fsm's `if Packet(PADCMD_ATTACK_LOW)` rule
+    // was being treated as "match anything" because PADCMD_ATTACK_LOW was
+    // missing from `build_pad_table`, causing every spawned AI fighter to
+    // immediately dispatch ANIMATTACK_2 on tick 0.
+    if cond.pad_flags == 0
+        && cond.ctrl_flags == 0
+        && cond.not_pad_flags == 0
+        && cond.not_ctrl_flags == 0
+        && cond.class_hit.is_none()
+        && cond.has_weapon_name.is_none()
+        && cond.not_has_weapon_name.is_none()
+    {
+        // Diagnostic for the empty-condition case.  If any legitimate
+        // rule was relying on the old "match everything" behavior, we'll
+        // see this warning and can decide whether to convert it to
+        // `if Always` (the right way to express "fire every tick") or
+        // relax the guard.  One-shot per process so a per-tick rule
+        // doesn't flood the log.
+        use std::sync::atomic::{AtomicBool, Ordering};
+        static WARNED: AtomicBool = AtomicBool::new(false);
+        if !WARNED.swap(true, Ordering::Relaxed) {
+            bevy::log::warn!(
+                "packet_matches: encountered an empty PacketCondition — \
+                 returning false (rule will never fire).  This is the \
+                 anti-`every-AI-fires-ANIMATTACK_2-on-spawn` guard.  If \
+                 expected, the source rule should use `if Always` instead \
+                 of `if Packet()`.  This warning fires only once per process."
+            );
+        }
+        return false;
+    }
     if cond.pad_flags != 0 && (packet.pad_flags & cond.pad_flags) != cond.pad_flags {
         return false;
     }
@@ -355,7 +393,10 @@ pub const INPUT_ACTION_PARSER: ActionParser<InputDriver> = parse_input_action;
 fn build_pad_table() -> HashMap<&'static str, u64> {
     let mut m = HashMap::new();
     m.insert("PADCMD_ATTACK_HIGH", pad_flags::PADCMD_ATTACK_HIGH);
+    m.insert("PADCMD_ATTACK_LOW", pad_flags::PADCMD_ATTACK_LOW);
     m.insert("PADCMD_ATTACK_TWO_HIGH", pad_flags::PADCMD_ATTACK_TWO_HIGH);
+    m.insert("PADCMD_ACTION", pad_flags::PADCMD_ACTION);
+    m.insert("PADCMD_SHAKE", pad_flags::PADCMD_SHAKE);
     m.insert("PADCMD_BLOCK", pad_flags::PADCMD_BLOCK);
     m.insert("PADCMD_SWEEP_FORWARD", pad_flags::PADCMD_SWEEP_FORWARD);
     m.insert("PADCMD_GRAPPLE", pad_flags::PADCMD_GRAPPLE);

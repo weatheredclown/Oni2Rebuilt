@@ -854,9 +854,11 @@ pub fn spawn_layout_actor(
                     if let Some(fsm_data) =
                         assets.fight_fsm_cache.get_or_load(&layout_ctx.entity_base)
                     {
+                        let mut fsm = crate::statemachine::core::SmRuntime::new(fsm_data, 0);
+                        fsm.entity = Some(entity);
                         assets.commands.entity(entity).insert(
                             crate::fightai::components::FightRuntime {
-                                fsm: crate::statemachine::core::SmRuntime::new(fsm_data, 0),
+                                fsm,
                                 ctx: crate::statemachine::drivers::fight::FightCtx::default(),
                                 last_log: String::new(),
                             },
@@ -868,9 +870,11 @@ pub fn spawn_layout_actor(
                             .attack_fsm_cache
                             .get_or_load(table, &layout_ctx.entity_base)
                     {
+                        let mut fsm = crate::statemachine::core::SmRuntime::new(atk_data, 0);
+                        fsm.entity = Some(entity);
                         assets.commands.entity(entity).insert(
                             crate::fightai::components::AttackRuntime {
-                                fsm: crate::statemachine::core::SmRuntime::new(atk_data, 0),
+                                fsm,
                                 ctx: crate::statemachine::drivers::attack::AttackCtx::default(),
                                 last_log: String::new(),
                                 tick_count: 0,

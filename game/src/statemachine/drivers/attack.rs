@@ -408,6 +408,8 @@ pub struct AttackCtx {
     pub anim_looping: bool,
     /// Distance to the entity's fight target, updated by the host system before tick()
     pub target_distance_current: Option<f32>,
+    /// The entity owning this FSM, for debug logging.
+    pub entity: Option<bevy::prelude::Entity>,
 }
 
 impl Default for AttackCtx {
@@ -422,6 +424,7 @@ impl Default for AttackCtx {
             anim_current_time: 0.0,
             anim_looping: false,
             target_distance_current: None,
+            entity: None,
         }
     }
 }
@@ -522,7 +525,11 @@ impl SmDriver for AttackDriver {
             }
             AttackAction::Action(name, args) => {
                 end_current(ctx);
-                bevy::log::info!("atk: Starting action {} '{}'", name, args);
+                let debug_str = ctx
+                    .entity
+                    .map(crate::debug::debug_name)
+                    .unwrap_or_else(|| "<no_entity>".to_string());
+                bevy::log::info!("atk {} [{}]: Starting action {} '{}'", debug_str, ctx.entity.map(|e| format!("{:?}", e)).unwrap_or("?".to_string()), name, args);
                 let mut new_action = build_atk_action(name, args);
                 if call_action_start(ctx, output, &mut *new_action) {
                     ctx.current_action = Some(new_action);

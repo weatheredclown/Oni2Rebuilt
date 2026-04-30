@@ -274,6 +274,9 @@ pub struct SmRuntime<D: SmDriver> {
 
     /// Last debug log string emitted by this FSM (used for edge-triggered dedup).
     pub last_log: String,
+
+    /// The entity owning this FSM, for debug logging.
+    pub entity: Option<bevy::prelude::Entity>,
 }
 
 impl<D: SmDriver> SmRuntime<D> {
@@ -287,6 +290,7 @@ impl<D: SmDriver> SmRuntime<D> {
             random_budget: AtomicU32::new(0_f32.to_bits()),
             rng_seed: 0xdeadbeef_cafebabe,
             last_log: String::new(),
+            entity: None,
         }
     }
 
@@ -383,9 +387,14 @@ impl<D: SmDriver> SmRuntime<D> {
             // Action chain succeeded.  Apply the goto if requested.
             if let Some(target) = adv.goto_request.or(rule.goto_state) {
                 if target != self.current_state {
+                    let debug_str = self
+                        .entity
+                        .map(crate::debug::debug_name)
+                        .unwrap_or_else(|| "<no_entity>".to_string());
                     let log_msg = format!(
-                        "FSM Transition [{}]: {} -> {}",
+                        "FSM Transition [{}] {}: {} -> {}",
                         std::any::type_name::<D>(),
+                        debug_str,
                         self.data.state_name(self.current_state),
                         self.data.state_name(target)
                     );

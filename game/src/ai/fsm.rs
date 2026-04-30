@@ -67,10 +67,12 @@ impl AiFsmRuntime {
     /// initial state in every shipped `.fsm` I inspected).  Falls
     /// back to state 0 if a future `.fsm` uses a different initial
     /// state name.
-    pub fn new(data: Arc<SmData<InputDriver>>) -> Self {
+    pub fn new(data: Arc<SmData<InputDriver>>, entity: bevy::prelude::Entity) -> Self {
         let initial = data.index_of_or_zero("IDLE_STATE");
+        let mut sm = SmRuntime::new(data, initial);
+        sm.entity = Some(entity);
         AiFsmRuntime {
-            sm: SmRuntime::new(data, initial),
+            sm,
             ctx: InputCtx::default(),
         }
     }
@@ -99,7 +101,7 @@ pub fn ai_attach_fsm_system(
         };
         commands
             .entity(entity)
-            .insert((AiFsmRuntime::new(data), AiPadCommands::default(), crate::ai::components::AiDrivenVelocityThisTick::default()));
+            .insert((AiFsmRuntime::new(data, entity), AiPadCommands::default(), crate::ai::components::AiDrivenVelocityThisTick::default()));
     }
 }
 

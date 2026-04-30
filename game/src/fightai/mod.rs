@@ -294,7 +294,10 @@ pub fn attack_runtime_update_system(
         
         rt_mut.tick_count = rt_mut.tick_count.wrapping_add(1);
         let pre_state = rt_mut.fsm.data.state_name(rt_mut.fsm.current_state).to_string();
-        let log_msg = format!("AttackRuntime: entity={:?}, state={}, got_cookie={}",
+        rt_mut.ctx.entity = Some(entity);
+        let debug_str = crate::debug::debug_name(entity);
+        let log_msg = format!("AttackRuntime: {} [{:?}], state={}, got_cookie={}",
+            debug_str,
             entity,
             pre_state,
             rt_mut.ctx.got_cookie);
@@ -315,8 +318,9 @@ pub fn attack_runtime_update_system(
             || output.start_following_distance.is_some()
         {
             bevy::log::info!(
-                "AttackRuntime out[{:?}] state={} cookie={} \
+                "AttackRuntime out {} [{:?}] state={} cookie={} \
                  attack={:?} block={:?} evade={:?} custom={:?} follow={:?}",
+                debug_str,
                 entity,
                 pre_state,
                 rt_mut.ctx.got_cookie,
