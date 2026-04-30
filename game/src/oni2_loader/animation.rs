@@ -328,6 +328,26 @@ impl Oni2AnimState {
     pub fn root_motion_delta(&self) -> Vec3 {
         self.root_offset_this_frame - self.root_offset_prev_frame
     }
+
+    /// True iff a non-looping one-shot animation is currently mid-play
+    /// (i.e. hasn't reached its final frame).  Used by both the AI
+    /// behavior LockedMovement gate (rb/src/behavior/component.cpp:1176
+    /// port) and the locomotion gait selector to suppress motion
+    /// commands while an attack swing / block / evade / reaction
+    /// animation has the actor committed.
+    ///
+    /// Locomotion gaits are always looping, so a non-looping anim that
+    /// hasn't ended is by definition not a gait — it's a one-shot the
+    /// actor must finish before any other system replaces it or steers
+    /// the body.
+    pub fn is_one_shot_in_progress(&self) -> bool {
+        let num_frames = self.anim.num_frames as f32;
+        if num_frames <= 1.0 {
+            return false;
+        }
+        let last_frame = (num_frames - 1.0).max(0.0);
+        !self.looping && self.current_time < last_frame
+    }
 }
 
 /// Deterministic string hash used as animation identifier.
@@ -392,6 +412,20 @@ impl Oni2AnimLibrary {
     /// speed after a jump completes.
     pub fn play_id(&self, id: AnimId, state: &mut Oni2AnimState) -> bool {
         if let Some(anim) = self.anims.get(&id) {
+            let new_name = self
+                .debug_names
+                .get(&id)
+                .cloned()
+                .unwrap_or_else(|| format!("{:?}", id));
+            let prev_name = state
+                .current_anim_id
+                .and_then(|pid| self.debug_names.get(&pid).cloned());
+            bevy::log::trace!(
+                "play_id: '{}' (looping={}) replacing prev='{}'",
+                new_name,
+                anim.is_loop,
+                prev_name.as_deref().unwrap_or("<none>")
+            );
             state.anim = anim.clone();
             state.current_time = 0.0;
             state.looping = anim.is_loop;
@@ -1206,6 +1240,24 @@ pub fn update_oni2_animation(
     )>,
 ) {
     for (entity, mut anim_state, debug_skel, render_offset, asleep_opt) in &mut anim_query {
+        // Diagnostic: dump every anim transition's playback config exactly
+        // once per transition (cleared at end of frame by
+        // `reset_anim_transition_edges`).  Lets us see if a do_attack-issued
+        // anim arrived with fps=0 / speed_multiplier=0 / paused=true / etc.,
+        // which would explain why current_time never advances.
+        if anim_state.anim_just_started {
+            bevy::log::trace!(
+                "anim_play[{:?}]: num_frames={} fps={} speed={} paused={} looping={} asleep={}",
+                entity,
+                anim_state.anim.num_frames,
+                anim_state.fps,
+                anim_state.speed_multiplier,
+                anim_state.paused,
+                anim_state.looping,
+                asleep_opt.is_some(),
+            );
+        }
+
         if asleep_opt.is_some() {
             continue;
         }

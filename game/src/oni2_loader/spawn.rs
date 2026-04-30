@@ -318,6 +318,16 @@ pub fn creature_movement_anim_system(
             continue;
         }
 
+        // Block locomotion while the actor is committed to a one-shot
+        // animation (attack swing, block, evade, hit reaction, …).
+        // Same gate the behavior layer uses to suppress velocity writes
+        // — funneling both call sites through `locked_movement` keeps
+        // future complexity (jump carve-out, HitReaction handling, etc.)
+        // in one place.  See `combat::locks` for the legacy reference.
+        if crate::combat::locked_movement(&anim_state) {
+            continue;
+        }
+
         let _horiz_speed = Vec2::new(vel.x, vel.z).length();
 
         // Get character forward and right directions

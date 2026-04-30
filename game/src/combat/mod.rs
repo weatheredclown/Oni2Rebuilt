@@ -11,7 +11,10 @@ pub mod components;
 pub mod events;
 pub mod faction;
 pub mod hitbox;
+pub mod locks;
 pub mod systems;
+
+pub use locks::locked_movement;
 
 pub use bundles::{CreaturePhysicsBundle, FighterBundle};
 

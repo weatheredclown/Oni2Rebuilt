@@ -131,7 +131,11 @@ impl AtkAction for ActionAttack {
         }
         self.anim_name = anim.clone();
         self.saw_our_anim = false;
-        output.attack_anim = Some(anim);
+        output.attack_anim = Some(anim.clone());
+        bevy::log::info!(
+            "ActionAttack::start -> anim='{}' (output.attack_anim set)",
+            anim
+        );
         true
     }
     fn update(&mut self, ctx: &mut AttackCtx, _output: &mut AttackOutput, _dt: f32) -> bool {
@@ -141,16 +145,31 @@ impl AtkAction for ActionAttack {
         // a tick AFTER the host wired in our anim — without it we'd match
         // stale-anim end-of-play state left over from the previous action.
         if ctx.anim_num_frames <= 1 {
+            bevy::log::trace!(
+                "ActionAttack::update '{}' waiting: anim_num_frames={} (need >1)",
+                self.anim_name, ctx.anim_num_frames
+            );
             return false;
         }
         if !self.saw_our_anim {
+            bevy::log::trace!(
+                "ActionAttack::update '{}' waiting saw_our_anim: t={:.2} num={} looping={}",
+                self.anim_name, ctx.anim_current_time, ctx.anim_num_frames, ctx.anim_looping
+            );
             if ctx.anim_current_time < 0.5 {
                 self.saw_our_anim = true;
             }
             return false;
         }
         let last_frame = (ctx.anim_num_frames as f32 - 1.0).max(0.0);
-        !ctx.anim_looping && ctx.anim_current_time >= last_frame
+        let done = !ctx.anim_looping && ctx.anim_current_time >= last_frame;
+        if done {
+            bevy::log::info!(
+                "ActionAttack::update '{}' DONE: t={:.2}/{:.2}",
+                self.anim_name, ctx.anim_current_time, last_frame
+            );
+        }
+        done
     }
 }
 

@@ -260,25 +260,43 @@ pub fn attack_runtime_update_system(
             &mut crate::oni2_loader::animation::Oni2AnimState,
             &mut crate::combat::components::Fighter,
             Option<&crate::ai::components::AiFighter>,
+            Option<&GlobalTransform>,
         ),
         Without<crate::oni2_loader::components::ActorAsleep>,
     >,
+    transforms_q: Query<&GlobalTransform>,
 ) {
     let dt = time.delta_secs();
-    for (entity, mut runtime, anim_lib, mut anim_state, mut fighter, ai_fighter_opt) in &mut query {
+    for (entity, mut runtime, anim_lib, mut anim_state, mut fighter, ai_fighter_opt, self_tf_opt) in &mut query {
         runtime.fsm.advance_clock(dt);
         runtime.ctx.dt = dt;
         runtime.ctx.anim_num_frames = anim_state.anim.num_frames as i32;
         runtime.ctx.anim_current_time = anim_state.current_time;
         runtime.ctx.anim_looping = anim_state.looping;
 
+        // Distance to current AI target — read by `ActionDistance::update`
+        // (and any future range-gated action) to decide when MB/MA-style
+        // "move to within X" actions complete.  Computed from world XZ;
+        // None when we have no target or transforms aren't available.
+        runtime.ctx.target_distance_current = ai_fighter_opt
+            .and_then(|ai| ai.target)
+            .and_then(|tgt| {
+                let self_pos = self_tf_opt?.translation();
+                let tgt_pos = transforms_q.get(tgt).ok()?.translation();
+                let dx = self_pos.x - tgt_pos.x;
+                let dz = self_pos.z - tgt_pos.z;
+                Some((dx * dx + dz * dz).sqrt())
+            });
+
         // Split the two mutable borrows — `runtime.fsm.tick(&mut runtime.ctx)`
         // would alias `runtime` to itself.  Go through `as_mut`.
         let rt_mut = runtime.as_mut();
         
-        let log_msg = format!("AttackRuntime: entity={:?}, state={}, got_cookie={}", 
-            entity, 
-            rt_mut.fsm.data.state_name(rt_mut.fsm.current_state),
+        rt_mut.tick_count = rt_mut.tick_count.wrapping_add(1);
+        let pre_state = rt_mut.fsm.data.state_name(rt_mut.fsm.current_state).to_string();
+        let log_msg = format!("AttackRuntime: entity={:?}, state={}, got_cookie={}",
+            entity,
+            pre_state,
             rt_mut.ctx.got_cookie);
         if log_msg != rt_mut.last_log {
             bevy::log::info!("{}", log_msg);
@@ -286,6 +304,29 @@ pub fn attack_runtime_update_system(
         }
 
         let mut output = rt_mut.fsm.tick(&mut rt_mut.ctx);
+
+        // Edge-trigger any output that came out of the .atk tick.  Lets us
+        // see whether the AttackRuntime is actually producing a swing/block/
+        // evade pulse or sitting silent despite got_cookie=true.
+        if output.attack_anim.is_some()
+            || output.block_anim.is_some()
+            || output.evade_anim.is_some()
+            || output.custom_anim.is_some()
+            || output.start_following_distance.is_some()
+        {
+            bevy::log::info!(
+                "AttackRuntime out[{:?}] state={} cookie={} \
+                 attack={:?} block={:?} evade={:?} custom={:?} follow={:?}",
+                entity,
+                pre_state,
+                rt_mut.ctx.got_cookie,
+                output.attack_anim.as_deref(),
+                output.block_anim.as_deref(),
+                output.evade_anim.as_ref().map(|(n, _)| n.as_str()),
+                output.custom_anim.as_deref(),
+                output.start_following_distance,
+            );
+        }
 
         if let Some(anim_name) = &output.attack_anim {
             bevy::log::info!("AttackRuntime: DoAttack → '{}' on {:?}", anim_name, entity);
@@ -421,6 +462,44 @@ pub fn fight_runtime_update_system(
         mut slot_state_opt,
     ) in &mut query
     {
+        if !runtime.ctx.init_logged {
+            bevy::log::info!(
+                "FightRuntime init[{:?}]: attack_rt={} slot_state={} behavior={} ai={} \
+                 anim={} action_player={} fighter_state={}",
+                entity,
+                attack_rt_opt.is_some(),
+                slot_state_opt.is_some(),
+                behavior_rt_opt.is_some(),
+                ai_opt.is_some(),
+                anim_opt.is_some(),
+                action_player_opt.is_some(),
+                fs_opt.is_some(),
+            );
+            runtime.ctx.init_logged = true;
+        }
+
+        // Heartbeat: if this entity has an AttackRuntime, peek its tick
+        // counter and warn loudly if it's still 0 by the time the fight
+        // FSM has progressed past S_STARTUP.  That indicates the
+        // attack_runtime_update_system query isn't matching the entity
+        // (most likely Oni2AnimLibrary or Fighter is missing — the two
+        // strict requirements that fight_runtime_update_system doesn't
+        // share).  One-shot per entity (gated on `warned_atk_silent`).
+        if let Some(attack_rt) = attack_rt_opt.as_deref() {
+            if attack_rt.tick_count == 0
+                && runtime.fsm.current_state != 0
+                && !runtime.ctx.warned_atk_silent
+            {
+                bevy::log::warn!(
+                    "FightRuntime[{:?}]: AttackRuntime exists but its tick_count is still 0 — \
+                     attack_runtime_update_system isn't matching this entity. \
+                     Check Oni2AnimLibrary / Fighter presence.",
+                    entity
+                );
+                runtime.ctx.warned_atk_silent = true;
+            }
+        }
+
         runtime.fsm.advance_clock(dt);
 
         // --- Populate context inputs ---
@@ -448,37 +527,67 @@ pub fn fight_runtime_update_system(
                 .cookie_offered_by
                 .map(|by| Some(by) == ai_target)
                 .unwrap_or(false);
+
+            // Edge-triggered diagnostic: dump exactly why has_position
+            // resolved the way it did.  Reads as
+            //   "slot=<idx> tgt=<entity> ai_tgt=<entity> offers=<n> ops=<n>"
+            // so a stuck S_STARTING_FIGHT shows whether the slot was
+            // never claimed (current_position=-1), whether resource_target
+            // diverged from the AI target, or whether the FSM is
+            // emitting RequestPosition at all (pending_ops length).
+            let dbg = format!(
+                "slot_state[{:?}]: cur_pos={} res_tgt={:?} ai_tgt={:?} offers={} pending_ops={} -> has_position={}",
+                entity,
+                slot.current_position,
+                slot.resource_target,
+                ai_target,
+                slot.offered_positions.len(),
+                slot.pending_ops.len(),
+                runtime.ctx.has_position,
+            );
+            if dbg != runtime.ctx.last_pos_dbg {
+                bevy::log::info!("{}", dbg);
+                runtime.ctx.last_pos_dbg = dbg;
+            }
         } else {
             runtime.ctx.has_position = false;
             runtime.ctx.can_attack = false;
             runtime.ctx.position_offered = false;
             runtime.ctx.cookie_offered = false;
+            let dbg = format!("slot_state[{:?}]: <NO COMPONENT> ai_tgt={:?}", entity, ai_target);
+            if dbg != runtime.ctx.last_pos_dbg {
+                bevy::log::warn!("{}", dbg);
+                runtime.ctx.last_pos_dbg = dbg;
+            }
         }
 
-        // Set `ctx.mode` based on AI state — NOT the current Behavior
-        // state.  The fight FSM's `S_STARTUP` only exits via
-        // `E_MODE(...)` events, so without a sensible mode the FSM
-        // parks forever and never logs a transition.
+        // Set `ctx.mode` mirroring `aiFightStateMachine::Update`
+        // (rb/src/aifight/statemachine.cpp:302-329).  Legacy
+        // recomputes mode EVERY tick from `ECanAttack` — i.e.
+        // `has_position && has_target` — so a positionless fighter
+        // gets routed through CHASE-mode states (S_STARTING_CHASE →
+        // S_REQUESTING_POSITION → ...) where `A_REQUEST_POSITION`
+        // actually fires.  Locking mode to "attack" when a target
+        // appears (the previous behavior) skipped the CHASE phase
+        // entirely and parked the FSM forever in S_STARTING_FIGHT
+        // emitting only `A_IDLE`.
         //
-        // Mode source precedence:
-        //   1. If scroni has already set a mode (via SetAiTarget /
-        //      TriggerFight), leave it alone — those commands are
-        //      explicit script intent and shouldn't be clobbered.
-        //   2. Otherwise, derive from `has_target`: target present →
-        //      "fight"; no target → "idle".
-        //
-        // This used to mirror the BehaviorRuntime's current state,
-        // but that created a feedback loop — scroni would set
-        // mode="attack", we'd overwrite with "idle" (behavior still
-        // in IDLE), fight FSM couldn't progress past S_STARTUP, which
-        // kept behavior in IDLE, which kept us overwriting.
-        let scroni_set_mode = !runtime.ctx.mode.is_empty()
-            && !runtime.ctx.mode.eq_ignore_ascii_case("idle");
-        if !scroni_set_mode {
-            runtime.ctx.mode = if runtime.ctx.has_target {
-                "fight".to_string()
-            } else {
+        // Scroni overrides for non-engagement modes (defend /
+        // join_formation) are still respected — those are explicit
+        // tactical intents the FSM shouldn't override.  Engagement
+        // intents (attack / fight / chase) are derived state and get
+        // recomputed.
+        let scroni_locked = matches!(
+            runtime.ctx.mode.to_ascii_lowercase().as_str(),
+            "defend" | "join_formation"
+        );
+        if !scroni_locked {
+            runtime.ctx.mode = if !runtime.ctx.has_target {
                 "idle".to_string()
+            } else if runtime.ctx.has_position {
+                "attack".to_string()
+            } else {
+                "chase".to_string()
             };
         }
 
@@ -544,12 +653,17 @@ pub fn fight_runtime_update_system(
                 // machine's `got_cookie` row selector.  Cheap to
                 // re-write each tick (same bool value is a no-op).
                 FightAction::GrabCookie => {
+                    let had_rt = attack_rt_opt.is_some();
                     if let Some(attack_rt) = attack_rt_opt.as_deref_mut() {
                         attack_rt.ctx.got_cookie = true;
                     }
                     if let Some(slot) = slot_state_opt.as_deref_mut() {
                         slot.pending_ops.push(position::ResourceOp::GrabCookie);
                     }
+                    bevy::log::info!(
+                        "FightRuntime: GrabCookie on {:?} attack_rt={} -> got_cookie=true",
+                        entity, had_rt
+                    );
                 }
                 FightAction::ReleaseCookie => {
                     if let Some(attack_rt) = attack_rt_opt.as_deref_mut() {
@@ -572,11 +686,30 @@ pub fn fight_runtime_update_system(
                 }
                 FightAction::AtkAttack | FightAction::Attack => {
                     if let Some(attack_rt) = attack_rt_opt.as_deref_mut() {
+                        if !attack_rt.ctx.got_cookie {
+                            bevy::log::info!(
+                                "FightRuntime: {:?} on {:?} -> got_cookie=true",
+                                action, entity
+                            );
+                        }
                         attack_rt.ctx.got_cookie = true;
+                    } else if !runtime.ctx.warned_no_attack_rt {
+                        bevy::log::warn!(
+                            "FightRuntime: {:?} on {:?} but NO AttackRuntime — \
+                             actor has no attack_table, no swing will happen",
+                            action, entity
+                        );
+                        runtime.ctx.warned_no_attack_rt = true;
                     }
                 }
                 FightAction::AtkIdle => {
                     if let Some(attack_rt) = attack_rt_opt.as_deref_mut() {
+                        if attack_rt.ctx.got_cookie {
+                            bevy::log::info!(
+                                "FightRuntime: AtkIdle on {:?} -> got_cookie=false",
+                                entity
+                            );
+                        }
                         attack_rt.ctx.got_cookie = false;
                     }
                 }

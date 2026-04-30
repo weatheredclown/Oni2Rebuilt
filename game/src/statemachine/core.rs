@@ -192,6 +192,11 @@ pub struct SmAdvance<D: SmDriver> {
     /// rule.  Matches the legacy `ActionFailed` flag set by e.g. `DoTriggerAtk`
     /// when the trigger resolution failed.
     action_failed: bool,
+    /// If true, the eval loop will reset `runtime.timer_start = runtime.elapsed`
+    /// after the rule's actions finish (only when the rule succeeds — same
+    /// gating as `goto_request`).  Driver `apply_action` impls flip this via
+    /// `SmAdvance::reset_timer` instead of needing a back-pointer to the runtime.
+    reset_timer_request: bool,
     _phantom: std::marker::PhantomData<D>,
 }
 
@@ -201,6 +206,7 @@ impl<D: SmDriver> SmAdvance<D> {
             check_request: None,
             goto_request: None,
             action_failed: false,
+            reset_timer_request: false,
             _phantom: std::marker::PhantomData,
         }
     }
@@ -221,6 +227,14 @@ impl<D: SmDriver> SmAdvance<D> {
     /// and resumes evaluation at the next rule in the state.
     pub fn fail(&mut self) {
         self.action_failed = true;
+    }
+
+    /// Request that `runtime.timer_start` be set to `runtime.elapsed` after
+    /// this rule's actions finish.  Only takes effect if the rule succeeds.
+    /// Driver impls call this from their `A_RESET_TIMER` / `ResetTimer`
+    /// action branch.
+    pub fn reset_timer(&mut self) {
+        self.reset_timer_request = true;
     }
 }
 
@@ -357,6 +371,13 @@ impl<D: SmDriver> SmRuntime<D> {
             if adv.action_failed {
                 // This rule's actions bailed — try the next rule.
                 continue;
+            }
+
+            // Action chain succeeded.  Process timer reset before goto so
+            // a state that does `A_RESET_TIMER / S_NEXT` lands in S_NEXT
+            // with timer_start aligned to "now".
+            if adv.reset_timer_request {
+                self.reset_timer();
             }
 
             // Action chain succeeded.  Apply the goto if requested.

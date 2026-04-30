@@ -22,4 +22,9 @@ pub struct AttackRuntime {
     pub fsm: SmRuntime<AttackDriver>,
     pub ctx: AttackCtx,
     pub last_log: String,
+    /// Per-entity tick counter — bumped each time `attack_runtime_update_system`
+    /// runs on this entity.  Used to diagnose whether the system is reaching
+    /// the entity at all (i.e. whether the strict component requirements on
+    /// the query are satisfied).
+    pub tick_count: u64,
 }

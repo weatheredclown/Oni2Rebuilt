@@ -57,11 +57,17 @@ pub fn do_attack(
     rotation_notches: i32,
 ) -> bool {
     let ok = anim_lib.play(anim_name, anim_state);
-    if !ok {
+    if ok {
+        info!(
+            "DoAttack: anim '{}' STARTED: num_frames={} looping={}",
+            anim_name, anim_state.anim.num_frames, anim_state.looping
+        );
+    } else {
         warn!(
-            "DoAttack: anim '{}' NOT in library ({} anims)",
+            "DoAttack: anim '{}' NOT in library ({} anims). Sample aliases: {:?}",
             anim_name,
-            anim_lib.anims.len()
+            anim_lib.anims.len(),
+            anim_lib.aliases().iter().take(8).collect::<Vec<_>>(),
         );
     }
     if rotation_notches != 0 {

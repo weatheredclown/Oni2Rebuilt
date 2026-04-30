@@ -602,6 +602,24 @@ pub fn behavior_update_dispatch_system(
 
         let outcome = current.update(&mut ctx, dt);
 
+        // Enforce the legacy `bhBehaviorComponent::LockedMovement` gate
+        // (rb/src/behavior/component.cpp:1176): if the actor is currently
+        // committed to a one-shot animation (attack swing, block, evade,
+        // hit reaction, …), zero the horizontal velocity that the
+        // behavior just wrote.  Behaviors stay clean (no per-impl
+        // attacker-state plumbing) and the FSM/.atk machines keep
+        // ticking normally — only the side-effect on `LinearVelocity`
+        // is suppressed, exactly as legacy gates the packet→velocity
+        // path.
+        if ctx
+            .anim_state
+            .as_deref()
+            .is_some_and(crate::combat::locked_movement)
+        {
+            ctx.velocity.x = 0.0;
+            ctx.velocity.z = 0.0;
+        }
+
         if let Some(mut driven) = driven_opt {
             driven.0 = true;
         }

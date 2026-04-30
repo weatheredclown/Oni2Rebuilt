@@ -873,6 +873,7 @@ pub fn spawn_layout_actor(
                                 fsm: crate::statemachine::core::SmRuntime::new(atk_data, 0),
                                 ctx: crate::statemachine::drivers::attack::AttackCtx::default(),
                                 last_log: String::new(),
+                                tick_count: 0,
                             },
                         );
                     }

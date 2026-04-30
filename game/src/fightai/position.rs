@@ -8,9 +8,17 @@
  *   FightResources   — DEFENDER side.  Lives on every fighter.
  *                      Holds 8 directional position slots around the
  *                      fighter and a single cookie.  Each slot is a
- *                      tiny priority queue: requesters get popped one
- *                      at a time and "offered" the slot for one tick
- *                      (mirrors `aiFightPosition::Update`).
+ *                      priority queue: the highest-priority requester
+ *                      is "offered" the slot every frame (peek, not
+ *                      pop) — they stay in the queue until they Grab
+ *                      it.  Diverges from legacy `aiFightPosition::Update`
+ *                      which popped on offer; the legacy model required
+ *                      multi-step-per-tick FSM evaluation to stay in
+ *                      sync, which we don't have, so making the offer
+ *                      a derived/persistent property of the queue head
+ *                      avoids losing it across an FSM transit gap (e.g.
+ *                      S_REQUESTING_POSITION → S_WAITING_FOR_POSITION
+ *                      crossing a frame boundary).
  *                      Mirrors `aiFightResources` + `aiFightPosition`.
  *
  *   FightSlotState   — ATTACKER side.  Lives on every fighter.
@@ -279,20 +287,28 @@ pub fn fight_resources_offer_system(
             if slot.holder.is_some() || slot.grabbed_by_owner || slot.queue.is_empty() {
                 continue;
             }
-            // Pop highest-priority requester (sort desc, take last for O(1)).
+            // Peek the highest-priority requester (sort asc, last is highest).
+            // Non-destructive: the requester stays in the queue until they
+            // either Grab the slot (which pops them in `fight_resource_apply_system`)
+            // or some other condition removes them.  Re-deriving the offer
+            // from the queue every frame means a one-frame FSM transit gap
+            // (e.g. S_REQUESTING_POSITION -> S_WAITING_FOR_POSITION) doesn't
+            // lose the offer, and a higher-priority requester arriving later
+            // naturally takes the offer next frame.
             slot.queue.sort_by(|a, b| a.0.cmp(&b.0));
-            let Some((_, fighter)) = slot.queue.pop() else {
+            let Some(&(_, fighter)) = slot.queue.last() else {
                 continue;
             };
             slot.offered_to = Some(fighter);
             position_offers.push((fighter, owner, slot_idx as i32));
         }
 
-        // Cookie.
+        // Cookie — same non-destructive peek as the position queue.  Actor
+        // is removed from `cookie_queue` only when `GrabCookie` fires.
         let cooldown_ok = (now - res.cookie_released_at) >= res.cookie_delay as f64;
         if res.cookie_holder.is_none() && cooldown_ok && !res.cookie_queue.is_empty() {
             res.cookie_queue.sort_by(|a, b| a.0.cmp(&b.0));
-            if let Some((_, fighter)) = res.cookie_queue.pop() {
+            if let Some(&(_, fighter)) = res.cookie_queue.last() {
                 res.cookie_offered_to = Some(fighter);
                 cookie_offers.push((fighter, owner));
             }
@@ -304,6 +320,12 @@ pub fn fight_resources_offer_system(
 
     // 3. Push notifications onto each offered fighter's state.
     for (offered_to, owner, slot_idx) in position_offers {
+        bevy::log::info!(
+            "fight_resources_offer: slot {} of {:?} offered to {:?}",
+            slot_idx,
+            owner,
+            offered_to
+        );
         if let Ok(mut st) = state_q.get_mut(offered_to) {
             // Don't push duplicates if multiple defenders offer the same
             // (owner, slot) — in practice impossible, but cheap to guard.
@@ -347,6 +369,14 @@ pub fn fight_resource_apply_system(
 
     if ops.is_empty() {
         return;
+    }
+
+    // Diagnostic: dump the ops batch.  Useful when E_HAS_POSITION is
+    // stuck false — confirms whether the FSM ever pushed RequestPosition,
+    // and shows the slot/target each op is bound to.
+    bevy::log::info!("fight_resource_apply: draining {} ops", ops.len());
+    for (actor, op) in &ops {
+        bevy::log::info!("  op[{:?}] = {:?}", actor, op);
     }
 
     // Phase B: apply.  Each ResourceOp branch is a port of one method
@@ -407,6 +437,11 @@ pub fn fight_resource_apply_system(
                     if slot.holder.is_none() && slot.offered_to == Some(actor) {
                         slot.holder = Some(actor);
                         slot.offered_to = None;
+                        // Offers are non-destructive in
+                        // `fight_resources_offer_system` (the actor stays in
+                        // the queue while being offered) — pop them here, on
+                        // the grab, so they're not re-offered next tick.
+                        slot.queue.retain(|&(_, e)| e != actor);
                         grabbed = true;
                     }
                 }
@@ -498,6 +533,9 @@ pub fn fight_resource_apply_system(
                     if res.cookie_offered_to == Some(actor) {
                         res.cookie_holder = Some(actor);
                         res.cookie_offered_to = None;
+                        // Pop the cookie queue here (non-destructive offers —
+                        // see GrabPosition above for the matching rationale).
+                        res.cookie_queue.retain(|&(_, e)| e != actor);
                         st.cookie_held = true;
                     }
                 }

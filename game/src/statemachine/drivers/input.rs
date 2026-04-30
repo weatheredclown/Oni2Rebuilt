@@ -153,17 +153,7 @@ impl SmDriver for InputDriver {
             FsmAction::Check(state_idx) => {
                 adv.check(*state_idx);
             }
-            FsmAction::ResetTimer => {
-                // ResetTimer is implemented by writing through the runtime via
-                // a dedicated apply_action path — but apply_action only sees
-                // `&mut SmAdvance`, not the runtime.  We handle this by having
-                // the host call `runtime.reset_timer()` whenever it observes
-                // an output flag, OR (preferred) by treating ResetTimer as a
-                // `Display`-style no-op here and relying on the host to scan
-                // rule actions.  For now, leave as no-op — the FSM author
-                // needing precise timer behavior should use the legacy
-                // `FsmRuntime` until the input driver is fully promoted.
-            }
+            FsmAction::ResetTimer => adv.reset_timer(),
             FsmAction::SetDone | FsmAction::EnablePad | FsmAction::DisablePad => {
                 // No-op in the current input pipeline (pads are always live).
             }

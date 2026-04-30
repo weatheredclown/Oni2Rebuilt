@@ -162,6 +162,21 @@ pub struct FightCtx {
     pub attacked: bool,
     /// String mode tag used by `EMode("foo")` events.
     pub mode: String,
+    /// Edge-trigger dedup for the position-coordinator diagnostic
+    /// printed in `fight_runtime_update_system`.  Engine-internal,
+    /// not read by the FSM.
+    pub last_pos_dbg: String,
+    /// One-shot dedup so the "no AttackRuntime" warning prints exactly
+    /// once per entity instead of every tick of S_ATTACK.
+    pub warned_no_attack_rt: bool,
+    /// One-shot dedup for the per-entity startup line dumping which
+    /// optional combat components are attached.  Fires the very first
+    /// tick of `fight_runtime_update_system` so we know the wiring is
+    /// in place WITHOUT waiting for the FSM to reach S_ATTACK.
+    pub init_logged: bool,
+    /// One-shot dedup for the "AttackRuntime exists but never ticks"
+    /// warning emitted from `fight_runtime_update_system`.
+    pub warned_atk_silent: bool,
 }
 
 /// Output accumulator filled during a tick — the host drains
@@ -242,6 +257,7 @@ impl SmDriver for FightDriver {
         match action {
             FightAction::Check(idx) => adv.check(*idx),
             FightAction::Display(msg) => bevy::log::trace!("fight FSM: {}", msg),
+            FightAction::ResetTimer => adv.reset_timer(),
             other => {
                 bevy::log::trace!("fight FSM requested: {:?}", other);
                 output.requested_actions.push(other.clone());
