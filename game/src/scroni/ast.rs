@@ -240,6 +240,17 @@ pub enum Stmt {
         name: Expr,
         at: Option<Expr>,
     },
+    /// `makeprojectile <name> direction <vec> speed <num> at <expr>`
+    /// Used by projectile-spawning scripts (e.g. `ercmissile.oni`'s
+    /// missile launch).  Spawns a named projectile entity at the given
+    /// origin, traveling along `direction` (already a normalized vector)
+    /// at `speed` units/sec.
+    MakeProjectile {
+        name: Expr,
+        direction: Expr,
+        speed: Expr,
+        at: Option<Expr>,
+    },
     /// `sendaction <expr> to <expr> [component <string>]`
     SendAction {
         action: Expr,

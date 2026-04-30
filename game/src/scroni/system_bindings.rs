@@ -630,6 +630,39 @@ pub fn scroni_sys_event_observer(
                 start_active: true,
             });
         }
+        ScrOniSysEvent::MakeProjectile {
+            script_entity,
+            name,
+            direction,
+            speed,
+            at,
+        } => {
+            // Resolve spawn origin: explicit `at` wins, otherwise fall
+            // back to the script-owner entity's current world position.
+            let position = at.unwrap_or_else(|| {
+                transform_query
+                    .get(script_entity)
+                    .map(|(tf, _, _, _)| tf.translation)
+                    .unwrap_or(Vec3::ZERO)
+            });
+            // ScrOni's `direction` is unit-length; combine with `speed`
+            // to get the velocity vector the projectile system expects.
+            let dir = direction.normalize_or_zero();
+            let velocity = dir * speed;
+            // Team comes from the script owner's faction if it has one;
+            // default to a neutral team that won't friendly-fire allies.
+            // (We don't have access to faction lookups in this query
+            // surface yet — wire them when faction-aware projectiles
+            // become a concrete need.)
+            let team = 1; // hostile-by-default for AI-fired missiles
+            commands.trigger(crate::projectile_system::SpawnProjectileEvent {
+                name,
+                position,
+                velocity,
+                owner: script_entity,
+                team,
+            });
+        }
         ScrOniSysEvent::SendAction {
             action,
             target,

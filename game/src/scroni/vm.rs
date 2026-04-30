@@ -230,6 +230,18 @@ pub enum SysRequest {
     CameraMoveToActor(Entity, f32), // Target, Duration
     CameraMoveToPoint(Vec3, f32),
     CameraMoveAlongRail(String, f32),
+    /// `makeprojectile <name> direction <vec> speed <num> [at <expr>]`
+    /// — converted to a `SpawnProjectileEvent` in `system_bindings`.
+    /// `direction` is the unit travel vector and `speed` the magnitude
+    /// (units/sec); we combine them into the `velocity` field that the
+    /// projectile system expects.
+    MakeProjectile {
+        script_entity: Entity,
+        name: String,
+        direction: Vec3,
+        speed: f32,
+        at: Option<Vec3>,
+    },
     /// Leave the frontend and run a level.  `None` for `level` means
     /// re-run the current layout (matches legacy
     /// `GAMEDATA.GetCurrentLayoutIndex()` fallback at
@@ -375,6 +387,14 @@ pub enum ScrOniSysEvent {
     CameraMoveToActor(Entity, f32),
     CameraMoveToPoint(Vec3, f32),
     CameraMoveAlongRail(String, f32),
+    /// `makeprojectile` event — see SysRequest variant for semantics.
+    MakeProjectile {
+        script_entity: Entity,
+        name: String,
+        direction: Vec3,
+        speed: f32,
+        at: Option<Vec3>,
+    },
     /// Leave the frontend and run a level — `None` for `level`
     /// re-runs the current layout, otherwise the int is interpreted
     /// as an index into `FrontendLevelList.entries`.
@@ -2650,6 +2670,21 @@ pub fn scroni_tick_system(
                     commands.trigger(ScrOniSysEvent::MakeFx {
                         script_entity,
                         name,
+                        at,
+                    });
+                }
+                SysRequest::MakeProjectile {
+                    script_entity,
+                    name,
+                    direction,
+                    speed,
+                    at,
+                } => {
+                    commands.trigger(ScrOniSysEvent::MakeProjectile {
+                        script_entity,
+                        name,
+                        direction,
+                        speed,
                         at,
                     });
                 }

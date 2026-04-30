@@ -187,6 +187,12 @@ pub fn load_tga_texture(
     texture_name: &str,
     images: &mut Assets<Image>,
 ) -> Option<(Handle<Image>, bool)> {
+    // Sentinel "none" — used by source materials to mean "no texture
+    // assigned".  Skip silently rather than logging a not-found warning
+    // for what is by design a no-op.  Empty names get the same treatment.
+    if texture_name.is_empty() || texture_name.eq_ignore_ascii_case("none") {
+        return None;
+    }
     let texture_name = texture_name
         .trim_end_matches(".tex")
         .trim_end_matches(".tex.highres");

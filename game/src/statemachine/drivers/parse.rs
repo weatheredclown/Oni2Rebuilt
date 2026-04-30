@@ -117,30 +117,67 @@ pub fn parse_sm<D: SmDriver>(
         match &tokens[temp_i] {
             Token::Punct('{') => depth += 1,
             Token::Punct('}') => depth -= 1,
-            Token::Word(w) if depth == base_depth => {
-                let name = if w == "#" && temp_i + 1 < tokens.len() {
-                    if let Token::Word(n) = &tokens[temp_i + 1] {
-                        temp_i += 1;
-                        n.clone()
+            Token::Word(w) => {
+                // State-header recognition is intentionally depth-AGNOSTIC.
+                // `.fsm` state bodies are not wrapped in `{}` — only rule
+                // action blocks are.  A `#STATENAME` token therefore is
+                // always a state boundary regardless of any active brace
+                // context above it.
+                //
+                // Concretely: player.fsm has a `;}` typo on line 3045
+                // (the closing brace of one rule is commented out).
+                // Tracking depth strictly here meant the parser stayed at
+                // depth=1 from that line onward and silently missed every
+                // subsequent `#STATENAME` header.  Skipping the depth gate
+                // localizes the damage to the broken rule's body and lets
+                // every later state still be discovered correctly.
+                //
+                // The `state NAME` and bare `S_*` forms get the same
+                // treatment for consistency, but those are only checked at
+                // base_depth — they're identifier tokens that could legitimately
+                // appear inside a rule (e.g. as a goto target name) and we
+                // don't want to mis-recognize them.
+                let mut name = String::new();
+                let starts_state = w == "#" || w.starts_with("#");
+                if starts_state {
+                    name = if w == "#" && temp_i + 1 < tokens.len() {
+                        if let Token::Word(n) = &tokens[temp_i + 1] {
+                            temp_i += 1;
+                            n.clone()
+                        } else {
+                            "".to_string()
+                        }
+                    } else {
+                        w[1..].to_string()
+                    };
+                } else if depth == base_depth {
+                    name = if w == "state" && temp_i + 1 < tokens.len() {
+                        if let Token::Word(n) = &tokens[temp_i + 1] {
+                            temp_i += 1;
+                            n.clone()
+                        } else {
+                            "".to_string()
+                        }
+                    } else if w.starts_with("S_") {
+                        w.clone()
                     } else {
                         "".to_string()
-                    }
-                } else if w.starts_with("#") {
-                    w[1..].to_string()
-                } else if w == "state" && temp_i + 1 < tokens.len() {
-                    if let Token::Word(n) = &tokens[temp_i + 1] {
-                        temp_i += 1;
-                        n.clone()
-                    } else {
-                        "".to_string()
-                    }
-                } else if w.starts_with("S_") {
-                    w.clone()
-                } else {
-                    "".to_string()
-                };
+                    };
+                }
 
                 if !name.is_empty() {
+                    // A `#STATENAME` found at unexpected depth means the
+                    // file has unclosed braces above this point.  Resync
+                    // so subsequent rule parsing isn't pulled along by the
+                    // bogus depth.
+                    if depth != base_depth {
+                        bevy::log::warn!(
+                            "sm parser: state '#{}' found at brace depth {} (expected {}) — \
+                             likely an unclosed `{{` in the previous state.  Resyncing.",
+                            name, depth, base_depth
+                        );
+                        depth = base_depth;
+                    }
                     state_index.insert(name.clone(), sm_states.len());
                     sm_states.push(SmState {
                         name: name.clone(),
@@ -348,5 +385,108 @@ pub fn split_call(text: &str) -> (&str, &str) {
     match (text.find('('), text.rfind(')')) {
         (Some(o), Some(c)) if o < c => (text[..o].trim(), text[o + 1..c].trim()),
         _ => (text.trim(), ""),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use super::super::squad::{SQUAD_ACTION_PARSER, SQUAD_EVENT_PARSER, SquadDriver};
+
+    /// Regression test for the depth-agnostic state-header recognition fix.
+    ///
+    /// Real-world trigger: `oni2/zips/assets/Statemachine/player.fsm` has a
+    /// commented-out closing brace (`;}`) on line 3045 — the author meant to
+    /// disable a kick rule but only neutralized the `}` while leaving the `{`
+    /// live.  Before the fix, Pass 1's depth counter went to 1 at that point
+    /// and never came back, causing every subsequent `#STATENAME` header to
+    /// be silently dropped (and Pass 2 would jam the orphaned headers onto
+    /// the next rule's event text, producing warnings like
+    /// `unknown event '#FWD_SHOOTING_ATTACK_DEFS if Packet'`).
+    ///
+    /// This test reproduces the structure in miniature: a state with a
+    /// rule whose closing brace is commented out, then a second state
+    /// after.  Both state names must be discovered.
+    #[test]
+    fn unclosed_brace_does_not_swallow_subsequent_state_header() {
+        let src = r#"
+#FIRST_STATE
+if Always
+{
+    Display "in first state"
+;}
+; ^ closing brace above is commented out — common authoring mistake
+
+#SECOND_STATE
+if Always
+{
+    Display "in second state"
+}
+"#;
+        let data = parse_sm::<SquadDriver>(src, SQUAD_EVENT_PARSER, SQUAD_ACTION_PARSER)
+            .expect("parse should not fail");
+
+        assert!(
+            data.state_index.contains_key("FIRST_STATE"),
+            "first state should always be found: states = {:?}",
+            data.state_index.keys().collect::<Vec<_>>()
+        );
+        assert!(
+            data.state_index.contains_key("SECOND_STATE"),
+            "second state must be found despite the unclosed brace in the \
+             previous state — this is the regression: states = {:?}",
+            data.state_index.keys().collect::<Vec<_>>()
+        );
+    }
+
+    /// Multiple consecutive state headers with no rules between them must
+    /// all be discovered (no implicit "consume rest of file" on the first).
+    #[test]
+    fn back_to_back_state_headers() {
+        let src = r#"
+#A
+#B
+#C
+"#;
+        let data = parse_sm::<SquadDriver>(src, SQUAD_EVENT_PARSER, SQUAD_ACTION_PARSER)
+            .expect("parse should not fail");
+        for name in ["A", "B", "C"] {
+            assert!(
+                data.state_index.contains_key(name),
+                "state {} missing — got {:?}",
+                name, data.state_index.keys().collect::<Vec<_>>()
+            );
+        }
+    }
+
+    /// Sanity: a well-formed file with two states still parses.  Guards
+    /// against the depth-agnostic change accidentally over-matching on
+    /// `#`-prefixed identifiers that happen to appear inside rule bodies
+    /// (which would be a future grammar mistake to catch — for now `#`
+    /// only appears at state-header position in any shipped .fsm).
+    #[test]
+    fn well_formed_two_state_file() {
+        let src = r#"
+#A
+if Always
+{
+    Display "a"
+    goto B
+}
+
+#B
+if Always
+{
+    Display "b"
+}
+"#;
+        let data = parse_sm::<SquadDriver>(src, SQUAD_EVENT_PARSER, SQUAD_ACTION_PARSER)
+            .expect("parse should not fail");
+        assert_eq!(data.state_index.get("A").copied(), Some(0));
+        assert_eq!(data.state_index.get("B").copied(), Some(1));
     }
 }

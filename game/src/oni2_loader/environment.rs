@@ -267,7 +267,8 @@ pub fn update_debug_light_grid(
                     PointLight {
                         color: Color::WHITE,
                         intensity: 500_000.0,
-                        range: grid_size * 2.5,
+                        range: grid_size * 5.0,
+                        radius: 2.0,
                         shadows_enabled: true,
                         ..default()
                     },

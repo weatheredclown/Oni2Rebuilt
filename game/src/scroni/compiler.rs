@@ -557,6 +557,7 @@ impl Compiler {
 
             TokenCode::Teleport => self.parse_teleport(),
             TokenCode::MakeFX => self.parse_make_fx(),
+            TokenCode::MakeProjectile => self.parse_make_projectile(),
             TokenCode::UsePad => {
                 self.advance();
                 Stmt::UsePad
@@ -1295,6 +1296,44 @@ impl Compiler {
             None
         };
         Stmt::MakeFx { name, at }
+    }
+
+    /// `makeprojectile <name> direction <vec> speed <num> [at <expr>]`
+    /// — `direction`, `speed`, and `at` keyword clauses can appear in
+    /// any order after the name expression.
+    fn parse_make_projectile(&mut self) -> Stmt {
+        self.advance(); // consume `makeprojectile`
+        let name = self.parse_expr();
+        let mut direction: Option<Expr> = None;
+        let mut speed: Option<Expr> = None;
+        let mut at: Option<Expr> = None;
+        loop {
+            match self.code() {
+                TokenCode::Direction => {
+                    self.advance();
+                    direction = Some(self.parse_expr());
+                }
+                TokenCode::Speed => {
+                    self.advance();
+                    speed = Some(self.parse_expr());
+                }
+                TokenCode::At => {
+                    self.advance();
+                    at = Some(self.parse_expr());
+                }
+                _ => break,
+            }
+        }
+        Stmt::MakeProjectile {
+            name,
+            direction: direction.unwrap_or(Expr::VectorLit(
+                Box::new(Expr::FloatLit(0.0)),
+                Box::new(Expr::FloatLit(0.0)),
+                Box::new(Expr::FloatLit(1.0)),
+            )),
+            speed: speed.unwrap_or(Expr::FloatLit(0.0)),
+            at,
+        }
     }
 
     fn parse_teleport(&mut self) -> Stmt {

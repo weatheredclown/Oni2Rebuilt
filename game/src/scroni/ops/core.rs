@@ -530,6 +530,44 @@ pub fn exec(ctx: &mut OpsCtx, stmt: &Stmt) -> bool {
             });
             true
         }
+        Stmt::MakeProjectile {
+            name,
+            direction,
+            speed,
+            at,
+        } => {
+            // Issues a SysRequest::MakeProjectile that the system_bindings
+            // observer turns into a `SpawnProjectileEvent` — the same
+            // event the weapon-fire pipeline already uses.  Projectile
+            // type ('Erc_Missile' etc.) must exist in `ProjLibrary`,
+            // populated from `Settings/rb.expl` / projectile parsers at
+            // boot.
+            let proj_name = ctx.eval_string(name);
+            let dir_v = match ctx.eval(direction) {
+                Value::Vector(v) => v,
+                _ => Vec3::Z,
+            };
+            let speed_v = ctx.eval(speed).as_float();
+            let at_pos = at.as_ref().map(|e| match ctx.eval(e) {
+                Value::Vector(v) => v,
+                Value::Actor(ent) => {
+                    if let Ok((_, tf, _)) = ctx.ctx.all_entities.get(ent) {
+                        tf.translation()
+                    } else {
+                        Vec3::ZERO
+                    }
+                }
+                _ => Vec3::ZERO,
+            });
+            ctx.sys_request(SysRequest::MakeProjectile {
+                script_entity: ctx.exec.owner,
+                name: proj_name,
+                direction: dir_v,
+                speed: speed_v,
+                at: at_pos,
+            });
+            true
+        }
         Stmt::Stack(name_expr) => {
             let name = ctx.eval_string(name_expr);
             if let Some(new_script) = ctx.exec.resolve_script(&name, ctx.ctx) {
