@@ -14,7 +14,7 @@ use crate::statemachine::core::SmData;
 use crate::statemachine::drivers::atk_parser::parse_atk;
 use crate::statemachine::drivers::attack::AttackDriver;
 use crate::statemachine::drivers::fight::{FIGHT_ACTION_PARSER, FIGHT_EVENT_PARSER, FightDriver};
-use crate::statemachine::drivers::parse::parse_sm;
+use crate::statemachine::drivers::parse_aifight_sm::parse_aifight_sm;
 use crate::statemachine::drivers::squad::{SQUAD_ACTION_PARSER, SQUAD_EVENT_PARSER, SquadDriver};
 
 pub mod components;
@@ -45,7 +45,7 @@ impl FightFsmCache {
         // Use vfs instead of direct filesystem access since files could be packed
         match crate::vfs::read_to_string(path, filename) {
             Ok(content) => {
-                match parse_sm::<FightDriver>(&content, FIGHT_EVENT_PARSER, FIGHT_ACTION_PARSER) {
+                match parse_aifight_sm::<FightDriver>(&content, FIGHT_EVENT_PARSER, FIGHT_ACTION_PARSER) {
                     Ok(sm_data) => {
                         bevy::log::info!("fightai: Successfully loaded {} ({} states)", filename, sm_data.states.len());
                         let arc = Arc::new(sm_data);
@@ -69,7 +69,7 @@ impl FightFsmCache {
                 let fb_path = format!("{}/statemachine/{}", asset_base, filename);
                 match std::fs::read_to_string(&fb_path) {
                     Ok(content) => {
-                        match parse_sm::<FightDriver>(
+                        match parse_aifight_sm::<FightDriver>(
                             &content,
                             FIGHT_EVENT_PARSER,
                             FIGHT_ACTION_PARSER,
@@ -124,7 +124,7 @@ impl SquadFsmCache {
         let filename = "squad.fsm";
         match crate::vfs::read_to_string("statemachine", filename) {
             Ok(content) => {
-                match parse_sm::<SquadDriver>(&content, SQUAD_EVENT_PARSER, SQUAD_ACTION_PARSER) {
+                match parse_aifight_sm::<SquadDriver>(&content, SQUAD_EVENT_PARSER, SQUAD_ACTION_PARSER) {
                     Ok(sm_data) => {
                         bevy::log::info!("fightai: Successfully loaded {} ({} states)", filename, sm_data.states.len());
                         let arc = Arc::new(sm_data);

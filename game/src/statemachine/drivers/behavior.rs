@@ -23,7 +23,8 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use super::super::core::{SmAdvance, SmData, SmDriver, SmRuntime};
-use super::parse::{ActionParser, EventParser, parse_sm};
+use super::parse::{ActionParser, EventParser};
+use super::parse_input_fsm::parse_input_fsm;
 
 // ---------------------------------------------------------------------------
 // Behavior kind — the small closed set of behaviors we dispatch.
@@ -250,7 +251,7 @@ pub const BEHAVIOR_ACTION_PARSER: ActionParser<BehaviorDriver> = parse_behavior_
 
 /// Parse the embedded FSM text into a reusable `SmData<BehaviorDriver>`.
 pub fn load_embedded() -> Result<SmData<BehaviorDriver>, String> {
-    parse_sm::<BehaviorDriver>(BEHAVIOR_FSM, BEHAVIOR_EVENT_PARSER, BEHAVIOR_ACTION_PARSER)
+    parse_input_fsm::<BehaviorDriver>(BEHAVIOR_FSM, BEHAVIOR_EVENT_PARSER, BEHAVIOR_ACTION_PARSER)
 }
 
 /// Convenience: wrap `load_embedded` into an `Arc` for sharing via a resource.

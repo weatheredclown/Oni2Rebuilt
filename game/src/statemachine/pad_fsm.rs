@@ -24,7 +24,7 @@ use std::sync::Arc;
 
 use super::core::SmData;
 use super::drivers::input::{INPUT_ACTION_PARSER, INPUT_EVENT_PARSER, InputDriver};
-use super::drivers::parse::parse_sm;
+use super::drivers::parse_input_fsm::parse_input_fsm;
 
 /// Lazy cache of parsed input-driver FSMs keyed by short name
 /// (e.g. `"player"`, `"enemy_grapple"`).  The file extension `.fsm` is
@@ -54,7 +54,7 @@ impl PadFsmCache {
             }
         };
 
-        match parse_sm::<InputDriver>(&text, INPUT_EVENT_PARSER, INPUT_ACTION_PARSER) {
+        match parse_input_fsm::<InputDriver>(&text, INPUT_EVENT_PARSER, INPUT_ACTION_PARSER) {
             Ok(data) => {
                 let n = data.states.len();
                 let arc = Arc::new(data);

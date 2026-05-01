@@ -25,7 +25,8 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use super::super::core::{SmAdvance, SmData, SmDriver, SmRuntime};
-use super::parse::{ActionParser, EventParser, parse_sm};
+use super::parse::{ActionParser, EventParser};
+use super::parse_input_fsm::parse_input_fsm;
 
 // ---------------------------------------------------------------------------
 // Vocabulary
@@ -302,7 +303,7 @@ pub const ANIMATOR_ACTION_PARSER: ActionParser<AnimatorDriver> = parse_animator_
 /// Call once at startup and store the result in a Bevy resource (Arc-shared
 /// across every character entity).
 pub fn load_embedded() -> Result<SmData<AnimatorDriver>, String> {
-    parse_sm::<AnimatorDriver>(ANIMATOR_FSM, ANIMATOR_EVENT_PARSER, ANIMATOR_ACTION_PARSER)
+    parse_input_fsm::<AnimatorDriver>(ANIMATOR_FSM, ANIMATOR_EVENT_PARSER, ANIMATOR_ACTION_PARSER)
 }
 
 /// Convenience: wrap `load_embedded` into an `Arc` for sharing via a resource.
@@ -614,7 +615,7 @@ if Always { Destroy; goto END }
 
 #END
 "#;
-        let data = super::parse_sm::<AnimatorDriver>(
+        let data = super::super::parse_input_fsm::parse_input_fsm::<AnimatorDriver>(
             source,
             ANIMATOR_EVENT_PARSER,
             ANIMATOR_ACTION_PARSER,
