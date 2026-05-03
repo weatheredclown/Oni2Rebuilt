@@ -63,10 +63,12 @@ pub struct LayoutContext {
 }
 
 /// A struct to bundle all asset mutators required for spawning entities.
-pub struct SpawnAssets<'a, 'commands, 'c1, 'c2, 'c3, 'c4, 'c5, 'c6, 'c7, 'c8, 'c9> {
+pub struct SpawnAssets<'a, 'commands, 'c1, 'c2, 'c3, 'c4, 'c5, 'c6, 'c7, 'c8, 'c9, 'c10> {
     pub commands: &'a mut Commands<'commands, 'c1>,
     pub meshes: &'a mut ResMut<'c2, Assets<Mesh>>,
     pub materials: &'a mut ResMut<'c3, Assets<StandardMaterial>>,
+    pub env_materials:
+        &'a mut ResMut<'c10, Assets<crate::env_reflect_material::EnvReflectMaterial>>,
     pub images: &'a mut ResMut<'c4, Assets<Image>>,
     pub skinned_mesh_ibp: &'a mut ResMut<'c5, Assets<SkinnedMeshInverseBindposes>>,
     pub entity_lib: &'a mut ResMut<'c6, crate::oni2_loader::registries::EntityLibrary>,

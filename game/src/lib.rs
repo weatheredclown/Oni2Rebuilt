@@ -9,6 +9,7 @@ pub mod crt_post;
 pub mod debug;
 pub mod debug_atdt;
 pub mod door;
+pub mod env_reflect_material;
 pub mod explosion;
 pub mod fight;
 pub mod fight_vector;

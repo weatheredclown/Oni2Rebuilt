@@ -738,11 +738,20 @@ pub struct DebugBoundsVisible(pub bool);
 #[derive(Resource)]
 pub struct DebugSkeletonVisible(pub bool);
 
+/// Per-pass material handle.  Most passes are PBR diffuse; the `EnvReflect`
+/// variant is the sphere-mapped reflection layer used by `texgen reflect`
+/// shaders (e.g. the FX Cathedral statue).
+#[derive(Clone)]
+pub enum PassMaterial {
+    Standard(Handle<StandardMaterial>),
+    EnvReflect(Handle<crate::env_reflect_material::EnvReflectMaterial>),
+}
+
 /// Stores the parsed model for mesh rebuilding (point cloud toggle etc).
 #[derive(Component)]
 pub struct Oni2ModelData {
     pub model: Oni2Model,
-    pub material_handles: Vec<Vec<Handle<StandardMaterial>>>,
+    pub material_handles: Vec<Vec<PassMaterial>>,
     pub fallback_material: Handle<StandardMaterial>,
 }
 

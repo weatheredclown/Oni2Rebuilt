@@ -44,6 +44,7 @@ fn main() -> Result<()> {
             ..default()
         }))
         .add_plugins(EguiPlugin::default())
+        .add_plugins(rb_game::env_reflect_material::EnvReflectMaterialPlugin)
         .add_systems(Startup, setup)
         .add_systems(
             Update,
@@ -316,6 +317,7 @@ fn setup(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    mut env_materials: ResMut<Assets<rb_game::env_reflect_material::EnvReflectMaterial>>,
     mut images: ResMut<Assets<Image>>,
     mut skinned_mesh_ibp: ResMut<Assets<SkinnedMeshInverseBindposes>>,
     mut entity_lib: ResMut<EntityLibrary>,
@@ -354,6 +356,7 @@ fn setup(
         &mut commands,
         &mut meshes,
         &mut materials,
+        &mut env_materials,
         &mut images,
         &mut skinned_mesh_ibp,
         &mut entity_lib,
@@ -385,6 +388,7 @@ fn spawn_actor_visuals(
     commands: &mut Commands,
     meshes: &mut ResMut<Assets<Mesh>>,
     materials: &mut ResMut<Assets<StandardMaterial>>,
+    env_materials: &mut ResMut<Assets<rb_game::env_reflect_material::EnvReflectMaterial>>,
     images: &mut ResMut<Assets<Image>>,
     skinned_mesh_ibp: &mut ResMut<Assets<SkinnedMeshInverseBindposes>>,
     entity_lib: &mut ResMut<EntityLibrary>,
@@ -406,6 +410,7 @@ fn spawn_actor_visuals(
             commands,
             meshes,
             materials,
+            env_materials,
             images,
             skinned_mesh_ibp,
             entity_lib,
@@ -1057,6 +1062,7 @@ fn thumbnail_background_generation_system(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    mut env_materials: ResMut<Assets<rb_game::env_reflect_material::EnvReflectMaterial>>,
     mut images: ResMut<Assets<Image>>,
     mut skinned_mesh_ibp: ResMut<Assets<SkinnedMeshInverseBindposes>>,
     mut entity_lib: ResMut<EntityLibrary>,
@@ -1148,6 +1154,7 @@ fn thumbnail_background_generation_system(
         &mut commands,
         &mut meshes,
         &mut materials,
+        &mut env_materials,
         &mut images,
         &mut skinned_mesh_ibp,
         &mut entity_lib,
@@ -1175,6 +1182,7 @@ fn regenerate_actor_meshes(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    mut env_materials: ResMut<Assets<rb_game::env_reflect_material::EnvReflectMaterial>>,
     mut images: ResMut<Assets<Image>>,
     mut skinned_mesh_ibp: ResMut<Assets<SkinnedMeshInverseBindposes>>,
     mut entity_lib: ResMut<EntityLibrary>,
@@ -1194,6 +1202,7 @@ fn regenerate_actor_meshes(
         &mut commands,
         &mut meshes,
         &mut materials,
+        &mut env_materials,
         &mut images,
         &mut skinned_mesh_ibp,
         &mut entity_lib,

@@ -25,6 +25,7 @@ pub fn scroni_sys_event_observer(
         Local<Option<crate::oni2_loader::parsers::audiopackages::AudioPackagesDirectory>>,
         ResMut<crate::fightai::FightFsmCache>,
         ResMut<crate::fightai::AttackFsmCache>,
+        ResMut<Assets<crate::env_reflect_material::EnvReflectMaterial>>,
     ),
     layout_data: (
         Option<Res<crate::oni2_loader::LayoutContext>>,
@@ -97,6 +98,7 @@ pub fn scroni_sys_event_observer(
         mut audio_packages,
         mut fight_fsm_cache,
         mut attack_fsm_cache,
+        mut env_materials,
     ) = assets;
 
     if td_directory.is_none() {
@@ -492,6 +494,7 @@ pub fn scroni_sys_event_observer(
                     commands: &mut commands,
                     meshes: &mut meshes,
                     materials: &mut materials,
+                    env_materials: &mut env_materials,
                     images: &mut images,
                     skinned_mesh_ibp: &mut skinned_mesh_ibp,
                     entity_lib: &mut entity_lib,

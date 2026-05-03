@@ -56,7 +56,7 @@ pub struct AnimRegistry {
 pub struct Oni2EntityType {
     pub name: String,
     pub sub_meshes: Vec<(usize, Handle<Mesh>)>,
-    pub materials: Vec<Vec<Handle<StandardMaterial>>>,
+    pub materials: Vec<Vec<crate::oni2_loader::animation::PassMaterial>>,
     pub material_animators: Vec<Vec<TextureUVAnimator>>,
     pub skeleton: Option<Oni2Skeleton>,
     pub inverse_bind_poses: Option<Handle<SkinnedMeshInverseBindposes>>,
@@ -104,6 +104,7 @@ pub fn load_global_registries(
     mut weapon_item_lib: ResMut<WeaponItemRegistry>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    mut env_materials: ResMut<Assets<crate::env_reflect_material::EnvReflectMaterial>>,
     mut skinned_mesh_ibp: ResMut<Assets<SkinnedMeshInverseBindposes>>,
     mut entity_lib: ResMut<EntityLibrary>,
     mut anim_registry: ResMut<AnimRegistry>,
@@ -121,6 +122,7 @@ pub fn load_global_registries(
                         if let Some(e) = crate::oni2_loader::spawn::load_oni2_entity_type(
                             &mut meshes,
                             &mut materials,
+                            &mut env_materials,
                             &mut images,
                             &mut skinned_mesh_ibp,
                             &mut anim_registry,

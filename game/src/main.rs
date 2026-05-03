@@ -20,6 +20,7 @@ mod crt_post;
 mod debug;
 mod debug_atdt;
 mod door;
+mod env_reflect_material;
 mod explosion;
 mod fight;
 mod fight_vector;
@@ -237,7 +238,8 @@ fn main() {
     .add_plugins(debug::DebugPlugin)
     .add_plugins(debug_atdt::AtdtDebugPlugin)
     .add_plugins(frontend::FrontendPlugin)
-    .add_plugins(crt_post::CrtPostPlugin);
+    .add_plugins(crt_post::CrtPostPlugin)
+    .add_plugins(env_reflect_material::EnvReflectMaterialPlugin);
 
     if fog_enabled {
         app.insert_resource(oni2_loader::FogEnabled);
@@ -321,6 +323,7 @@ fn setup_scene(
     asset_server: Res<AssetServer>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    mut env_materials: ResMut<Assets<env_reflect_material::EnvReflectMaterial>>,
     mut images: ResMut<Assets<Image>>,
     mut skinned_mesh_ibp: ResMut<Assets<bevy::mesh::skinning::SkinnedMeshInverseBindposes>>,
     mut entity_lib: ResMut<oni2_loader::registries::EntityLibrary>,
@@ -331,9 +334,12 @@ fn setup_scene(
     selected_layout: Option<Res<SelectedLayout>>,
     sandbox: Option<Res<SandboxMode>>,
     loaded_player: Option<Res<crate::oni2_loader::layout_loader::LoadedLayoutPlayer>>,
-    mover_backend: Res<crate::mover::MoverBackend>,
-    shared_mover_config: Option<Res<crate::mover::SharedMoverConfig>>,
+    mover_setup: (
+        Res<crate::mover::MoverBackend>,
+        Option<Res<crate::mover::SharedMoverConfig>>,
+    ),
 ) {
+    let (mover_backend, shared_mover_config) = mover_setup;
     let scoped = InGameEntity;
 
     let layout_name = selected_layout
@@ -372,6 +378,7 @@ fn setup_scene(
             &mut commands,
             &mut meshes,
             &mut materials,
+            &mut env_materials,
             &mut images,
             &mut skinned_mesh_ibp,
             &mut entity_lib,

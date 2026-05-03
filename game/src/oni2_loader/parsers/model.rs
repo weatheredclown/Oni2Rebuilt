@@ -335,6 +335,11 @@ pub fn parse_shader(content: &str) -> Vec<Oni2MaterialPass> {
                     current_pass.scalet = Some(parts[1..].join(" "));
                 }
             }
+            "texgen" => {
+                if parts.len() > 1 {
+                    current_pass.texgen = Some(parts[1].to_lowercase());
+                }
+            }
             _ => {}
         }
     }

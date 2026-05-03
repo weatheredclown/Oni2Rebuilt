@@ -36,6 +36,10 @@ pub struct Oni2MaterialPass {
     pub slidet: Option<String>,
     pub rotate: Option<String>,
     pub scalet: Option<String>,
+    /// `passthru` (default UV0 lookup) or `reflect` (sphere-mapped environment
+    /// reflection — used by e.g. statueBody_SG.shader's pass 1 to layer the
+    /// gold-metallic envmap on top of the diffuse pass).
+    pub texgen: Option<String>,
 }
 
 #[derive(Debug, Clone)]

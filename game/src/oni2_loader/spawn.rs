@@ -7,9 +7,84 @@
  * associated components.  Also contains moving_platform_system and ground_snap_system.
  */
 use super::*;
+use crate::env_reflect_material::EnvReflectMaterial;
 use crate::oni2_loader::parsers::texture::load_tga_texture;
 use crate::oni2_loader::utils::bone::{compute_inverse_bind_poses, is_model_local_heuristic};
 use crate::oni2_loader::utils::space;
+
+/// Build the Bevy material handle for a single shader pass.  Dispatches on
+/// `texgen=reflect` to swap the standard PBR material out for the sphere-
+/// mapped `EnvReflectMaterial` (the gold-statue / matcap path).
+fn build_pass_material(
+    pass: &Oni2MaterialPass,
+    pass_idx: usize,
+    diffuse: Color,
+    entity_dir: &str,
+    materials: &mut Assets<StandardMaterial>,
+    env_materials: &mut Assets<EnvReflectMaterial>,
+    images: &mut Assets<Image>,
+) -> PassMaterial {
+    let is_env_reflect = pass
+        .texgen
+        .as_deref()
+        .map(|s| s == "reflect")
+        .unwrap_or(false);
+
+    let (texture_handle, has_alpha) = match pass.texture_name.as_ref() {
+        Some(tex_name) => match load_tga_texture(entity_dir, tex_name, images) {
+            Some((h, alpha)) => (Some(h), alpha),
+            None => (None, false),
+        },
+        None => (None, false),
+    };
+
+    if is_env_reflect {
+        let env_tex = texture_handle.unwrap_or_default();
+        return PassMaterial::EnvReflect(env_materials.add(EnvReflectMaterial {
+            env_texture: env_tex,
+        }));
+    }
+
+    let is_decal = pass
+        .texcombine
+        .as_ref()
+        .map(|s| s == "decal")
+        .unwrap_or(false);
+    // `blendset normal` is the legacy default for OPAQUE materials with
+    // standard SrcAlpha/OneMinusSrcAlpha blending — when the texture has no
+    // alpha channel (which is the common case) it renders identically to
+    // opaque.  Only modes that actually require translucency belong on the
+    // Blend path; otherwise sending the mesh through Bevy's transparency
+    // sorter causes per-frame draw-order flips on concave self-overlapping
+    // geometry like the FX Cathedral statue base/foot — and competes with
+    // the env-reflect overlay sibling for the same sort slot, producing
+    // residual flicker.
+    let is_blend = pass
+        .blendset
+        .as_ref()
+        .map(|s| !matches!(s.as_str(), "opaque" | "normal"))
+        .unwrap_or(false);
+
+    PassMaterial::Standard(materials.add(StandardMaterial {
+        base_color: if texture_handle.is_some() {
+            Color::WHITE
+        } else {
+            diffuse
+        },
+        base_color_texture: texture_handle,
+        cull_mode: None,
+        alpha_mode: if has_alpha || is_decal || is_blend {
+            AlphaMode::Blend
+        } else {
+            AlphaMode::Opaque
+        },
+        perceptual_roughness: 1.0,
+        reflectance: 0.0,
+        depth_bias: pass_idx as f32 * 10.0,
+        ..default()
+    }))
+}
+
 
 #[derive(Component)]
 pub struct CreatureRenderOffset {
@@ -439,6 +514,7 @@ pub fn spawn_mod_file(
     commands: &mut Commands,
     meshes: &mut ResMut<Assets<Mesh>>,
     materials: &mut ResMut<Assets<StandardMaterial>>,
+    env_materials: &mut ResMut<Assets<EnvReflectMaterial>>,
     images: &mut ResMut<Assets<Image>>,
     mod_path: &str,
     entity_dir: &str,
@@ -451,81 +527,39 @@ pub fn spawn_mod_file(
 
     let sub_meshes = build_meshes_by_material(&model);
 
-    let bevy_materials: Vec<Vec<Handle<StandardMaterial>>> = model
+    let bevy_materials: Vec<Vec<PassMaterial>> = model
         .materials
         .iter()
         .map(|oni_mat| {
+            let diffuse =
+                Color::srgb(oni_mat.diffuse[0], oni_mat.diffuse[1], oni_mat.diffuse[2]);
             let mut handles = Vec::new();
             if !oni_mat.passes.is_empty() {
                 for (pass_idx, pass) in oni_mat.passes.iter().enumerate() {
-                    let (texture_handle, has_alpha) = match pass.texture_name.as_ref() {
-                        Some(tex_name) => match load_tga_texture(dir, tex_name, images) {
-                            Some((h, alpha)) => (Some(h), alpha),
-                            None => (None, false),
-                        },
-                        None => (None, false),
-                    };
-
-                    let diffuse =
-                        Color::srgb(oni_mat.diffuse[0], oni_mat.diffuse[1], oni_mat.diffuse[2]);
-                    let is_decal = pass
-                        .texcombine
-                        .as_ref()
-                        .map(|s| s == "decal")
-                        .unwrap_or(false);
-                    let is_blend = pass
-                        .blendset
-                        .as_ref()
-                        .map(|s| s != "opaque")
-                        .unwrap_or(false);
-
-                    handles.push(materials.add(StandardMaterial {
-                        base_color: if texture_handle.is_some() {
-                            Color::WHITE
-                        } else {
-                            diffuse
-                        },
-                        base_color_texture: texture_handle,
-                        cull_mode: None,
-                        alpha_mode: if has_alpha || is_decal || is_blend {
-                            AlphaMode::Blend
-                        } else {
-                            AlphaMode::Opaque
-                        },
-                        perceptual_roughness: 1.0,
-                        reflectance: 0.0,
-                        depth_bias: pass_idx as f32 * 10.0,
-                        ..default()
-                    }));
+                    handles.push(build_pass_material(
+                        pass,
+                        pass_idx,
+                        diffuse,
+                        dir,
+                        materials.as_mut(),
+                        env_materials.as_mut(),
+                        images.as_mut(),
+                    ));
                 }
             } else {
-                let (texture_handle, has_alpha) = match oni_mat.texture_name.as_ref() {
-                    Some(tex_name) => match load_tga_texture(dir, tex_name, images) {
-                        Some((h, alpha)) => (Some(h), alpha),
-                        None => (None, false),
-                    },
-                    None => (None, false),
+                let synthetic = Oni2MaterialPass {
+                    texture_name: oni_mat.texture_name.clone(),
+                    ..Default::default()
                 };
-
-                let diffuse =
-                    Color::srgb(oni_mat.diffuse[0], oni_mat.diffuse[1], oni_mat.diffuse[2]);
-                handles.push(materials.add(StandardMaterial {
-                    base_color: if texture_handle.is_some() {
-                        Color::WHITE
-                    } else {
-                        diffuse
-                    },
-                    base_color_texture: texture_handle,
-                    cull_mode: None,
-                    alpha_mode: if has_alpha {
-                        AlphaMode::Blend
-                    } else {
-                        AlphaMode::Opaque
-                    },
-                    perceptual_roughness: 1.0,
-                    reflectance: 0.0,
-                    ..default()
-                }));
+                handles.push(build_pass_material(
+                    &synthetic,
+                    0,
+                    diffuse,
+                    dir,
+                    materials.as_mut(),
+                    env_materials.as_mut(),
+                    images.as_mut(),
+                ));
             }
             handles
         })
@@ -580,21 +614,31 @@ pub fn spawn_mod_file(
         .with_children(|parent| {
             for (mat_idx, mesh) in sub_meshes {
                 let mesh_handle = meshes.add(mesh);
-                let pass_handles = bevy_materials
-                    .get(mat_idx)
-                    .cloned()
-                    .unwrap_or_else(|| vec![fallback_mat.clone()]);
+                let pass_handles = bevy_materials.get(mat_idx).cloned().unwrap_or_else(|| {
+                    vec![PassMaterial::Standard(fallback_mat.clone())]
+                });
 
-                for (pass_idx, pass_mat_handle) in pass_handles.into_iter().enumerate() {
-                    parent.spawn((
-                        Name::new(format!(
-                            "{}::submesh_{}_pass_{}",
-                            label_owned, mat_idx, pass_idx
-                        )),
-                        Mesh3d(mesh_handle.clone()),
-                        MeshMaterial3d(pass_mat_handle),
-                        Transform::default(),
-                    ));
+                for (pass_idx, pass_mat) in pass_handles.into_iter().enumerate() {
+                    let name =
+                        Name::new(format!("{}::submesh_{}_pass_{}", label_owned, mat_idx, pass_idx));
+                    match pass_mat {
+                        PassMaterial::Standard(h) => {
+                            parent.spawn((
+                                name,
+                                Mesh3d(mesh_handle.clone()),
+                                MeshMaterial3d(h),
+                                Transform::default(),
+                            ));
+                        }
+                        PassMaterial::EnvReflect(h) => {
+                            parent.spawn((
+                                name,
+                                Mesh3d(mesh_handle.clone()),
+                                MeshMaterial3d(h),
+                                Transform::default(),
+                            ));
+                        }
+                    }
                 }
             }
         })
@@ -612,6 +656,7 @@ pub fn spawn_oni2_entity(
     commands: &mut Commands,
     meshes: &mut ResMut<Assets<Mesh>>,
     materials: &mut ResMut<Assets<StandardMaterial>>,
+    env_materials: &mut ResMut<Assets<EnvReflectMaterial>>,
     images: &mut ResMut<Assets<Image>>,
     skinned_mesh_ibp: &mut ResMut<Assets<SkinnedMeshInverseBindposes>>,
     entity_lib: &mut ResMut<crate::oni2_loader::registries::EntityLibrary>,
@@ -624,6 +669,7 @@ pub fn spawn_oni2_entity(
         commands,
         meshes,
         materials,
+        env_materials,
         images,
         skinned_mesh_ibp,
         entity_lib,
@@ -672,6 +718,7 @@ fn parse_uv_animator(
 pub fn load_oni2_entity_type(
     meshes: &mut Assets<Mesh>,
     materials: &mut Assets<StandardMaterial>,
+    env_materials: &mut Assets<EnvReflectMaterial>,
     images: &mut Assets<Image>,
     skinned_mesh_ibp: &mut Assets<SkinnedMeshInverseBindposes>,
     anim_registry: &mut crate::oni2_loader::registries::AnimRegistry,
@@ -988,93 +1035,43 @@ pub fn load_oni2_entity_type(
     };
 
     let (bevy_materials, material_animators): (
-        Vec<Vec<Handle<StandardMaterial>>>,
+        Vec<Vec<PassMaterial>>,
         Vec<Vec<crate::oni2_loader::registries::TextureUVAnimator>>,
     ) = if let Some(ref m) = model {
         m.materials
             .iter()
             .map(|oni_mat| {
+                let diffuse =
+                    Color::srgb(oni_mat.diffuse[0], oni_mat.diffuse[1], oni_mat.diffuse[2]);
                 let mut handles = Vec::new();
                 let mut anims = Vec::new();
                 if !oni_mat.passes.is_empty() {
                     for (pass_idx, pass) in oni_mat.passes.iter().enumerate() {
-                        let (texture_handle, has_alpha) = match pass.texture_name.as_ref() {
-                            Some(tex_name) => {
-                                match crate::oni2_loader::parsers::texture::load_tga_texture(
-                                    dir, tex_name, images,
-                                ) {
-                                    Some((h, alpha)) => (Some(h), alpha),
-                                    None => (None, false),
-                                }
-                            }
-                            None => (None, false),
-                        };
-
-                        let diffuse =
-                            Color::srgb(oni_mat.diffuse[0], oni_mat.diffuse[1], oni_mat.diffuse[2]);
-                        let is_decal = pass
-                            .texcombine
-                            .as_ref()
-                            .map(|s| s == "decal")
-                            .unwrap_or(false);
-                        let is_blend = pass
-                            .blendset
-                            .as_ref()
-                            .map(|s| s != "opaque")
-                            .unwrap_or(false);
-
-                        handles.push(materials.add(StandardMaterial {
-                            base_color: if texture_handle.is_some() {
-                                Color::WHITE
-                            } else {
-                                diffuse
-                            },
-                            base_color_texture: texture_handle,
-                            cull_mode: None,
-                            alpha_mode: if has_alpha || is_decal || is_blend {
-                                AlphaMode::Blend
-                            } else {
-                                AlphaMode::Opaque
-                            },
-                            perceptual_roughness: 1.0,
-                            reflectance: 0.0,
-                            depth_bias: pass_idx as f32 * 10.0,
-                            ..default()
-                        }));
+                        handles.push(build_pass_material(
+                            pass,
+                            pass_idx,
+                            diffuse,
+                            dir,
+                            materials,
+                            env_materials,
+                            images,
+                        ));
                         anims.push(parse_uv_animator(pass));
                     }
                 } else {
-                    let (texture_handle, has_alpha) = match oni_mat.texture_name.as_ref() {
-                        Some(tex_name) => {
-                            match crate::oni2_loader::parsers::texture::load_tga_texture(
-                                dir, tex_name, images,
-                            ) {
-                                Some((h, alpha)) => (Some(h), alpha),
-                                None => (None, false),
-                            }
-                        }
-                        None => (None, false),
+                    let synthetic = Oni2MaterialPass {
+                        texture_name: oni_mat.texture_name.clone(),
+                        ..Default::default()
                     };
-
-                    let diffuse =
-                        Color::srgb(oni_mat.diffuse[0], oni_mat.diffuse[1], oni_mat.diffuse[2]);
-                    handles.push(materials.add(StandardMaterial {
-                        base_color: if texture_handle.is_some() {
-                            Color::WHITE
-                        } else {
-                            diffuse
-                        },
-                        base_color_texture: texture_handle,
-                        cull_mode: None,
-                        alpha_mode: if has_alpha {
-                            AlphaMode::Blend
-                        } else {
-                            AlphaMode::Opaque
-                        },
-                        perceptual_roughness: 1.0,
-                        reflectance: 0.0,
-                        ..default()
-                    }));
+                    handles.push(build_pass_material(
+                        &synthetic,
+                        0,
+                        diffuse,
+                        dir,
+                        materials,
+                        env_materials,
+                        images,
+                    ));
                     anims.push(crate::oni2_loader::registries::TextureUVAnimator::default());
                 }
                 (handles, anims)
@@ -1107,6 +1104,7 @@ pub fn spawn_oni2_entity_with_rotation(
     commands: &mut Commands,
     meshes: &mut ResMut<Assets<Mesh>>,
     materials: &mut ResMut<Assets<StandardMaterial>>,
+    env_materials: &mut ResMut<Assets<EnvReflectMaterial>>,
     images: &mut ResMut<Assets<Image>>,
     skinned_mesh_ibp: &mut ResMut<Assets<SkinnedMeshInverseBindposes>>,
     entity_lib: &mut ResMut<crate::oni2_loader::registries::EntityLibrary>,
@@ -1126,6 +1124,7 @@ pub fn spawn_oni2_entity_with_rotation(
         if let Some(loaded) = load_oni2_entity_type(
             meshes.as_mut(),
             materials.as_mut(),
+            env_materials.as_mut(),
             images.as_mut(),
             skinned_mesh_ibp.as_mut(),
             anim_registry.as_mut(),
@@ -1438,11 +1437,9 @@ pub fn spawn_oni2_entity_with_rotation(
 
     // 4. Mesh sub_meshes
     for (mat_idx, mesh_handle) in &ent_type.sub_meshes {
-        let pass_handles = ent_type
-            .materials
-            .get(*mat_idx)
-            .cloned()
-            .unwrap_or_else(|| vec![fallback_mat.clone()]);
+        let pass_handles = ent_type.materials.get(*mat_idx).cloned().unwrap_or_else(|| {
+            vec![PassMaterial::Standard(fallback_mat.clone())]
+        });
 
         let pass_animators = ent_type
             .material_animators
@@ -1450,13 +1447,22 @@ pub fn spawn_oni2_entity_with_rotation(
             .cloned()
             .unwrap_or_default();
 
-        for (pass_idx, pass_mat_handle) in pass_handles.into_iter().enumerate() {
-            let mut mesh_ec = commands.spawn((
-                Name::new(format!("{}::submesh_{}_pass_{}", name, mat_idx, pass_idx)),
-                Mesh3d(mesh_handle.clone()),
-                MeshMaterial3d(pass_mat_handle),
-                Transform::default(),
-            ));
+        for (pass_idx, pass_mat) in pass_handles.into_iter().enumerate() {
+            let pass_name = Name::new(format!("{}::submesh_{}_pass_{}", name, mat_idx, pass_idx));
+            let mut mesh_ec = match pass_mat {
+                PassMaterial::Standard(h) => commands.spawn((
+                    pass_name,
+                    Mesh3d(mesh_handle.clone()),
+                    MeshMaterial3d(h),
+                    Transform::default(),
+                )),
+                PassMaterial::EnvReflect(h) => commands.spawn((
+                    pass_name,
+                    Mesh3d(mesh_handle.clone()),
+                    MeshMaterial3d(h),
+                    Transform::default(),
+                )),
+            };
 
             if let Some(anim) = pass_animators.get(pass_idx)
                 && (anim.slides_speed != 0.0
@@ -1486,6 +1492,7 @@ pub fn spawn_oni2_creature(
     commands: &mut Commands,
     meshes: &mut ResMut<Assets<Mesh>>,
     materials: &mut ResMut<Assets<StandardMaterial>>,
+    env_materials: &mut ResMut<Assets<EnvReflectMaterial>>,
     images: &mut ResMut<Assets<Image>>,
     skinned_mesh_ibp: &mut ResMut<Assets<SkinnedMeshInverseBindposes>>,
     entity_lib: &mut ResMut<crate::oni2_loader::registries::EntityLibrary>,
@@ -1511,6 +1518,7 @@ pub fn spawn_oni2_creature(
         commands,
         meshes,
         materials,
+        env_materials,
         images,
         skinned_mesh_ibp,
         entity_lib,
