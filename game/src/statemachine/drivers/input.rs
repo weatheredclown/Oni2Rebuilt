@@ -60,7 +60,9 @@ pub struct InputCtx {
     /// Combo queue: button presses captured in the queue window that should
     /// fire the moment the branch window opens (see `apply_timing_windows`).
     pub queued_attack: bool,
+    pub queued_attack_critical: bool,
     pub queued_attack_two: bool,
+    pub queued_attack_two_critical: bool,
 
     /// Pre-resolved fight-vector attack (entity inside trigger AND facing
     /// within 30°).  Consumed by `DoTriggerAtk`; absence makes that action

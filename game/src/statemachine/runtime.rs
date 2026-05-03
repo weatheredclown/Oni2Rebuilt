@@ -405,9 +405,11 @@ pub fn apply_timing_windows(
         gated.attack_two = input.attack_two || runtime.ctx.queued_attack_two;
         if gated.attack {
             runtime.ctx.queued_attack = false;
+            runtime.ctx.queued_attack_critical = false;
         }
         if gated.attack_two {
             runtime.ctx.queued_attack_two = false;
+            runtime.ctx.queued_attack_two_critical = false;
         }
         return (gated, false);
     }
@@ -420,7 +422,9 @@ pub fn apply_timing_windows(
 
     let Some(strike) = strike else {
         runtime.ctx.queued_attack = false;
+        runtime.ctx.queued_attack_critical = false;
         runtime.ctx.queued_attack_two = false;
+        runtime.ctx.queued_attack_two_critical = false;
         return (input.clone(), false);
     };
 
@@ -432,7 +436,9 @@ pub fn apply_timing_windows(
 
     if phase < strike.opp2_q_start {
         runtime.ctx.queued_attack = false;
+        runtime.ctx.queued_attack_critical = false;
         runtime.ctx.queued_attack_two = false;
+        runtime.ctx.queued_attack_two_critical = false;
         let mut gated = input.clone();
         gated.attack = false;
         gated.attack_two = false;
@@ -443,9 +449,15 @@ pub fn apply_timing_windows(
         if strike.queue_next_attack {
             if input.attack {
                 runtime.ctx.queued_attack = true;
+                if phase >= strike.opp2_crit_start {
+                    runtime.ctx.queued_attack_critical = true;
+                }
             }
             if input.attack_two {
                 runtime.ctx.queued_attack_two = true;
+                if phase >= strike.opp2_crit_start {
+                    runtime.ctx.queued_attack_two_critical = true;
+                }
             }
         }
         let mut gated = input.clone();
@@ -458,13 +470,21 @@ pub fn apply_timing_windows(
         let mut gated = input.clone();
         gated.attack = input.attack || runtime.ctx.queued_attack;
         gated.attack_two = input.attack_two || runtime.ctx.queued_attack_two;
+        
+        let mut is_critical = false;
         if gated.attack {
+            is_critical |= (input.attack && phase >= strike.opp2_do_crit_start)
+                || (runtime.ctx.queued_attack && runtime.ctx.queued_attack_critical);
             runtime.ctx.queued_attack = false;
+            runtime.ctx.queued_attack_critical = false;
         }
         if gated.attack_two {
+            is_critical |= (input.attack_two && phase >= strike.opp2_do_crit_start)
+                || (runtime.ctx.queued_attack_two && runtime.ctx.queued_attack_two_critical);
             runtime.ctx.queued_attack_two = false;
+            runtime.ctx.queued_attack_two_critical = false;
         }
-        return (gated, true);
+        return (gated, is_critical);
     }
 
     let mut gated = input.clone();
