@@ -277,6 +277,21 @@ pub fn parse_input_event(
     let text = text.trim();
     let tables = flag_tables();
 
+    // An empty event clause is legitimate authoring shorthand for
+    // "always fire" — the legacy convention is `{ actions }` (no `if`)
+    // means an unconditional rule.  Real example in shipped player.fsm
+    // (around line 1673):
+    //   ; Check Standard Forward Diagonal Attacks
+    //   ;if True
+    //   {
+    //       Check FWD_ATTACK_TWO_DEFS
+    //   }
+    // Author commented out the `if True` keeping just the action block.
+    // Treat empty exactly as `True` — same enum variant, no warning.
+    if text.is_empty() {
+        return Ok(FsmEvent::True);
+    }
+
     if text.starts_with("Timeout") {
         return Ok(FsmEvent::Timeout);
     }

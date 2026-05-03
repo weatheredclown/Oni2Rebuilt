@@ -79,7 +79,13 @@ impl Plugin for Oni2LoaderPlugin {
             .add_systems(Startup, (load_global_registries, load_global_explosions))
             .add_systems(
                 PhysicsSchedule,
-                physics::octree_one_way_contact_system.in_set(NarrowPhaseSystems::Last),
+                physics::octree_one_way_contact_system
+                    .run_if(|q: Query<&crate::camera::components::CameraController>| {
+                        q.iter().any(|c| {
+                            c.active_mode == crate::camera::components::ActiveCameraMode::Script
+                        })
+                    })
+                    .in_set(NarrowPhaseSystems::Last),
             )
             .add_systems(
                 Update,

@@ -1146,7 +1146,7 @@ pub fn spawn_oni2_entity_with_rotation(
     //    Each sub-bound was already assigned to a bone and its vertices converted
     //    to bone-local space in load_oni2_entity_type.
     let has_any_collider = !ent_type.bone_colliders.is_empty();
-    let built_colliders: Vec<(usize, Collider, Option<String>, Option<String>)> = ent_type
+    let built_colliders: Vec<(usize, Collider, Option<String>, Option<String>, Vec3)> = ent_type
         .bone_colliders
         .iter()
         .filter_map(|(bone_idx, sub)| {
@@ -1158,6 +1158,11 @@ pub fn spawn_oni2_entity_with_rotation(
             if verts.is_empty() {
                 return None;
             }
+            // Vertex-mean is a guaranteed-interior reference for any convex cell
+            // (octree cells are convex by construction).  We use this rather than
+            // sub.centroid because the file's centroid: line is unreliable as a
+            // side-test reference — it can sit outside the cell on certain bounds.
+            let centroid = verts.iter().copied().sum::<Vec3>() / (verts.len() as f32);
             let mut tris: Vec<[u32; 3]> = Vec::with_capacity(sub.quads.len() * 2 + sub.tris.len());
             for q in &sub.quads {
                 tris.push([q[0], q[1], q[2]]);
@@ -1177,6 +1182,7 @@ pub fn spawn_oni2_entity_with_rotation(
                     c,
                     sub.bound_type.clone(),
                     sub.material_type.clone(),
+                    centroid,
                 )
             })
         })
@@ -1269,19 +1275,20 @@ pub fn spawn_oni2_entity_with_rotation(
                 avian3d::prelude::LinearVelocity::default(),
                 avian3d::prelude::AngularVelocity::default(),
             ));
-            let all_root = built_colliders.iter().all(|(idx, _, _, _)| *idx == 0);
+            let all_root = built_colliders.iter().all(|(idx, _, _, _, _)| *idx == 0);
             if all_root {
                 // Single-body bound (case a): merge onto parent entity.
-                for (_, collider, bound_type, material_type) in built_colliders {
+                for (_, collider, bound_type, material_type, centroid) in built_colliders {
                     commands.entity(parent_entity).insert(collider);
                     if let Some(bt) = bound_type {
                         commands
                             .entity(parent_entity)
                             .insert(crate::oni2_loader::components::BoundType(bt.clone()));
                         if bt.to_lowercase() == "octree" {
-                            commands
-                                .entity(parent_entity)
-                                .insert(crate::oni2_loader::components::OneWayOctreeBound);
+                            commands.entity(parent_entity).insert((
+                                crate::oni2_loader::components::OneWayOctreeBound,
+                                crate::oni2_loader::components::OctreeInteriorRef(centroid),
+                            ));
                         }
                     }
                     if let Some(mt) = material_type {
@@ -1292,7 +1299,7 @@ pub fn spawn_oni2_entity_with_rotation(
                 }
             } else {
                 // Per-panel animated bound (case b): each sub-shape on its joint.
-                for (bone_idx, collider, bound_type, material_type) in built_colliders {
+                for (bone_idx, collider, bound_type, material_type, centroid) in built_colliders {
                     let target = joint_entities
                         .get(bone_idx)
                         .copied()
@@ -1303,9 +1310,10 @@ pub fn spawn_oni2_entity_with_rotation(
                             .entity(target)
                             .insert(crate::oni2_loader::components::BoundType(bt.clone()));
                         if bt.to_lowercase() == "octree" {
-                            commands
-                                .entity(target)
-                                .insert(crate::oni2_loader::components::OneWayOctreeBound);
+                            commands.entity(target).insert((
+                                crate::oni2_loader::components::OneWayOctreeBound,
+                                crate::oni2_loader::components::OctreeInteriorRef(centroid),
+                            ));
                         }
                     }
                     if let Some(mt) = material_type {
@@ -1317,7 +1325,7 @@ pub fn spawn_oni2_entity_with_rotation(
             }
         } else {
             // Static (case c): one child entity per sub-bound collider.
-            for (sub_idx, (_, collider, bound_type, material_type)) in
+            for (sub_idx, (_, collider, bound_type, material_type, centroid)) in
                 built_colliders.into_iter().enumerate()
             {
                 let child = commands
@@ -1333,9 +1341,10 @@ pub fn spawn_oni2_entity_with_rotation(
                         .entity(child)
                         .insert(crate::oni2_loader::components::BoundType(bt.clone()));
                     if bt.to_lowercase() == "octree" {
-                        commands
-                            .entity(child)
-                            .insert(crate::oni2_loader::components::OneWayOctreeBound);
+                        commands.entity(child).insert((
+                            crate::oni2_loader::components::OneWayOctreeBound,
+                            crate::oni2_loader::components::OctreeInteriorRef(centroid),
+                        ));
                     }
                 }
                 if let Some(mt) = material_type {

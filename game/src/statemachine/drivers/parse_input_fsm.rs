@@ -326,6 +326,42 @@ if Always
         }
     }
 
+    /// `{ actions }` with no `if`-prefixed event is the legacy
+    /// "fire unconditionally" shorthand — author commented out
+    /// `if True` and kept just the action block.  The driver-side
+    /// event parser maps empty event text to True, so this should
+    /// parse without an "unknown event ''" warning.  Confirmed in
+    /// shipped `player.fsm` around line 1673.
+    #[test]
+    fn empty_event_is_unconditional_rule() {
+        let src = r#"
+#A
+if True
+{
+    Display "first"
+}
+;if True              ; <- author commented out the condition
+{
+    Display "second"  ; <- but kept the action block
+}
+"#;
+        let data =
+            parse_input_fsm::<SquadDriver>(src, SQUAD_EVENT_PARSER, SQUAD_ACTION_PARSER)
+                .expect("parse should not fail");
+        // Both rules should land on state A.  SquadDriver collapses every
+        // event to Always, so we just confirm the count and that no panic
+        // occurred — the regression here is that the second rule used to
+        // emit `unknown event ''` (a parser warning) instead of being
+        // accepted.
+        assert_eq!(data.states.len(), 1);
+        assert_eq!(
+            data.states[0].rules.len(),
+            2,
+            "both rules should be accepted — got {} rules",
+            data.states[0].rules.len()
+        );
+    }
+
     #[test]
     fn well_formed_two_state_file() {
         let src = r#"

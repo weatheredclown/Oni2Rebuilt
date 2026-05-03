@@ -89,3 +89,11 @@ pub struct MaterialType(pub String);
 /// Marker component for legacy "octree" volumes which use strict 1-way collision portal culling.
 #[derive(Component, Debug, Clone)]
 pub struct OneWayOctreeBound;
+
+/// Per-octree-collider entity-local point that lies inside the playable cell
+/// (the sub-bound centroid from the .bnd file, in the same local frame as the
+/// collider vertices). Used by `octree_one_way_contact_system` to determine
+/// which side of a wall faces the level interior, independent of contact
+/// normal orientation.
+#[derive(Component, Debug, Clone, Copy)]
+pub struct OctreeInteriorRef(pub Vec3);
