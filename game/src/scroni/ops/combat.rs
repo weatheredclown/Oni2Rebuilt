@@ -172,7 +172,7 @@ pub fn exec(ctx: &mut OpsCtx, stmt: &Stmt) -> bool {
                             .ctx
                             .actor_statuses
                             .get(&ent)
-                            .map(|s| s.as_str())
+                            .copied()
                             .unwrap_or("");
                         let mut passes_filter = true;
 

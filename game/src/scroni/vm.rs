@@ -603,7 +603,7 @@ pub struct ScroniContext<'a, 'w_e, 's_e, 'w_t, 's_t> {
     pub current_checkpoint: i32,
     pub layout_dir: String,
     /// Per-entity status string: "alive", "dead", "fighting". Built each frame.
-    pub actor_statuses: &'a std::collections::HashMap<Entity, String>,
+    pub actor_statuses: &'a std::collections::HashMap<Entity, &'static str>,
     /// Optional line-of-sight checker: (from, to, exclude_a, exclude_b) -> bool.
     pub line_of_sight: Option<&'a dyn Fn(Vec3, Vec3, Entity, Entity) -> bool>,
     pub is_enemy: Option<&'a dyn Fn(Entity, Entity) -> bool>,
@@ -1486,8 +1486,7 @@ impl ScriptExec {
                 eval_binop(*op, &l, &r, ctx)
             }
             Expr::Call { name, args } => {
-                let lower = name.to_lowercase();
-                match lower.as_str() {
+                match name.as_str() {
                     "clock" => Value::Float(now as f32),
                     "sin" => {
                         let val = args
@@ -1571,7 +1570,7 @@ impl ScriptExec {
                         if let Some(t) = target {
                             let ents = ctx.resolve_targets(&t);
                             for ent in ents {
-                                if ctx.actor_statuses.get(&ent).map(|s| s.as_str()) != Some("dead")
+                                if ctx.actor_statuses.get(&ent).copied() != Some("dead")
                                 {
                                     return Value::Int(1);
                                 }
@@ -1587,7 +1586,7 @@ impl ScriptExec {
                                 let s = ctx
                                     .actor_statuses
                                     .get(&ent)
-                                    .map(|s| s.as_str())
+                                    .copied()
                                     .unwrap_or("dead");
                                 return Value::String(s.to_string());
                             }
@@ -1710,40 +1709,33 @@ impl ScriptExec {
                                 Expr::Var(n) => n.clone(),
                                 Expr::StringLit(s) => s.clone(),
                                 _ => self.eval_expr(tid, event_expr, now, ctx).as_string(),
-                            }
-                            .to_lowercase();
+                            };
 
                             if let Ok(trigger) = ctx.triggers.get(self.owner) {
-                                match event_name.as_str() {
-                                    "playerenter" => {
-                                        if let Some(p) = ctx.player
-                                            && trigger.just_entered.contains(&p)
-                                        {
-                                            return Value::Int(1);
-                                        }
+                                if event_name.eq_ignore_ascii_case("playerenter") {
+                                    if let Some(p) = ctx.player
+                                        && trigger.just_entered.contains(&p)
+                                    {
+                                        return Value::Int(1);
                                     }
-                                    "playerexit" => {
-                                        if let Some(p) = ctx.player
-                                            && trigger.just_exited.contains(&p)
-                                        {
-                                            return Value::Int(1);
-                                        }
+                                } else if event_name.eq_ignore_ascii_case("playerexit") {
+                                    if let Some(p) = ctx.player
+                                        && trigger.just_exited.contains(&p)
+                                    {
+                                        return Value::Int(1);
                                     }
-                                    "playerinside" => {
-                                        if let Some(p) = ctx.player
-                                            && trigger.inside.contains(&p)
-                                        {
-                                            return Value::Int(1);
-                                        }
+                                } else if event_name.eq_ignore_ascii_case("playerinside") {
+                                    if let Some(p) = ctx.player
+                                        && trigger.inside.contains(&p)
+                                    {
+                                        return Value::Int(1);
                                     }
-                                    "playeroutside" => {
-                                        if let Some(p) = ctx.player
-                                            && !trigger.inside.contains(&p)
-                                        {
-                                            return Value::Int(1);
-                                        }
+                                } else if event_name.eq_ignore_ascii_case("playeroutside") {
+                                    if let Some(p) = ctx.player
+                                        && !trigger.inside.contains(&p)
+                                    {
+                                        return Value::Int(1);
                                     }
-                                    _ => {}
                                 }
                             }
                         }
@@ -1963,7 +1955,7 @@ impl ScriptExec {
                         let state_val = args.get(1).map(|e| self.eval_expr(tid, e, now, ctx));
                         let state = state_val
                             .as_ref()
-                            .map(|v| v.as_string().to_lowercase())
+                            .map(|v| v.as_string())
                             .unwrap_or_default();
                         if let Some(val) = actor_val {
                             let ents = ctx.resolve_targets(&val);
@@ -1971,27 +1963,24 @@ impl ScriptExec {
                                 let cur = ctx
                                     .actor_statuses
                                     .get(&ent)
-                                    .map(|s| s.as_str())
+                                    .copied()
                                     .unwrap_or("");
-                                let matches = match state.as_str() {
-                                    "alive" => !cur.is_empty() && cur != "dead",
-                                    "dead" => cur == "dead" || cur.is_empty(),
-                                    "fighting" => cur == "fighting",
-                                    "notdying" => cur != "dying" && cur != "dead",
-                                    "player" => ctx.player == Some(ent),
-                                    // Faction-relation stubs — no faction
-                                    // plumbing yet, so approximate: anyone
-                                    // not the script owner is an enemy from
-                                    // the owner's perspective.  `friendly`
-                                    // narrows to "is the script owner or the
-                                    // player the owner is cooperating with"
-                                    // — we can only answer the self leg.
-                                    "enemy" => ent != self.owner,
-                                    "friendly" => ent == self.owner,
-                                    // States we don't track yet — be honest
-                                    // and return false rather than inventing
-                                    // a truthy answer the script will act on.
-                                    _ => false,
+                                let matches = if state.eq_ignore_ascii_case("alive") {
+                                    !cur.is_empty() && cur != "dead"
+                                } else if state.eq_ignore_ascii_case("dead") {
+                                    cur == "dead" || cur.is_empty()
+                                } else if state.eq_ignore_ascii_case("fighting") {
+                                    cur == "fighting"
+                                } else if state.eq_ignore_ascii_case("notdying") {
+                                    cur != "dying" && cur != "dead"
+                                } else if state.eq_ignore_ascii_case("player") {
+                                    ctx.player == Some(ent)
+                                } else if state.eq_ignore_ascii_case("enemy") {
+                                    ent != self.owner
+                                } else if state.eq_ignore_ascii_case("friendly") {
+                                    ent == self.owner
+                                } else {
+                                    false
                                 };
                                 return Value::Int(if matches { 1 } else { 0 });
                             }
@@ -2046,7 +2035,7 @@ impl ScriptExec {
                 let ents = ctx.resolve_targets(&val);
                 let alive = ents
                     .iter()
-                    .any(|ent| ctx.actor_statuses.get(ent).map(|s| s.as_str()) != Some("dead"));
+                    .any(|ent| ctx.actor_statuses.get(ent).copied() != Some("dead"));
                 Value::Int(if alive { 1 } else { 0 })
             }
         }
@@ -2238,7 +2227,7 @@ pub fn scroni_tick_system(
     let mut all_messages = Vec::new();
     let player_ent = player_query.iter().next();
 
-    let mut actor_statuses = std::collections::HashMap::new();
+    let mut actor_statuses: std::collections::HashMap<Entity, &'static str> = std::collections::HashMap::new();
     for (ent, health, ai_opt) in health_query.iter() {
         let status = if health.current <= 0.0 {
             "dead"
@@ -2256,7 +2245,7 @@ pub fn scroni_tick_system(
         } else {
             "alive"
         };
-        actor_statuses.insert(ent, status.to_string());
+        actor_statuses.insert(ent, status);
     }
 
     for (entity, mut script, transform, pathfollower_opt, _retreating_opt) in &mut query {

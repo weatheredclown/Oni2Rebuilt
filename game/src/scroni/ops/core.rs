@@ -343,23 +343,22 @@ pub fn exec(ctx: &mut OpsCtx, stmt: &Stmt) -> bool {
                 if dist_sq <= max_dist_sq {
                     let mut matches_all = true;
                     for (k, v) in &eval_conds {
-                        let k_lower = k.to_lowercase();
-                        if k_lower == "name" || k_lower == "group" {
+                        if k.eq_ignore_ascii_case("name") || k.eq_ignore_ascii_case("group") {
                             let expected_name = v.as_string();
                             let actual_name = name_opt.map(|n| n.as_str()).unwrap_or("");
-                            if actual_name != expected_name {
+                            if !actual_name.eq_ignore_ascii_case(&expected_name) {
                                 matches_all = false;
                                 break;
                             }
-                        } else if k_lower == "status" {
-                            let expected_status = v.as_string().to_lowercase();
+                        } else if k.eq_ignore_ascii_case("status") {
+                            let expected_status = v.as_string();
                             let actual_status = ctx
                                 .ctx
                                 .actor_statuses
                                 .get(&other_ent)
-                                .map(|s| s.as_str())
+                                .copied()
                                 .unwrap_or("dead");
-                            if expected_status == "enemy" {
+                            if expected_status.eq_ignore_ascii_case("enemy") {
                                 if actual_status == "dead" {
                                     matches_all = false;
                                     break;
@@ -369,7 +368,7 @@ pub fn exec(ctx: &mut OpsCtx, stmt: &Stmt) -> bool {
                                     matches_all = false;
                                     break;
                                 }
-                            } else if actual_status != expected_status {
+                            } else if !actual_status.eq_ignore_ascii_case(&expected_status) {
                                 matches_all = false;
                                 break;
                             }
