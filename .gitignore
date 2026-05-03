@@ -6,3 +6,4 @@ BANKS.DAT
 .claude/settings.local.json
 lclclaude.bat
 rb.bat
+rb-trace.bat
