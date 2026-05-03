@@ -261,7 +261,7 @@ pub fn update_debug_light_grid(
             {
                 ray_origin.y + hit.distance - 2.0
             } else {
-                py + 5.0
+                py + 2.0
             };
 
             commands
@@ -300,9 +300,13 @@ pub fn debug_draw_light_grid(
     if !visible.0 {
         return;
     }
-    
+
     let color = Color::srgb(1.0, 1.0, 0.0); // Yellow for lights
     for transform in &query {
-        gizmos.sphere(Isometry3d::from_translation(transform.translation), 0.5, color);
+        gizmos.sphere(
+            Isometry3d::from_translation(transform.translation),
+            0.5,
+            color,
+        );
     }
 }

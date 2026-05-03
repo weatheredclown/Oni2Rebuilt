@@ -25,8 +25,8 @@ mod explosion;
 mod fight;
 mod fight_vector;
 mod fightai;
-mod frontend;
 mod filesystem;
+mod frontend;
 mod fx_system;
 mod fx_visuals;
 mod hud;
@@ -421,10 +421,11 @@ fn setup_scene(
 
     // Fallback lights for sandbox
     if sandbox.is_some() {
+        info!(">> Spawning fallback lights");
         commands.spawn((
             DirectionalLight {
                 illuminance: 10_000.0,
-                shadows_enabled: true,
+                shadows_enabled: false,
                 ..default()
             },
             Transform::from_xyz(50.0, 50.0, 50.0).looking_at(Vec3::ZERO, Vec3::Y),
