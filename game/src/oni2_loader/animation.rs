@@ -420,8 +420,8 @@ impl Oni2AnimLibrary {
             let prev_name = state
                 .current_anim_id
                 .and_then(|pid| self.debug_names.get(&pid).cloned());
-            bevy::log::trace!(
-                "play_id: '{}' (looping={}) replacing prev='{}'",
+            println!(
+                "PLAY_ANIM: '{}' (looping={}) replacing prev='{}'",
                 new_name,
                 anim.is_loop,
                 prev_name.as_deref().unwrap_or("<none>")

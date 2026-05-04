@@ -1356,21 +1356,29 @@ pub fn spawn_oni2_entity_with_rotation(
         }
     }
 
-    // Determine the default animation
-    // Note: anim_path logic isn't preserved directly inside Oni2EntityType as it specifies instance overrides,
-    // so we parse the single instance animation requested right now natively
-    let loaded_anim = anim_path.and_then(|path| {
+    // Determine the default animation.
+    //
+    // Only the explicit per-instance `anim_path` override seeds the AnimState
+    // with a real animation here.  When no override is given we deliberately
+    // leave `anim = Oni2Animation::default()` (num_frames=0) and
+    // `current_anim_id = None` — the locomotion gait selector / state machine
+    // picks the right loop (typically ANIMNAV_STAND) on the first tick via
+    // `Oni2AnimLibrary::play_id`.  The C++ engine doesn't pick a default anim
+    // off the library; iterating `lib.anims.iter().next()` here used to seed
+    // every actor with a random anim that the loco system then immediately
+    // replaced, producing spammy PLAY_ANIM transition logs at startup.
+    //
+    // Note: anim_path is parsed natively here because it's an instance-level
+    // override that isn't preserved on Oni2EntityType.
+    let default_anim = anim_path.and_then(|path| {
         crate::vfs::read("", path)
             .ok()
             .and_then(|data| parse_anim(&data))
     });
 
-    let default_anim = loaded_anim.or_else(|| {
-        ent_type
-            .anim_library
-            .as_ref()
-            .and_then(|lib| lib.anims.values().next().cloned())
-    });
+    if default_anim.is_some() {
+        println!("PLAY_ANIM (SPAWN): '<loaded override>' on entity '{}'", name);
+    }
 
     // Insert AnimState and Library even if there is no skeleton (for root-motion only animations)
     let has_anim = default_anim.is_some() || !joint_entities.is_empty();
