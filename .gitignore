@@ -9,3 +9,4 @@ rb.bat
 rb-trace.bat
 trace_summarize.py
 trace_steady_state.py
+trace_filter.py

@@ -293,17 +293,23 @@ pub fn attack_runtime_update_system(
         let rt_mut = runtime.as_mut();
         
         rt_mut.tick_count = rt_mut.tick_count.wrapping_add(1);
-        let pre_state = rt_mut.fsm.data.state_name(rt_mut.fsm.current_state).to_string();
         rt_mut.ctx.entity = Some(entity);
-        let debug_str = crate::debug::debug_name(entity);
-        let log_msg = format!("AttackRuntime: {} [{:?}], state={}, got_cookie={}",
-            debug_str,
-            entity,
-            pre_state,
-            rt_mut.ctx.got_cookie);
-        if log_msg != rt_mut.last_log {
-            bevy::log::info!("{}", log_msg);
-            rt_mut.last_log = log_msg;
+        
+        let current_state = rt_mut.fsm.current_state;
+        let got_cookie = rt_mut.ctx.got_cookie;
+
+        if current_state != rt_mut.last_state_idx || got_cookie != rt_mut.last_cookie {
+            let pre_state = rt_mut.fsm.data.state_name(current_state);
+            let debug_str = crate::debug::debug_name(entity);
+            bevy::log::info!(
+                "AttackRuntime: {} [{:?}], state={}, got_cookie={}",
+                debug_str,
+                entity,
+                pre_state,
+                got_cookie
+            );
+            rt_mut.last_state_idx = current_state;
+            rt_mut.last_cookie = got_cookie;
         }
 
         let mut output = rt_mut.fsm.tick(&mut rt_mut.ctx);
@@ -317,6 +323,8 @@ pub fn attack_runtime_update_system(
             || output.custom_anim.is_some()
             || output.start_following_distance.is_some()
         {
+            let debug_str = crate::debug::debug_name(entity);
+            let pre_state = rt_mut.fsm.data.state_name(rt_mut.fsm.current_state);
             bevy::log::info!(
                 "AttackRuntime out {} [{:?}] state={} cookie={} \
                  attack={:?} block={:?} evade={:?} custom={:?} follow={:?}",
@@ -581,22 +589,25 @@ pub fn fight_runtime_update_system(
         // tactical intents the FSM shouldn't override.  Engagement
         // intents (attack / fight / chase) are derived state and get
         // recomputed.
-        let scroni_locked = matches!(
-            runtime.ctx.mode.to_ascii_lowercase().as_str(),
-            "defend" | "join_formation"
-        );
+        let scroni_locked = runtime.ctx.mode.eq_ignore_ascii_case("defend")
+            || runtime.ctx.mode.eq_ignore_ascii_case("join_formation");
         if !scroni_locked {
-            runtime.ctx.mode = if !runtime.ctx.has_target {
-                "idle".to_string()
+            let new_mode = if !runtime.ctx.has_target {
+                "idle"
             } else if runtime.ctx.has_position {
-                "attack".to_string()
+                "attack"
             } else {
-                "chase".to_string()
+                "chase"
             };
+            if runtime.ctx.mode != new_mode {
+                runtime.ctx.mode = new_mode.to_string();
+            }
         }
 
-        // Stash the current behavior state name for dedup below.
-        let behavior_state_name = behavior_rt_opt
+        // Stash the current behavior state name for dedup + the
+        // MoveToPosition arm below (which gates on whether the actor
+        // is already in GOTO_STATE / FIGHT_STATE).
+        let behavior_state_name: Option<String> = behavior_rt_opt
             .as_deref()
             .map(|rt| rt.sm.data.state_name(rt.sm.current_state).to_string());
         // attack_finished: proxy = current attack anim has played to end
@@ -614,17 +625,19 @@ pub fn fight_runtime_update_system(
 
         // --- Tick ---
         let rt_mut = runtime.as_mut();
+        let current_state = rt_mut.fsm.current_state;
 
-        let log_msg = format!("FightRuntime: entity={:?}, state={}, mode='{}', has_target={}, behavior={}", 
-            entity,
-            rt_mut.fsm.data.state_name(rt_mut.fsm.current_state),
-            rt_mut.ctx.mode,
-            rt_mut.ctx.has_target,
-            behavior_state_name.as_deref().unwrap_or("None")
-        );
-        if log_msg != rt_mut.last_log {
-            bevy::log::info!("{}", log_msg);
-            rt_mut.last_log = log_msg;
+        if current_state != rt_mut.last_state_idx || rt_mut.ctx.mode != rt_mut.last_mode {
+            bevy::log::info!(
+                "FightRuntime: entity={:?}, state={}, mode='{}', has_target={}, behavior={}",
+                entity,
+                rt_mut.fsm.data.state_name(current_state),
+                rt_mut.ctx.mode,
+                rt_mut.ctx.has_target,
+                behavior_state_name.as_deref().unwrap_or("None")
+            );
+            rt_mut.last_state_idx = current_state;
+            rt_mut.last_mode = rt_mut.ctx.mode.clone();
         }
 
         let output = rt_mut.fsm.tick(&mut rt_mut.ctx);

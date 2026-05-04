@@ -11,7 +11,8 @@ use crate::statemachine::drivers::fight::{FightCtx, FightDriver};
 pub struct FightRuntime {
     pub fsm: SmRuntime<FightDriver>,
     pub ctx: FightCtx,
-    pub last_log: String,
+    pub last_state_idx: usize,
+    pub last_mode: String,
 }
 
 /// The runtime state for an actor's individual attacks (`*.atk`).
@@ -21,7 +22,8 @@ pub struct FightRuntime {
 pub struct AttackRuntime {
     pub fsm: SmRuntime<AttackDriver>,
     pub ctx: AttackCtx,
-    pub last_log: String,
+    pub last_state_idx: usize,
+    pub last_cookie: bool,
     /// Per-entity tick counter — bumped each time `attack_runtime_update_system`
     /// runs on this entity.  Used to diagnose whether the system is reaching
     /// the entity at all (i.e. whether the strict component requirements on

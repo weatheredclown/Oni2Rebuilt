@@ -72,6 +72,20 @@ pub struct PendingLayoutLoad {
     /// Which code path kicked the load — controls cleanup-marker
     /// tagging + the finalize-phase routing.
     pub scope: LayoutLoadScope,
+    /// Entity-type prepass queue.  Walked before actor spawning starts,
+    /// one per tick, so the heavy `load_oni2_entity_type` work (mesh
+    /// build, material build, skeleton + anim library load) happens
+    /// during the loading screen instead of on the first spawn that
+    /// needs each type.  Each tuple is
+    /// `(entity_dir, entity_type, animator_type_override)`; the loader
+    /// is invoked with `name = animator.unwrap_or(entity_type)` so the
+    /// cached `Oni2EntityType` matches what `spawn_oni2_creature` would
+    /// have produced on first spawn.  Without this prepass, draining a
+    /// chunk of 8 unseen actor types in one frame stacks 8 entity-type
+    /// loads = the ~90 ms hitch we observed in trace
+    /// `1777898793624427`.
+    pub entity_prepass: Vec<(String, String, Option<String>)>,
+    pub entity_prepass_cursor: usize,
 }
 
 /// Resource produced by the chunked loader once finalized, carrying
@@ -154,6 +168,42 @@ pub fn begin_chunked_layout_load(
         })
         .collect();
 
+    // Walk every actor XML once now to discover which entity types the
+    // layout will need.  We dedupe by entity_dir so each unique type is
+    // loaded exactly once during the prepass.  `parse_actor_xml` caches
+    // its output, so the chunked spawner re-parsing these XMLs later
+    // is a cache-hit, not extra IO.
+    //
+    // We capture the FIRST animator_type override we see for a given
+    // entity_dir.  In ONI2 layouts each entity_type is normally bound to
+    // one animator, so this matches what `spawn_oni2_creature` would
+    // produce on first spawn (cache-key is `entity_dir` either way).
+    let template_dir = "template".to_string();
+    let mut seen_dirs = std::collections::HashSet::<String>::new();
+    let mut entity_prepass: Vec<(String, String, Option<String>)> = Vec::new();
+    for name in &actor_names {
+        let Some(actor) = crate::oni2_loader::parsers::actor_xml::parse_actor_xml(
+            layout_path,
+            &format!("{}.xml", name),
+            &template_dir,
+        ) else {
+            continue;
+        };
+        let entity_dir = format!("{}/{}", entity_base, actor.entity_type);
+        if seen_dirs.insert(entity_dir.clone()) {
+            entity_prepass.push((
+                entity_dir,
+                actor.entity_type.clone(),
+                actor.animator_type.clone(),
+            ));
+        }
+    }
+    info!(
+        "Layout: {} actor names, {} unique entity types to preload",
+        actor_names.len(),
+        entity_prepass.len()
+    );
+
     Some(PendingLayoutLoad {
         actor_names,
         cursor: 0,
@@ -167,6 +217,8 @@ pub fn begin_chunked_layout_load(
         skipped: 0,
         post_done: false,
         scope: LayoutLoadScope::InGame,
+        entity_prepass,
+        entity_prepass_cursor: 0,
     })
 }
 
@@ -339,10 +391,53 @@ pub fn drive_chunked_actor_spawn_system(
     shared_mover_config: Option<Res<crate::mover::SharedMoverConfig>>,
 ) {
     const CHUNK_SIZE: usize = 8;
+    // Entity-type prepass cap: how many `load_oni2_entity_type` calls we do
+    // per tick before moving on to actor spawning.  Each call can take
+    // 5-30 ms for a complex creature (skeleton + animations + materials),
+    // so 1/tick keeps the loading-screen frames bounded by the single
+    // heaviest type instead of stacking N of them in one frame.
+    const PREPASS_CHUNK_SIZE: usize = 1;
     let Some(ref mut state) = pending else {
         return;
     };
 
+    // Phase 1: prepay entity-type loads.  Until this drains, we don't
+    // spawn any actors — every actor spawn will be a cache-hit on the
+    // EntityLibrary so the per-actor cost drops to instantiation only.
+    for _ in 0..PREPASS_CHUNK_SIZE {
+        if state.entity_prepass_cursor >= state.entity_prepass.len() {
+            break;
+        }
+        let idx = state.entity_prepass_cursor;
+        state.entity_prepass_cursor += 1;
+        let (entity_dir, entity_type, animator) = state.entity_prepass[idx].clone();
+        if entity_lib.entities.contains_key(&entity_dir) {
+            continue;
+        }
+        let anim_name = animator.as_deref().unwrap_or(entity_type.as_str());
+        if let Some(loaded) = crate::oni2_loader::spawn::load_oni2_entity_type(
+            &mut meshes,
+            &mut materials,
+            &mut env_materials,
+            &mut images,
+            &mut skinned_mesh_ibp,
+            &mut anim_registry,
+            &entity_dir,
+            anim_name,
+            Some(anim_name),
+        ) {
+            entity_lib.entities.insert(entity_dir, loaded);
+        }
+    }
+    if state.entity_prepass_cursor < state.entity_prepass.len() {
+        // Hold actor spawning until the prepass finishes — cheaper to
+        // spend a few extra loading-screen frames here than to pay the
+        // load cost during gameplay.
+        return;
+    }
+
+    // Phase 2: drain actor names.  Every actor spawn from this point on
+    // hits the EntityLibrary cache, so it's pure instantiation.
     for _ in 0..CHUNK_SIZE {
         if state.cursor >= state.actor_names.len() {
             break;
@@ -865,7 +960,8 @@ pub fn spawn_layout_actor(
                             crate::fightai::components::FightRuntime {
                                 fsm,
                                 ctx: crate::statemachine::drivers::fight::FightCtx::default(),
-                                last_log: String::new(),
+                                last_state_idx: usize::MAX,
+                                last_mode: String::new(),
                             },
                         );
                     }
@@ -881,7 +977,8 @@ pub fn spawn_layout_actor(
                             crate::fightai::components::AttackRuntime {
                                 fsm,
                                 ctx: crate::statemachine::drivers::attack::AttackCtx::default(),
-                                last_log: String::new(),
+                                last_state_idx: usize::MAX,
+                                last_cookie: false,
                                 tick_count: 0,
                             },
                         );
@@ -1440,20 +1537,25 @@ fn load_layout_lights(
                     (light.intensity * POINT_RANGE_FROM_INTENSITY).max(POINT_MIN_RANGE);
                 let lumens = light.intensity * POINT_INTENSITY_TO_CANDELA;
 
-                let entity = commands
-                    .spawn((
-                        PointLight {
-                            color,
-                            intensity: lumens,
-                            range,
-                            shadows_enabled: casts_shadow,
-                            ..default()
-                        },
-                        Transform::from_translation(pos),
-                        InGameEntity,
-                        Name::new(light.name.clone()),
-                    ))
-                    .id();
+                let mut ec = commands.spawn((
+                    PointLight {
+                        color,
+                        intensity: lumens,
+                        range,
+                        // Shadows are gated by the shadow-LOD system at
+                        // runtime — start off, the LOD picks the K closest
+                        // to the player each tick.  See shadow_lod.rs.
+                        shadows_enabled: false,
+                        ..default()
+                    },
+                    Transform::from_translation(pos),
+                    InGameEntity,
+                    Name::new(light.name.clone()),
+                ));
+                if casts_shadow {
+                    ec.insert(crate::shadow_lod::ShadowCandidate);
+                }
+                let entity = ec.id();
                 attach_pending_glow_if_requested(commands, entity, light);
                 point_count += 1;
             }
@@ -1483,22 +1585,25 @@ fn load_layout_lights(
                 };
                 let transform = Transform::from_translation(pos).looking_at(look, Vec3::Y);
 
-                let entity = commands
-                    .spawn((
-                        SpotLight {
-                            color,
-                            intensity: lumens,
-                            range,
-                            outer_angle: outer,
-                            inner_angle: inner,
-                            shadows_enabled: casts_shadow,
-                            ..default()
-                        },
-                        transform,
-                        InGameEntity,
-                        Name::new(light.name.clone()),
-                    ))
-                    .id();
+                let mut ec = commands.spawn((
+                    SpotLight {
+                        color,
+                        intensity: lumens,
+                        range,
+                        outer_angle: outer,
+                        inner_angle: inner,
+                        // Same LOD treatment as PointLight above.
+                        shadows_enabled: false,
+                        ..default()
+                    },
+                    transform,
+                    InGameEntity,
+                    Name::new(light.name.clone()),
+                ));
+                if casts_shadow {
+                    ec.insert(crate::shadow_lod::ShadowCandidate);
+                }
+                let entity = ec.id();
                 attach_pending_glow_if_requested(commands, entity, light);
                 spot_count += 1;
             }

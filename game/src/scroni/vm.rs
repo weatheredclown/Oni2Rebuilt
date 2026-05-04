@@ -826,6 +826,71 @@ impl ScriptExec {
         std::iter::once(&mut self.main_thread).chain(self.child_threads.iter_mut())
     }
 
+    /// True when this script's `tick()` would do nothing observable this
+    /// frame — every thread is sleeping on `Idle { end_time }` with the
+    /// wake-up still in the future, AND the script has no `whenever` block
+    /// that could fire on world state.  In that case the caller can
+    /// `continue` past the tick and just call `advance_idle_skip` to
+    /// keep timer variables decrementing.
+    ///
+    /// Important boundaries:
+    ///   • If ANY thread has a non-Idle blocking action (Goto / Face /
+    ///     WaitingForBehavior / etc.) we MUST run tick — those resolve
+    ///     externally and the script needs to react when the resolver
+    ///     systems clear them.
+    ///   • If the script has a whenever block, we MUST run tick — whenever
+    ///     polls world state (player position, packets, etc.) and missing
+    ///     a tick changes script behavior.
+    ///   • A `safety_margin` of one frame's worth of time keeps the unblock
+    ///     responsive — we wake up right around `end_time`, not after it.
+    pub fn can_skip_for_idle(&self, now: f64, safety_margin: f64) -> bool {
+        if !self.active {
+            // Inactive scripts are already cheap (`tick` early-returns).
+            // Skipping here saves nothing — keep the tick path so any
+            // future re-activation logic still runs.
+            return false;
+        }
+        if self.main_thread.script.whenever.is_some() {
+            return false;
+        }
+        let threads_idle = std::iter::once(&self.main_thread)
+            .chain(self.child_threads.iter())
+            .all(|t| match &t.blocking {
+                Some(BlockingAction::Idle { end_time }) => now + safety_margin < *end_time,
+                _ => false,
+            });
+        threads_idle
+    }
+
+    /// Decrement timer-typed variables on every thread by `delta_time`.
+    /// Mirrors the timer-decrement loop at the top of `tick()`; called
+    /// from the host system when `can_skip_for_idle` lets us bypass the
+    /// full tick this frame so timers don't fall behind wall-clock time.
+    pub fn advance_idle_skip(&mut self, delta_time: f32) {
+        for thread in std::iter::once(&mut self.main_thread).chain(self.child_threads.iter_mut()) {
+            if thread.state == ExecState::Done {
+                continue;
+            }
+            for var_decl in &thread.script.variables {
+                if var_decl.var_type == VarType::Timer
+                    && !var_decl.is_parent
+                    && let Some(val) = thread.variables.get(&var_decl.name)
+                {
+                    let new_val = match val {
+                        Value::Float(f) if *f > 0.0 => Some((*f - delta_time).max(0.0)),
+                        Value::Int(i) if (*i as f32) > 0.0 => {
+                            Some(((*i as f32) - delta_time).max(0.0))
+                        }
+                        _ => None,
+                    };
+                    if let Some(nv) = new_val {
+                        thread.variables.insert(var_decl.name.clone(), Value::Float(nv));
+                    }
+                }
+            }
+        }
+    }
+
     pub fn get_thread(&self, tid: u32) -> &ScrOniThread {
         if tid == 0 {
             &self.main_thread
@@ -908,6 +973,7 @@ impl ScriptExec {
         if !self.active {
             return ExecState::Blocked;
         }
+        let _span = bevy::log::info_span!("scroni::tick").entered();
 
         // Degrade timer variables (only local ones to avoid double-decrement on inherited variables)
         for thread in std::iter::once(&mut self.main_thread).chain(self.child_threads.iter_mut()) {
@@ -968,6 +1034,7 @@ impl ScriptExec {
     }
 
     fn tick_thread(&mut self, tid: u32, now: f64, ctx: &mut ScroniContext) {
+        let _span = bevy::log::info_span!("scroni::tick_thread").entered();
         // Run whenever block (non-blocking, runs every frame)
         // This must run even if the main sequence is blocked or done!
         let whenever = self.get_thread(tid).script.whenever.clone();
@@ -1049,6 +1116,7 @@ impl ScriptExec {
     }
 
     fn run_sequence(&mut self, tid: u32, now: f64, ctx: &mut ScroniContext) {
+        let _span = bevy::log::info_span!("scroni::run_sequence").entered();
         let mut instruction_count = 0;
         let max_instructions = 10000;
 
@@ -2227,6 +2295,7 @@ pub fn scroni_tick_system(
     let mut all_messages = Vec::new();
     let player_ent = player_query.iter().next();
 
+    let _build_status_span = bevy::log::info_span!("scroni::build_actor_statuses").entered();
     let mut actor_statuses: std::collections::HashMap<Entity, &'static str> = std::collections::HashMap::new();
     for (ent, health, ai_opt) in health_query.iter() {
         let status = if health.current <= 0.0 {
@@ -2247,13 +2316,34 @@ pub fn scroni_tick_system(
         };
         actor_statuses.insert(ent, status);
     }
+    drop(_build_status_span);
 
+    let _scripts_span = bevy::log::info_span!("scroni::script_loop").entered();
+    // Wake-up margin for the Idle-skip optimization.  Two frames at 60fps
+    // (~33 ms) — small enough that the wake feels instant, large enough
+    // that we always tick at least once before `end_time` actually passes.
+    const IDLE_SKIP_MARGIN_S: f64 = 0.033;
     for (entity, mut script, transform, pathfollower_opt, _retreating_opt) in &mut query {
         if script.exec.ticks_alive == 0 {
             script.exec.ticks_alive += 1;
             continue;
         }
         script.exec.ticks_alive += 1;
+
+        // Skip the entire per-script body when every thread is sleeping
+        // on `Idle { end_time }` with the wake-up still in the future and
+        // the script has no `whenever` block — there's nothing for tick
+        // to do this frame.  We still advance any timer variables so they
+        // don't drift behind wall-clock, then continue past closure setup,
+        // ScroniContext construction, blocking-action collection, and
+        // sysreq drain (all of which would be no-ops on a sleeping
+        // script).  See `ScriptExec::can_skip_for_idle` for the full
+        // safety contract.
+        if script.exec.can_skip_for_idle(now, IDLE_SKIP_MARGIN_S) {
+            let _skip_span = bevy::log::info_span!("scroni::skip_idle").entered();
+            script.exec.advance_idle_skip(delta_time);
+            continue;
+        }
 
         let los_checker = |from: Vec3, to: Vec3, exc_a: Entity, exc_b: Entity| -> bool {
             let delta = to - from;
@@ -2828,7 +2918,9 @@ pub fn scroni_tick_system(
             }
         }
     }
+    drop(_scripts_span);
 
+    let _deliver_span = bevy::log::info_span!("scroni::deliver_messages").entered();
     // Deliver messages
     for msg in all_messages {
         let is_action = msg.is_action;

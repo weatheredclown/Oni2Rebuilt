@@ -271,10 +271,17 @@ pub fn update_debug_light_grid(
                         intensity: 500_000.0,
                         range: grid_size * 5.0,
                         radius: 2.0,
-                        shadows_enabled: true,
+                        // Shadows are gated by the shadow-LOD system at
+                        // runtime — start off, the LOD picks the K
+                        // closest-to-player candidates each tick.  Without
+                        // routing the debug grid through ShadowCandidate
+                        // it would render shadows for every grid cell and
+                        // dwarf the cost of the layout's own lights.
+                        shadows_enabled: false,
                         ..default()
                     },
                     Transform::from_xyz(world_x, height, world_z),
+                    crate::shadow_lod::ShadowCandidate,
                     // Without this tag, the procedural-grid lights
                     // outlive their owning layout — so loading a new
                     // level inherits stale lights at positions

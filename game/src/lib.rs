@@ -27,6 +27,7 @@ pub mod oni2_loader;
 pub mod player;
 pub mod projectile_system;
 pub mod scroni;
+pub mod shadow_lod;
 pub mod statemachine;
 pub mod telemetry;
 pub mod weapons;

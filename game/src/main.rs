@@ -38,6 +38,7 @@ mod oni2_loader;
 mod player;
 mod projectile_system;
 mod scroni;
+mod shadow_lod;
 mod statemachine;
 mod telemetry;
 mod weapons;
@@ -239,7 +240,8 @@ fn main() {
     .add_plugins(debug_atdt::AtdtDebugPlugin)
     .add_plugins(frontend::FrontendPlugin)
     .add_plugins(crt_post::CrtPostPlugin)
-    .add_plugins(env_reflect_material::EnvReflectMaterialPlugin);
+    .add_plugins(env_reflect_material::EnvReflectMaterialPlugin)
+    .add_plugins(shadow_lod::ShadowLodPlugin);
 
     if fog_enabled {
         app.insert_resource(oni2_loader::FogEnabled);
