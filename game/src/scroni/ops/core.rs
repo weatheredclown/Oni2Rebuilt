@@ -785,6 +785,102 @@ pub fn exec(ctx: &mut OpsCtx, stmt: &Stmt) -> bool {
             });
             true
         }
+        Stmt::SetShaderLocal { args } => {
+            // `setShaderLocal <name> <value>` — writes a per-instance shader
+            // local on the actor's material. Mirrors DoSetShaderLocal in
+            // rb/src/scroni/XLevelCommand.cpp:189. The Bevy side reads
+            // ShaderLocals in apply_shader_locals_system and translates
+            // recognised keys (e.g. `occulation`) into material updates.
+            if let (Some(name_expr), Some(val_expr)) = (args.first(), args.get(1)) {
+                let name = ctx.eval_string(name_expr);
+                let val = ctx.eval_float(val_expr);
+                ctx.sys_request(SysRequest::SetShaderLocal { name, val });
+            }
+            true
+        }
+        Stmt::SetFullScreenColor { args } => {
+            // `setFullScreenColor <vector> <duration>` — full-screen
+            // color overlay fade. DoSetFullScreenColor at
+            // rb/src/scroni/XLevelCommand.cpp:136.
+            if args.len() >= 2 {
+                let color = ctx.eval_vec3(&args[0]);
+                let duration = ctx.eval_float(&args[1]);
+                ctx.sys_request(SysRequest::SetFullScreenColor {
+                    color: Vec3::from(color),
+                    duration,
+                });
+            }
+            true
+        }
+        Stmt::SetUpdateState { target, state } => {
+            // `setUpdateState <guid> <Active|Asleep|Dormant>` — toggles
+            // an actor's update state. DoSetUpdateState at
+            // rb/src/scroni/XLevelCommand.cpp:221.
+            let target_str = ctx.eval_string(target);
+            let state_str = ctx.eval_string(state);
+            ctx.sys_request(SysRequest::SetUpdateState {
+                target: target_str,
+                state: state_str,
+            });
+            true
+        }
+        Stmt::ControlHead { args } => {
+            // `controlhead <mode> [args]` — head IK control on the
+            // owning actor. Mirrors DoControlHead at
+            // rb/src/scroni/XCommand.cpp:1557. The parser stamps args[0]
+            // with the mode string; subsequent positions depend on mode.
+            use crate::oni2_loader::components::ControlHeadTask;
+            let actor = ctx.exec.owner;
+            let mode = args.first().map(|e| ctx.eval_string(e)).unwrap_or_default();
+            let task = match mode.as_str() {
+                "disable" => Some(ControlHeadTask::Disable),
+                "trackclosest" => Some(ControlHeadTask::TrackClosest),
+                "trackactor" => args.get(1).and_then(|e| match ctx.eval(e) {
+                    Value::Actor(a) => Some(ControlHeadTask::TrackActor(a)),
+                    _ => None,
+                }),
+                "trackpos" => args.get(1).map(|e| {
+                    let v = ctx.eval_vec3(e);
+                    ControlHeadTask::TrackPos(Vec3::from(v))
+                }),
+                "set" => args.get(1).map(|e| {
+                    // Legacy DoControlHead converts the supplied float
+                    // (degrees) to radians for the azimuth and uses 0
+                    // for the second component.
+                    let azimuth_deg = ctx.eval_float(e);
+                    ControlHeadTask::Set {
+                        azimuth: azimuth_deg.to_radians(),
+                        incline: 0.0,
+                    }
+                }),
+                "scan" => {
+                    // Parser emits ("range", val) and ("in", val) pairs
+                    // after the mode in any combination — defaults
+                    // mirror DoControlHead's 80°/2s.
+                    let mut range = 80.0_f32.to_radians();
+                    let mut period = 2.0_f32;
+                    let mut i = 1;
+                    while i + 1 < args.len() {
+                        let label = match ctx.eval(&args[i]) {
+                            Value::String(s) => s,
+                            _ => break,
+                        };
+                        match label.as_str() {
+                            "range" => range = ctx.eval_float(&args[i + 1]).to_radians(),
+                            "in" => period = ctx.eval_float(&args[i + 1]),
+                            _ => {}
+                        }
+                        i += 2;
+                    }
+                    Some(ControlHeadTask::Scan { range, period })
+                }
+                _ => None,
+            };
+            if let Some(task) = task {
+                ctx.sys_request(SysRequest::ControlHead { actor, task });
+            }
+            true
+        }
         Stmt::SetLightParameter { args } => {
             if let Some(light_name_expr) = args.first() {
                 let name = ctx.eval_string(light_name_expr);

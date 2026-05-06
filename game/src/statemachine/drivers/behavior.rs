@@ -42,6 +42,9 @@ pub enum BehaviorKind {
     Patrol,
     Retreat,
     Pad,
+    /// `takecover` — find a POINT_COVER nav node and walk to it.  Port of
+    /// `bhBehaviors::kBehaviorTakeCover` (rb/src/behavior/takecover.cpp).
+    TakeCover,
 }
 
 impl BehaviorKind {
@@ -54,6 +57,7 @@ impl BehaviorKind {
             BehaviorKind::Patrol => "Patrol",
             BehaviorKind::Retreat => "Retreat",
             BehaviorKind::Pad => "Pad",
+            BehaviorKind::TakeCover => "TakeCover",
         }
     }
 
@@ -66,6 +70,7 @@ impl BehaviorKind {
             "Patrol" => BehaviorKind::Patrol,
             "Retreat" => BehaviorKind::Retreat,
             "Pad" => BehaviorKind::Pad,
+            "TakeCover" => BehaviorKind::TakeCover,
             _ => return None,
         })
     }
@@ -94,6 +99,8 @@ pub enum BehaviorEvent {
     Idle,
     /// Pad (player takeover) requested this tick.
     Pad,
+    /// TakeCover requested this tick (ScrOni `takecover`).
+    TakeCover,
     /// The currently-active behavior's `update` just returned `Finished`.
     BehaviorDone,
     /// Always true — used for unconditional rules that drop into `Check`.
@@ -133,6 +140,7 @@ pub struct BehaviorCtx {
     pub requested_patrol: bool,
     pub requested_retreat: bool,
     pub requested_pad: bool,
+    pub requested_take_cover: bool,
     pub behavior_done: bool,
     /// Diagnostic — name of the state we're currently in.
     pub current_state: String,
@@ -168,6 +176,7 @@ impl SmDriver for BehaviorDriver {
             BehaviorEvent::Retreat => ctx.requested_retreat,
             BehaviorEvent::Idle => ctx.requested_idle,
             BehaviorEvent::Pad => ctx.requested_pad,
+            BehaviorEvent::TakeCover => ctx.requested_take_cover,
             BehaviorEvent::BehaviorDone => ctx.behavior_done,
             BehaviorEvent::Always => true,
         }
@@ -209,6 +218,7 @@ pub fn parse_behavior_event(
         "ERetreat" | "Retreat" => BehaviorEvent::Retreat,
         "EIdle" | "Idle" => BehaviorEvent::Idle,
         "EPad" | "Pad" => BehaviorEvent::Pad,
+        "ETakeCover" | "TakeCover" => BehaviorEvent::TakeCover,
         "EBehaviorDone" | "BehaviorDone" => BehaviorEvent::BehaviorDone,
         "EAlways" | "Always" | "True" => BehaviorEvent::Always,
         other => return Err(format!("behavior: unknown event '{}'", other)),
@@ -295,18 +305,23 @@ if EBehaviorDone { StartBehavior Patrol;  goto PATROL_STATE }
 if EAlways       { Check BEHAVIOR_SWITCHES }
 if EBehaviorDone { StartBehavior Idle;    goto IDLE_STATE }
 
+#TAKECOVER_STATE
+if EAlways       { Check BEHAVIOR_SWITCHES }
+if EBehaviorDone { StartBehavior Idle;    goto IDLE_STATE }
+
 #PAD_STATE
 ; Player has the pad.  No EAlways/Check here — PAD is a dead-end until the
 ; ScrOni unpad path strips the BehaviorRuntime and hands the entity back.
 
 #BEHAVIOR_SWITCHES
-if EFight   { StartBehavior Fight;   goto FIGHT_STATE }
-if EFollow  { StartBehavior Follow;  goto FOLLOW_STATE }
-if EGoto    { StartBehavior Goto;    goto GOTO_STATE }
-if EPatrol  { StartBehavior Patrol;  goto PATROL_STATE }
-if ERetreat { StartBehavior Retreat; goto RETREAT_STATE }
-if EIdle    { StartBehavior Idle;    goto IDLE_STATE }
-if EPad     { StartBehavior Pad;     goto PAD_STATE }
+if EFight     { StartBehavior Fight;     goto FIGHT_STATE }
+if EFollow    { StartBehavior Follow;    goto FOLLOW_STATE }
+if EGoto      { StartBehavior Goto;      goto GOTO_STATE }
+if EPatrol    { StartBehavior Patrol;    goto PATROL_STATE }
+if ERetreat   { StartBehavior Retreat;   goto RETREAT_STATE }
+if ETakeCover { StartBehavior TakeCover; goto TAKECOVER_STATE }
+if EIdle      { StartBehavior Idle;      goto IDLE_STATE }
+if EPad       { StartBehavior Pad;       goto PAD_STATE }
 "#;
 
 // ---------------------------------------------------------------------------
@@ -399,6 +414,38 @@ mod tests {
         let out = rt.tick(&mut ctx);
         assert_eq!(rt.current_state, fight);
         assert_eq!(out.started_behavior, Some(BehaviorKind::Fight));
+    }
+
+    #[test]
+    fn idle_to_takecover_on_request() {
+        let data = Arc::new(load_embedded().expect("parses"));
+        let idle = data.index_of_or_zero("IDLE_STATE");
+        let take_cover = data.index_of_or_zero("TAKECOVER_STATE");
+        let mut rt = SmRuntime::<BehaviorDriver>::new(data, idle);
+
+        let mut ctx = BehaviorCtx {
+            requested_take_cover: true,
+            ..Default::default()
+        };
+        let out = rt.tick(&mut ctx);
+        assert_eq!(rt.current_state, take_cover);
+        assert_eq!(out.started_behavior, Some(BehaviorKind::TakeCover));
+    }
+
+    #[test]
+    fn takecover_done_returns_to_idle() {
+        let data = Arc::new(load_embedded().expect("parses"));
+        let idle = data.index_of_or_zero("IDLE_STATE");
+        let take_cover = data.index_of_or_zero("TAKECOVER_STATE");
+        let mut rt = SmRuntime::<BehaviorDriver>::new(data, take_cover);
+
+        let mut ctx = BehaviorCtx {
+            behavior_done: true,
+            ..Default::default()
+        };
+        let out = rt.tick(&mut ctx);
+        assert_eq!(rt.current_state, idle);
+        assert_eq!(out.started_behavior, Some(BehaviorKind::Idle));
     }
 
     #[test]

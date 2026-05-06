@@ -171,8 +171,17 @@ pub enum BlockingAction {
     /// behavior kind.  Resolved by an `EndBehaviorMessage` whose
     /// `(entity, kind)` matches.  Used by the ported `goto` path so the
     /// script thread parks until GotoBehavior returns Finished.
+    ///
+    /// `deadline` mirrors the C++ `BehaviorDoneOrTimeout` instruction
+    /// (rb/src/scroni/xBlockingCommand.cpp:1050) — when set, the wait
+    /// also resolves once `now >= deadline`, even if the behavior is
+    /// still running.  Timeout resolutions clear `blocking_failed`
+    /// (timeout != failure, matching the legacy `IsFailing=false` path).
+    /// `None` = wait indefinitely; preserves the historic behavior of
+    /// `goto` and bare `takecover`.
     WaitingForBehavior {
         kind: crate::statemachine::drivers::behavior::BehaviorKind,
+        deadline: Option<f64>,
     },
     /// Internal: waiting for CurveFollower to reach its target phase.
     /// Set by the bridge system after configuring the CurveFollower from a GotoCurvePhase.
@@ -182,6 +191,57 @@ pub enum BlockingAction {
     WaitingForPath,
 }
 
+/// Resolution decision for a `WaitingForBehavior` thread.  Pulled out of
+/// the bridge's tick loop so the timeout/end-behavior arbitration can be
+/// unit-tested without standing up a Bevy app.  Inputs:
+///
+///   * `entity` — the actor owning the script's BehaviorRuntime.
+///   * `kind` — the behavior the thread is waiting on.
+///   * `deadline` — optional absolute script-clock time after which the
+///     wait gives up regardless of behavior state (set by `takecover for
+///     <secs>` and friends).
+///   * `now` — current script-clock time (`Time::elapsed_secs_f64`).
+///   * `ended_behaviors` — `(entity, kind) → failed` map drained from
+///     this tick's `EndBehaviorMessage` stream.
+///
+/// Returns `Some(failed)` when the wait should resolve this tick, `None`
+/// when it should keep waiting.  `failed=true` propagates to the
+/// thread's `blocking_failed` flag; `failed=false` (including timeout
+/// resolutions) clears it.
+pub fn resolve_behavior_wait(
+    entity: Entity,
+    kind: crate::statemachine::drivers::behavior::BehaviorKind,
+    deadline: Option<f64>,
+    now: f64,
+    ended_behaviors: &std::collections::HashMap<
+        (
+            Entity,
+            crate::statemachine::drivers::behavior::BehaviorKind,
+        ),
+        bool,
+    >,
+) -> Option<bool> {
+    if let Some(&failed) = ended_behaviors.get(&(entity, kind)) {
+        Some(failed)
+    } else if let Some(d) = deadline
+        && now >= d
+    {
+        // Timeout — matches the C++ DoBehaviorDoneOrTimeout path that
+        // treats elapsed-deadline as a non-failing resolution.
+        Some(false)
+    } else {
+        None
+    }
+}
+
+/// Dead-code on this enum is escalated to a hard error: every variant
+/// must be constructed somewhere (i.e. produced by an ops handler from a
+/// `Stmt`). When the linter flags a variant as unused, that variant is an
+/// orphan — observer plumbing without a parser/ops bridge — and the
+/// script-level command silently does nothing. The fix is either to add
+/// the missing `Stmt::X` arm in `scroni/ops/`, or, if the variant is
+/// genuinely WIP, to mark it `#[allow(dead_code)]` with a comment.
+#[deny(dead_code)]
 #[derive(Debug, Clone)]
 pub enum SysRequest {
     SetFullScreenColor {
@@ -216,6 +276,19 @@ pub enum SysRequest {
         actor: Entity,
         target: Option<Entity>,
     },
+    /// `takecover [for <duration>]` — kicks the actor's BehaviorRuntime
+    /// into TAKECOVER, which finds a POINT_COVER node and walks to it.
+    /// Port of `bhMsgSetBehavior(kBehaviorTakeCover)` (rb/src/scroni/
+    /// xBlockingCommand.cpp:715).  `duration` is parsed but unused by the
+    /// runtime today (no timed-cover behavior).
+    TakeCover {
+        actor: Entity,
+        // Parsed but unused by the runtime today (no timed-cover
+        // behavior); kept on the SysRequest so the wire format matches
+        // the legacy parser.
+        #[allow(dead_code)]
+        duration: Option<f32>,
+    },
     CameraSetPackage(String),
     CameraReset,
     /// `cameramode (script|game) [time <seconds>]` — mode name + optional
@@ -229,6 +302,10 @@ pub enum SysRequest {
     CameraTrackPoint(Vec3),
     CameraMoveToActor(Entity, f32), // Target, Duration
     CameraMoveToPoint(Vec3, f32),
+    // `cameramovealongrail` — token + observer + ScrOniSysEvent are wired,
+    // but no `Stmt::CameraMoveAlongRail` parser arm exists yet. Marked
+    // allow-dead until the parser side is implemented.
+    #[allow(dead_code)]
     CameraMoveAlongRail(String, f32),
     /// `makeprojectile <name> direction <vec> speed <num> [at <expr>]`
     /// — converted to a `SpawnProjectileEvent` in `system_bindings`.
@@ -504,6 +581,22 @@ pub struct ScrOniThread {
     pub blocking: Option<BlockingAction>,
     pub in_whenever: bool,
     pub whenever_timers: HashMap<String, f64>,
+    /// Latched output of the most recently resolved blocking command.
+    /// Set by the bridge when a `WaitingForBehavior` resolution carries
+    /// `failed=true` (TakeCover with no cover spot, future Goto with no
+    /// path, etc.); cleared back to false on a successful resolution.
+    /// Read by the `blockingcommandfailed` query in `eval_expr`, which
+    /// scripts use in retry loops:
+    ///
+    ///     takecover
+    ///     do while blockingcommandfailed begin
+    ///         retreat for 0.5
+    ///         takecover
+    ///     end
+    ///
+    /// Persists across non-blocking statements until the next blocking
+    /// command resolves and overwrites it.
+    pub blocking_failed: bool,
 }
 
 impl ScrOniThread {
@@ -523,6 +616,7 @@ impl ScrOniThread {
             blocking: None,
             in_whenever: false,
             whenever_timers: HashMap::new(),
+            blocking_failed: false,
         }
     }
 }
@@ -1556,6 +1650,15 @@ impl ScriptExec {
             Expr::Call { name, args } => {
                 match name.as_str() {
                     "clock" => Value::Float(now as f32),
+                    "blockingcommandfailed" => {
+                        // Latched on this thread by the bridge whenever a
+                        // `WaitingForBehavior` resolves; succeeds → false,
+                        // fails → true.  Persists across non-blocking
+                        // statements so retry loops can read it after
+                        // intervening logic.
+                        let failed = self.get_thread(tid).blocking_failed;
+                        Value::Int(if failed { 1 } else { 0 })
+                    }
                     "sin" => {
                         let val = args
                             .first()
@@ -2282,15 +2385,21 @@ pub fn scroni_tick_system(
     let delta_time = time.delta_secs();
 
     // Drain behavior-completion events so threads blocked on
-    // `WaitingForBehavior { kind }` can resolve this tick.  Buffer the
-    // set (entity, kind) pairs — messages are one-shot so re-reading the
-    // reader in the resolve loop below would miss them.
-    let ended_behaviors: std::collections::HashSet<(
-        Entity,
-        crate::statemachine::drivers::behavior::BehaviorKind,
-    )> = end_behavior_reader
+    // `WaitingForBehavior { kind }` can resolve this tick.  Map keyed on
+    // (entity, kind) → failed; messages are one-shot so re-reading the
+    // reader in the resolve loop below would miss them.  The `failed`
+    // bit propagates into the resolved thread's `blocking_failed` so
+    // `blockingcommandfailed` reads true after a TakeCover that couldn't
+    // find cover (etc.).
+    let ended_behaviors: std::collections::HashMap<
+        (
+            Entity,
+            crate::statemachine::drivers::behavior::BehaviorKind,
+        ),
+        bool,
+    > = end_behavior_reader
         .read()
-        .map(|m| (m.entity, m.kind))
+        .map(|m| ((m.entity, m.kind), m.failed))
         .collect();
     let mut all_messages = Vec::new();
     let player_ent = player_query.iter().next();
@@ -2465,8 +2574,10 @@ pub fn scroni_tick_system(
                 patrols_to_resolve.push((t.thread_id, path_val));
             } else if let Some(BlockingAction::WaitingForPath) = t.blocking.clone() {
                 waiting_for_path.push(t.thread_id);
-            } else if let Some(BlockingAction::WaitingForBehavior { kind }) = t.blocking.clone() {
-                waiting_for_behavior.push((t.thread_id, kind));
+            } else if let Some(BlockingAction::WaitingForBehavior { kind, deadline }) =
+                t.blocking.clone()
+            {
+                waiting_for_behavior.push((t.thread_id, kind, deadline));
             } else if let Some(BlockingAction::Face { target, seconds }) = t.blocking.clone() {
                 faces_to_resolve.push((t.thread_id, target, seconds));
             }
@@ -2482,9 +2593,23 @@ pub fn scroni_tick_system(
         // Resolve `WaitingForBehavior` threads whose behavior finished this
         // tick (EndBehaviorMessage was drained into `ended_behaviors` above).
         // Entity + kind must both match — a different behavior finishing on
-        // the same actor doesn't unblock a script waiting on Goto.
-        for (tid, kind) in waiting_for_behavior {
-            if ended_behaviors.contains(&(entity, kind)) {
+        // the same actor doesn't unblock a script waiting on Goto.  The
+        // `failed` bit is latched onto the thread before clearing the
+        // blocking action, so the surrounding script's next read of
+        // `blockingcommandfailed` reflects this resolution's outcome.
+        //
+        // Timeout path: when `deadline` is set and `now >= deadline`, the
+        // wait resolves even if the behavior is still running.  Mirrors
+        // `DoBehaviorDoneOrTimeout` (rb/src/scroni/xBlockingCommand.cpp:
+        // 1050) — timeout != failure, so `blocking_failed` is cleared.
+        // The behavior keeps ticking on the actor; the script just stops
+        // listening (its EndBehaviorMessage will arrive later with no
+        // thread parked on it, and is harmlessly dropped).
+        for (tid, kind, deadline) in waiting_for_behavior {
+            if let Some(failed) =
+                resolve_behavior_wait(entity, kind, deadline, now, &ended_behaviors)
+            {
+                script.exec.get_thread_mut(tid).blocking_failed = failed;
                 script.exec.clear_blocking(tid);
                 script.exec.tick_thread(tid, now, &mut ctx);
             }
@@ -2605,6 +2730,7 @@ pub fn scroni_tick_system(
                     script.exec.get_thread_mut(tid).blocking =
                         Some(BlockingAction::WaitingForBehavior {
                             kind: crate::statemachine::drivers::behavior::BehaviorKind::Goto,
+                            deadline: None,
                         });
                     continue;
                 } else {
@@ -2694,6 +2820,32 @@ pub fn scroni_tick_system(
                         e_cmd.insert(crate::ai::components::ActorRetreating {
                             avoid_target: target,
                         });
+                    }
+                }
+                SysRequest::TakeCover {
+                    actor,
+                    duration: _,
+                } => {
+                    // Flip the actor's BehaviorRuntime into a TakeCover
+                    // request — same handshake the goto/retreat scripts use
+                    // (write pending_params, set request flag, FSM tick
+                    // routes to TAKECOVER_STATE on the next FixedUpdate
+                    // pass).  The script thread already parked on
+                    // WaitingForBehavior { TakeCover } back in
+                    // ops/combat.rs, so we don't touch blocking state
+                    // here.
+                    if let Ok(mut rt) = behavior_runtime_query.get_mut(actor) {
+                        // No path/target_point — TakeCoverBehavior owns
+                        // its own destination selection from the
+                        // CoverPointManager.  Clear stale params just so
+                        // a leftover Goto path can't leak in.
+                        rt.pending_params = crate::behavior::BehaviorParams::default();
+                        rt.ctx.requested_take_cover = true;
+                    } else {
+                        warn!(
+                            "scroni takecover: entity {:?} has no BehaviorRuntime",
+                            actor
+                        );
                     }
                 }
                 SysRequest::CameraSetPackage(pkg_name) => {
@@ -3180,10 +3332,8 @@ pub fn apply_shader_locals_system(
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
     for (entity, shader_locals) in query.iter() {
-        // Evaluate supported parameters mapped functionally
         let mut target_uv_offset = None;
         if let Some(val) = shader_locals.locals.get("occulation") {
-            // "occulation" mathematically translates UVs in our shader definition logic
             target_uv_offset = Some(*val);
         }
 
@@ -3200,13 +3350,11 @@ pub fn apply_shader_locals_system(
             }
 
             if let Ok((child_entity, mut mesh_mat, cloned)) = child_materials.get_mut(current) {
-                // Lazily isolate instance material Handle exactly once per mesh utilizing COW
                 if cloned.is_none() {
                     if let Some(mat_asset) = materials.get(mesh_mat.id()) {
                         let mut cloned_mat_val = mat_asset.clone();
 
                         if let Some(offset) = target_uv_offset {
-                            // maybe invert?
                             cloned_mat_val.uv_transform =
                                 bevy::math::Affine2::from_translation(Vec2::new(offset, offset));
                         }
@@ -3217,17 +3365,103 @@ pub fn apply_shader_locals_system(
                             e_cmd.insert(ClonedShaderLocalMaterial);
                         }
                     }
-                } else {
-                    // Already cloned, mutating in-place is instance-safe
-                    if let Some(target_mat) = materials.get_mut(mesh_mat.id())
-                        && let Some(offset) = target_uv_offset
-                    {
-                        // maybe invert?
-                        target_mat.uv_transform =
-                            bevy::math::Affine2::from_translation(Vec2::new(offset, offset));
-                    }
+                } else if let Some(target_mat) = materials.get_mut(mesh_mat.id())
+                    && let Some(offset) = target_uv_offset
+                {
+                    target_mat.uv_transform =
+                        bevy::math::Affine2::from_translation(Vec2::new(offset, offset));
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::statemachine::drivers::behavior::BehaviorKind;
+
+    fn make_entity(idx: u32) -> Entity {
+        // Synthesize an Entity for unit-test keys without spinning up a
+        // World — Entity::from_raw_u32 is `pub` exactly for this case.
+        Entity::from_raw_u32(idx).unwrap()
+    }
+
+    #[test]
+    fn resolve_behavior_wait_resolves_on_end_message() {
+        let actor = make_entity(1);
+        let mut ended = std::collections::HashMap::new();
+        ended.insert((actor, BehaviorKind::TakeCover), false);
+        // Behavior finished cleanly — should resolve with failed=false.
+        let r = resolve_behavior_wait(actor, BehaviorKind::TakeCover, None, 100.0, &ended);
+        assert_eq!(r, Some(false));
+    }
+
+    #[test]
+    fn resolve_behavior_wait_propagates_failure() {
+        let actor = make_entity(1);
+        let mut ended = std::collections::HashMap::new();
+        ended.insert((actor, BehaviorKind::TakeCover), true);
+        // Behavior reported Failed — flag flows into blocking_failed.
+        let r = resolve_behavior_wait(actor, BehaviorKind::TakeCover, None, 100.0, &ended);
+        assert_eq!(r, Some(true));
+    }
+
+    #[test]
+    fn resolve_behavior_wait_keeps_waiting_when_no_signal() {
+        let actor = make_entity(1);
+        let ended = std::collections::HashMap::new();
+        // No EndBehaviorMessage, no deadline — must keep waiting.
+        let r = resolve_behavior_wait(actor, BehaviorKind::TakeCover, None, 100.0, &ended);
+        assert_eq!(r, None);
+    }
+
+    #[test]
+    fn resolve_behavior_wait_fires_on_timeout() {
+        let actor = make_entity(1);
+        let ended = std::collections::HashMap::new();
+        // Deadline elapsed without an EndBehaviorMessage — resolve as
+        // a non-failing timeout (matches C++ DoBehaviorDoneOrTimeout).
+        let r =
+            resolve_behavior_wait(actor, BehaviorKind::TakeCover, Some(50.0), 100.0, &ended);
+        assert_eq!(r, Some(false));
+    }
+
+    #[test]
+    fn resolve_behavior_wait_holds_before_deadline() {
+        let actor = make_entity(1);
+        let ended = std::collections::HashMap::new();
+        // Deadline still in the future — keep waiting.
+        let r =
+            resolve_behavior_wait(actor, BehaviorKind::TakeCover, Some(150.0), 100.0, &ended);
+        assert_eq!(r, None);
+    }
+
+    #[test]
+    fn resolve_behavior_wait_end_message_beats_pending_timeout() {
+        let actor = make_entity(1);
+        let mut ended = std::collections::HashMap::new();
+        ended.insert((actor, BehaviorKind::TakeCover), true);
+        // Behavior failed BEFORE the deadline elapses — the failure
+        // path takes priority over the (not-yet-due) timeout.
+        let r =
+            resolve_behavior_wait(actor, BehaviorKind::TakeCover, Some(150.0), 100.0, &ended);
+        assert_eq!(
+            r,
+            Some(true),
+            "end-message failure must beat the pending timeout"
+        );
+    }
+
+    #[test]
+    fn resolve_behavior_wait_ignores_other_actor_other_kind() {
+        let me = make_entity(1);
+        let other = make_entity(2);
+        let mut ended = std::collections::HashMap::new();
+        ended.insert((other, BehaviorKind::TakeCover), false);
+        ended.insert((me, BehaviorKind::Goto), false);
+        // Right entity wrong kind, or right kind wrong entity — both miss.
+        let r = resolve_behavior_wait(me, BehaviorKind::TakeCover, None, 100.0, &ended);
+        assert_eq!(r, None);
     }
 }

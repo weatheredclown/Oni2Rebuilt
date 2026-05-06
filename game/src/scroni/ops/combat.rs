@@ -359,6 +359,32 @@ pub fn exec(ctx: &mut OpsCtx, stmt: &Stmt) -> bool {
             ctx.thread_mut().state = crate::scroni::vm::ExecState::Yielded;
             true
         }
+        Stmt::TakeCover { duration } => {
+            // Port of `DoTakeCover` + `AddBehaviorDoneOrTimeout` (rb/src/
+            // scroni/xBlockingCommand.cpp:705 / Compiler.cpp:600).  Parks
+            // the thread on `WaitingForBehavior { TakeCover, deadline }`
+            // and dispatches a SysRequest the bridge turns into a
+            // behavior start request.  Resolves on EndBehaviorMessage —
+            // failed outcomes flip the thread's `blocking_failed` so the
+            // surrounding `do while blockingcommandfailed` retry loops
+            // (e.g. scavenger_cover.oni:53) see a true.  If a `for
+            // <duration>` modifier was given, the wait also resolves at
+            // `now + duration` even if the behavior is still running
+            // (timeout path; matches the C++ legacy `IsFailing=false`
+            // semantics, so timeouts don't trip the retry loop).
+            let dur = duration.as_ref().map(|e| ctx.eval(e).as_float());
+            let deadline = dur.map(|secs| ctx.now + secs as f64);
+            ctx.sys_request(SysRequest::TakeCover {
+                actor: ctx.exec.owner,
+                duration: dur,
+            });
+            ctx.thread_mut().blocking = Some(crate::scroni::vm::BlockingAction::WaitingForBehavior {
+                kind: crate::statemachine::drivers::behavior::BehaviorKind::TakeCover,
+                deadline,
+            });
+            ctx.thread_mut().state = crate::scroni::vm::ExecState::Yielded;
+            true
+        }
         _ => false,
     }
 }

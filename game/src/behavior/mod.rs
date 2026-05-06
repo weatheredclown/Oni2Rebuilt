@@ -158,6 +158,13 @@ pub enum BehaviorUpdate {
     /// Behavior completed naturally — dispatcher clears ActiveBehavior
     /// and fires EBehaviorDone into the FSM so it can transition.
     Finished,
+    /// Behavior gave up (e.g. TakeCover couldn't find a cover point,
+    /// Goto's path computation failed at run time).  Surfaces to ScrOni
+    /// as `EndBehaviorMessage { failed: true }` so threads parked on
+    /// `WaitingForBehavior` can flip the per-thread `blocking_failed`
+    /// flag that backs the `blockingcommandfailed` query.  The FSM
+    /// treats Failed identically to Finished (both fire EBehaviorDone).
+    Failed,
 }
 
 /// One concrete behavior impl (IdleBehavior, GotoBehavior, …).  Each impl
@@ -231,12 +238,15 @@ pub struct StartBehaviorMessage {
 }
 
 /// Emitted by the dispatcher when the current Behavior's `update`
-/// returns `Finished`.  Surfaces up to ScrOni for blocking-action
-/// resolution.
+/// returns `Finished` or `Failed`.  Surfaces up to ScrOni for blocking-
+/// action resolution; `failed=true` means the behavior gave up (no cover
+/// spot, no path, etc.) and should set the script thread's
+/// `blocking_failed` flag so `blockingcommandfailed` reads true.
 #[derive(Message)]
 pub struct EndBehaviorMessage {
     pub entity: Entity,
     pub kind: BehaviorKind,
+    pub failed: bool,
 }
 
 // ---------------------------------------------------------------------------
@@ -365,6 +375,7 @@ pub fn behavior_fsm_tick_system(
         rt.ctx.requested_patrol = false;
         rt.ctx.requested_retreat = false;
         rt.ctx.requested_pad = false;
+        rt.ctx.requested_take_cover = false;
         rt.ctx.behavior_done = false;
     }
 }
@@ -395,6 +406,8 @@ pub fn behavior_start_dispatch_system(
     )>,
     target_transforms: Query<&GlobalTransform>,
     player_query: Query<Entity, With<crate::player::components::Player>>,
+    nav_graph: Option<Res<crate::ai::navigation::NavGraph>>,
+    mut cover_mgr: Option<ResMut<crate::ai::cover::CoverPointManager>>,
     mut end_writer: MessageWriter<EndBehaviorMessage>,
 ) {
     for msg in reader.read() {
@@ -437,6 +450,26 @@ pub fn behavior_start_dispatch_system(
             let has_target = ai_fighter_opt.as_ref().is_some_and(|af| af.target.is_some());
             if !has_target {
                 runtime.pending_params.target_entity = player_query.single().ok();
+            }
+        }
+
+        // TakeCover: pick a POINT_COVER nav node, reserve it, and seed
+        // the path before TakeCoverBehavior::on_enter consumes
+        // pending_params.  An empty path here triggers the behavior's
+        // immediate-Failed path so ScrOni's `blockingcommandfailed` retry
+        // loops fire.  Reservation lives in the manager; the
+        // update-dispatch system releases it when TakeCover ends.
+        if msg.kind == BehaviorKind::TakeCover {
+            runtime.pending_params.path.clear();
+            if let (Some(nav), Some(mgr)) = (nav_graph.as_ref(), cover_mgr.as_mut()) {
+                let here = transform.translation;
+                if let Some((cover_idx, nav_idx)) = mgr.closest_unreserved(msg.entity, here, nav)
+                    && let Some(point) = nav.points.get(nav_idx).copied()
+                    && let Some(path) = nav.find_path_to_point(here, point)
+                {
+                    mgr.reserve(cover_idx, msg.entity);
+                    runtime.pending_params.path = path;
+                }
             }
         }
 
@@ -497,9 +530,23 @@ pub fn behavior_start_dispatch_system(
             }
             let outgoing_kind = prev.kind();
             prev.on_exit(&mut ctx);
+            // Pre-empting a TakeCover-in-progress also has to release the
+            // cover-spot reservation so the next requester can claim it.
+            // Done here (not in TakeCoverBehavior::on_exit) so the
+            // behavior impl stays free of resource-handle plumbing.
+            if outgoing_kind == BehaviorKind::TakeCover
+                && let Some(mgr) = cover_mgr.as_mut()
+            {
+                mgr.release_actor(msg.entity);
+            }
+            // Pre-empted by a different behavior, not a self-reported
+            // failure — keep `failed=false` so a retry loop reading
+            // `blockingcommandfailed` doesn't get a false-positive when
+            // another script just swapped the actor's behavior.
             end_writer.write(EndBehaviorMessage {
                 entity: msg.entity,
                 kind: outgoing_kind,
+                failed: false,
             });
         }
 
@@ -550,6 +597,7 @@ pub fn behavior_update_dispatch_system(
         Without<crate::oni2_loader::components::ActorAsleep>,
     >,
     target_transforms: Query<&GlobalTransform>,
+    mut cover_mgr: Option<ResMut<crate::ai::cover::CoverPointManager>>,
     mut end_writer: MessageWriter<EndBehaviorMessage>,
 ) {
     let dt = time.delta_secs();
@@ -628,12 +676,27 @@ pub fn behavior_update_dispatch_system(
             BehaviorUpdate::Continue => {
                 active.0 = Some(current);
             }
-            BehaviorUpdate::Finished => {
+            BehaviorUpdate::Finished | BehaviorUpdate::Failed => {
                 let kind = current.kind();
+                let failed = matches!(outcome, BehaviorUpdate::Failed);
                 current.on_exit(&mut ctx);
                 active.0 = None;
-                end_writer.write(EndBehaviorMessage { entity, kind });
-                // Signal to the FSM tick on the next FixedUpdate pass.
+                // Release any TakeCover reservation held by this actor.
+                // The dispatcher owns reservation lifetime so the
+                // behavior impl stays free of resource-handle plumbing.
+                if kind == BehaviorKind::TakeCover
+                    && let Some(mgr) = cover_mgr.as_mut()
+                {
+                    mgr.release_actor(entity);
+                }
+                end_writer.write(EndBehaviorMessage {
+                    entity,
+                    kind,
+                    failed,
+                });
+                // Both paths fire EBehaviorDone — the FSM doesn't care
+                // about success/failure, only ScrOni's `blockingcommand-
+                // failed` query does.
                 runtime.ctx.behavior_done = true;
             }
         }

@@ -8,6 +8,7 @@
  * `ground_detection_system` so physics sees intent-derived velocity each tick.
  */
 pub mod components;
+pub mod cover;
 pub mod fsm;
 pub mod navigation;
 

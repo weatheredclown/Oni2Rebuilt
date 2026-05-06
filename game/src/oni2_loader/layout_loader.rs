@@ -137,7 +137,13 @@ pub fn begin_chunked_layout_load(
         "Layout: generated NavGraph with {} points",
         nav_graph.points.len()
     );
+    let cover_mgr = crate::ai::cover::build_cover_points(&nav_graph);
+    info!(
+        "Layout: cover-point manager seeded with {} POINT_COVER nodes",
+        cover_mgr.points.len()
+    );
     commands.insert_resource(nav_graph);
+    commands.insert_resource(cover_mgr);
     commands.insert_resource(layout_paths.clone());
 
     let actors_content = match crate::vfs::read_to_string(layout_path, "layout.actors") {
@@ -636,7 +642,13 @@ pub fn load_layout(
         "Layout: generated NavGraph with {} points",
         nav_graph.points.len()
     );
+    let cover_mgr = crate::ai::cover::build_cover_points(&nav_graph);
+    info!(
+        "Layout: cover-point manager seeded with {} POINT_COVER nodes",
+        cover_mgr.points.len()
+    );
     commands.insert_resource(nav_graph);
+    commands.insert_resource(cover_mgr);
 
     // Insert LayoutPaths globally for dynamic spawned actors
     commands.insert_resource(layout_paths.clone());
@@ -853,15 +865,20 @@ pub fn spawn_layout_actor(
         let mut frames = Vec::new();
 
         let mut sha_content = None;
+        let mut sha_exists = false;
+        
         for fname in &sha_filenames {
-            if let Ok(content) = crate::vfs::read_to_string(&entity_dir, fname) {
-                sha_content = Some(content);
-                break;
+            if crate::vfs::exists(&entity_dir, fname) {
+                sha_exists = true;
+                if let Ok(content) = crate::vfs::read_to_string(&entity_dir, fname) {
+                    sha_content = Some(content);
+                    break;
+                }
             }
         }
 
-        if sha_content.is_none() {
-            warn!("Failed to read sha file for: {}", actor.entity_type);
+        if sha_exists && sha_content.is_none() {
+            warn!("Failed to read sha file for: {} (file exists but could not be read)", actor.entity_type);
         }
 
         if let Some(sha_content) = sha_content {
@@ -1530,9 +1547,11 @@ fn load_layout_lights(
 
         match light.light_type.as_str() {
             "point" => {
-                if light.intensity <= 0.0 {
-                    continue;
-                }
+                // Lights with intensity 0 are spawned anyway: ScrOni
+                // (`setLightParameter <name>`/`intensity`) can ramp them up
+                // later, and skipping here leaves the lookup-by-Name unable
+                // to find them. The trash-chute door light is the canonical
+                // example — starts dark, the open/close ramps drive it.
                 let range =
                     (light.intensity * POINT_RANGE_FROM_INTENSITY).max(POINT_MIN_RANGE);
                 let lumens = light.intensity * POINT_INTENSITY_TO_CANDELA;
@@ -1560,9 +1579,6 @@ fn load_layout_lights(
                 point_count += 1;
             }
             "spot" => {
-                if light.intensity <= 0.0 {
-                    continue;
-                }
                 let range =
                     (light.intensity * POINT_RANGE_FROM_INTENSITY).max(POINT_MIN_RANGE);
                 let lumens = light.intensity * SPOT_INTENSITY_TO_CANDELA;

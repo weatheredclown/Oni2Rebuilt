@@ -496,6 +496,21 @@ impl Compiler {
                 };
                 Stmt::Retreat(target)
             }
+            TokenCode::TakeCover => {
+                // `takecover [for <expr>]` — port of rb/src/scroni/
+                // BlockingCommand.cpp:726.  The optional duration consumes
+                // the same `for <value>` that the C++ parser accepts; we
+                // capture it but the runtime currently treats takecover as
+                // run-until-done (cover reached) or run-until-failed (no
+                // cover point reachable).
+                self.advance();
+                let duration = if self.skip_if(TokenCode::For) {
+                    Some(self.parse_expr())
+                } else {
+                    None
+                };
+                Stmt::TakeCover { duration }
+            }
             TokenCode::Destroy => {
                 self.advance();
                 // Check if it's called like a function `destroy(expr)` or as a command `destroy expr`
@@ -2553,6 +2568,74 @@ end
             Stmt::If { else_branch, .. } => assert!(else_branch.is_some()),
             _ => panic!("expected if statement"),
         }
+    }
+
+    #[test]
+    fn compile_takecover_bare() {
+        // Bare `takecover` — the form scavenger_cover.oni:52 / :55 use.
+        // Before the port, parser fell through to "Hanging value or
+        // unrecognized command: 'takecover'" and the whole script
+        // (Scv_Cover_Awareness) refused to compile.
+        let src = r#"
+Script Scv_Cover_Awareness
+begin
+sequence
+    takecover
+end
+"#;
+        let file = Compiler::compile(src).expect("should compile");
+        let body = &file.scripts[0].sequence;
+        assert!(
+            matches!(body.first(), Some(Stmt::TakeCover { duration: None })),
+            "first stmt should be TakeCover with no duration, got {:?}",
+            body.first()
+        );
+    }
+
+    #[test]
+    fn compile_takecover_with_duration() {
+        // The C++ parser also accepts `takecover for <expr>`
+        // (rb/src/scroni/BlockingCommand.cpp:734); even though no
+        // shipping script in the current corpus uses it, the parser
+        // shouldn't reject it.
+        let src = r#"
+Script S
+begin
+sequence
+    takecover for 5
+end
+"#;
+        let file = Compiler::compile(src).expect("should compile");
+        let body = &file.scripts[0].sequence;
+        assert!(
+            matches!(body.first(), Some(Stmt::TakeCover { duration: Some(_) })),
+            "first stmt should be TakeCover with a duration, got {:?}",
+            body.first()
+        );
+    }
+
+    #[test]
+    fn compile_takecover_retry_loop() {
+        // The actual scavenger_cover.oni:48–56 control flow.  This is
+        // the integration test for the full port: the script must
+        // compile when takecover is used inside a `do while
+        // blockingcommandfailed` retry loop with retreat fallbacks,
+        // because before the port the unrecognized `takecover` would
+        // poison the entire script (including the surrounding
+        // do-while + retreat statements).
+        let src = r#"
+Script Scv_Cover_Awareness
+begin
+sequence
+    controlhead disable
+    takecover
+    do while blockingcommandfailed begin
+        retreat for 0.5
+        takecover
+    end
+end
+"#;
+        Compiler::compile(src).expect("should compile");
     }
 
     #[test]

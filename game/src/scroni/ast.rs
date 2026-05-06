@@ -196,6 +196,11 @@ pub enum Stmt {
     Attack(Expr),
     /// `retreat [to <expr>]`
     Retreat(Option<Expr>),
+    /// `takecover [for <expr>]` — block until the actor's cover behavior
+    /// reports done or failed.  `duration` mirrors the legacy timeout knob
+    /// (rb/src/scroni/BlockingCommand.cpp:734); not yet surfaced to the
+    /// runtime.  See behavior::impls::take_cover for the AI side.
+    TakeCover { duration: Option<Expr> },
     /// `destroy <expr>`
     Destroy(Expr),
 

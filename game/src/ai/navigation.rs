@@ -18,6 +18,11 @@ pub struct NavGraph {
     pub adj: Vec<Vec<(usize, f32)>>,
     pub edge_doors: HashMap<(usize, usize), usize>,
     pub doors_open: Vec<bool>,
+    /// Per-point flag bitmask carried through from layout.graph.  Bits
+    /// follow `rb/src/graphs/elements.h` (`POINT_DOOR=BIT0`,
+    /// `POINT_SHOOTING=BIT1`, `POINT_COVER=BIT2`, `POINT_RETREAT=BIT3`,
+    /// `POINT_HIDING=BIT4`, …).  Same indexing as `points`.
+    pub point_flags: Vec<u32>,
 }
 
 #[derive(Clone, PartialEq)]
@@ -48,6 +53,7 @@ impl NavGraph {
         }
 
         let mut points = Vec::with_capacity(total_points);
+        let mut point_flags = Vec::with_capacity(total_points);
         let mut names = HashMap::new();
         let mut adj = vec![Vec::new(); total_points];
 
@@ -55,6 +61,7 @@ impl NavGraph {
         for g in graphs {
             for (i, p) in g.points.iter().enumerate() {
                 points.push(p.position);
+                point_flags.push(p.flags);
                 if !p.name.is_empty() {
                     names.insert(p.name.clone(), offset + i);
                 }
@@ -77,6 +84,7 @@ impl NavGraph {
             adj,
             edge_doors: HashMap::new(),
             doors_open: Vec::new(),
+            point_flags,
         }
     }
 

@@ -10,6 +10,7 @@
 pub mod fight;
 pub mod goto;
 pub mod idle;
+pub mod take_cover;
 
 use super::{Behavior, BehaviorRegistry};
 use crate::statemachine::drivers::behavior::BehaviorKind;
@@ -25,6 +26,9 @@ pub fn register_default_behaviors(registry: &mut BehaviorRegistry) {
     });
     registry.register(BehaviorKind::Fight, || {
         Box::new(fight::FightBehavior) as Box<dyn Behavior>
+    });
+    registry.register(BehaviorKind::TakeCover, || {
+        Box::new(take_cover::TakeCoverBehavior::default()) as Box<dyn Behavior>
     });
     // Follow / Patrol / Retreat / Pad — ported in follow-ups.
 }
