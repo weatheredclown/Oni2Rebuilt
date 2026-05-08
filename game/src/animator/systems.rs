@@ -364,6 +364,12 @@ fn try_start_action(
                 }
                 ap.flags &= !action_flags::OVERRIDELIST_FIGHTSTANCE;
                 ap.flags |= action_flags::FIGHTSTANCE;
+
+                if crate::combat::locked_movement(state) {
+                    ap.record_new_substate_1(sub_state_1::IDLE);
+                    return ActionResult::Succeeded;
+                }
+
                 play_and_record(
                     "ANIMFIGHTSTANCE_STAND_TO_FIGHT",
                     sub_state_1::TRANSITION,
@@ -583,7 +589,7 @@ fn try_start_action(
 
 fn do_end_action(
     action: MainAction,
-    _subaction: i32,
+    subaction: i32,
     ap: &mut ActionPlayer,
     _lib: &Oni2AnimLibrary,
     _state: &mut Oni2AnimState,
@@ -600,7 +606,9 @@ fn do_end_action(
             ap.flags &= !action_flags::CROUCHING;
         }
         MainAction::FightStance => {
-            ap.flags &= !action_flags::FIGHTSTANCE;
+            if subaction == sub_state_0::TRANSITION_FIGHTSTANCE_END {
+                ap.flags &= !action_flags::FIGHTSTANCE;
+            }
         }
         MainAction::DrawWeapon => {
             ap.flags &= !action_flags::WEAPON;

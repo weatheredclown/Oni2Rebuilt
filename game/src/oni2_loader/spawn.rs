@@ -395,6 +395,7 @@ pub fn creature_movement_anim_system(
         Option<&crate::statemachine::runtime::FsmRuntime>,
         Option<&crate::combat::components::HitReaction>,
         Option<&crate::animator::AnimSchedule>,
+        Option<&crate::animator::components::ActionPlayer>,
     )>,
 ) {
     const WALK_THRESHOLD: f32 = 0.5;
@@ -411,6 +412,7 @@ pub fn creature_movement_anim_system(
         fsm_opt,
         react_opt,
         schedule_opt,
+        ap_opt,
     ) in &mut creatures
     {
         // Block locomotion while an FSM-driven animation (attack, etc.) is playing.
@@ -501,7 +503,21 @@ pub fn creature_movement_anim_system(
                     })
             });
 
-            if let Some(gait) = best_gait
+            let mut gait_to_play = best_gait.cloned();
+            if let Some(ap) = ap_opt {
+                if ap.is_in_fight_stance() {
+                    if let Some(g) = &mut gait_to_play {
+                        let id = g.anim.0;
+                        if id == crate::oni2_loader::animation::AnimId::new("ANIMNORMAL_IDLE").0
+                            || id == crate::oni2_loader::animation::AnimId::new("ANIMNAV_STAND").0
+                        {
+                            g.anim = crate::oni2_loader::animation::AnimId::new("ANIMFIGHTSTANCE_FIGHT");
+                        }
+                    }
+                }
+            }
+
+            if let Some(gait) = gait_to_play
                 && Some(gait.anim) != anim_state.current_anim_id
             {
                 let prev_num_frames = anim_state.anim.frames.len().max(1) as f32;
