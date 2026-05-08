@@ -59,22 +59,46 @@ pub struct PendingGlow {
     /// `RadialAttenuate` flag.  Pass `Vec3::ZERO` for non-spot
     /// lights — radial attenuation falls back to fully lit.
     pub light_dir: Vec3,
+    /// Parent light's authored Color from `layout.lights`.  Legacy
+    /// `fxLight::DrawGlow` passes `m_Color` into the glow draw and
+    /// it modulates the texture (lightglows.cpp:206).  The def's
+    /// own `GlowColor` is only used by standalone fxEffects (not
+    /// fxLight-attached glows) — using it here would tint
+    /// LightConeDown bright magenta because the def authors
+    /// `GlowColor 1 0 1` as a placeholder default.
+    pub light_color: Color,
 }
 
 /// Per-instance state for a spawned glow corona.  Lives on the same
 /// entity as the billboard quad's `Mesh3d` + `MeshMaterial3d`.  Built
 /// from a `LightGlowDef` + the parent fxLight's `intensity` scalar
 /// and (for radial-attenuate spots) `direction`.
+///
+/// The per-frame max-intensity is recomputed from the **parent light's
+/// live intensity** rather than captured at spawn (legacy
+/// `fxLight::DrawGlow` at rb/src/fx/light.cpp:294 passes
+/// `m_Intensity * m_GlowIntensityScale` every frame, which is `glowsize`
+/// directly — the def's `GlowIntensity` is *not* multiplied in for
+/// fxLight glows; it's the standalone-effect default).  This is what
+/// makes ScrOni `intensity (multiplier*52)` ramps drive shaft size —
+/// without it, the shaft is locked to whatever the layout-authored
+/// intensity was at level load.
 #[derive(Component)]
 pub struct LightGlow {
-    /// Max intensity / quad half-size (world units).  Equals
-    /// `glow_def.glow_intensity * fx_light.glow_intensity_scale`.
-    pub max_intensity: f32,
-    /// Current intensity, ramped toward `max_intensity` (visible) or
-    /// 0 (occluded) at `rate_per_sec`.
+    /// Per-Light `GlowIntensityScale` (typically 0.1).  Constant after
+    /// spawn — this is layout-authored, not script-driven.  Multiplied
+    /// each frame with the parent's live intensity to give the live
+    /// `max_intensity`, matching legacy `m_Intensity * m_GlowIntensityScale`
+    /// at light.cpp:294.
+    pub intensity_scale: f32,
+    /// `glow_intensity_rate_of_change` from the `LightGlowDef`.
+    /// Multiplied each frame with the live `max_intensity` to give the
+    /// occlusion ramp rate (matches legacy `intensityRateChange =
+    /// intensityRateOfChange * lightIntensity` at lightglows.cpp:130).
+    pub rate_of_change_factor: f32,
+    /// Current intensity, ramped toward live `max_intensity` (visible)
+    /// or 0 (occluded) per frame.
     pub current_intensity: f32,
-    /// Ramp speed in intensity-units per second when occluded.
-    pub rate_per_sec: f32,
     /// World-space forward direction of the parent light (for
     /// `radial_attenuate`).  None when the parent light isn't a spot
     /// or the flag is off.
@@ -137,9 +161,14 @@ fn get_or_create_quad_mesh(
 /// Spawn a glow corona at `world_pos` for the given def, and parent
 /// it to `parent_entity` (typically the layout-light entity itself).
 /// `intensity_scale` is the per-Light `GlowIntensityScale` value
-/// from `layout.lights`; multiplied with the def's own `glow_intensity`
-/// per the legacy chain (lightglows.cpp:124 — `lightIntensity` is the
-/// product of the def's value and the per-instance scale).
+/// from `layout.lights`.  The size formula matches legacy
+/// `fxLight::DrawGlow` (light.cpp:294): `glowsize = parent.intensity *
+/// intensity_scale` per frame — the def's `GlowIntensity` is *not*
+/// multiplied in for fxLight-attached glows (that field is the default
+/// intensity for standalone fx-effect glows).  `light_color` is the
+/// parent light's authored Color, used to modulate the texture
+/// (lightglows.cpp:206) — *not* `def.glow_color`, which is a
+/// placeholder default and is bright magenta for several defs.
 pub fn spawn_light_glow(
     commands: &mut Commands,
     glow_mesh: &mut LightGlowMesh,
@@ -149,6 +178,7 @@ pub fn spawn_light_glow(
     world_pos: Vec3,
     light_dir: Vec3,
     intensity_scale: f32,
+    light_color: Color,
     name: &str,
     def: &LightGlowDef,
 ) {
@@ -157,42 +187,48 @@ pub fn spawn_light_glow(
         // untextured magenta quad (which would look broken).
         return;
     };
-    let max_intensity = def.glow_intensity * intensity_scale;
-    if max_intensity <= 0.001 {
-        return;
-    }
+    // Note: we don't gate on intensity_scale > 0 here.  A script-driven
+    // light (e.g. trash-chute door) authors the parent at intensity 0
+    // and ramps it up at runtime; the glow needs to exist beforehand so
+    // it's ready when the parent intensity rises.  The per-frame update
+    // culls invisible glows (`glowsize < 0.1`).
     let mesh = get_or_create_quad_mesh(glow_mesh, meshes);
     let flags = GlowFlags::from_def(def);
 
     // Material: additive, unlit (the texture IS the light).  Each
     // instance gets its own material handle so the per-frame system
     // can write its alpha for the occlusion fade independently.
+    // `cull_mode: None` so the billboard reads from both sides — even
+    // with the cylindrical/look_at billboarding, momentary frame-edge
+    // cases (camera passing through the quad plane) shouldn't blink the
+    // shaft off.
     let material = materials.add(StandardMaterial {
-        base_color: def.glow_color.with_alpha(1.0),
+        base_color: light_color.with_alpha(1.0),
         base_color_texture: Some(tex_handle),
         alpha_mode: AlphaMode::Add,
         unlit: true,
+        cull_mode: None,
         // The corona shouldn't write to depth or cast shadows — it's
         // a screen-space sprite, not geometry.
         depth_bias: 0.0,
         ..default()
     });
 
-    let initial_size = max_intensity;
     commands.spawn((
         Name::new(format!("LightGlow:{}", name)),
         Mesh3d(mesh),
         MeshMaterial3d(material.clone()),
-        Transform::from_translation(world_pos)
-            .with_scale(Vec3::splat(initial_size * 2.0)),
+        // Spawn at zero scale; the per-frame system rescales from the
+        // parent's live intensity on its first tick.
+        Transform::from_translation(world_pos).with_scale(Vec3::ZERO),
         Visibility::Visible,
         bevy::light::NotShadowCaster,
         bevy::light::NotShadowReceiver,
         ChildOf(parent_entity),
         LightGlow {
-            max_intensity,
-            current_intensity: max_intensity,
-            rate_per_sec: def.glow_intensity_rate_of_change.max(0.0) * max_intensity,
+            intensity_scale,
+            rate_of_change_factor: def.glow_intensity_rate_of_change.max(0.0),
+            current_intensity: 0.0,
             light_dir: if flags.radial_attenuate {
                 Some(light_dir.normalize_or_zero())
             } else {
@@ -231,6 +267,7 @@ pub fn resolve_pending_glow_system(
                     gtf.translation(),
                     glow.light_dir,
                     glow.glow_intensity_scale,
+                    glow.light_color,
                     name_str,
                     def,
                 );
@@ -254,10 +291,19 @@ pub fn resolve_pending_glow_system(
 
 /// Per-frame: orient each glow toward the camera, run occlusion ramp
 /// + radial attenuation, scale the quad to its current intensity.
+///
+/// Mirrors the legacy chain `fxLight::DrawGlow` →
+/// `fxLightGlow::DrawInstancedGlow` → `DrawLightGlow`
+/// (rb/src/fx/light.cpp:294, lightglows.cpp:128).  The crucial detail:
+/// `lightIntensity` in `DrawLightGlow` is `m_Intensity * m_GlowIntensityScale`
+/// where `m_Intensity` is the parent light's **live** intensity, not a
+/// cached spawn-time value.  We replicate that by querying the parent
+/// PointLight/SpotLight every frame via the `ChildOf` relation.
 pub fn update_light_glow_billboards(
     time: Res<Time>,
     camera_q: Query<&GlobalTransform, With<bevy::camera::Camera>>,
-    mut glows: Query<(&mut Transform, &GlobalTransform, &mut LightGlow)>,
+    mut glows: Query<(&mut Transform, &GlobalTransform, &mut LightGlow, &ChildOf)>,
+    parent_lights: Query<(Option<&PointLight>, Option<&SpotLight>)>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     spatial: avian3d::prelude::SpatialQuery,
 ) {
@@ -270,7 +316,7 @@ pub fn update_light_glow_billboards(
     let cam_pos = cam_xf.translation();
     let dt = time.delta_secs();
 
-    for (mut tf, gtf, mut glow) in &mut glows {
+    for (mut tf, gtf, mut glow, child_of) in &mut glows {
         let glow_pos = gtf.translation();
         let to_cam = cam_pos - glow_pos;
         let to_cam_dist = to_cam.length();
@@ -278,6 +324,29 @@ pub fn update_light_glow_billboards(
             // Camera right on top of the glow — nothing meaningful to draw.
             continue;
         }
+
+        // Recover the parent light's live, legacy-unitless intensity.
+        // Spawn-time conversion was `lumens = legacy * POINT_INTENSITY_TO_CANDELA`,
+        // so we invert that to get a comparable scalar back.  If the
+        // parent has somehow been despawned or stripped of its light
+        // component, treat as off (max_intensity = 0).
+        let parent_legacy_intensity = parent_lights
+            .get(child_of.parent())
+            .ok()
+            .and_then(|(pt, sp)| {
+                pt.map(|p| p.intensity)
+                    .or_else(|| sp.map(|s| s.intensity))
+            })
+            .map(|cd| cd / crate::oni2_loader::layout_loader::POINT_INTENSITY_TO_CANDELA)
+            .unwrap_or(0.0);
+        // Legacy `fxLight::DrawGlow` (light.cpp:294) passes
+        // `m_Intensity * m_GlowIntensityScale` straight in as
+        // `lightIntensity`, and `glowsize = lightIntensity` directly
+        // (lightglows.cpp:132).  The def's `GlowIntensity` field is
+        // only consumed by the standalone fx-effect path
+        // (lightglows.cpp:124, `DrawAll`).  Keep them parallel here.
+        let max_intensity = parent_legacy_intensity * glow.intensity_scale;
+        let rate_per_sec = glow.rate_of_change_factor * max_intensity;
 
         // 1. Occlusion fade (kOccludeGlow).  Cast a ray glow → camera.
         //    If anything blocks, ramp current_intensity DOWN; else UP.
@@ -292,20 +361,22 @@ pub fn update_light_glow_billboards(
                     &avian3d::prelude::SpatialQueryFilter::default(),
                 )
             }).is_some();
-            let target = if blocked { 0.0 } else { glow.max_intensity };
-            let max_step = glow.rate_per_sec * dt;
+            let target = if blocked { 0.0 } else { max_intensity };
+            let max_step = rate_per_sec * dt;
             if max_step > 0.0 {
                 let delta = (target - glow.current_intensity).clamp(-max_step, max_step);
                 glow.current_intensity = (glow.current_intensity + delta)
-                    .clamp(0.0, glow.max_intensity);
+                    .clamp(0.0, max_intensity);
             } else {
                 // Rate-of-change of zero → snap (matches legacy when
                 // intensityRateChange == 0).
                 glow.current_intensity = target;
             }
         } else {
-            // No occlusion → keep at full intensity.
-            glow.current_intensity = glow.max_intensity;
+            // No occlusion → track the live max each frame.  This is
+            // what makes ScrOni intensity ramps drive shaft size — the
+            // BCTrashChamberB08 trash-chute light is the canonical case.
+            glow.current_intensity = max_intensity;
         }
 
         let mut glowsize = glow.current_intensity;
@@ -347,8 +418,8 @@ pub fn update_light_glow_billboards(
         // 4. Apply scale (quad spans ±glowsize → side length 2 ×
         //    glowsize).  Material alpha mirrors the fade fraction so
         //    occlusion ramps both size AND opacity.
-        let alpha = if glow.max_intensity > 0.0 {
-            glow.current_intensity / glow.max_intensity
+        let alpha = if max_intensity > 0.0 {
+            glow.current_intensity / max_intensity
         } else {
             0.0
         };

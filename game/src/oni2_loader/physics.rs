@@ -52,12 +52,28 @@ fn process_one_way(
         .map(|manifold| {
             // Avian's manifold.normal points collider1 -> collider2; flip so it
             // always points octree -> actor (the contact push direction onto
-            // the actor's body). Used only for the velocity check below.
+            // the actor's body).
             let push_normal = if e1 == actor_ent {
                 -manifold.normal
             } else {
                 manifold.normal
             };
+
+            // Floor case: surface pushes the actor mostly upward.  Legacy
+            // "walk-through" / one-way octree boundaries are walls — entering
+            // a room horizontally — so a near-vertical push direction means
+            // we're standing on a floor/ledge and must stay solid regardless
+            // of which side of the centroid the actor sits on.  Without this,
+            // a freshly teleported / ground-snapped actor on top of any
+            // OneWayOctreeBound surface gets ghosted as soon as gravity gives
+            // it any downward velocity (the velocity check below trips), and
+            // they tunnel through the floor down to whatever's beneath.  The
+            // player's post-cutscene teleport-onto-BCStart was the canonical
+            // case caught.  Threshold 0.5 = ≥30° from horizontal, which still
+            // treats steep ramps as floors but excludes near-vertical walls.
+            if push_normal.y > 0.5 {
+                return false;
+            }
 
             // Side test: is the actor on the same side of the contact point as
             // the known interior centroid? If yes, this is a normal collision

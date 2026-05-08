@@ -13,6 +13,26 @@ use crate::oni2_loader::parsers::texture::decode_tex;
 use crate::oni2_loader::parsers::texture::load_tga_texture;
 use crate::oni2_loader::utils::space;
 
+// Light intensity / range scaling — used both at spawn time
+// (`load_layout`) and by the runtime ScrOni `setLightIntensity` binding
+// in `scroni::system_bindings`. Keeping the formula in one place means a
+// .lights file Intensity of N produces the same brightness as the script
+// later writing `intensity N` against the same light.
+//
+// The 3000× factor lifts the unitless legacy values (typical 30–300, see
+// `lgtLight::ContributionTo` at rb/src/fx/light.cpp:81) into Bevy's
+// candela range; tuned against Blast Chambers. Range follows from
+// intensity because legacy doesn't author it directly: `1/r²` falloff
+// means contribution drops to ~1% by `r ≈ 10·sqrt(intensity)`, and 3×
+// intensity is the rough heuristic that keeps fill lights local while
+// letting 300-intensity lamps reach across rooms. `MIN_RANGE` is the
+// floor so an authored-zero / script-rampable light still has some
+// reach the moment its intensity goes nonzero.
+pub const POINT_INTENSITY_TO_CANDELA: f32 = 3000.0;
+pub const SPOT_INTENSITY_TO_CANDELA: f32 = 3000.0;
+pub const POINT_RANGE_FROM_INTENSITY: f32 = 3.0;
+pub const POINT_MIN_RANGE: f32 = 25.0;
+
 pub struct LayoutPlayerInfo {
     pub entity: Entity,
     pub position: Vec3,
@@ -1367,11 +1387,13 @@ fn attach_pending_glow_if_requested(
         // fxLight flag set without a glow type — file malformed; skip.
         return;
     };
+    let light_color = Color::srgb(light.color[0], light.color[1], light.color[2]);
     commands.entity(light_entity).insert(
         crate::oni2_loader::light_glow::PendingGlow {
             glow_type_name,
             glow_intensity_scale: light.glow_intensity_scale,
             light_dir: light.direction,
+            light_color,
         },
     );
 }
@@ -1515,19 +1537,10 @@ fn load_layout_lights(
     // uses by default.  But the units differ:
     //   - Legacy intensity is unitless / scene-tuned, typical 30–300.
     //   - Bevy `PointLight.intensity` is in candela (luminous intensity).
-    // The 3000× multiplier here lifts the unitless PS2 values into a
-    // candela range that produces visible illumination given Bevy's
-    // tonemapping + our CRT post-process pipeline.  Tweakable; was
-    // tuned against Blast Chambers' 100–300 intensity range.
-    const POINT_INTENSITY_TO_CANDELA: f32 = 3000.0;
-    const SPOT_INTENSITY_TO_CANDELA: f32 = 3000.0;
-    // Bevy's `PointLight.range` is the max distance the light can
-    // illuminate.  Legacy doesn't expose a range directly; in practice
-    // the `1/r²` falloff means contribution drops to ~1% by `r ≈ 10·sqrt(intensity)`.
-    // 3× intensity is a rough heuristic that keeps small fill lights
-    // local while letting hub-style 300-intensity lamps reach across rooms.
-    const POINT_RANGE_FROM_INTENSITY: f32 = 3.0;
-    const POINT_MIN_RANGE: f32 = 25.0;
+    // Constants live at module scope (top of file) so the runtime
+    // SetLightIntensity binding in scroni::system_bindings can apply the
+    // same scaling — keeping authored vs scripted intensity in the same
+    // units. See LIGHT_* below.
 
     let mut point_count = 0;
     let mut spot_count = 0;

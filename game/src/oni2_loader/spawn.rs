@@ -122,10 +122,14 @@ pub fn ground_snap_system(
         &mut NeedsGroundSnap,
         Option<&mut crate::statemachine::runtime::AnimatorRuntime>,
         Option<&mut crate::oni2_loader::animation::Oni2AnimState>,
+        Option<&crate::player::components::Player>,
     )>,
     spatial_query: SpatialQuery,
 ) {
-    for (entity, mut transform, mut snap, mut animator_opt, mut anim_state_opt) in &mut query {
+    for (entity, mut transform, mut snap, mut animator_opt, mut anim_state_opt, is_player) in
+        &mut query
+    {
+        let is_player = is_player.is_some();
         // Wait for colliders to be registered in the physics pipeline
         if snap.wait_frames > 0 {
             snap.wait_frames -= 1;
@@ -202,10 +206,17 @@ pub fn ground_snap_system(
             commands
                 .entity(entity)
                 .insert(avian3d::prelude::Position(final_pos));
-            info!(
-                "Ground-snapped creature {:?} from ({:.1}, {:.1}, {:.1}) to ({:.1}, {:.1}, {:.1})",
-                entity, origin.x, origin.y, origin.z, final_pos.x, final_pos.y, final_pos.z,
-            );
+            if is_player {
+                warn!(
+                    "PLAYER GROUND SNAP: ok, from {:.2?} to {:.2?} (ground_y={:.2})",
+                    origin, final_pos, ground_pos.y
+                );
+            } else {
+                info!(
+                    "Ground-snapped creature {:?} from ({:.1}, {:.1}, {:.1}) to ({:.1}, {:.1}, {:.1})",
+                    entity, origin.x, origin.y, origin.z, final_pos.x, final_pos.y, final_pos.z,
+                );
+            }
         } else {
             // No ground found — spawn above origin and hope for the best
             let final_pos = Vec3::new(origin.x, origin.y + 2.0, origin.z);
@@ -213,10 +224,17 @@ pub fn ground_snap_system(
             commands
                 .entity(entity)
                 .insert(avian3d::prelude::Position(final_pos));
-            warn!(
-                "No ground found for creature {:?} near ({:.1}, {:.1}, {:.1}), spawning above origin",
-                entity, origin.x, origin.y, origin.z
-            );
+            if is_player {
+                warn!(
+                    "PLAYER GROUND SNAP: NO GROUND near {:.2?}, parked at {:.2?}",
+                    origin, final_pos
+                );
+            } else {
+                warn!(
+                    "No ground found for creature {:?} near ({:.1}, {:.1}, {:.1}), spawning above origin",
+                    entity, origin.x, origin.y, origin.z
+                );
+            }
         }
 
         // Zero out velocity so they don't keep falling from the old position

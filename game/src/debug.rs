@@ -24,13 +24,18 @@ pub struct DebugPlugin;
 
 impl Plugin for DebugPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Startup, (setup_fps_counter, disable_physics_debug))
+        app.init_resource::<LightGizmoOn>()
+            .add_systems(Startup, (setup_fps_counter, disable_physics_debug))
             .add_systems(
                 Update,
                 (
                     update_fps_counter,
                     toggle_physics_debug,
                     toggle_debug_light,
+                    toggle_light_gizmos,
+                    draw_light_gizmos,
+                    log_player_teleports,
+                    log_player_grounded_transitions,
                     debug_kill_creatures,
                     debug_scan_player_geometry,
                     sync_debug_names,
@@ -140,6 +145,143 @@ fn toggle_debug_light(
             info!("Debug point light ON");
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// Light gizmos (F9 — wireframe each named PointLight's range)
+// ---------------------------------------------------------------------------
+//
+// "Is the light actually in the world?" answer-er. Toggleable because the
+// per-light spheres are noisy in a populated layout.
+
+#[derive(Resource, Default)]
+struct LightGizmoOn(bool);
+
+fn toggle_light_gizmos(keyboard: Res<ButtonInput<KeyCode>>, mut on: ResMut<LightGizmoOn>) {
+    if keyboard.just_pressed(KeyCode::F9) {
+        on.0 = !on.0;
+        info!("Light gizmos: {}", if on.0 { "ON" } else { "OFF" });
+    }
+}
+
+fn draw_light_gizmos(
+    on: Res<LightGizmoOn>,
+    mut gizmos: Gizmos,
+    point_lights: Query<(&GlobalTransform, &PointLight, Option<&Name>)>,
+    spot_lights: Query<(&GlobalTransform, &SpotLight, Option<&Name>)>,
+) {
+    if !on.0 {
+        return;
+    }
+    for (tf, pl, _name) in &point_lights {
+        let pos = tf.translation();
+        // Range sphere in the light's authored color, fades when the
+        // light is dark so you can still see the marker on a 0-intensity
+        // (script-driven) light.
+        let alpha = if pl.intensity > 1.0 { 0.8 } else { 0.4 };
+        let mut col = pl.color.to_linear();
+        col.alpha = alpha;
+        gizmos.sphere(pos, pl.range, Color::LinearRgba(col));
+        // Tiny solid marker at the position itself so a light with
+        // range=0 / off-screen intensity is still findable.
+        gizmos.sphere(pos, 0.15, Color::srgb(1.0, 1.0, 0.0));
+    }
+    for (tf, sl, _name) in &spot_lights {
+        let pos = tf.translation();
+        let alpha = if sl.intensity > 1.0 { 0.8 } else { 0.4 };
+        let mut col = sl.color.to_linear();
+        col.alpha = alpha;
+        gizmos.sphere(pos, sl.range, Color::LinearRgba(col));
+        gizmos.sphere(pos, 0.15, Color::srgb(1.0, 0.5, 0.0));
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Player grounded transitions
+// ---------------------------------------------------------------------------
+//
+// Pairs with the teleport logger: when investigating "player falls out of
+// the world", knowing the moment ground contact is lost (and from where)
+// is the missing half of the story. ShapeHits-driven loss of ground will
+// fire here even when no teleport just happened.
+
+fn log_player_grounded_transitions(
+    time: Res<Time>,
+    mut prev_grounded: Local<Option<bool>>,
+    player_q: Query<
+        (
+            &GlobalTransform,
+            &crate::oni2_loader::animation::Oni2AnimState,
+            Option<&avian3d::prelude::LinearVelocity>,
+        ),
+        With<crate::player::components::Player>,
+    >,
+) {
+    let Ok((gtf, anim_state, vel_opt)) = player_q.single() else {
+        *prev_grounded = None;
+        return;
+    };
+    let cur = anim_state.is_grounded;
+    if let Some(prev) = *prev_grounded
+        && prev != cur
+    {
+        let pos = gtf.translation();
+        let vel = vel_opt.map(|v| v.0).unwrap_or(Vec3::ZERO);
+        warn!(
+            "PLAYER GROUNDED: t={:.3}s {} pos={:.2?} vel={:.2?}",
+            time.elapsed_secs(),
+            if cur { "ON GROUND" } else { "AIRBORNE" },
+            pos,
+            vel
+        );
+    }
+    *prev_grounded = Some(cur);
+}
+
+// ---------------------------------------------------------------------------
+// Player teleport logger
+// ---------------------------------------------------------------------------
+//
+// Per-frame position diff vs. the previous frame, with a threshold tuned to
+// catch teleports without drowning in normal locomotion (typical
+// per-frame movement at 60 fps with run speed ~6 m/s is < 0.1 units; the
+// threshold below is well above that). Prints the from→to position, the
+// delta magnitude, and a millis-resolution timestamp so logs can be
+// correlated with other systems' output.
+//
+// Useful when a recent commit caused a "player falls out of the world"
+// regression: scrub the log for jumps and check what was running just
+// before each one.
+
+const PLAYER_TELEPORT_THRESHOLD: f32 = 1.5;
+
+fn log_player_teleports(
+    time: Res<Time>,
+    mut last_pos: Local<Option<Vec3>>,
+    player_q: Query<&GlobalTransform, With<crate::player::components::Player>>,
+) {
+    let Ok(gtf) = player_q.single() else {
+        // No player yet (frontend, loading), or two — either way reset
+        // so the next single-player frame doesn't fire a false jump.
+        *last_pos = None;
+        return;
+    };
+    let cur = gtf.translation();
+    if let Some(prev) = *last_pos {
+        let delta = cur - prev;
+        let mag = delta.length();
+        if mag >= PLAYER_TELEPORT_THRESHOLD {
+            warn!(
+                "PLAYER TELEPORT: t={:.3}s mag={:.2} from={:.2?} to={:.2?} delta={:.2?}",
+                time.elapsed_secs(),
+                mag,
+                prev,
+                cur,
+                delta
+            );
+        }
+    }
+    *last_pos = Some(cur);
 }
 
 // ---------------------------------------------------------------------------

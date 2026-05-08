@@ -753,14 +753,27 @@ pub fn scroni_sys_event_observer(
             light,
             intensity,
         } => {
+            // Apply the same intensity → candela / range formula that
+            // `layout_loader::load_layout` uses at spawn time, so a
+            // script writing `intensity 52` produces the same brightness
+            // as a `.lights` entry with Intensity 52. Pre-fix this was a
+            // hardcoded *100 heuristic which left script-driven lights
+            // ~30× dimmer than authored ones — caught while debugging the
+            // BCTrashChamberB08 trash-chute ramp not being visible.
+            use crate::oni2_loader::layout_loader::{
+                POINT_INTENSITY_TO_CANDELA, POINT_MIN_RANGE, POINT_RANGE_FROM_INTENSITY,
+                SPOT_INTENSITY_TO_CANDELA,
+            };
+            let new_range = (intensity * POINT_RANGE_FROM_INTENSITY).max(POINT_MIN_RANGE);
             for (name, mut point, mut spot) in &mut lights_query {
                 if name.as_str().eq_ignore_ascii_case(&light) {
-                    // Multiply scaling heuristic to adapt Oni floats to PBR luminous intensity
                     if let Some(p) = point.as_deref_mut() {
-                        p.intensity = intensity * 100.0;
+                        p.intensity = intensity * POINT_INTENSITY_TO_CANDELA;
+                        p.range = new_range;
                     }
                     if let Some(s) = spot.as_deref_mut() {
-                        s.intensity = intensity * 100.0;
+                        s.intensity = intensity * SPOT_INTENSITY_TO_CANDELA;
+                        s.range = new_range;
                     }
                 }
             }
