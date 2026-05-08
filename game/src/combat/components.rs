@@ -225,6 +225,22 @@ impl ReactLibrary {
         }
         self.entries.get(react_enum as usize)?.as_ref()
     }
+
+    /// Pick the death animation enum given the killing-blow's `react_enum`.
+    /// Mirrors `crReactData::GetCanBeDieAnimation` decision at
+    /// `rb/src/animator/action.cpp:1325-1326`: if the killing react has
+    /// `CanBeDieAnimation = true`, reuse that react as the death anim;
+    /// otherwise fall back to `ANIMDIE_GENERAL` (index 56 in the unified
+    /// react/die enum table).
+    pub fn pick_die_enum(&self, killing_react_enum: i32) -> i32 {
+        if killing_react_enum >= 0
+            && let Some(rd) = self.get(killing_react_enum)
+            && rd.can_be_die_animation
+        {
+            return killing_react_enum;
+        }
+        crate::oni2_loader::parsers::rct::ANIMDIE_GENERAL_INDEX
+    }
 }
 
 // === Data-driven attack sequence (from entity's .attacks file) ===

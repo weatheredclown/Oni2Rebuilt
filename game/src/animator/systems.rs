@@ -417,28 +417,68 @@ fn try_start_action(
             if ap.find_at_least_one_flag(action_flags::REJECTLIST_REACT) {
                 return ActionResult::Denied;
             }
-            // The concrete react animation is selected by ANIMREACT_NAMES[substate];
-            // play_react_system resolves the alias before calling us.  If the caller
-            // passed the substate directly (e.g. via StartActionMessage), fall back
-            // to ANIMREACT_REGULAR.
-            let idx = if substate >= 0 && (substate as usize) < ANIMREACT_NAMES.len() {
-                substate as usize
-            } else {
-                0 // ANIMREACT_REGULAR
-            };
-            let alias = ANIMREACT_NAMES[idx];
-            play_and_record(alias, sub_state_1::REACT, ap, lib, state)
-        }
-
-        MainAction::Die => {
-            ap.flags |= action_flags::DEAD;
+            // ANIMREACT_NAMES[substate] resolves the concrete react alias.
+            // Caller passes the react_enum (e.g. 4 = ANIMREACT_KNOCKDOWN);
+            // fall back to ANIMREACT_REGULAR for invalid indices.
             let idx = if substate >= 0 && (substate as usize) < ANIMREACT_NAMES.len() {
                 substate as usize
             } else {
                 0
             };
             let alias = ANIMREACT_NAMES[idx];
-            play_and_record(alias, sub_state_1::DIE, ap, lib, state)
+
+            // Play the react and install a single-entry schedule.  The
+            // schedule shape is the hook for `action_start_system` to
+            // append a follow-up getup entry from `FighterState.pending_getup_anim`
+            // after this returns — that's how knockdown→getup auto-advances
+            // in lockstep with the FSM REACT state, mirroring legacy
+            // `ActionStartReact`'s 2-batch react+getup queue
+            // (rb/src/animator/action.cpp:1253-1259).
+            if !lib.play(alias, state) {
+                return ActionResult::Failed;
+            }
+            ap.record_new_substate_1(sub_state_1::REACT);
+            let entry = AnimScheduleEntry::new(alias, sub_state_1::REACT);
+            let mut schedule = AnimSchedule::single(entry);
+            schedule.mark_first_played();
+            *schedule_out = Some(schedule);
+            ActionResult::Succeeded
+        }
+
+        MainAction::Die => {
+            // Mark the action player dead.  Most other actions' REJECTLIST_*
+            // already include `DEAD`, so further fight/jump/crouch/etc.
+            // requests get rejected automatically — that's our equivalent of
+            // legacy `ACT_FLAG_DEAD` (rb/src/animator/action.h:174).
+            ap.flags |= action_flags::DEAD;
+
+            // Pick the death-anim alias.  `substate` is the die_enum chosen
+            // by death_system via ReactLibrary::pick_die_enum (which mirrors
+            // legacy `GetCanBeDieAnimation` + `ANIMDIE_GENERAL` fallback).
+            // ANIMDIE_GENERAL lives at index 56 in the unified table.
+            let idx = if substate >= 0 && (substate as usize) < ANIMREACT_NAMES.len() {
+                substate as usize
+            } else {
+                crate::oni2_loader::parsers::rct::ANIMDIE_GENERAL_INDEX as usize
+            };
+            let alias = ANIMREACT_NAMES[idx];
+
+            // Install a single-entry held schedule and force looping=false.
+            // Mirrors legacy `AnimList.SetIfEmpty(ANIMLIST_HOLD)` at
+            // animator/action.cpp:1338 — the corpse plays the death anim
+            // once and clamps on the last frame indefinitely (until the
+            // DestroyOnDeath timer despawns it).  This is the same hold
+            // pattern used by Fall (see actions/fall.rs:64-77).
+            if !lib.play(alias, state) {
+                return ActionResult::Failed;
+            }
+            state.looping = false;
+            ap.record_new_substate_1(sub_state_1::DIE);
+            let entry = AnimScheduleEntry::new(alias, sub_state_1::DIE).with_hold();
+            let mut schedule = AnimSchedule::single(entry);
+            schedule.mark_first_played();
+            *schedule_out = Some(schedule);
+            ActionResult::Succeeded
         }
 
         MainAction::Evade => {
@@ -600,6 +640,7 @@ pub fn action_start_system(
         &mut Oni2AnimState,
         Option<&JumpController>,
     )>,
+    mut fighter_query: Query<&mut crate::fight::components::FighterState>,
 ) {
     for msg in reader.read() {
         // Migration: actions registered in the new pipeline are handled
@@ -628,6 +669,27 @@ pub fn action_start_system(
         } else {
             ActionResult::Failed
         };
+
+        // For React, append the pending getup anim as a second schedule
+        // entry.  Mirrors legacy `ActionStartReact` (rb/src/animator/
+        // action.cpp:1253-1259) which queued react + getup as two batches
+        // of the same ACT_REACT action — the FSM stays in REACT for both
+        // and the schedule's auto-advance handles the visual transition.
+        // Pre-fix this was a separate `knockdown_getup_system` doing a
+        // bare `lib.play` outside the action pipeline, which raced the
+        // FSM (REACT timed out and hit IDLE before getup installed,
+        // teleporting the actor to standing).
+        if result == ActionResult::Succeeded
+            && msg.action == MainAction::React
+            && let Some(schedule) = schedule_out.as_mut()
+            && let Ok(mut fs) = fighter_query.get_mut(msg.entity)
+            && let Some(getup) = fs.pending_getup_anim.take()
+            && !getup.is_empty()
+        {
+            schedule
+                .entries
+                .push(AnimScheduleEntry::new(getup, sub_state_1::REACT));
+        }
 
         // Attach the multi-stage schedule (if built).  The
         // anim_schedule_tick_system picks it up next tick.

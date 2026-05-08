@@ -65,7 +65,12 @@ impl Plugin for FightPlugin {
                     systems::rotation_notches_system,
                     // React-data-driven post-reaction housekeeping.
                     systems::react_end_rotation_system,
-                    systems::knockdown_getup_system,
+                    // (knockdown_getup_system removed — getup is now
+                    // queued as the second entry of the React action's
+                    // AnimSchedule by action_start_system; the schedule
+                    // tick auto-advances knockdown→getup atomically with
+                    // the FSM's REACT state, mirroring legacy
+                    // ActionStartReact's two-batch react+getup queue.)
                 )
                     .run_if(in_state(AppState::InGame)),
             )

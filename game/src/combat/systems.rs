@@ -749,18 +749,35 @@ pub fn combo_tracking_system(
     }
 }
 
-/// Checks for dead entities and emits DeathMessages.
+/// Checks for dead entities and emits DeathMessages plus a one-shot
+/// `PlayDieMessage` that drives the death animation through the action
+/// dispatcher.  The die_enum chosen mirrors legacy `ActionStartDie`
+/// (rb/src/animator/action.cpp:1325-1326): the killing blow's react if
+/// it has `CanBeDieAnimation = true`, otherwise `ANIMDIE_GENERAL`.
 pub fn death_system(
-    query: Query<(Entity, &Health), Changed<Health>>,
-    mut writer: MessageWriter<DeathMessage>,
+    health_query: Query<(Entity, &Health), Changed<Health>>,
+    fighter_query: Query<(Option<&FighterState>, Option<&ReactLibrary>)>,
+    mut death_writer: MessageWriter<DeathMessage>,
+    mut die_writer: MessageWriter<crate::animator::PlayDieMessage>,
 ) {
-    for (entity, health) in &query {
-        if health.current <= 0.0 {
-            writer.write(DeathMessage {
-                entity,
-                killer: Entity::PLACEHOLDER,
-            });
+    for (entity, health) in &health_query {
+        if health.current > 0.0 {
+            continue;
         }
+        death_writer.write(DeathMessage {
+            entity,
+            killer: Entity::PLACEHOLDER,
+        });
+
+        // Pick the death anim enum.  Without a ReactLibrary or last-react
+        // record we still fall back to ANIMDIE_GENERAL — the action
+        // dispatcher will simply attempt the alias and skip if missing.
+        let (fs_opt, lib_opt) = fighter_query.get(entity).unwrap_or((None, None));
+        let killing_react = fs_opt.map(|fs| fs.react_anim).unwrap_or(-1);
+        let die_enum = lib_opt
+            .map(|lib| lib.pick_die_enum(killing_react))
+            .unwrap_or(crate::oni2_loader::parsers::rct::ANIMDIE_GENERAL_INDEX);
+        die_writer.write(crate::animator::PlayDieMessage { entity, die_enum });
     }
 }
 

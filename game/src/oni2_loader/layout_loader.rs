@@ -36,6 +36,7 @@ pub const POINT_MIN_RANGE: f32 = 25.0;
 pub struct LayoutPlayerInfo {
     pub entity: Entity,
     pub position: Vec3,
+    pub rotation: Quat,
     pub entity_type: String,
     pub animator_type: String,
     pub max_hitpoints: Option<f32>,
@@ -360,6 +361,7 @@ pub fn spawn_queued_layout_actor(
                 Some(LayoutPlayerInfo {
                     entity,
                     position: actor.position,
+                    rotation: space::to_bevy_space_rot(actor.orientation_o2),
                     entity_type: actor.entity_type.clone(),
                     animator_type: actor.animator_type.clone().unwrap_or_default(),
                     max_hitpoints: actor.max_hitpoints,
@@ -747,6 +749,7 @@ pub fn load_layout(
                     player_info = Some(LayoutPlayerInfo {
                         entity,
                         position: actor.position,
+                        rotation: space::to_bevy_space_rot(actor.orientation_o2),
                         entity_type: actor.entity_type.clone(),
                         animator_type: actor.animator_type.clone().unwrap_or_default(),
                         max_hitpoints: actor.max_hitpoints,
@@ -1040,7 +1043,10 @@ pub fn spawn_layout_actor(
                 assets.commands.entity(entity).insert((
                     crate::combat::components::Enemy,
                     crate::combat::faction::Faction(actor.faction.clone().unwrap_or_default()),
-                    crate::combat::components::Fighter::default(),
+                    crate::combat::components::Fighter {
+                        facing: rotation * Vec3::Z,
+                        ..Default::default()
+                    },
                     crate::combat::components::FighterId(uuid::Uuid::new_v4()),
                     crate::combat::components::Health::new(actor.max_hitpoints.unwrap_or(100.0)),
                 ));

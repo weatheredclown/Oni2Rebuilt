@@ -103,6 +103,10 @@ pub enum BehaviorEvent {
     TakeCover,
     /// The currently-active behavior's `update` just returned `Finished`.
     BehaviorDone,
+    /// Actor's `Health.current <= 0.0` this tick.  Used as a one-way
+    /// gate into `DEAD_STATE` from every other state — the behavior
+    /// FSM equivalent of the animator FSM's `EHealthZero → DIE`.
+    HealthZero,
     /// Always true — used for unconditional rules that drop into `Check`.
     Always,
 }
@@ -142,6 +146,9 @@ pub struct BehaviorCtx {
     pub requested_pad: bool,
     pub requested_take_cover: bool,
     pub behavior_done: bool,
+    /// Set per-tick by the host when the actor's `Health.current <= 0.0`.
+    /// Drives the universal `EHealthZero → DEAD_STATE` transition.
+    pub is_dead: bool,
     /// Diagnostic — name of the state we're currently in.
     pub current_state: String,
 }
@@ -178,6 +185,7 @@ impl SmDriver for BehaviorDriver {
             BehaviorEvent::Pad => ctx.requested_pad,
             BehaviorEvent::TakeCover => ctx.requested_take_cover,
             BehaviorEvent::BehaviorDone => ctx.behavior_done,
+            BehaviorEvent::HealthZero => ctx.is_dead,
             BehaviorEvent::Always => true,
         }
     }
@@ -220,6 +228,7 @@ pub fn parse_behavior_event(
         "EPad" | "Pad" => BehaviorEvent::Pad,
         "ETakeCover" | "TakeCover" => BehaviorEvent::TakeCover,
         "EBehaviorDone" | "BehaviorDone" => BehaviorEvent::BehaviorDone,
+        "EHealthZero" | "HealthZero" => BehaviorEvent::HealthZero,
         "EAlways" | "Always" | "True" => BehaviorEvent::Always,
         other => return Err(format!("behavior: unknown event '{}'", other)),
     })
@@ -281,37 +290,59 @@ pub const BEHAVIOR_FSM: &str = r#"
 ; EBehaviorDone handling diverges (most → IDLE; PATROL loops; PAD has no
 ; done handler).  All inbound behavior-switch commands route through the
 ; shared BEHAVIOR_SWITCHES subroutine.
+;
+; Death is universal: every non-terminal state's first rule routes
+; EHealthZero into DEAD_STATE, which is terminal (no outbound rules).
+; This is the behavior-layer mirror of the animator FSM's `if HealthZero
+; { goto DIE }` pattern — once an actor's health reaches zero we stop
+; issuing new fight/move/take-cover decisions, even if the AI hasn't
+; been torn down yet.  The animator's DIE state handles the visual; this
+; just stops the behavior driver from competing.
 
 #IDLE_STATE
+if EHealthZero   { goto DEAD_STATE }
 if EAlways       { Check BEHAVIOR_SWITCHES }
 
 #FIGHT_STATE
+if EHealthZero   { goto DEAD_STATE }
 if EAlways       { Check BEHAVIOR_SWITCHES }
 if EBehaviorDone { StartBehavior Idle;    goto IDLE_STATE }
 
 #FOLLOW_STATE
+if EHealthZero   { goto DEAD_STATE }
 if EAlways       { Check BEHAVIOR_SWITCHES }
 if EBehaviorDone { StartBehavior Idle;    goto IDLE_STATE }
 
 #GOTO_STATE
+if EHealthZero   { goto DEAD_STATE }
 if EAlways       { Check BEHAVIOR_SWITCHES }
 if EBehaviorDone { StartBehavior Idle;    goto IDLE_STATE }
 
 #PATROL_STATE
+if EHealthZero   { goto DEAD_STATE }
 if EAlways       { Check BEHAVIOR_SWITCHES }
 if EBehaviorDone { StartBehavior Patrol;  goto PATROL_STATE }
 
 #RETREAT_STATE
+if EHealthZero   { goto DEAD_STATE }
 if EAlways       { Check BEHAVIOR_SWITCHES }
 if EBehaviorDone { StartBehavior Idle;    goto IDLE_STATE }
 
 #TAKECOVER_STATE
+if EHealthZero   { goto DEAD_STATE }
 if EAlways       { Check BEHAVIOR_SWITCHES }
 if EBehaviorDone { StartBehavior Idle;    goto IDLE_STATE }
 
 #PAD_STATE
 ; Player has the pad.  No EAlways/Check here — PAD is a dead-end until the
 ; ScrOni unpad path strips the BehaviorRuntime and hands the entity back.
+; Player death routes to DEAD_STATE same as everyone else.
+if EHealthZero   { goto DEAD_STATE }
+
+#DEAD_STATE
+; Terminal.  Health component handles entity destruction on its own
+; timeout; the behavior FSM just holds here so no fight / goto / take-
+; cover decisions can fire from a corpse.
 
 #BEHAVIOR_SWITCHES
 if EFight     { StartBehavior Fight;     goto FIGHT_STATE }
@@ -414,6 +445,45 @@ mod tests {
         let out = rt.tick(&mut ctx);
         assert_eq!(rt.current_state, fight);
         assert_eq!(out.started_behavior, Some(BehaviorKind::Fight));
+    }
+
+    #[test]
+    fn fight_to_dead_on_health_zero() {
+        let data = Arc::new(load_embedded().expect("parses"));
+        let fight = data.index_of_or_zero("FIGHT_STATE");
+        let dead = data.index_of_or_zero("DEAD_STATE");
+        let mut rt = SmRuntime::<BehaviorDriver>::new(data, fight);
+
+        let mut ctx = BehaviorCtx {
+            is_dead: true,
+            ..Default::default()
+        };
+        let out = rt.tick(&mut ctx);
+        assert_eq!(rt.current_state, dead);
+        // Death route goes straight to DEAD_STATE — no new behavior
+        // is started (corpse stops issuing decisions).
+        assert_eq!(out.started_behavior, None);
+    }
+
+    #[test]
+    fn dead_state_is_terminal() {
+        let data = Arc::new(load_embedded().expect("parses"));
+        let dead = data.index_of_or_zero("DEAD_STATE");
+        let mut rt = SmRuntime::<BehaviorDriver>::new(data, dead);
+
+        // Even with every request flag asserted, DEAD_STATE has no
+        // outbound rules and the FSM must stay put.
+        let mut ctx = BehaviorCtx {
+            is_dead: true,
+            requested_fight: true,
+            requested_idle: true,
+            requested_take_cover: true,
+            behavior_done: true,
+            ..Default::default()
+        };
+        let out = rt.tick(&mut ctx);
+        assert_eq!(rt.current_state, dead);
+        assert_eq!(out.started_behavior, None);
     }
 
     #[test]

@@ -346,14 +346,21 @@ pub fn behavior_attach_system(
 /// clears the per-tick request flags (pulse semantics).
 pub fn behavior_fsm_tick_system(
     mut query: Query<
-        (Entity, &mut BehaviorRuntime),
+        (
+            Entity,
+            &mut BehaviorRuntime,
+            Option<&crate::combat::components::Health>,
+        ),
         Without<crate::oni2_loader::components::ActorAsleep>,
     >,
     mut start_writer: MessageWriter<StartBehaviorMessage>,
 ) {
-    for (entity, mut rt) in &mut query {
+    for (entity, mut rt, health) in &mut query {
         let current_name = rt.sm.data.state_name(rt.sm.current_state).to_string();
         rt.ctx.current_state = current_name;
+        // Mirror animator FSM's HealthZero gate: surface a dead state so
+        // every active state can route to DEAD_STATE on this tick.
+        rt.ctx.is_dead = health.is_some_and(|h| h.current <= 0.0);
 
         // Split the two mutable borrows — `rt.sm.tick(&mut rt.ctx)` would
         // alias `rt` to itself.  Go through `as_mut` to get disjoint refs.
@@ -367,7 +374,9 @@ pub fn behavior_fsm_tick_system(
         // Clear pulse flags — callers must re-set each tick they want the
         // request to fire.  `behavior_done` is also a single-tick edge
         // written by `behavior_update_dispatch_system`, so it gets
-        // cleared here too.
+        // cleared here too.  `is_dead` is *not* cleared — it's a level
+        // of state, not a pulse, and we want it to stay true so the FSM
+        // can't accidentally walk back out of DEAD_STATE.
         rt.ctx.requested_idle = false;
         rt.ctx.requested_fight = false;
         rt.ctx.requested_follow = false;
@@ -620,6 +629,21 @@ pub fn behavior_update_dispatch_system(
         let Some(mut current) = active.0.take() else {
             continue;
         };
+
+        // Don't tick a corpse's behavior.  `is_dead` is populated each
+        // tick by behavior_fsm_tick_system from `Health.current <= 0.0`;
+        // when set, the FSM has already routed itself into DEAD_STATE
+        // and is no longer issuing `StartBehavior` actions.  Stop
+        // ticking the still-installed `ActiveBehavior` too so it can't
+        // emit movement / attack requests post-mortem.  We keep the
+        // behavior installed (don't put `Finished`/`Failed` in
+        // `EndBehaviorMessage`) so any wait-on-behavior ScrOni threads
+        // don't get a spurious resolution from the death itself —
+        // they'll resolve via the actor's despawn instead.
+        if runtime.ctx.is_dead {
+            active.0 = Some(current);
+            continue;
+        }
 
         let target_position = ai_fighter_opt
             .as_ref()

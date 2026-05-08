@@ -7,7 +7,8 @@
  * grapple_system               — manage grapple lifecycle from FSM CtrlGrapple actions
  * super_meter_system           — add/remove from super meter via SuperMeterAddEvent
  * successive_attacks_system    — escalate reactions after repeated hits on same target
- * knockdown_getup_system       — play get-up anim after knockdown react completes
+ * (knockdown→getup is now handled by the React action's AnimSchedule;
+ *  see action_start_system in animator/systems.rs)
  * react_end_rotation_system    — apply ReactData.end_rotation_notches after react
  * attack_spin_system           — rotate entity by ATDT.spin during active attack frames
  * hit_eta_system               — compute AboutToBeHit ETA from ATDT reactphase
@@ -473,37 +474,6 @@ pub fn successive_attacks_system(
     }
 }
 
-// ---------------------------------------------------------------------------
-// knockdown_getup_system
-// ---------------------------------------------------------------------------
-
-/// After a knockdown HitReaction completes, play the get-up animation from
-/// ReactData (if one was stored in FighterState.pending_getup_anim).
-///
-/// Mirrors the get-up anim logic in crReactData::GetGetUpAnim().
-pub fn knockdown_getup_system(
-    mut query: Query<(
-        &mut FighterState,
-        &mut Oni2AnimState,
-        &Oni2AnimLibrary,
-        &HitReaction,
-    )>,
-) {
-    for (mut fs, mut anim_state, lib, reaction) in &mut query {
-        let getup_name = match fs.pending_getup_anim.clone() {
-            Some(n) if !n.is_empty() => n,
-            _ => continue,
-        };
-        // Wait until the knockdown reaction animation has ended
-        if reaction.active.is_some() {
-            continue;
-        }
-        // Play get-up
-        if lib.play(&getup_name, &mut anim_state) {
-            fs.pending_getup_anim = None;
-        }
-    }
-}
 
 // ---------------------------------------------------------------------------
 // react_end_rotation_system

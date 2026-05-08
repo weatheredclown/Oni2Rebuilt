@@ -408,6 +408,7 @@ fn setup_scene(
         let info = loaded_player.map(|r| crate::oni2_loader::layout_loader::LayoutPlayerInfo {
             entity: r.0.entity,
             position: r.0.position,
+            rotation: r.0.rotation,
             entity_type: r.0.entity_type.clone(),
             animator_type: r.0.animator_type.clone(),
             max_hitpoints: r.0.max_hitpoints,
@@ -446,12 +447,16 @@ fn setup_scene(
     // Attach player components to layout entity, or spawn a fallback capsule
     let player_id = if let Some(ref pi) = layout_player_info {
         let pad_fsm = pi.pad_fsm.clone().unwrap_or_else(|| "player".to_string());
+        
+        let mut player_bundle = crate::player::PlayerIdentityBundle::new(
+            pi.faction.clone().unwrap_or_default(),
+            pi.max_hitpoints.unwrap_or(100.0),
+        );
+        player_bundle.fighter.facing = pi.rotation * Vec3::Z;
+
         commands.entity(pi.entity).insert((
             scoped.clone(),
-            crate::player::PlayerIdentityBundle::new(
-                pi.faction.clone().unwrap_or_default(),
-                pi.max_hitpoints.unwrap_or(100.0),
-            ),
+            player_bundle,
             crate::player::components::PadFsmName(pad_fsm),
             crate::combat::FighterBundle::default(),
             // The player is also a defender — AI fighters need to
