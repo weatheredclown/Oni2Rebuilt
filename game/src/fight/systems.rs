@@ -849,6 +849,14 @@ pub fn fight_stance_exit_system(
             was_timed_out.insert(entity, false);
             continue;
         }
+        // A corpse can be in FIGHTSTANCE at the moment of death (died mid-fight
+        // with an active leave timer).  Without this gate the timer expires on
+        // the corpse and FIGHT_TO_STAND replaces the held death pose, popping
+        // the body to standing.  Mirrors the DEAD check on the entry side.
+        if ap.check_flags(ap_flags::DEAD) {
+            was_timed_out.insert(entity, false);
+            continue;
+        }
 
         let timed_out = fs.leave_fight_stance_timer <= 0.0;
         let prev = was_timed_out.get(&entity).copied().unwrap_or(false);
