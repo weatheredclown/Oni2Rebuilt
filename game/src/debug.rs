@@ -34,6 +34,7 @@ impl Plugin for DebugPlugin {
                     toggle_debug_light,
                     toggle_light_gizmos,
                     draw_light_gizmos,
+                    toggle_fullscreen,
                     log_player_teleports,
                     log_player_grounded_transitions,
                     debug_kill_creatures,
@@ -193,6 +194,31 @@ fn draw_light_gizmos(
         col.alpha = alpha;
         gizmos.sphere(pos, sl.range, Color::LinearRgba(col));
         gizmos.sphere(pos, 0.15, Color::srgb(1.0, 0.5, 0.0));
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Alt-Enter fullscreen toggle
+// ---------------------------------------------------------------------------
+
+fn toggle_fullscreen(
+    keys: Res<ButtonInput<KeyCode>>,
+    mut windows: Query<&mut bevy::window::Window>,
+) {
+    let alt_held = keys.pressed(KeyCode::AltLeft) || keys.pressed(KeyCode::AltRight);
+    if !(alt_held && keys.just_pressed(KeyCode::Enter)) {
+        return;
+    }
+    for mut window in &mut windows {
+        window.mode = match window.mode {
+            bevy::window::WindowMode::Windowed => {
+                bevy::window::WindowMode::BorderlessFullscreen(
+                    bevy::window::MonitorSelection::Current,
+                )
+            }
+            _ => bevy::window::WindowMode::Windowed,
+        };
+        info!("Window mode toggled: {:?}", window.mode);
     }
 }
 

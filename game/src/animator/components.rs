@@ -196,7 +196,12 @@ pub mod action_flags {
         DEAD | JUMPING | SLIDING | CROUCHING | LEDGEHANGING | ZIPLINE;
     pub const REJECTLIST_LIE: u32 = DEAD | JUMPING | SLIDING | LEDGEHANGING | ZIPLINE;
     pub const REJECTLIST_JUMP: u32 = DEAD | CROUCHING | DOUBLE_JUMPING | ZIPLINE;
-    pub const REJECTLIST_REACT: u32 = JUMPING | LEDGEHANGING | ZIPLINE;
+    // Reacts must reject when DEAD — without it, follow-up hits on a
+    // corpse play a react animation that overrides the held death pose,
+    // and after the react finishes the FSM transitions out of DIE
+    // through IDLE/FIGHTSTANCE (the corpse "stands up").  Mirrors the
+    // legacy `ACT_FLAG_DEAD` rejection set.
+    pub const REJECTLIST_REACT: u32 = DEAD | JUMPING | LEDGEHANGING | ZIPLINE;
     pub const REJECTLIST_EVADE: u32 =
         DEAD | CROUCHING | LEDGEHANGING | DOUBLE_JUMPING | RUNNING_JUMP | STANDING_JUMP | ZIPLINE;
     pub const REJECTLIST_FALL: u32 = LEDGEHANGING | DEAD | ZIPLINE;

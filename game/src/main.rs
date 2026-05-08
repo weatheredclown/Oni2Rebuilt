@@ -49,6 +49,7 @@ use avian3d::prelude::*;
 use bevy::diagnostic::FrameTimeDiagnosticsPlugin;
 use bevy::log::LogPlugin;
 use bevy::prelude::*;
+use bevy::winit::{UpdateMode, WinitSettings};
 use camera::channel::CameraChannel;
 use camera::components::{CameraController, PrototypeElement};
 use combat::components::{CombatMaterials, FistVisual};
@@ -191,6 +192,19 @@ fn main() {
 
     let mut app = App::new();
     app.insert_resource(mover_backend);
+
+    // When the window loses focus (typical alt-tab) Windows + DXGI can hand
+    // wgpu transient surface errors that Bevy's `prepare_windows` panics on
+    // with "Couldn't get swap chain texture, operation unrecoverable".
+    // Throttling the unfocused update loop drastically reduces how often
+    // we touch the swap chain while alt-tabbed and lets the OS hand it
+    // back cleanly when focus returns.  Keeps focused mode at full FPS.
+    app.insert_resource(WinitSettings {
+        focused_mode: UpdateMode::Continuous,
+        unfocused_mode: UpdateMode::reactive_low_power(
+            std::time::Duration::from_millis(500),
+        ),
+    });
 
     app.add_plugins(
         DefaultPlugins
