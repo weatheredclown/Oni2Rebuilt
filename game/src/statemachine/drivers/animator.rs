@@ -48,6 +48,14 @@ pub enum AnimatorEvent {
     /// re-fires the rule and stomps the in-progress action's state.
     PadPressed(String),
     JumpsAvailable,
+    /// True while the actor is airborne in the JUMP_MAIN sub_state_1 — i.e.
+    /// past the COMPRESS phase and not yet in LAND.  Used to gate the
+    /// double-jump re-entry: a second `PADCMD_JUMP` press is only valid
+    /// after the first jump has fully launched (mirrors legacy
+    /// `if (SubState1 != ACT_S1_JUMP_MAIN) return ACT_DENIED;` in
+    /// rb/src/animator/action.cpp:620).  Without this gate, spamming jump
+    /// during COMPRESS re-fires the takeoff schedule.
+    JumpInAir,
     /// AI / script asked to start a CustomAnim this tick.
     CustomAnimRequested,
 
@@ -119,6 +127,7 @@ pub struct AnimatorCtx {
     pub pressed_pad_cmds: std::collections::HashSet<String>,
     pub custom_anim_requested: bool,
     pub jumps_available: bool,
+    pub jump_in_air: bool,
 
     // Physics
     pub ground_lost_this_tick: bool,
@@ -170,6 +179,7 @@ impl SmDriver for AnimatorDriver {
             AnimatorEvent::PadCmd(name) => ctx.active_pad_cmds.contains(name),
             AnimatorEvent::PadPressed(name) => ctx.pressed_pad_cmds.contains(name),
             AnimatorEvent::JumpsAvailable => ctx.jumps_available,
+            AnimatorEvent::JumpInAir => ctx.jump_in_air,
             AnimatorEvent::CustomAnimRequested => ctx.custom_anim_requested,
             AnimatorEvent::GroundLost => ctx.ground_lost_this_tick,
             AnimatorEvent::GroundRegained => ctx.ground_regained_this_tick,
@@ -252,6 +262,7 @@ pub fn parse_animator_event(
         "PadCmd" => AnimatorEvent::PadCmd(args.trim_matches('"').to_string()),
         "PadPressed" => AnimatorEvent::PadPressed(args.trim_matches('"').to_string()),
         "JumpsAvailable" => AnimatorEvent::JumpsAvailable,
+        "JumpInAir" => AnimatorEvent::JumpInAir,
         "CustomAnimRequested" => AnimatorEvent::CustomAnimRequested,
         "GroundLost" => AnimatorEvent::GroundLost,
         "GroundRegained" => AnimatorEvent::GroundRegained,
@@ -353,7 +364,9 @@ if HealthZero                 { Broadcast StartDeath;         goto DIE }
 if Damaged                    { Broadcast StartReact;         goto REACT }
 if GroundRegained             { Broadcast StartLand;          goto LAND }
 if WallGrabAvailable          { Broadcast StartLedgeGrab;     goto LEDGE_HANG }
-if PadPressed("PADCMD_JUMP") && JumpsAvailable { Broadcast StartJumpCompress;  goto JUMP }
+; Double-jump gate: requires `JumpInAir` so the second press is rejected
+; while still in COMPRESS.  Mirrors action.cpp:620's substate guard.
+if PadPressed("PADCMD_JUMP") && JumpsAvailable && JumpInAir { Broadcast StartJumpCompress;  goto JUMP }
 
 #FALL
 if HealthZero                 { Broadcast StartDeath;         goto DIE }
@@ -498,6 +511,65 @@ mod tests {
         assert!(
             !out.broadcasts.iter().any(|b| b == "StartJumpCompress"),
             "held button must not re-fire StartJumpCompress, got: {:?}",
+            out.broadcasts
+        );
+    }
+
+    #[test]
+    fn pressing_jump_during_compress_phase_does_not_re_fire() {
+        // Regression: while in #JUMP and in the COMPRESS phase (not yet
+        // airborne in JUMP_MAIN), a fresh `PADCMD_JUMP` press must NOT
+        // trigger a second StartJumpCompress.  Mirrors action.cpp:620's
+        // `if(SubState1 != ACT_S1_JUMP_MAIN) return ACT_DENIED;` gate.
+        let data = Arc::new(load_embedded().expect("parses"));
+        let jump = data.index_of_or_zero("JUMP");
+        let mut rt = SmRuntime::<AnimatorDriver>::new(data, jump);
+
+        let mut active_pad_cmds = std::collections::HashSet::new();
+        active_pad_cmds.insert("PADCMD_JUMP".into());
+        let mut pressed_pad_cmds = std::collections::HashSet::new();
+        pressed_pad_cmds.insert("PADCMD_JUMP".into());
+        let mut ctx = AnimatorCtx {
+            active_pad_cmds,
+            pressed_pad_cmds,
+            jumps_available: true,
+            jump_in_air: false, // still in COMPRESS — NOT in MAIN yet
+            current_mode: "JUMP".into(),
+            ..Default::default()
+        };
+        let out = rt.tick(&mut ctx);
+        assert_eq!(rt.current_state, jump);
+        assert!(
+            !out.broadcasts.iter().any(|b| b == "StartJumpCompress"),
+            "press during COMPRESS must not re-fire StartJumpCompress, got: {:?}",
+            out.broadcasts
+        );
+    }
+
+    #[test]
+    fn pressing_jump_in_main_phase_fires_somersault() {
+        // Companion to the above: once SubState1 is JUMP_MAIN and the
+        // button is freshly pressed, the rule fires the second jump.
+        let data = Arc::new(load_embedded().expect("parses"));
+        let jump = data.index_of_or_zero("JUMP");
+        let mut rt = SmRuntime::<AnimatorDriver>::new(data, jump);
+
+        let mut active_pad_cmds = std::collections::HashSet::new();
+        active_pad_cmds.insert("PADCMD_JUMP".into());
+        let mut pressed_pad_cmds = std::collections::HashSet::new();
+        pressed_pad_cmds.insert("PADCMD_JUMP".into());
+        let mut ctx = AnimatorCtx {
+            active_pad_cmds,
+            pressed_pad_cmds,
+            jumps_available: true,
+            jump_in_air: true,
+            current_mode: "JUMP".into(),
+            ..Default::default()
+        };
+        let out = rt.tick(&mut ctx);
+        assert!(
+            out.broadcasts.iter().any(|b| b == "StartJumpCompress"),
+            "press during JUMP_MAIN must fire StartJumpCompress, got: {:?}",
             out.broadcasts
         );
     }

@@ -209,9 +209,15 @@ pub(crate) fn build_jump_schedule(
         sub_state_0::JUMP_SOMERSAULT => vec![
             // Mid-air flip — no compress phase.  The impulse fires as soon as
             // SubState1 becomes JUMP_SOMERSAULT (which is "fresh" on start).
-            // `with_hold()` keeps the anim looping until ground contact.
-            AnimScheduleEntry::new("ANIMJUMP_VERTICAL_2", sub_state_1::JUMP_SOMERSAULT)
-                .with_rate(main_rate("ANIMJUMP_VERTICAL_2"))
+            // RUN_DBL is the somersault flip; RUN_2_EXT is a generic airborne
+            // hold.  Mirrors action.cpp:621-630 which adds both to the
+            // AnimList in JUMP_SOMERSAULT substate (DBL plays once, then EXT
+            // holds at end until ground contact).  If RUN_DBL is missing from
+            // the loaded library, the schedule auto-skips to EXT — the same
+            // behavior as the C++ `if (!(a1 || a2))` graceful fallback.
+            AnimScheduleEntry::new("ANIMJUMP_RUN_DBL", sub_state_1::JUMP_SOMERSAULT)
+                .with_rate(main_rate("ANIMJUMP_RUN_DBL")),
+            AnimScheduleEntry::new("ANIMJUMP_RUN_2_EXT", sub_state_1::JUMP_SOMERSAULT)
                 .with_hold(),
         ],
         sub_state_0::JUMP_WALL_COMPRESS => vec![AnimScheduleEntry::new(

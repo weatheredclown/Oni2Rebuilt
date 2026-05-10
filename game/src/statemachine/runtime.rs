@@ -707,6 +707,11 @@ pub fn animator_update_system(
         runtime.ctx.active_pad_cmds = active_pad_cmds.clone();
         runtime.ctx.pressed_pad_cmds = pressed_pad_cmds;
         runtime.ctx.jumps_available = ap_opt.is_some_and(|a| a.jumps_remaining > 0);
+        // Window for the double-jump gate: only true once the takeoff has
+        // promoted SubState1 to JUMP_MAIN.  Prevents the #JUMP rule from
+        // re-firing StartJumpCompress while still in the COMPRESS phase.
+        runtime.ctx.jump_in_air = ap_opt
+            .is_some_and(|a| a.sub_state_1 == crate::animator::components::sub_state_1::JUMP_MAIN);
         runtime.ctx.ground_lost_this_tick = ground_lost;
         runtime.ctx.ground_regained_this_tick = ground_regained;
 

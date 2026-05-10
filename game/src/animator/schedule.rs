@@ -223,6 +223,19 @@ pub fn anim_schedule_tick_system(
                             "anim_schedule: alias '{}' not in library — skipping entry {}",
                             entry.alias, sched.cursor
                         );
+                        // Auto-advance past the missing entry so a fallback
+                        // entry (e.g. RUN_DBL → RUN_2_EXT for somersault) can
+                        // still play.  Without this, `needs_play=false` plus
+                        // the auto-advance gate stalls the schedule on the
+                        // missing alias.
+                        sched.cursor += 1;
+                        if sched.cursor >= sched.entries.len() {
+                            sched.finished = true;
+                            sched.needs_play = false;
+                        } else {
+                            sched.needs_play = true;
+                        }
+                        continue;
                     }
                     sched.needs_play = false;
                 }
