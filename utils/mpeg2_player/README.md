@@ -10,6 +10,9 @@ cargo run -p mpeg2_player -- path/to/video.m2v --dump-dir decoded --deinterlace 
 ```
 
 Interlaced frame-picture streams are supported when coded as 4:2:0 frame
-pictures with frame-prediction/frame-DCT. Field pictures and field-DCT/field-MC
-macroblocks are detected and rejected with explicit errors instead of silently
-returning corrupt frames.
+pictures that use frame-MC/frame-DCT macroblocks. Streams with
+`frame_pred_frame_dct = 0` are parsed for the per-macroblock
+`frame_motion_type` and `dct_type` side bits so frame-mode macroblocks stay
+aligned; field pictures and macroblocks that actually request field-DCT,
+field-MC, or dual-prime prediction are rejected with explicit errors instead
+of silently returning corrupt frames.

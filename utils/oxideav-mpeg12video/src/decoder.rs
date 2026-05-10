@@ -378,10 +378,12 @@ fn build_picture_params(
     match (is_mpeg2_codec, &seq.mpeg2_seq, &ph.mpeg2_pic) {
         (true, Some(seq_ext), Some(pic_ext)) => {
             // Interlaced frame pictures are accepted when the picture coding
-            // extension says the coded unit is still a full frame and the
-            // stream uses frame-prediction/frame-DCT.  Field pictures and
-            // field-DCT/field-MC remain guarded below because they require a
-            // different macroblock address and motion-compensation path.
+            // extension says the coded unit is still a full frame. When
+            // frame_pred_frame_dct is false, the slice decoder must still
+            // parse the per-macroblock mode bits so it can keep bit alignment
+            // and reject any actual field-DCT / field-MC macroblocks at the
+            // macroblock that uses them. Field pictures remain out of scope
+            // because they require a different picture-addressing path.
             if seq_ext.chroma_format != 0b01 {
                 return Err(Error::unsupported(
                     "mpeg2video: only 4:2:0 chroma format supported",
@@ -397,11 +399,6 @@ fn build_picture_params(
                     "mpeg2video: intra_vlc_format=1 (Table B-15) not supported",
                 ));
             }
-            if !pic_ext.frame_pred_frame_dct {
-                return Err(Error::unsupported(
-                    "mpeg2video: field-DCT / field-MC not supported",
-                ));
-            }
             if pic_ext.concealment_motion_vectors {
                 return Err(Error::unsupported(
                     "mpeg2video: concealment MVs not supported",
@@ -413,6 +410,7 @@ fn build_picture_params(
                 alternate_scan: pic_ext.alternate_scan,
                 intra_vlc_format: false,
                 q_scale_type: pic_ext.q_scale_type,
+                frame_pred_frame_dct: pic_ext.frame_pred_frame_dct,
                 f_code: pic_ext.f_code,
                 full_pel_fwd: false,
                 full_pel_bwd: false,

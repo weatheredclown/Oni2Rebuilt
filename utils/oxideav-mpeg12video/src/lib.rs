@@ -27,10 +27,12 @@
 //!   picture_coding_extension parsing, per-direction-per-axis f_codes,
 //!   MPEG-2 intra / non-intra dequantisation, MPEG-2 global-XOR mismatch,
 //!   MPEG-2 escape (6-bit run + 12-bit signed level). Main Profile @ Main
-//!   Level 4:2:0 progressive and interlaced frame pictures are accepted when
-//!   frame-prediction/frame-DCT is used; field pictures, field-DCT/field-MC,
-//!   4:2:2/4:4:4, intra_vlc_format=1, alternate_scan, non-linear q_scale,
-//!   dual-prime and 16×8 MVs are rejected.
+//!   Level 4:2:0 progressive and interlaced frame pictures are accepted. When
+//!   frame_pred_frame_dct is false, per-macroblock frame_motion_type / dct_type
+//!   side bits are parsed; macroblocks that actually request field-DCT,
+//!   field-MC, or dual-prime are rejected. Field pictures, 4:2:2/4:4:4,
+//!   intra_vlc_format=1, alternate_scan, non-linear q_scale, and 16×8 MVs are
+//!   rejected.
 //! * Milestone 9 — MPEG-2 I-frame encoder (I-only, progressive 4:2:0).
 //!
 //! This crate intentionally has no runtime dependencies beyond `oxideav-core`
@@ -74,8 +76,10 @@ pub fn register(reg: &mut CodecRegistry) {
     );
 
     // MPEG-2 video (H.262). First-pass milestone: decoder supports I/P/B
-    // pictures in 4:2:0 Main Profile, including interlaced frame pictures
-    // that use frame-prediction/frame-DCT; encoder produces I-only bitstreams.
+    // pictures in 4:2:0 Main Profile. Interlaced frame pictures with
+    // frame_pred_frame_dct=0 are parsed far enough to accept frame-MC /
+    // frame-DCT macroblocks and reject actual field modes explicitly; encoder
+    // produces I-only bitstreams.
     let caps_m2 = CodecCapabilities::video("mpeg2video_sw")
         .with_lossy(true)
         .with_intra_only(false)
