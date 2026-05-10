@@ -43,6 +43,47 @@ const RUN: [u8; 111] = [
     15, 15, 16, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31,
 ];
 
+// Table B-15 — alternate intra VLC table (used when `intra_vlc_format = 1`).
+// Same RUN/LEVEL pairs as Table B-14, different codewords. Sourced from
+// ffmpeg's `ff_mpeg2_vlc_table` (libavcodec/mpeg12data.c, LGPL); the table
+// values themselves are facts from ISO/IEC 13818-2 Annex B and not
+// copyrightable, but the layout follows ffmpeg's convention.
+//
+// 113 entries: 111 RL pairs (same RUN[]/LEVEL[] mapping as Table B-14) +
+// escape (`0x01`, 6 bits) + EOB (`0x06`, 4 bits).
+const MPEG2_VLC: [(u32, u8); 113] = [
+    (0x02, 2),  (0x06, 3),  (0x07, 4),  (0x1c, 5),
+    (0x1d, 5),  (0x05, 6),  (0x04, 6),  (0x7b, 7),
+    (0x7c, 7),  (0x23, 8),  (0x22, 8),  (0xfa, 8),
+    (0xfb, 8),  (0xfe, 8),  (0xff, 8),  (0x1f, 14),
+    (0x1e, 14), (0x1d, 14), (0x1c, 14), (0x1b, 14),
+    (0x1a, 14), (0x19, 14), (0x18, 14), (0x17, 14),
+    (0x16, 14), (0x15, 14), (0x14, 14), (0x13, 14),
+    (0x12, 14), (0x11, 14), (0x10, 14), (0x18, 15),
+    (0x17, 15), (0x16, 15), (0x15, 15), (0x14, 15),
+    (0x13, 15), (0x12, 15), (0x11, 15), (0x10, 15),
+    (0x02, 3),  (0x06, 5),  (0x79, 7),  (0x27, 8),
+    (0x20, 8),  (0x16, 13), (0x15, 13), (0x1f, 15),
+    (0x1e, 15), (0x1d, 15), (0x1c, 15), (0x1b, 15),
+    (0x1a, 15), (0x19, 15), (0x13, 16), (0x12, 16),
+    (0x11, 16), (0x10, 16), (0x05, 5),  (0x07, 7),
+    (0xfc, 8),  (0x0c, 10), (0x14, 13), (0x07, 5),
+    (0x26, 8),  (0x1c, 12), (0x13, 13), (0x06, 6),
+    (0xfd, 8),  (0x12, 12), (0x07, 6),  (0x04, 9),
+    (0x12, 13), (0x06, 7),  (0x1e, 12), (0x14, 16),
+    (0x04, 7),  (0x15, 12), (0x05, 7),  (0x11, 12),
+    (0x78, 7),  (0x11, 13), (0x7a, 7),  (0x10, 13),
+    (0x21, 8),  (0x1a, 16), (0x25, 8),  (0x19, 16),
+    (0x24, 8),  (0x18, 16), (0x05, 9),  (0x17, 16),
+    (0x07, 9),  (0x16, 16), (0x0d, 10), (0x15, 16),
+    (0x1f, 12), (0x1a, 12), (0x19, 12), (0x17, 12),
+    (0x16, 12), (0x1f, 13), (0x1e, 13), (0x1d, 13),
+    (0x1c, 13), (0x1b, 13), (0x1f, 16), (0x1e, 16),
+    (0x1d, 16), (0x1c, 16), (0x1b, 16),
+    (0x01, 6),  // escape
+    (0x06, 4),  // EOB
+];
+
 // `(code, bits)` for 111 entries + 2 sentinels (escape = 0x1,6; EOB = 0x2,2).
 const MPEG1_VLC: [(u32, u8); 113] = [
     (0x3, 2),
@@ -236,6 +277,37 @@ mod tests {
     }
 
     #[test]
+    fn no_prefix_collisions_b15() {
+        check_no_collision(table_b15(), "dct_coeffs_b15");
+    }
+
+    #[test]
+    fn b15_table_spot_checks() {
+        let t = table_b15();
+        // Entry 0: code 0x02 (2 bits) → (run=0, level=1).  Differs from B-14
+        // where this codeword is `0x3` — the whole point of B-15.
+        let e0 = &t.entries[0];
+        assert_eq!(e0.code, 0x02);
+        assert_eq!(e0.bits, 2);
+        if let DctSym::RunLevel { run, level_abs } = e0.value {
+            assert_eq!(run, 0);
+            assert_eq!(level_abs, 1);
+        } else {
+            panic!("entry 0 should be RunLevel");
+        }
+        // EOB at index 112: code 0x06, 4 bits.  Different placement than
+        // B-14's 2-bit `0x2` — this is what makes the table unambiguous
+        // when the standard's `1`-prefix family is reassigned.
+        assert!(matches!(t.entries[112].value, DctSym::Eob));
+        assert_eq!(t.entries[112].code, 0x06);
+        assert_eq!(t.entries[112].bits, 4);
+        // Escape at index 111: same as B-14, 6-bit `0x01`.
+        assert!(matches!(t.entries[111].value, DctSym::Escape));
+        assert_eq!(t.entries[111].code, 0x01);
+        assert_eq!(t.entries[111].bits, 6);
+    }
+
+    #[test]
     fn dct_table_spot_checks() {
         let t = table();
         // Entry 0: code 0x3 (2 bits) → (run=0, level=1)
@@ -274,6 +346,36 @@ mod tests {
         check_no_collision(crate::tables::dct_dc::luma(), "dct_dc_luma");
         check_no_collision(crate::tables::dct_dc::chroma(), "dct_dc_chroma");
     }
+}
+
+/// Table B-15 (intra_vlc_format=1).  Variant of [`table`] with codewords from
+/// the alternate intra-block VLC.  Used for intra-coded blocks (DC + AC) when
+/// the picture's `intra_vlc_format` flag is set; non-intra blocks always use
+/// [`table`] / [`first_coeff_table`].
+pub fn table_b15() -> &'static VlcTable<DctSym> {
+    use std::sync::OnceLock;
+    static CELL: OnceLock<VlcTable<DctSym>> = OnceLock::new();
+    CELL.get_or_init(|| {
+        let mut v = Vec::with_capacity(113);
+        for i in 0..111 {
+            let (code, bits) = MPEG2_VLC[i];
+            v.push(VlcEntry::new(
+                bits,
+                code,
+                DctSym::RunLevel {
+                    run: RUN[i],
+                    level_abs: LEVEL[i] as u16,
+                },
+            ));
+        }
+        // Escape.
+        let (code, bits) = MPEG2_VLC[111];
+        v.push(VlcEntry::new(bits, code, DctSym::Escape));
+        // EOB.
+        let (code, bits) = MPEG2_VLC[112];
+        v.push(VlcEntry::new(bits, code, DctSym::Eob));
+        VlcTable::new(v)
+    })
 }
 
 pub fn first_coeff_table() -> &'static VlcTable<DctSym> {

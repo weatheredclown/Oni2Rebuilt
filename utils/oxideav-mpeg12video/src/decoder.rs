@@ -394,11 +394,6 @@ fn build_picture_params(
                     "mpeg2video: field pictures not supported",
                 ));
             }
-            if pic_ext.intra_vlc_format {
-                return Err(Error::unsupported(
-                    "mpeg2video: intra_vlc_format=1 (Table B-15) not supported",
-                ));
-            }
             if pic_ext.concealment_motion_vectors {
                 return Err(Error::unsupported(
                     "mpeg2video: concealment MVs not supported",
@@ -408,7 +403,7 @@ fn build_picture_params(
                 codec: Codec::Mpeg2,
                 intra_dc_precision: pic_ext.intra_dc_precision,
                 alternate_scan: pic_ext.alternate_scan,
-                intra_vlc_format: false,
+                intra_vlc_format: pic_ext.intra_vlc_format,
                 q_scale_type: pic_ext.q_scale_type,
                 frame_pred_frame_dct: pic_ext.frame_pred_frame_dct,
                 f_code: pic_ext.f_code,

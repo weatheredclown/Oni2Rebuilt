@@ -81,13 +81,21 @@ pub fn decode_intra_block(
     };
     coeffs[0] = dc_pel;
 
-    // 2. Zig-zag AC coefficients using Table B-14.
+    // 2. Zig-zag AC coefficients.
     //
     // Per ISO/IEC 11172-2 §2.4.2.9, the AC stream is ALWAYS terminated by an
     // End-Of-Block marker, even when the block holds all 63 AC coefficients.
-    // MPEG-2 inherits the same terminator. The first-pass decoder does not
-    // support `intra_vlc_format=1` (Table B-15) — it's rejected upstream.
-    let ac_tbl = dct_coeffs::table();
+    // MPEG-2 inherits the same terminator.
+    //
+    // For MPEG-2 intra blocks, `params.intra_vlc_format` selects between
+    // Table B-14 (=0, shared with MPEG-1 / non-intra) and Table B-15 (=1,
+    // alternate intra VLC).  Non-intra blocks always use B-14 so we only
+    // dispatch here.
+    let ac_tbl = if params.is_mpeg2() && params.intra_vlc_format {
+        dct_coeffs::table_b15()
+    } else {
+        dct_coeffs::table()
+    };
     let scan = scan_for(params.alternate_scan);
     let mut k: usize = 1;
     loop {
