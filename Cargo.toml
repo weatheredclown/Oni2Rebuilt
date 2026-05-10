@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["game", "server", "shared", "utils/stm_player", "utils/layout_editor"]
+members = ["game", "server", "shared", "utils/stm_player", "utils/layout_editor", "utils/mpeg2_player"]
 
 [workspace.package]
 version = "0.1.0"

@@ -1,0 +1,12 @@
+[package]
+name = "mpeg2_player"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow = "1.0"
+oxideav-core = "0.1"
+oxideav-mpeg12video = { path = "../oxideav-mpeg12video" }
+
+[dev-dependencies]
+tempfile = "3"
