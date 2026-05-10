@@ -354,6 +354,7 @@ mod tests {
             alternate_scan,
             intra_vlc_format: false,
             q_scale_type: false,
+            frame_pred_frame_dct: true,
             f_code: [[15, 15], [15, 15]],
             full_pel_fwd: false,
             full_pel_bwd: false,

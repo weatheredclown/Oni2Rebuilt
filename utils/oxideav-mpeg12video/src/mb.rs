@@ -41,6 +41,55 @@ impl Default for SliceState {
     }
 }
 
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+struct Mpeg2MacroblockModes {
+    /// MPEG-2 `frame_motion_type` side bits when present. Value 2 means
+    /// frame-based motion compensation, matching the existing prediction path.
+    frame_motion_type: Option<u8>,
+    /// MPEG-2 `dct_type` side bit: false = frame DCT, true = field DCT.
+    field_dct: bool,
+}
+
+fn parse_mpeg2_macroblock_modes(
+    br: &mut BitReader<'_>,
+    params: &PictureParams,
+    mb_type_flags: mb_type::MbTypeFlags,
+) -> Result<Mpeg2MacroblockModes> {
+    let mut modes = Mpeg2MacroblockModes::default();
+    if !params.is_mpeg2() || params.frame_pred_frame_dct {
+        return Ok(modes);
+    }
+
+    if mb_type_flags.motion_forward || mb_type_flags.motion_backward {
+        let frame_motion_type = br.read_u32(2)? as u8;
+        match frame_motion_type {
+            2 => modes.frame_motion_type = Some(frame_motion_type),
+            1 => {
+                return Err(Error::unsupported(
+                    "mpeg2video: field-MC frame macroblocks not supported",
+                ));
+            }
+            3 => {
+                return Err(Error::unsupported(
+                    "mpeg2video: dual-prime frame macroblocks not supported",
+                ));
+            }
+            _ => return Err(Error::invalid("mpeg2video: invalid frame_motion_type=0")),
+        }
+    }
+
+    if mb_type_flags.pattern || mb_type_flags.intra {
+        modes.field_dct = br.read_u32(1)? != 0;
+        if modes.field_dct {
+            return Err(Error::unsupported(
+                "mpeg2video: field-DCT macroblocks not supported",
+            ));
+        }
+    }
+
+    Ok(modes)
+}
+
 /// Decode one slice.
 #[allow(clippy::too_many_arguments)]
 pub fn decode_slice(
@@ -166,6 +215,14 @@ pub fn decode_slice(
                 quant_scale = params.quantiser_scale(qs);
             }
         }
+
+        // MPEG-2 frame pictures with frame_pred_frame_dct == 0 carry
+        // macroblock-level mode side bits before motion_vector() and block
+        // data. Parse them even when they resolve to frame prediction / frame
+        // DCT; otherwise the bitstream falls out of alignment. Actual
+        // field-DCT, field-MC, and dual-prime modes still return explicit
+        // unsupported errors here.
+        let _mpeg2_modes = parse_mpeg2_macroblock_modes(br, params, mb_type_flags)?;
 
         // Parse MV(s).
         let mut fwd_mv: Option<(i32, i32)> = None;
@@ -616,5 +673,96 @@ fn write_mb(
         let off = (mb_y * 8 + j) * cs + mb_x * 8;
         pic.cb[off..off + 8].copy_from_slice(&cb[j * 8..j * 8 + 8]);
         pic.cr[off..off + 8].copy_from_slice(&cr[j * 8..j * 8 + 8]);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::coding_mode::Codec;
+    use oxideav_core::bits::BitWriter;
+
+    fn params(frame_pred_frame_dct: bool) -> PictureParams {
+        PictureParams {
+            codec: Codec::Mpeg2,
+            intra_dc_precision: 0,
+            alternate_scan: false,
+            intra_vlc_format: false,
+            q_scale_type: false,
+            frame_pred_frame_dct,
+            f_code: [[1, 1], [1, 1]],
+            full_pel_fwd: false,
+            full_pel_bwd: false,
+        }
+    }
+
+    fn bits(entries: &[(u32, u32)]) -> Vec<u8> {
+        let mut bw = BitWriter::new();
+        for &(value, len) in entries {
+            bw.write_bits(value, len);
+        }
+        bw.align_to_byte();
+        bw.finish()
+    }
+
+    #[test]
+    fn parses_frame_pred_zero_frame_motion_and_frame_dct_side_bits() {
+        // frame_motion_type = 10 (frame MC), dct_type = 0 (frame DCT).
+        let data = bits(&[(0b10, 2), (0, 1)]);
+        let mut br = BitReader::new(&data);
+        let modes = parse_mpeg2_macroblock_modes(
+            &mut br,
+            &params(false),
+            mb_type::MbTypeFlags::new(false, true, false, true, false),
+        )
+        .unwrap();
+
+        assert_eq!(modes.frame_motion_type, Some(2));
+        assert!(!modes.field_dct);
+    }
+
+    #[test]
+    fn rejects_field_mc_macroblock_after_parsing_mode_bits() {
+        // frame_motion_type = 01 (field MC).
+        let data = bits(&[(0b01, 2)]);
+        let mut br = BitReader::new(&data);
+        let err = parse_mpeg2_macroblock_modes(
+            &mut br,
+            &params(false),
+            mb_type::MbTypeFlags::new(false, true, false, false, false),
+        )
+        .unwrap_err();
+
+        assert!(err.to_string().contains("field-MC"));
+    }
+
+    #[test]
+    fn rejects_field_dct_macroblock_after_parsing_dct_type() {
+        // dct_type = 1 (field DCT) on a coded no-motion macroblock.
+        let data = bits(&[(1, 1)]);
+        let mut br = BitReader::new(&data);
+        let err = parse_mpeg2_macroblock_modes(
+            &mut br,
+            &params(false),
+            mb_type::MbTypeFlags::new(false, false, false, true, false),
+        )
+        .unwrap_err();
+
+        assert!(err.to_string().contains("field-DCT"));
+    }
+
+    #[test]
+    fn skips_side_bits_when_frame_pred_frame_dct_is_set() {
+        let data = bits(&[(0b01, 2), (1, 1)]);
+        let mut br = BitReader::new(&data);
+        let modes = parse_mpeg2_macroblock_modes(
+            &mut br,
+            &params(true),
+            mb_type::MbTypeFlags::new(false, true, false, true, false),
+        )
+        .unwrap();
+
+        assert_eq!(modes, Mpeg2MacroblockModes::default());
+        assert_eq!(br.bits_remaining(), 8);
     }
 }

@@ -67,6 +67,10 @@ pub struct PictureParams {
     /// table from H.262 §7.4.2.2 Table 7-6. Decoder honours this flag per
     /// picture; encoder does not currently emit it.
     pub q_scale_type: bool,
+    /// MPEG-2 `frame_pred_frame_dct`. When false, macroblocks carry
+    /// `frame_motion_type` and/or `dct_type` side bits that must be parsed
+    /// before motion vectors and block data.
+    pub frame_pred_frame_dct: bool,
     pub f_code: [[u8; 2]; 2],
     pub full_pel_fwd: bool,
     pub full_pel_bwd: bool,
@@ -132,6 +136,7 @@ impl PictureParams {
             alternate_scan: false,
             intra_vlc_format: false,
             q_scale_type: false,
+            frame_pred_frame_dct: true,
             f_code: [[fwd, fwd], [bwd, bwd]],
             full_pel_fwd: ph.full_pel_forward_vector,
             full_pel_bwd: ph.full_pel_backward_vector,
@@ -151,6 +156,7 @@ mod tests {
             alternate_scan: false,
             intra_vlc_format: false,
             q_scale_type: false,
+            frame_pred_frame_dct: true,
             f_code: [[1, 1], [1, 1]],
             full_pel_fwd: false,
             full_pel_bwd: false,
@@ -176,6 +182,7 @@ mod tests {
             alternate_scan: false,
             intra_vlc_format: false,
             q_scale_type: false,
+            frame_pred_frame_dct: true,
             f_code: [[1, 1], [1, 1]],
             full_pel_fwd: false,
             full_pel_bwd: false,
@@ -215,6 +222,7 @@ mod tests {
             alternate_scan: false,
             intra_vlc_format: false,
             q_scale_type: false,
+            frame_pred_frame_dct: true,
             f_code: [[1, 1], [1, 1]],
             full_pel_fwd: false,
             full_pel_bwd: false,
