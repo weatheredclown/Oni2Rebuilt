@@ -3,8 +3,13 @@ use std::fs;
 use std::path::Path;
 use std::process::Command;
 
+/// I-frame decode is now wired through `next_frame()` (milestone 4).  This
+/// test is `#[ignore]` because it requires `ffmpeg`/`ffprobe` on PATH to
+/// generate the fixture and produce the reference YUV; run explicitly with
+/// `cargo test -p mpeg2_player_v2 --test golden_frames -- --ignored` in an
+/// environment where they're installed.
 #[test]
-#[ignore = "milestone 4 gate: enable once I-frame slice/macroblock decode is wired into next_frame"]
+#[ignore = "requires ffmpeg on PATH to generate fixture + reference decode"]
 fn generated_progressive_simple_matches_ffmpeg_yuv() {
     let temp = std::env::temp_dir().join(format!(
         "mpeg2_player_v2_golden_{}_{}",
