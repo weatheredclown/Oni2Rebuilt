@@ -25,10 +25,12 @@ impl PictureParams {
     }
 
     /// Reset value for the intra DC predictor at the start of a slice, per
-    /// §7.2.1: `1 << (10 - intra_dc_precision)`.  Equals 1024 for the
-    /// default 8-bit precision (precision=0).
+    /// §7.2.1: `1 << (7 + intra_dc_precision)`.  Equals 128 for the default
+    /// 8-bit precision (precision=0); after multiplication by
+    /// `intra_dc_mult()` this seeds the pel-space DC at 1024 ⇒ spatial
+    /// midpoint 128 after IDCT, the correct "no signal yet" predictor.
     pub fn intra_dc_reset_value(&self) -> i32 {
-        1 << (10 - self.coding.intra_dc_precision as i32)
+        1 << (7 + self.coding.intra_dc_precision as i32)
     }
 
     /// MPEG-2 §7.4.2.1 intra DC multiplier — converts the differentially
@@ -90,16 +92,21 @@ mod tests {
 
     #[test]
     fn intra_dc_reset_default_precision() {
+        // §7.2.1: reset = 1 << (7 + precision).  For 8-bit video
+        // (precision=0) this is 128; combined with intra_dc_mult=8 the
+        // pel-space DC seed is 1024 → IDCT gives 128 (gray midpoint).
         let p = make_params();
-        assert_eq!(p.intra_dc_reset_value(), 1024);
+        assert_eq!(p.intra_dc_reset_value(), 128);
         assert_eq!(p.intra_dc_mult(), 8);
     }
 
     #[test]
     fn intra_dc_reset_precision_two() {
+        // precision=2 → reset = 1<<9 = 512, mult = 2 → pel DC seed = 1024
+        // (same spatial midpoint regardless of bit depth).
         let mut p = make_params();
         p.coding.intra_dc_precision = 2;
-        assert_eq!(p.intra_dc_reset_value(), 256);
+        assert_eq!(p.intra_dc_reset_value(), 512);
         assert_eq!(p.intra_dc_mult(), 2);
     }
 }

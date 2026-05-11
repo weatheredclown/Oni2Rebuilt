@@ -25,6 +25,7 @@ hound = "3.5.1"
 anyhow = "1.0.102"
 bevy-tnua = "0.29"
 bevy-tnua-avian3d = "0.10"
+mpeg2_player_v2 = { path = "../utils/mpeg2_player_v2" }
 
 [features]
 # Emit a Chrome-tracing JSON to the cwd on clean shutdown.

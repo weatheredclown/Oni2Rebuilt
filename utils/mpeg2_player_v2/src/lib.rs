@@ -67,6 +67,8 @@ pub struct Mpeg2Player {
     next_picture_offset: Option<usize>,
     /// Display PTS counter, advanced by 1/fps each emitted frame.
     presentation_time: f64,
+    fwd_ref: Option<crate::picture::PictureBuffer>,
+    bwd_ref: Option<crate::picture::PictureBuffer>,
 }
 
 impl Mpeg2Player {
@@ -88,6 +90,8 @@ impl Mpeg2Player {
             pending_bob: VecDeque::new(),
             next_picture_offset,
             presentation_time: 0.0,
+            fwd_ref: None,
+            bwd_ref: None,
         })
     }
 
@@ -156,24 +160,12 @@ impl Mpeg2Player {
             .ok_or_else(|| Error::invalid("decode_picture: missing picture coding extension"))?;
         let pic_ext = headers::parse_picture_coding_extension(pic_ext_payload)?;
 
-        if !matches!(pic_header.picture_coding_type, PictureType::I) {
-            return Err(Error::not_implemented(
-                "milestone 5+: P/B picture decoding (this is an I-only build)",
-            ));
-        }
-        if !pic_ext.frame_pred_frame_dct {
-            return Err(Error::not_implemented(
-                "milestone 6+: frame_pred_frame_dct=0 (field-DCT side bits)",
-            ));
-        }
-        if pic_ext.intra_vlc_format {
-            // Plumbed through the block decoder but not yet exercised by
-            // the milestone 4 fixture.  Remove this guard once a fixture
-            // exists.
-            return Err(Error::not_implemented(
-                "milestone 6: intra_vlc_format=1 (no fixture yet)",
-            ));
-        }
+        // `frame_pred_frame_dct = 0` and `intra_vlc_format = 1` are both
+        // plumbed end-to-end (MB-mode side bits in mb.rs, Table B-15 in
+        // block.rs, field-DCT layout in decode_inter_mb).  Field-MC
+        // (`frame_motion_type = 0b01`) is rejected at the MB level by
+        // decode_inter_mb until milestone 8 lands the field-aware
+        // prediction read.
 
         let params = crate::picture_params::PictureParams {
             sequence: self.info.clone(),
@@ -183,16 +175,35 @@ impl Mpeg2Player {
 
         let mut pic = crate::picture::PictureBuffer::new(self.info.width, self.info.height);
 
+        let fwd_ref_pass = if matches!(params.header.picture_coding_type, PictureType::B) {
+            self.fwd_ref.as_ref()
+        } else {
+            self.bwd_ref.as_ref()
+        };
+        let bwd_ref_pass = if matches!(params.header.picture_coding_type, PictureType::B) {
+            self.bwd_ref.as_ref()
+        } else {
+            None
+        };
+
         for (sc, payload) in &payloads {
             if (1..=0xaf).contains(&sc.code) {
                 slice::decode_slice(
                     payload,
                     sc.code,
                     &mut pic,
+                    fwd_ref_pass,
+                    bwd_ref_pass,
                     &params,
                     &self.seq_header.intra_quantiser_matrix,
+                    &self.seq_header.non_intra_quantiser_matrix,
                 )?;
             }
+        }
+
+        if matches!(params.header.picture_coding_type, PictureType::I | PictureType::P) {
+            self.fwd_ref = self.bwd_ref.take();
+            self.bwd_ref = Some(pic.clone());
         }
 
         // Crop the MB-padded planes down to the display rectangle.

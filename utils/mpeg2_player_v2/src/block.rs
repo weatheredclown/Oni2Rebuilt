@@ -292,16 +292,18 @@ mod tests {
         assert_eq!(sign_extend_dc(7, 3), 7);
     }
 
-    /// DC-only intra block: size=0 differential, EOB immediately.
-    /// Verifies the predictor update and pel-space DC reconstruction.
+    /// DC-only intra block at the slice-start reset: `dc_size=0`,
+    /// `dc_diff=0`, immediate EOB.  Verifies the predictor seeds the
+    /// pel-space midpoint (Y≈128).
     #[test]
-    fn dc_only_block_writes_high_constant() {
+    fn dc_only_block_writes_midgray() {
         // Tiny bitstream: dc_size=0 (luma B.12 code `100`, 3 bits) then EOB
         // (B.14 code `10`, 2 bits) = 5 bits total.  Pack MSB-first:
         //   100_10_000 = 0b1001_0000 = 0x90.
         let data = [0x90u8];
         let mut br = BitReader::new(&data);
-        let mut dc_pred = 1024i32; // intra DC reset value at precision 0
+        // intra DC reset at precision=0 is 1 << (7+0) = 128 (§7.2.1).
+        let mut dc_pred = 128i32;
         let params = make_params();
         let intra_q = crate::tables::q_matrices::DEFAULT_INTRA_QUANTISER_MATRIX;
         let mut out = [0u8; 8 * 8];
@@ -316,13 +318,17 @@ mod tests {
             8,
         )
         .unwrap();
-        // dc_size=0 → dc_diff=0 → predictor stays at 1024 → F[0][0] =
-        // clamp(8 * 1024, -2048..=2047) = 2047 → DC-only IDCT spreads ~256
-        // per pixel → clamps to 255 across the whole block (mismatch may
-        // toggle one bit in coeffs[63] but the spatial result is uniform
-        // saturated).
+        // dc_diff=0 → predictor stays at 128 → F[0][0] = 128*8 = 1024 →
+        // IDCT of a DC-only block with coeff[0]=1024 spreads ~128 per
+        // pixel.  Mismatch control may flip the LSB of coeff[63] which
+        // perturbs a couple of pixels by ±1 LSB but the bulk should be
+        // within a small window of 128.
         for &v in &out {
-            assert!(v >= 250, "expected near-saturated DC, got {:?}", out);
+            assert!(
+                (120..=136).contains(&v),
+                "expected near-midgray DC, got {:?}",
+                out
+            );
         }
     }
 }

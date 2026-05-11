@@ -7294,6 +7294,7 @@ dependencies = [
  "flate2",
  "hound",
  "image",
+ "mpeg2_player_v2",
  "prost",
  "rand 0.9.2",
  "rb-shared",

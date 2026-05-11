@@ -49,8 +49,15 @@ impl SliceState {
     }
 }
 
-/// Decode one intra macroblock at `(mb_x, mb_y)` into `pic`.  Reads the MB
-/// type, optional quantiser scale, and the six 8×8 blocks (Y0..Y3, Cb, Cr).
+/// Decode the six 8×8 blocks of an intra macroblock at `(mb_x, mb_y)`.
+///
+/// The caller (`slice::decode_slice`) has already consumed the MB-type,
+/// the optional `quantiser_scale_code` override, and the MPEG-2 side bits
+/// (`frame_motion_type` / `dct_type`).  The caller supplies the decoded
+/// `field_dct` flag so the luma blocks can be de-interleaved into top-
+/// field / bottom-field rows on write (§6.1.3); chroma is unaffected in
+/// 4:2:0.
+#[allow(clippy::too_many_arguments)]
 pub fn decode_intra_mb(
     br: &mut BitReader<'_>,
     state: &mut SliceState,
@@ -59,35 +66,15 @@ pub fn decode_intra_mb(
     intra_quantiser: &[u8; 64],
     mb_x: usize,
     mb_y: usize,
+    field_dct: bool,
 ) -> Result<()> {
-    // For I-pictures the only valid MB types are `intra` and `intra+quant`.
-    let mb_type_flags = vlc::decode(br, mb_type::i_table())?;
-    if !mb_type_flags.intra {
-        return Err(Error::invalid("I-picture: non-intra MB type decoded"));
-    }
-    if mb_type_flags.quant {
-        let qs = br.read(5)? as u8;
-        if qs == 0 {
-            return Err(Error::invalid("MB quantiser_scale_code = 0"));
-        }
-        state.quant_code = qs;
-    }
-
-    // MPEG-2 §6.3.17.1: `dct_type` side bit when
-    // `frame_pred_frame_dct == 0` and the MB has pattern/intra coefficients.
-    // For milestone 4 the fixture uses `frame_pred_frame_dct = 1`, so this
-    // branch isn't expected to fire — but we honour it if the bitstream
-    // presents it (without acting on field-DCT yet).
-    let _dct_type = if !params.coding.frame_pred_frame_dct {
-        Some(br.read(1)? != 0)
-    } else {
-        None
-    };
-
-    // Decode the six blocks.  Layout in luma: blocks 0/1 are the left/right
-    // top-half, 2/3 are the left/right bottom-half.  4 = Cb, 5 = Cr.
     for b in 0..6usize {
         let (is_chroma, comp_idx, dst_x0, dst_y0, stride) = block_layout(b, mb_x, mb_y, pic);
+        let (dst_x0, dst_y0, dst_stride) = if field_dct && !is_chroma {
+            luma_block_layout_field_dct(b, mb_x, mb_y, pic.y_stride)
+        } else {
+            (dst_x0, dst_y0, stride)
+        };
         let plane: &mut [u8] = match comp_idx {
             0 => &mut pic.y[..],
             1 => &mut pic.cb[..],
@@ -102,7 +89,7 @@ pub fn decode_intra_mb(
             intra_quantiser,
             params,
             sub,
-            stride,
+            dst_stride,
         )?;
     }
     Ok(())
@@ -169,7 +156,6 @@ impl DirPrediction {
             _ => None,
         }
     }
-    #[allow(dead_code)]
     pub fn has_any(&self) -> bool {
         !matches!(self, DirPrediction::None)
     }
@@ -304,14 +290,10 @@ pub fn decode_inter_mb(
     let mut pred_cb = [0u8; 8 * 8];
     let mut pred_cr = [0u8; 8 * 8];
 
-    if matches!(fwd_pred, DirPrediction::Field { .. }) || matches!(bwd_pred, DirPrediction::Field { .. }) {
-        return Err(Error::unsupported("mpeg2video: field-MC frame macroblock prediction not implemented"));
-    }
-
-    let fwd_mv = fwd_pred.frame_mv();
-    let bwd_mv = bwd_pred.frame_mv();
-
-    build_prediction(fwd_ref, bwd_ref, mb_x, mb_y, fwd_mv, bwd_mv, &mut pred_y, &mut pred_cb, &mut pred_cr)?;
+    build_dir_prediction(
+        fwd_ref, bwd_ref, mb_x, mb_y, fwd_pred, bwd_pred,
+        &mut pred_y, &mut pred_cb, &mut pred_cr,
+    )?;
 
     for b in 0..6usize {
         let (is_chroma, comp_idx, dst_x0, dst_y0, stride_ptr) = block_layout(b, mb_x, mb_y, pic);
@@ -354,6 +336,159 @@ pub fn decode_inter_mb(
             crate::block::decode_non_intra_block(br, state.quant_code, non_intra_quantiser, params, pred_slice, pred_stride, sub, dst_stride)?;
         } else {
             crate::block::copy_prediction(pred_slice, pred_stride, 8, sub, dst_stride);
+        }
+    }
+    Ok(())
+}
+
+/// Per-direction MC that handles both frame-MC and field-MC and writes
+/// directly into spatial-order planes (`out_y` is 16×16 row-major, `out_cb`
+/// / `out_cr` are 8×8).  Returns `Ok(true)` if the direction had motion,
+/// `Ok(false)` if it was `DirPrediction::None`.
+#[allow(clippy::too_many_arguments)]
+fn build_one_direction_prediction(
+    pred: DirPrediction,
+    refp: &PictureBuffer,
+    mb_x: usize,
+    mb_y: usize,
+    out_y: &mut [u8; 16 * 16],
+    out_cb: &mut [u8; 8 * 8],
+    out_cr: &mut [u8; 8 * 8],
+) -> bool {
+    match pred {
+        DirPrediction::None => false,
+        DirPrediction::Frame { mv: (mx, my) } => {
+            mc_mb(refp, mb_x, mb_y, mx, my, out_y, out_cb, out_cr);
+            true
+        }
+        DirPrediction::Field {
+            top_mv: (top_mx, top_my),
+            top_field_select,
+            bot_mv: (bot_mx, bot_my),
+            bot_field_select,
+        } => {
+            // Luma: two 16×8 reads, top into rows 0,2,…,14 (stride 32 from
+            // pred_y[0]); bottom into rows 1,3,…,15 (stride 32 from
+            // pred_y[16]).  Vertical MV is in half-FIELD-LINE units; the
+            // field-aware predictor reads with doubled reference stride.
+            let mb_px = (mb_x * 16) as i32;
+            let mb_py = (mb_y * 16) as i32;
+            let ref_w = refp.display_width as i32;
+            let ref_h = refp.display_height as i32;
+
+            crate::motion::predict_field_half(
+                &refp.y, refp.y_stride, ref_w, ref_h,
+                mb_px, mb_py, top_mx, top_my, top_field_select,
+                16, 8, &mut out_y[0..], 32,
+            );
+            crate::motion::predict_field_half(
+                &refp.y, refp.y_stride, ref_w, ref_h,
+                mb_px, mb_py, bot_mx, bot_my, bot_field_select,
+                16, 8, &mut out_y[16..], 32,
+            );
+
+            // Chroma: 4:2:0 → 8 wide × 4 tall per field half.  MV
+            // components halve (luma → chroma half-pel scaling).  mb base
+            // in chroma coords is mb_x*8, mb_y*8 (frame rows).
+            let c_px = (mb_x * 8) as i32;
+            let c_py = (mb_y * 8) as i32;
+            let c_w = (refp.display_width / 2) as i32;
+            let c_h = (refp.display_height / 2) as i32;
+            let top_cx = crate::motion::scale_mv_to_chroma(top_mx);
+            let top_cy = crate::motion::scale_mv_to_chroma(top_my);
+            let bot_cx = crate::motion::scale_mv_to_chroma(bot_mx);
+            let bot_cy = crate::motion::scale_mv_to_chroma(bot_my);
+
+            crate::motion::predict_field_half(
+                &refp.cb, refp.c_stride, c_w, c_h,
+                c_px, c_py, top_cx, top_cy, top_field_select,
+                8, 4, &mut out_cb[0..], 16,
+            );
+            crate::motion::predict_field_half(
+                &refp.cb, refp.c_stride, c_w, c_h,
+                c_px, c_py, bot_cx, bot_cy, bot_field_select,
+                8, 4, &mut out_cb[8..], 16,
+            );
+            crate::motion::predict_field_half(
+                &refp.cr, refp.c_stride, c_w, c_h,
+                c_px, c_py, top_cx, top_cy, top_field_select,
+                8, 4, &mut out_cr[0..], 16,
+            );
+            crate::motion::predict_field_half(
+                &refp.cr, refp.c_stride, c_w, c_h,
+                c_px, c_py, bot_cx, bot_cy, bot_field_select,
+                8, 4, &mut out_cr[8..], 16,
+            );
+            true
+        }
+    }
+}
+
+/// Build the MB-level prediction for one or two motion-compensation
+/// directions, handling frame-MC and field-MC uniformly.  Bidirectional
+/// prediction averages the two contributions with `(a + b + 1) >> 1`.
+#[allow(clippy::too_many_arguments)]
+pub fn build_dir_prediction(
+    fwd_ref: Option<&PictureBuffer>,
+    bwd_ref: Option<&PictureBuffer>,
+    mb_x: usize,
+    mb_y: usize,
+    fwd_pred: DirPrediction,
+    bwd_pred: DirPrediction,
+    pred_y: &mut [u8; 16 * 16],
+    pred_cb: &mut [u8; 8 * 8],
+    pred_cr: &mut [u8; 8 * 8],
+) -> Result<()> {
+    let mut fwd_y = [0u8; 16 * 16];
+    let mut fwd_cb = [0u8; 8 * 8];
+    let mut fwd_cr = [0u8; 8 * 8];
+    let mut bwd_y = [0u8; 16 * 16];
+    let mut bwd_cb = [0u8; 8 * 8];
+    let mut bwd_cr = [0u8; 8 * 8];
+
+    let have_fwd = if matches!(fwd_pred, DirPrediction::None) {
+        false
+    } else {
+        let refp = fwd_ref.ok_or_else(|| {
+            Error::invalid("forward prediction requested without forward reference")
+        })?;
+        build_one_direction_prediction(
+            fwd_pred, refp, mb_x, mb_y, &mut fwd_y, &mut fwd_cb, &mut fwd_cr,
+        )
+    };
+    let have_bwd = if matches!(bwd_pred, DirPrediction::None) {
+        false
+    } else {
+        let refp = bwd_ref.ok_or_else(|| {
+            Error::invalid("backward prediction requested without backward reference")
+        })?;
+        build_one_direction_prediction(
+            bwd_pred, refp, mb_x, mb_y, &mut bwd_y, &mut bwd_cb, &mut bwd_cr,
+        )
+    };
+
+    match (have_fwd, have_bwd) {
+        (true, false) => {
+            pred_y.copy_from_slice(&fwd_y);
+            pred_cb.copy_from_slice(&fwd_cb);
+            pred_cr.copy_from_slice(&fwd_cr);
+        }
+        (false, true) => {
+            pred_y.copy_from_slice(&bwd_y);
+            pred_cb.copy_from_slice(&bwd_cb);
+            pred_cr.copy_from_slice(&bwd_cr);
+        }
+        (true, true) => {
+            for i in 0..16 * 16 {
+                pred_y[i] = ((fwd_y[i] as u32 + bwd_y[i] as u32 + 1) >> 1) as u8;
+            }
+            for i in 0..8 * 8 {
+                pred_cb[i] = ((fwd_cb[i] as u32 + bwd_cb[i] as u32 + 1) >> 1) as u8;
+                pred_cr[i] = ((fwd_cr[i] as u32 + bwd_cr[i] as u32 + 1) >> 1) as u8;
+            }
+        }
+        (false, false) => {
+            return Err(Error::invalid("inter MB with neither fwd nor bwd prediction"));
         }
     }
     Ok(())
@@ -425,13 +560,13 @@ pub fn mc_mb(
 ) {
     let mb_px = (mb_x * 16) as i32;
     let mb_py = (mb_y * 16) as i32;
-    crate::motion::predict_block(&refp.y, refp.y_stride, refp.y_stride as i32, (refp.y.len() / refp.y_stride) as i32, mb_px, mb_py, mv_x, mv_y, 16, dst_y, 16);
+    crate::motion::predict_block(&refp.y, refp.y_stride, refp.display_width as i32, refp.display_height as i32, mb_px, mb_py, mv_x, mv_y, 16, dst_y, 16);
     let c_px = (mb_x * 8) as i32;
     let c_py = (mb_y * 8) as i32;
     let mv_cx = crate::motion::scale_mv_to_chroma(mv_x);
     let mv_cy = crate::motion::scale_mv_to_chroma(mv_y);
-    crate::motion::predict_block(&refp.cb, refp.c_stride, refp.c_stride as i32, (refp.cb.len() / refp.c_stride) as i32, c_px, c_py, mv_cx, mv_cy, 8, dst_cb, 8);
-    crate::motion::predict_block(&refp.cr, refp.c_stride, refp.c_stride as i32, (refp.cr.len() / refp.c_stride) as i32, c_px, c_py, mv_cx, mv_cy, 8, dst_cr, 8);
+    crate::motion::predict_block(&refp.cb, refp.c_stride, (refp.display_width / 2) as i32, (refp.display_height / 2) as i32, c_px, c_py, mv_cx, mv_cy, 8, dst_cb, 8);
+    crate::motion::predict_block(&refp.cr, refp.c_stride, (refp.display_width / 2) as i32, (refp.display_height / 2) as i32, c_px, c_py, mv_cx, mv_cy, 8, dst_cr, 8);
 }
 
 pub fn fill_forward_predict(pic: &mut PictureBuffer, fwd_ref: Option<&PictureBuffer>, mb_x: usize, mb_y: usize, mv_x: i32, mv_y: i32) -> Result<()> {

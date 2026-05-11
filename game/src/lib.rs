@@ -22,6 +22,7 @@ pub mod hud;
 pub mod inventory;
 pub mod laser;
 pub mod menu;
+pub mod mpeg2_video;
 pub mod mover;
 pub mod oni2_loader;
 pub mod player;
