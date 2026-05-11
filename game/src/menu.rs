@@ -17,11 +17,13 @@ pub enum AppState {
     /// into game).  This is the polished player-facing menu; while
     /// it's still being wired up it's hidden behind `--ogmenu`.
     FrontEnd,
+    #[cfg_attr(feature = "intro_videos", default)]
+    IntroVideo,
     /// Default startup state — the dev-friendly debug picker
     /// (formerly `--testlayout`).  Lists every layout folder on disk
     /// + descriptions from `Settings/rb.gamedata`, and is what the
     /// game also drops back into on Escape from a level.
-    #[default]
+    #[cfg_attr(not(feature = "intro_videos"), default)]
     Menu,
     AnimMenu,
     EntityMenu,

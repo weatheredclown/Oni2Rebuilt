@@ -32,3 +32,5 @@ mpeg2_player_v2 = { path = "../utils/mpeg2_player_v2" }
 # Run with `cargo run --release --features trace`, then drop the
 # resulting `trace-*.json` into chrome://tracing or ui.perfetto.dev.
 trace = ["bevy/trace_chrome"]
+# Conditionally play Angel Studios and Rockstar Games intro videos before the main menu.
+intro_videos = []

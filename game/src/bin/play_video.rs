@@ -51,7 +51,7 @@ fn main() {
 
 fn kick_off(mut writer: MessageWriter<PlayMpeg2Video>, path: Res<VideoPath>) {
     writer.write(PlayMpeg2Video {
-        path: path.0.clone(),
+        source: rb_game::mpeg2_video::VideoSource::Disk(path.0.clone()),
     });
 }
 

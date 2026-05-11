@@ -34,6 +34,7 @@ mod inventory;
 mod laser;
 mod menu;
 mod mover;
+mod mpeg2_video;
 mod oni2_loader;
 mod player;
 mod projectile_system;
@@ -42,6 +43,8 @@ mod shadow_lod;
 mod statemachine;
 mod telemetry;
 mod weapons;
+#[cfg(feature = "intro_videos")]
+mod intro_video;
 pub use filesystem::dave_vfs;
 pub use filesystem::vfs;
 
@@ -256,6 +259,9 @@ fn main() {
     .add_plugins(crt_post::CrtPostPlugin)
     .add_plugins(env_reflect_material::EnvReflectMaterialPlugin)
     .add_plugins(shadow_lod::ShadowLodPlugin);
+
+    #[cfg(feature = "intro_videos")]
+    app.add_plugins(intro_video::IntroVideoPlugin);
 
     if fog_enabled {
         app.insert_resource(oni2_loader::FogEnabled);

@@ -111,11 +111,17 @@ impl Material2d for Mpeg2VideoMaterial {
     }
 }
 
+#[derive(Clone, Debug)]
+pub enum VideoSource {
+    Vfs(String),
+    Disk(PathBuf),
+}
+
 /// Trigger event: start playing the video at `path`.  Replaces any
 /// already-playing video on the same `World`.
 #[derive(Message, Debug, Clone)]
 pub struct PlayMpeg2Video {
-    pub path: PathBuf,
+    pub source: VideoSource,
 }
 
 /// Emitted once on the tick after the stream ends.  Use to chain into
@@ -177,12 +183,27 @@ fn start_playback(
         // Open + parse on the main thread so we know the dimensions and
         // frame rate up front; only the slice-by-slice decode loop runs
         // on the worker.
-        let player = match Mpeg2Player::open(&ev.path) {
-            Ok(p) => p,
-            Err(err) => {
-                error!("mpeg2_video: failed to open {:?}: {err}", ev.path);
-                continue;
-            }
+        let player = match &ev.source {
+            VideoSource::Disk(path) => match Mpeg2Player::open(path) {
+                Ok(p) => p,
+                Err(err) => {
+                    error!("mpeg2_video: failed to open {:?}: {err}", path);
+                    continue;
+                }
+            },
+            VideoSource::Vfs(vfs_path) => match crate::vfs::read("", vfs_path) {
+                Ok(bytes) => match Mpeg2Player::from_bytes(bytes) {
+                    Ok(p) => p,
+                    Err(err) => {
+                        error!("mpeg2_video: failed to parse {}: {}", vfs_path, err);
+                        continue;
+                    }
+                },
+                Err(err) => {
+                    error!("mpeg2_video: failed to read {} from VFS: {}", vfs_path, err);
+                    continue;
+                }
+            },
         };
         let info = player.info().clone();
         let width = info.width;
@@ -199,7 +220,7 @@ fn start_playback(
             width,
             height,
             1.0 / frame_period,
-            ev.path
+            ev.source
         );
 
         // Despawn any prior playback so triggering twice replaces cleanly.
@@ -265,7 +286,7 @@ fn start_playback(
                 decoded_count,
                 uploaded_count: 0,
             },
-            Name::new(format!("Mpeg2Video[{}]", ev.path.display())),
+            Name::new(format!("Mpeg2Video[{:?}]", ev.source)),
         ));
 
         if existing_cameras.is_empty() {

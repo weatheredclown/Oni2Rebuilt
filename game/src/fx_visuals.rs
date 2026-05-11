@@ -470,8 +470,13 @@ pub fn spawn_strike(
     materials: &mut Assets<StandardMaterial>,
     def: &StrikeFxDef,
     world_pos: Vec3,
-    parent: Option<Entity>,
+    _parent: Option<Entity>,
 ) {
+    info!(
+        "spawn_strike: def={} world_pos={:?} duration={} scale_rate={}",
+        def.name, world_pos, def.duration, def.scale_rate
+    );
+
     let mesh_handle = if let Some(h) = mesh_cache.0.get(&def.name) {
         h.clone()
     } else {
@@ -495,7 +500,9 @@ pub fn spawn_strike(
         ..default()
     });
 
-    let mut ec = commands.spawn((
+    // Stick at the impact point — no parenting (avoids double-applying the
+    // parent's world transform on top of our world-space position).
+    commands.spawn((
         Name::new(format!("StrikeFx:{}", def.name)),
         Mesh3d(mesh_handle),
         MeshMaterial3d(material.clone()),
@@ -516,10 +523,6 @@ pub fn spawn_strike(
         },
         crate::menu::InGameEntity,
     ));
-
-    if let Some(p) = parent {
-        ec.insert(ChildOf(p));
-    }
 }
 
 fn update_strike_fx(
@@ -550,12 +553,26 @@ fn update_strike_fx(
             1.0
         };
 
+        // Bevy's `AlphaMode::Add` doesn't modulate by `base_color.a`, unlike the
+        // legacy `blendSet_SrcAlpha_One` (which did `src*src.alpha + dst`).  To
+        // get the same effective fade, pre-multiply the source alpha into RGB
+        // and leave the alpha channel at 1.
         if let Some(mat) = materials.get_mut(&strike.material) {
-            mat.base_color = mat.base_color.with_alpha(alpha);
+            let base = mat.base_color.to_linear();
+            let faded = LinearRgba::new(
+                base.red * alpha,
+                base.green * alpha,
+                base.blue * alpha,
+                1.0,
+            );
+            mat.base_color = Color::LinearRgba(faded);
         }
 
-        let world_size = strike.current_scale;
-        
+        // C++ folds a 0.5 into `Rotation.Set(sinθ*0.5, cosθ*0.5)`, so the
+        // effective world stretch is `Scale * 0.5`.  Match that here so the
+        // strike's apparent size lines up with the legacy game.
+        let world_size = strike.current_scale * 0.5;
+
         let mut base_rot = Quat::IDENTITY;
         if let Some(cam_tf) = camera.iter().next() {
             base_rot = cam_tf.compute_transform().rotation;
