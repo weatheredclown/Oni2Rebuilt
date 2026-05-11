@@ -80,14 +80,27 @@ fn parse_mpeg2_macroblock_modes(
 
     if mb_type_flags.pattern || mb_type_flags.intra {
         modes.field_dct = br.read_u32(1)? != 0;
-        if modes.field_dct {
-            return Err(Error::unsupported(
-                "mpeg2video: field-DCT macroblocks not supported",
-            ));
-        }
     }
 
     Ok(modes)
+}
+
+/// Block layout for a single 8×8 block of an MB.  Returns
+/// `(is_chroma, comp_idx, dst_x0, dst_y0, stride)`.  When `field_dct` is true,
+/// the four luma blocks (0..=3) are organised as field-DCT: blocks 0/1 carry
+/// the top-field rows (0,2,…,14) and blocks 2/3 carry the bottom-field rows
+/// (1,3,…,15).  The output stride doubles so the IDCT's 8 contiguous rows
+/// land on every-other picture row; chroma is unaffected in 4:2:0 (§6.1.3).
+fn luma_block_layout_field_dct(
+    b: usize,
+    mb_x: usize,
+    mb_y: usize,
+    y_stride: usize,
+) -> (usize, usize, usize) {
+    // Returns (dst_x0, dst_y0, stride).
+    let x_off = if b & 1 == 0 { 0 } else { 8 };
+    let y_off = if b < 2 { 0 } else { 1 };
+    (mb_x * 16 + x_off, mb_y * 16 + y_off, y_stride * 2)
 }
 
 /// Decode one slice.
@@ -218,11 +231,10 @@ pub fn decode_slice(
 
         // MPEG-2 frame pictures with frame_pred_frame_dct == 0 carry
         // macroblock-level mode side bits before motion_vector() and block
-        // data. Parse them even when they resolve to frame prediction / frame
-        // DCT; otherwise the bitstream falls out of alignment. Actual
-        // field-DCT, field-MC, and dual-prime modes still return explicit
-        // unsupported errors here.
-        let _mpeg2_modes = parse_mpeg2_macroblock_modes(br, params, mb_type_flags)?;
+        // data.  field-DCT (`dct_type=1`) is supported and reorganises the
+        // luma blocks; field-MC and dual-prime still return unsupported.
+        let mpeg2_modes = parse_mpeg2_macroblock_modes(br, params, mb_type_flags)?;
+        let field_dct = mpeg2_modes.field_dct;
 
         // Parse MV(s).
         let mut fwd_mv: Option<(i32, i32)> = None;
@@ -287,7 +299,9 @@ pub fn decode_slice(
 
         if mb_type_flags.intra {
             // Pure intra MB.
-            decode_mb_intra(br, seq, params, &mut state, pic, mb_x, mb_y, quant_scale)?;
+            decode_mb_intra(
+                br, seq, params, &mut state, pic, mb_x, mb_y, quant_scale, field_dct,
+            )?;
         } else {
             // Non-intra MB: apply motion compensation and optional
             // residual add.
@@ -305,6 +319,7 @@ pub fn decode_slice(
                 fwd_mv,
                 bwd_mv,
                 cbp_bits,
+                field_dct,
             )?;
         }
 
@@ -354,9 +369,20 @@ fn decode_mb_intra(
     mb_x: usize,
     mb_y: usize,
     quant_scale: u8,
+    field_dct: bool,
 ) -> Result<()> {
     for b in 0..6usize {
         let (is_chroma, comp_idx, dst_x0, dst_y0, stride_ptr) = block_layout(b, mb_x, mb_y, pic);
+        // Override the luma destination for field-DCT MBs: rows are
+        // de-interleaved into top-field (b=0,1) and bottom-field (b=2,3),
+        // and the output stride doubles so 8 contiguous IDCT rows land
+        // on every-other picture row.  Chroma (b=4,5) is frame-organised
+        // in 4:2:0 regardless.
+        let (dst_x0, dst_y0, dst_stride) = if field_dct && !is_chroma {
+            luma_block_layout_field_dct(b, mb_x, mb_y, pic.y_stride)
+        } else {
+            (dst_x0, dst_y0, stride_ptr)
+        };
         let buf: &mut [u8] = match comp_idx {
             0 => &mut pic.y[..],
             1 => &mut pic.cb[..],
@@ -371,7 +397,7 @@ fn decode_mb_intra(
             &seq.intra_quantiser,
             params,
             sub,
-            stride_ptr,
+            dst_stride,
         )?;
     }
     Ok(())
@@ -392,6 +418,7 @@ fn decode_mb_inter(
     fwd_mv: Option<(i32, i32)>,
     bwd_mv: Option<(i32, i32)>,
     cbp_bits: u8,
+    field_dct: bool,
 ) -> Result<()> {
     // Build 16x16 luma + 8x8 Cb + 8x8 Cr prediction.
     let mut pred_y = [0u8; 16 * 16];
@@ -419,16 +446,37 @@ fn decode_mb_inter(
         // Bit 5 (0x20) = block 0; bit 0 (0x01) = block 5.
         let coded = (cbp_bits & (1 << (5 - b))) != 0;
 
-        let (pred_slice, pred_stride, blk_size): (&[u8], usize, usize) = match b {
-            0 => (&pred_y[0..], 16, 8),
-            1 => (&pred_y[8..], 16, 8),
-            2 => (&pred_y[16 * 8..], 16, 8),
-            3 => (&pred_y[16 * 8 + 8..], 16, 8),
-            4 => (&pred_cb[..], 8, 8),
-            5 => (&pred_cr[..], 8, 8),
-            _ => unreachable!(),
+        // Frame-DCT luma: blocks 0/1 = top half rows 0..=7, blocks 2/3 =
+        // bottom half rows 8..=15.  Field-DCT luma: blocks 0/1 = top-field
+        // rows 0,2,…,14, blocks 2/3 = bottom-field rows 1,3,…,15 — both
+        // the prediction slice AND the picture destination need the
+        // de-interleaved layout, otherwise the residual lands on the
+        // wrong rows.  Chroma is frame-organised regardless.
+        let (pred_slice, pred_stride): (&[u8], usize) = if field_dct && !is_chroma {
+            match b {
+                0 => (&pred_y[0..], 16 * 2),
+                1 => (&pred_y[8..], 16 * 2),
+                2 => (&pred_y[16..], 16 * 2),       // row 1 = byte 16
+                3 => (&pred_y[16 + 8..], 16 * 2),   // row 1, col 8
+                _ => unreachable!(),
+            }
+        } else {
+            match b {
+                0 => (&pred_y[0..], 16),
+                1 => (&pred_y[8..], 16),
+                2 => (&pred_y[16 * 8..], 16),
+                3 => (&pred_y[16 * 8 + 8..], 16),
+                4 => (&pred_cb[..], 8),
+                5 => (&pred_cr[..], 8),
+                _ => unreachable!(),
+            }
         };
-        let _ = blk_size;
+
+        let (dst_x0, dst_y0, dst_stride) = if field_dct && !is_chroma {
+            luma_block_layout_field_dct(b, mb_x, mb_y, pic.y_stride)
+        } else {
+            (dst_x0, dst_y0, stride_ptr)
+        };
 
         let buf: &mut [u8] = match comp_idx {
             0 => &mut pic.y[..],
@@ -445,11 +493,11 @@ fn decode_mb_inter(
                 pred_slice,
                 pred_stride,
                 sub,
-                stride_ptr,
+                dst_stride,
             )?;
         } else {
             let _ = is_chroma;
-            copy_prediction(pred_slice, pred_stride, 8, sub, stride_ptr);
+            copy_prediction(pred_slice, pred_stride, 8, sub, dst_stride);
         }
     }
     Ok(())
@@ -737,18 +785,39 @@ mod tests {
     }
 
     #[test]
-    fn rejects_field_dct_macroblock_after_parsing_dct_type() {
-        // dct_type = 1 (field DCT) on a coded no-motion macroblock.
+    fn parses_field_dct_bit_without_rejecting() {
+        // dct_type = 1 (field DCT) on a coded no-motion macroblock.  Now
+        // accepted — the MB-level decoder de-interleaves luma rows when
+        // this flag is set.
         let data = bits(&[(1, 1)]);
         let mut br = BitReader::new(&data);
-        let err = parse_mpeg2_macroblock_modes(
+        let modes = parse_mpeg2_macroblock_modes(
             &mut br,
             &params(false),
             mb_type::MbTypeFlags::new(false, false, false, true, false),
         )
-        .unwrap_err();
+        .unwrap();
 
-        assert!(err.to_string().contains("field-DCT"));
+        assert!(modes.field_dct);
+        assert_eq!(modes.frame_motion_type, None);
+    }
+
+    #[test]
+    fn field_dct_luma_layout_top_field_blocks() {
+        // Blocks 0 and 1 carry top-field rows (0,2,…) of left/right halves.
+        let (x0, y0, stride) = luma_block_layout_field_dct(0, /*mb_x=*/ 2, /*mb_y=*/ 3, 256);
+        assert_eq!((x0, y0, stride), (2 * 16, 3 * 16, 512));
+        let (x1, y1, _) = luma_block_layout_field_dct(1, 2, 3, 256);
+        assert_eq!((x1, y1), (2 * 16 + 8, 3 * 16));
+    }
+
+    #[test]
+    fn field_dct_luma_layout_bottom_field_blocks() {
+        // Blocks 2 and 3 carry bottom-field rows (1,3,…) — start at row+1.
+        let (x2, y2, stride) = luma_block_layout_field_dct(2, /*mb_x=*/ 2, /*mb_y=*/ 3, 256);
+        assert_eq!((x2, y2, stride), (2 * 16, 3 * 16 + 1, 512));
+        let (x3, y3, _) = luma_block_layout_field_dct(3, 2, 3, 256);
+        assert_eq!((x3, y3), (2 * 16 + 8, 3 * 16 + 1));
     }
 
     #[test]

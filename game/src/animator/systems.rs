@@ -1262,6 +1262,18 @@ pub fn replenish_jumps_on_ground_system(
 ) {
     for (anim_state_opt, mut ap) in &mut query {
         let is_grounded = anim_state_opt.is_none_or(|s| s.is_grounded);
+        // Skip during the COMPRESS phase of an in-progress jump.  COMPRESS
+        // is the squat-down animation that plays *before* the impulse
+        // fires — the actor is still grounded, but `StartJumpCompress` has
+        // already decremented `jumps_remaining`.  Refilling here would let
+        // the next press see `is_first_jump=true` and fire a second
+        // regular takeoff instead of the somersault, producing a visible
+        // "jump → jump-again → somersault" triple jump.  JUMP_LAND is
+        // grounded too but is the natural reset point, so we *do* want
+        // the refill there.
+        if ap.sub_state_1 == sub_state_1::JUMP_COMPRESS {
+            continue;
+        }
         if is_grounded && ap.jumps_remaining < ap.max_jumps {
             ap.jumps_remaining = ap.max_jumps;
         }
