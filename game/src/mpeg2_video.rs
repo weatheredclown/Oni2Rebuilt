@@ -277,12 +277,13 @@ fn start_playback(
 fn advance_playback(
     time: Res<Time>,
     mut images: ResMut<Assets<Image>>,
-    mut query: Query<(Entity, &mut Mpeg2VideoPlayback)>,
+    mut query: Query<(Entity, &mut Mpeg2VideoPlayback, &MeshMaterial2d<Mpeg2VideoMaterial>)>,
+    mut materials: ResMut<Assets<Mpeg2VideoMaterial>>,
     mut finished: MessageWriter<Mpeg2VideoFinishedMessage>,
     mut commands: Commands,
 ) {
     let dt = time.delta_secs_f64();
-    for (entity, mut playback) in &mut query {
+    for (entity, mut playback, material_handle) in &mut query {
         if playback.finished {
             continue;
         }
@@ -305,6 +306,7 @@ fn advance_playback(
                     );
                 }
                 upload_frame(&mut images, &playback, frame, n);
+                let _ = materials.get_mut(&material_handle.0);
             }
             Err(TryRecvError::Empty) => {
                 // Decoder is behind; cap the accumulator so we don't
