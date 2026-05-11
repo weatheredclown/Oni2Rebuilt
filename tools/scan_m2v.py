@@ -1,5 +1,5 @@
 """Scan an MPEG-2 elementary stream and report the flags relevant for the
-proposed mpeg2_player crate's relaxed-guard subset.
+mpeg2_player_v2 crate's relaxed-guard subset.
 
 Reports:
   - sequence info (size, frame rate, progressive_sequence)

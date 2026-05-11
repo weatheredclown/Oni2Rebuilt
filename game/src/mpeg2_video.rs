@@ -47,6 +47,8 @@ use bevy::sprite_render::{AlphaMode2d, Material2d, Material2dPlugin};
 use crossbeam_channel::{Receiver, TryRecvError, bounded};
 use mpeg2_player_v2::{FramePlanes, Mpeg2Player, VideoFrame};
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::Arc;
 use std::thread;
 
 /// Number of decoded frames the worker may queue ahead of the display.
@@ -135,6 +137,12 @@ pub struct Mpeg2VideoPlayback {
     /// exceeds `frame_period` we pull the next frame.
     accum: f64,
     finished: bool,
+    /// Counter of frames the worker has produced (incremented on send).
+    /// Diagnostic only — lets the main thread observe whether the worker
+    /// is making progress when no frames are arriving.
+    decoded_count: Arc<AtomicU32>,
+    /// Counter of frames the main thread has uploaded to GPU.
+    uploaded_count: u32,
 }
 
 pub struct Mpeg2VideoPlugin;
@@ -204,6 +212,8 @@ fn start_playback(
         let cr_tex = images.add(plane_image(c_w, c_h));
 
         let (tx, rx) = bounded::<VideoFrame>(RING_DEPTH);
+        let decoded_count = Arc::new(AtomicU32::new(0));
+        let decoded_count_worker = decoded_count.clone();
         thread::Builder::new()
             .name("mpeg2_video_decode".into())
             .spawn(move || {
@@ -211,12 +221,19 @@ fn start_playback(
                 loop {
                     match player.next_frame() {
                         Ok(Some(frame)) => {
+                            let n = decoded_count_worker.fetch_add(1, Ordering::Relaxed) + 1;
+                            if n == 1 || n % 30 == 0 {
+                                info!("mpeg2_video: worker decoded frame #{n}");
+                            }
                             if tx.send(frame).is_err() {
                                 // Display dropped — playback was cancelled.
                                 return;
                             }
                         }
-                        Ok(None) => return,
+                        Ok(None) => {
+                            info!("mpeg2_video: worker reached end of stream");
+                            return;
+                        }
                         Err(err) => {
                             error!("mpeg2_video: decode error: {err}");
                             return;
@@ -245,6 +262,8 @@ fn start_playback(
                 frame_period,
                 accum: frame_period, // present the first frame immediately
                 finished: false,
+                decoded_count,
+                uploaded_count: 0,
             },
             Name::new(format!("Mpeg2Video[{}]", ev.path.display())),
         ));
@@ -277,7 +296,15 @@ fn advance_playback(
         match playback.rx.try_recv() {
             Ok(frame) => {
                 playback.accum -= playback.frame_period;
-                upload_frame(&mut images, &playback, frame);
+                playback.uploaded_count += 1;
+                let n = playback.uploaded_count;
+                let decoded = playback.decoded_count.load(Ordering::Relaxed);
+                if n == 1 || n % 30 == 0 {
+                    info!(
+                        "mpeg2_video: main uploaded frame #{n} (decoded so far: {decoded})"
+                    );
+                }
+                upload_frame(&mut images, &playback, frame, n);
             }
             Err(TryRecvError::Empty) => {
                 // Decoder is behind; cap the accumulator so we don't
@@ -293,7 +320,12 @@ fn advance_playback(
     }
 }
 
-fn upload_frame(images: &mut Assets<Image>, playback: &Mpeg2VideoPlayback, frame: VideoFrame) {
+fn upload_frame(
+    images: &mut Assets<Image>,
+    playback: &Mpeg2VideoPlayback,
+    frame: VideoFrame,
+    seq: u32,
+) {
     let FramePlanes::Yuv420p { y, cb, cr } = frame.planes else {
         // RGBA-mode frames aren't expected from this decoder configuration.
         // The default Mpeg2Player output is YUV420P; if that changes we'd
@@ -302,14 +334,41 @@ fn upload_frame(images: &mut Assets<Image>, playback: &Mpeg2VideoPlayback, frame
         warn!("mpeg2_video: ignoring non-YUV frame variant");
         return;
     };
-    overwrite_plane(images, &playback.y_tex, y);
-    overwrite_plane(images, &playback.cb_tex, cb);
-    overwrite_plane(images, &playback.cr_tex, cr);
+    if seq == 1 {
+        let y_min = y.iter().copied().min().unwrap_or(0);
+        let y_max = y.iter().copied().max().unwrap_or(0);
+        let y_mean: u32 = y.iter().map(|&v| v as u32).sum::<u32>() / (y.len().max(1) as u32);
+        info!(
+            "mpeg2_video: first frame planes y={} bytes [{y_min}..{y_max} mean {y_mean}], cb={} bytes, cr={} bytes",
+            y.len(),
+            cb.len(),
+            cr.len()
+        );
+    }
+    overwrite_plane(images, &playback.y_tex, y, seq, "y");
+    overwrite_plane(images, &playback.cb_tex, cb, seq, "cb");
+    overwrite_plane(images, &playback.cr_tex, cr, seq, "cr");
 }
 
-fn overwrite_plane(images: &mut Assets<Image>, handle: &Handle<Image>, bytes: Vec<u8>) {
-    if let Some(img) = images.get_mut(handle) {
-        img.data = Some(bytes);
+fn overwrite_plane(
+    images: &mut Assets<Image>,
+    handle: &Handle<Image>,
+    bytes: Vec<u8>,
+    seq: u32,
+    label: &str,
+) {
+    match images.get_mut(handle) {
+        Some(img) => {
+            if seq == 1 {
+                info!(
+                    "mpeg2_video: writing first {label} plane: {} bytes, prior data={}",
+                    bytes.len(),
+                    img.data.as_ref().map(Vec::len).map_or("None".to_string(), |n| n.to_string())
+                );
+            }
+            img.data = Some(bytes);
+        }
+        None => warn!("mpeg2_video: {label} image handle missing from Assets<Image>"),
     }
 }
 
