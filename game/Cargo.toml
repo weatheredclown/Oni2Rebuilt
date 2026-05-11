@@ -23,6 +23,7 @@ flate2 = "1.1.9"
 bevy_hanabi = "0.18.0"
 hound = "3.5.1"
 anyhow = "1.0.102"
+mpeg2_player = { path = "../utils/mpeg2_player" }
 bevy-tnua = "0.29"
 bevy-tnua-avian3d = "0.10"
 
