@@ -22,6 +22,7 @@ pub mod picture_params;
 pub mod scan;
 pub mod slice;
 pub mod tables;
+pub mod vlc;
 
 use std::collections::VecDeque;
 use std::fs;
