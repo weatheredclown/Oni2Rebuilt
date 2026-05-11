@@ -316,6 +316,91 @@ pub fn predict_block(
     );
 }
 
+/// Field-MC prediction read for a frame-picture macroblock.
+///
+/// Reads a `w` × `h` block from the selected field of `ref_plane` (a frame
+/// buffer where the field's rows are interleaved with the other field's
+/// rows), writing every-other row of `dst`.  Used by field-MC inter
+/// macroblocks per H.262 §7.6.4.
+///
+///   * `field_select` selects which field of the reference to read from:
+///     0 = top field (even reference rows), 1 = bottom field (odd reference
+///     rows).
+///   * `bottom_field` selects which half of the destination MB to write:
+///     0 = top-field rows of the destination, 1 = bottom-field rows.
+///   * `mv_x_half`, `mv_y_half` are in half-pel units.  Horizontal is
+///     half-frame-pel as usual; vertical is half-FIELD-LINE units (1 field
+///     line = 2 frame lines), so `(mv_y >> 1)` is a full-field-line offset
+///     within the chosen field and `mv_y & 1` is a half-field-line offset
+///     averaging two consecutive field lines.
+///
+/// `dst_y_offset` is the destination row offset at which to write the top
+/// of this half's block (typically `mb_py * 16` plus `bottom_field`).
+/// `dst_stride` is the doubled stride (`2 * frame_stride`) so consecutive
+/// IDCT rows land on every-other picture row.
+#[allow(clippy::too_many_arguments)]
+pub fn predict_field_half(
+    ref_plane: &[u8],
+    ref_stride: usize,
+    ref_w: i32,
+    ref_h_frame: i32,
+    mb_px: i32,
+    mb_py_frame: i32,
+    mv_x_half: i32,
+    mv_y_half: i32,
+    field_select: u8,
+    w: i32,
+    h: i32,
+    dst: &mut [u8],
+    dst_stride: usize,
+) {
+    // Horizontal: standard half-pel split.
+    let (int_x, hx) = split_half(mv_x_half);
+    // Vertical: half-field-line split.
+    let (int_y_field, hy) = split_half(mv_y_half);
+
+    let src_x = mb_px + int_x;
+    // MB top in field-line space is mb_py_frame / 2 (every other frame row
+    // is one field row).  Add the integer field-line offset from the MV.
+    let src_y_field = (mb_py_frame >> 1) + int_y_field;
+    // Convert field-line index back to a frame-row index, picking the
+    // selected field (top = even, bottom = odd).
+    let src_y_frame_start = src_y_field * 2 + field_select as i32;
+
+    // The reference plane is the full frame buffer.  We access it with a
+    // stride of `2 * ref_stride` so consecutive reads step over one field
+    // line (= 2 frame lines).  Half-pel vertical bilinear averages two
+    // adjacent FIELD lines — i.e. two frame rows that are 2 apart.
+    let field_stride = ref_stride * 2;
+    // Effective field-plane height (rows in the chosen field).
+    let ref_h_field = ref_h_frame >> 1;
+
+    // Adjust `ref_plane` slice so coordinate (0,0) of the field starts at
+    // the chosen field's first row.  We achieve this by passing `ref_plane`
+    // sliced from `field_select * ref_stride` — but `mc_block` indexes from
+    // `(src_y * stride) + src_x`, so we instead pass src_y in FIELD-line
+    // coordinates and let the doubled stride do the work, with an extra
+    // `field_select * ref_stride` byte offset applied to the base.
+    let field_base_offset = field_select as usize * ref_stride;
+    let field_plane = &ref_plane[field_base_offset..];
+
+    mc_block(
+        field_plane,
+        field_stride,
+        ref_w,
+        ref_h_field,
+        src_x,
+        src_y_field,
+        hx,
+        hy,
+        w,
+        h,
+        dst,
+        dst_stride,
+    );
+    let _ = src_y_frame_start; // documented above; not used directly here.
+}
+
 fn split_half(v: i32) -> (i32, bool) {
     // Arithmetic shift, then bit0 of the original value (toward zero) marks
     // the half-pel offset per §2.4.4.2. Use `v >> 1` (floor division) and

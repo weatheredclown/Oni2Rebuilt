@@ -14,8 +14,17 @@ use oxideav_core::bits::BitReader;
 /// Running slice-decode state carried between macroblocks.
 pub struct SliceState {
     pub dc_pred: [i32; 3],
-    pub fwd: MvPredictor,
-    pub bwd: MvPredictor,
+    /// Motion vector predictors `PMV[r][s]` per H.262 §7.6.3.  `r ∈ {0,1}`
+    /// indexes the MV pair within a direction (only field MC and dual-prime
+    /// use `r=1`; frame MC keeps PMV[0] and PMV[1] in sync).  `s ∈ {0,1}`
+    /// is direction (`DIR_FWD=0`, `DIR_BWD=1`).
+    pub pmv: [[MvPredictor; 2]; 2],
+    /// Per-direction unit indicator for the vertical PMV: `true` means the
+    /// last update was field-MC and the stored value is in half-FIELD-LINE
+    /// units; `false` means frame-MC and the stored value is in half-pel
+    /// (frame) units.  Conversion happens on read when the next MV's mode
+    /// differs (§7.6.3.6).
+    pub last_field_mc: [bool; 2],
     /// True if the previous macroblock in this slice had a forward MV.
     /// Required for B-frame "skipped MB inherits previous MB type".
     pub last_had_forward: bool,
@@ -27,11 +36,18 @@ impl SliceState {
     pub fn new(dc_reset: i32) -> Self {
         Self {
             dc_pred: [dc_reset; 3],
-            fwd: MvPredictor::default(),
-            bwd: MvPredictor::default(),
+            pmv: [[MvPredictor::default(); 2]; 2],
+            last_field_mc: [false; 2],
             last_had_forward: false,
             last_had_backward: false,
         }
+    }
+
+    /// Reset both predictor pairs and unit-indicator for direction `s`.
+    pub fn reset_dir(&mut self, s: usize) {
+        self.pmv[s][0].reset();
+        self.pmv[s][1].reset();
+        self.last_field_mc[s] = false;
     }
 }
 
@@ -41,11 +57,172 @@ impl Default for SliceState {
     }
 }
 
+/// Per-direction prediction descriptor.  Carries enough information to
+/// drive either the legacy frame-MC path (single MV per direction) or the
+/// new field-MC path (two MV pairs + 2 field-select bits per direction).
+#[derive(Clone, Copy, Debug, Default)]
+enum DirPrediction {
+    /// No motion in this direction (intra MB, or no fwd/bwd flag).
+    #[default]
+    None,
+    /// Single MV pair.  Used for frame-MC and for P-skip / B-skip
+    /// inheritance, where the inherited MV is always frame-mode (vertical
+    /// in half-frame-pel).
+    Frame { mv: (i32, i32) },
+    /// Two MV pairs with field selects.  `top_mv` predicts the top-field
+    /// rows of the destination MB; `bot_mv` predicts the bottom-field rows.
+    /// `top_field_select` / `bot_field_select` choose which field of the
+    /// reference frame each MV reads from.  Vertical MV components are in
+    /// half-FIELD-LINE units.  Fields are populated by the parse layer but
+    /// the prediction stage that consumes them isn't wired yet — see
+    /// `decode_mb_inter`.
+    #[allow(dead_code)]
+    Field {
+        top_mv: (i32, i32),
+        top_field_select: u8,
+        bot_mv: (i32, i32),
+        bot_field_select: u8,
+    },
+}
+
+impl DirPrediction {
+    /// Frame-MC view for the legacy build_prediction path and B-skip
+    /// inheritance.  Field-MC entries collapse to `None` here — they go
+    /// through `apply_field_mc` instead.
+    fn frame_mv(&self) -> Option<(i32, i32)> {
+        match *self {
+            DirPrediction::Frame { mv } => Some(mv),
+            _ => None,
+        }
+    }
+
+    #[allow(dead_code)]
+    fn has_any(&self) -> bool {
+        !matches!(self, DirPrediction::None)
+    }
+}
+
+/// Parse the MV(s) for one direction and update the appropriate predictor
+/// pair(s) in `SliceState`.  Handles frame-MC, field-MC, and the P-only
+/// "no-MC inter MB" implicit zero MV.
+#[allow(clippy::too_many_arguments)]
+fn parse_direction_mvs(
+    br: &mut BitReader<'_>,
+    picture_type: PictureType,
+    has_motion: bool,
+    is_intra: bool,
+    motion_type: Mpeg2MotionType,
+    f_code_pair: [u8; 2],
+    full_pel: bool,
+    s: usize,
+    state: &mut SliceState,
+) -> Result<DirPrediction> {
+    let f_code_h = f_code_pair[AXIS_H];
+    let f_code_v = f_code_pair[AXIS_V];
+
+    if !has_motion {
+        // Implicit zero MV for P MBs without `motion_forward` (P frame
+        // inter MB with no MC).  All other no-motion cases fall through.
+        if matches!(picture_type, PictureType::P) && !is_intra && s == DIR_FWD {
+            state.reset_dir(DIR_FWD);
+            return Ok(DirPrediction::Frame { mv: (0, 0) });
+        }
+        return Ok(DirPrediction::None);
+    }
+
+    match motion_type {
+        Mpeg2MotionType::Frame => {
+            // Single MV pair, vertical in half-frame-pel units.  If the
+            // last update for this direction was field-MC, the stored
+            // predictor's vertical is in half-field-line units; double it
+            // back to frame units before use (§7.6.3.6).
+            if state.last_field_mc[s] {
+                state.pmv[s][0].y = state.pmv[s][0].y * 2;
+            }
+            let mx = motion::decode_motion_component(
+                br,
+                f_code_h,
+                full_pel,
+                &mut state.pmv[s][0].x,
+            )?;
+            let my = motion::decode_motion_component(
+                br,
+                f_code_v,
+                full_pel,
+                &mut state.pmv[s][0].y,
+            )?;
+            // Frame MC: PMV[1][s] is reset to be equal to PMV[0][s].
+            state.pmv[s][1] = state.pmv[s][0];
+            state.last_field_mc[s] = false;
+            Ok(DirPrediction::Frame { mv: (mx, my) })
+        }
+        Mpeg2MotionType::Field => {
+            // Two MV pairs, each preceded by a 1-bit field_select.
+            // Vertical predictors must be in half-field-line units; if the
+            // last update was frame-MC, halve the stored value first
+            // (§7.6.3.6).  Halving uses integer floor division (i32 >> 1
+            // performs arithmetic shift; for the negative case this is
+            // toward -infinity which matches libavcodec).
+            if !state.last_field_mc[s] {
+                state.pmv[s][0].y >>= 1;
+                state.pmv[s][1].y >>= 1;
+            }
+            let top_field_select = br.read_u32(1)? as u8;
+            let mx0 = motion::decode_motion_component(
+                br,
+                f_code_h,
+                full_pel,
+                &mut state.pmv[s][0].x,
+            )?;
+            let my0 = motion::decode_motion_component(
+                br,
+                f_code_v,
+                full_pel,
+                &mut state.pmv[s][0].y,
+            )?;
+            let bot_field_select = br.read_u32(1)? as u8;
+            let mx1 = motion::decode_motion_component(
+                br,
+                f_code_h,
+                full_pel,
+                &mut state.pmv[s][1].x,
+            )?;
+            let my1 = motion::decode_motion_component(
+                br,
+                f_code_v,
+                full_pel,
+                &mut state.pmv[s][1].y,
+            )?;
+            state.last_field_mc[s] = true;
+            Ok(DirPrediction::Field {
+                top_mv: (mx0, my0),
+                top_field_select,
+                bot_mv: (mx1, my1),
+                bot_field_select,
+            })
+        }
+    }
+}
+
+/// Macroblock motion-compensation mode, per H.262 §6.3.17.1 Table 6-17.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+enum Mpeg2MotionType {
+    /// Frame-MC (`frame_motion_type = 0b10`): one MV per direction, vertical
+    /// component in half-frame-pel units.
+    #[default]
+    Frame,
+    /// Field-MC (`frame_motion_type = 0b01`): two MV pairs per direction
+    /// with `motion_vertical_field_select` bits; one MV predicts the
+    /// top-field rows of the MB, the other predicts the bottom-field rows.
+    /// Vertical components are in half-FIELD-LINE units (§7.6.4).
+    Field,
+}
+
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 struct Mpeg2MacroblockModes {
-    /// MPEG-2 `frame_motion_type` side bits when present. Value 2 means
-    /// frame-based motion compensation, matching the existing prediction path.
-    frame_motion_type: Option<u8>,
+    /// Motion-compensation type for this MB.  Always `Frame` when
+    /// `frame_pred_frame_dct = 1` or when the MB has no motion.
+    motion_type: Mpeg2MotionType,
     /// MPEG-2 `dct_type` side bit: false = frame DCT, true = field DCT.
     field_dct: bool,
 }
@@ -63,12 +240,8 @@ fn parse_mpeg2_macroblock_modes(
     if mb_type_flags.motion_forward || mb_type_flags.motion_backward {
         let frame_motion_type = br.read_u32(2)? as u8;
         match frame_motion_type {
-            2 => modes.frame_motion_type = Some(frame_motion_type),
-            1 => {
-                return Err(Error::unsupported(
-                    "mpeg2video: field-MC frame macroblocks not supported",
-                ));
-            }
+            2 => modes.motion_type = Mpeg2MotionType::Frame,
+            1 => modes.motion_type = Mpeg2MotionType::Field,
             3 => {
                 return Err(Error::unsupported(
                     "mpeg2video: dual-prime frame macroblocks not supported",
@@ -172,8 +345,8 @@ pub fn decode_slice(
                 PictureType::P => {
                     // Per §2.4.4.2 / §2.4.3.4: P-skip MBs have MV=(0,0)
                     // and reset MV predictors.
-                    state.fwd.reset();
-                    state.bwd.reset();
+                    state.reset_dir(DIR_FWD);
+                    state.reset_dir(DIR_BWD);
                     state.last_had_forward = true;
                     state.last_had_backward = false;
                     for skip_addr in (prev_mb_addr + 1)..mb_addr {
@@ -189,12 +362,12 @@ pub fn decode_slice(
                         let sx = (skip_addr % mb_width) as usize;
                         let sy = (skip_addr / mb_width) as usize;
                         let fwd_mv = if state.last_had_forward {
-                            Some((state.fwd.x, state.fwd.y))
+                            Some((state.pmv[DIR_FWD][0].x, state.pmv[DIR_FWD][0].y))
                         } else {
                             None
                         };
                         let bwd_mv = if state.last_had_backward {
-                            Some((state.bwd.x, state.bwd.y))
+                            Some((state.pmv[DIR_BWD][0].x, state.pmv[DIR_BWD][0].y))
                         } else {
                             None
                         };
@@ -231,48 +404,39 @@ pub fn decode_slice(
 
         // MPEG-2 frame pictures with frame_pred_frame_dct == 0 carry
         // macroblock-level mode side bits before motion_vector() and block
-        // data.  field-DCT (`dct_type=1`) is supported and reorganises the
-        // luma blocks; field-MC and dual-prime still return unsupported.
+        // data.  field-DCT (`dct_type=1`) and field-MC (`frame_motion_type=01`)
+        // are supported; dual-prime is still rejected.
         let mpeg2_modes = parse_mpeg2_macroblock_modes(br, params, mb_type_flags)?;
         let field_dct = mpeg2_modes.field_dct;
 
-        // Parse MV(s).
-        let mut fwd_mv: Option<(i32, i32)> = None;
-        let mut bwd_mv: Option<(i32, i32)> = None;
-        if mb_type_flags.motion_forward {
-            let mx = motion::decode_motion_component(
-                br,
-                params.f_code[DIR_FWD][AXIS_H],
-                params.full_pel_fwd,
-                &mut state.fwd.x,
-            )?;
-            let my = motion::decode_motion_component(
-                br,
-                params.f_code[DIR_FWD][AXIS_V],
-                params.full_pel_fwd,
-                &mut state.fwd.y,
-            )?;
-            fwd_mv = Some((mx, my));
-        } else if matches!(picture_type, PictureType::P) && !mb_type_flags.intra {
-            // No-MC P MB: vector is (0,0) and predictor resets.
-            state.fwd.reset();
-            fwd_mv = Some((0, 0));
-        }
-        if mb_type_flags.motion_backward {
-            let mx = motion::decode_motion_component(
-                br,
-                params.f_code[DIR_BWD][AXIS_H],
-                params.full_pel_bwd,
-                &mut state.bwd.x,
-            )?;
-            let my = motion::decode_motion_component(
-                br,
-                params.f_code[DIR_BWD][AXIS_V],
-                params.full_pel_bwd,
-                &mut state.bwd.y,
-            )?;
-            bwd_mv = Some((mx, my));
-        }
+        // Parse MV(s) into a per-direction prediction descriptor.  For
+        // frame MC: one MV pair per direction.  For field MC: two MV pairs
+        // each preceded by a `motion_vertical_field_select` bit, with the
+        // vertical predictor in half-FIELD-LINE units (§7.6.4).
+        let fwd_pred = parse_direction_mvs(
+            br,
+            picture_type,
+            mb_type_flags.motion_forward,
+            mb_type_flags.intra,
+            mpeg2_modes.motion_type,
+            params.f_code[DIR_FWD],
+            params.full_pel_fwd,
+            DIR_FWD,
+            &mut state,
+        )?;
+        let bwd_pred = parse_direction_mvs(
+            br,
+            picture_type,
+            mb_type_flags.motion_backward,
+            mb_type_flags.intra,
+            mpeg2_modes.motion_type,
+            params.f_code[DIR_BWD],
+            params.full_pel_bwd,
+            DIR_BWD,
+            &mut state,
+        )?;
+        let fwd_mv = fwd_pred.frame_mv();
+        let bwd_mv = bwd_pred.frame_mv();
 
         // Track MV availability for B-skip inheritance.
         if matches!(picture_type, PictureType::B) && !mb_type_flags.intra {
@@ -303,6 +467,7 @@ pub fn decode_slice(
                 br, seq, params, &mut state, pic, mb_x, mb_y, quant_scale, field_dct,
             )?;
         } else {
+            let _ = (fwd_mv, bwd_mv); // legacy frame-MC view, used only via fwd_pred / bwd_pred
             // Non-intra MB: apply motion compensation and optional
             // residual add.
             decode_mb_inter(
@@ -316,8 +481,8 @@ pub fn decode_slice(
                 mb_x,
                 mb_y,
                 quant_scale,
-                fwd_mv,
-                bwd_mv,
+                fwd_pred,
+                bwd_pred,
                 cbp_bits,
                 field_dct,
             )?;
@@ -415,8 +580,8 @@ fn decode_mb_inter(
     mb_x: usize,
     mb_y: usize,
     quant_scale: u8,
-    fwd_mv: Option<(i32, i32)>,
-    bwd_mv: Option<(i32, i32)>,
+    fwd_pred: DirPrediction,
+    bwd_pred: DirPrediction,
     cbp_bits: u8,
     field_dct: bool,
 ) -> Result<()> {
@@ -424,6 +589,24 @@ fn decode_mb_inter(
     let mut pred_y = [0u8; 16 * 16];
     let mut pred_cb = [0u8; 8 * 8];
     let mut pred_cr = [0u8; 8 * 8];
+
+    // Field-MC prediction is not yet wired through `build_prediction`.  The
+    // MV parsing layer (including `frame_motion_type=01` two-MV-pair side
+    // bits and predictor unit conversion) is in and tested; the remaining
+    // work is the field-aware prediction read in `motion::predict_field_half`
+    // plus the chroma-MV scaling for 4:2:0.  Until that lands we return a
+    // clear unsupported error at the prediction stage so the bitstream
+    // alignment of in-progress slices doesn't desync.
+    if matches!(fwd_pred, DirPrediction::Field { .. })
+        || matches!(bwd_pred, DirPrediction::Field { .. })
+    {
+        return Err(Error::unsupported(
+            "mpeg2video: field-MC frame macroblock prediction not implemented (parsing done)",
+        ));
+    }
+
+    let fwd_mv = fwd_pred.frame_mv();
+    let bwd_mv = bwd_pred.frame_mv();
 
     build_prediction(
         fwd_ref,
@@ -765,23 +948,24 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(modes.frame_motion_type, Some(2));
+        assert_eq!(modes.motion_type, Mpeg2MotionType::Frame);
         assert!(!modes.field_dct);
     }
 
     #[test]
-    fn rejects_field_mc_macroblock_after_parsing_mode_bits() {
-        // frame_motion_type = 01 (field MC).
+    fn parses_field_mc_macroblock_without_rejecting() {
+        // frame_motion_type = 01 (field MC).  Now accepted — the slice
+        // decoder reads two MV pairs with intervening field_select bits.
         let data = bits(&[(0b01, 2)]);
         let mut br = BitReader::new(&data);
-        let err = parse_mpeg2_macroblock_modes(
+        let modes = parse_mpeg2_macroblock_modes(
             &mut br,
             &params(false),
             mb_type::MbTypeFlags::new(false, true, false, false, false),
         )
-        .unwrap_err();
+        .unwrap();
 
-        assert!(err.to_string().contains("field-MC"));
+        assert_eq!(modes.motion_type, Mpeg2MotionType::Field);
     }
 
     #[test]
@@ -799,7 +983,7 @@ mod tests {
         .unwrap();
 
         assert!(modes.field_dct);
-        assert_eq!(modes.frame_motion_type, None);
+        assert_eq!(modes.motion_type, Mpeg2MotionType::Frame);
     }
 
     #[test]
