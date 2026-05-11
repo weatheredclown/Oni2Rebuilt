@@ -222,6 +222,7 @@ pub trait SettingsExt {
     fn get_bool(&self, key: &str, default: bool) -> bool;
     fn get_string(&self, key: &str) -> Option<String>;
     fn get_color(&self, key: &str, default: Color) -> Color;
+    fn get_vec2(&self, key: &str, default: Vec2) -> Vec2;
     fn get_vec3(&self, key: &str, default: Vec3) -> Vec3;
     fn get_block(&self, key: &str) -> Option<&SettingsBlock>;
 }
@@ -266,6 +267,15 @@ impl SettingsExt for SettingsBlock {
                     1.0
                 }; // Assume opacity entirely driven by fx if alpha=0
                 Color::srgba(arr[0], arr[1], arr[2], a)
+            }
+            _ => default,
+        }
+    }
+
+    fn get_vec2(&self, key: &str, default: Vec2) -> Vec2 {
+        match self.properties.get(key) {
+            Some(SettingsValue::FloatArray(arr)) if arr.len() >= 2 => {
+                Vec2::new(arr[0], arr[1])
             }
             _ => default,
         }

@@ -628,6 +628,16 @@ pub fn injure_system(
                     fx.dispatch(&mut commands, hit_pos, Some(msg.target), msg.target);
                 }
             }
+
+            // Spawn the legacy HealthIndicator
+            if let Some(tf) = transform_opt.as_ref() {
+                commands.trigger(crate::fx_system::SpawnFx {
+                    name: "HealthIndicator".to_string(),
+                    at: Some(tf.translation + Vec3::new(0.0, 2.0, 0.0)),
+                    parent: Some(msg.target),
+                    start_active: true,
+                });
+            }
         }
     }
 }

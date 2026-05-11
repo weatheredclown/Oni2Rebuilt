@@ -25,6 +25,7 @@ pub enum EffectDef {
     LightGlow(LightGlowDef),
     Charge(ChargeDef),
     Flash(FlashDef),
+    Strike(StrikeFxDef),
 }
 
 #[derive(Debug, Clone)]
@@ -229,6 +230,30 @@ pub struct FlashDef {
     pub color1: Color,
     pub color2: Color,
     pub color3: Color,
+}
+
+#[derive(Debug, Clone)]
+pub struct StrikeFxDef {
+    pub name: String,
+    pub exponent: f32,
+    pub jumble: f32,
+    pub spike_scale: f32,
+    pub fade_start: f32,
+    pub wave_count: i32,
+    pub color1a: Color,
+    pub color2a: Color,
+    pub color3a: Color,
+    pub color1b: Color,
+    pub color2b: Color,
+    pub color3b: Color,
+    pub tile: Vec2,
+    pub slide_rate: Vec2,
+    pub scale_rate: f32,
+    pub fade_duration: f32,
+    pub duration: f32,
+    pub position: Vec3,
+    pub texture_name: String,
+    pub texture_handle: Option<Handle<Image>>,
 }
 
 
@@ -451,6 +476,43 @@ pub fn parse_effect(
             color2: block.get_color("Color2", Color::WHITE),
             color3: block.get_color("Color3", Color::WHITE),
         })),
+        "STRIKE" => {
+            let tex_name = block.get_string("TextureName").unwrap_or_else(|| "bam".to_string());
+            let tex_handle = if tex_name.is_empty() || tex_name.eq_ignore_ascii_case("none") {
+                None
+            } else {
+                Some(crate::oni2_loader::parsers::texture::load_tga_texture(
+                    "entity/strikefx",
+                    &tex_name,
+                    images,
+                )
+                .map(|(h, _)| h)
+                .unwrap_or_else(|| asset_server.load(format!("texture/{}.tga", tex_name))))
+            };
+
+            Some(EffectDef::Strike(StrikeFxDef {
+                name: name.to_string(),
+                exponent: block.get_f32("Exponent", 1.0),
+                jumble: block.get_f32("Jumble", 0.0),
+                spike_scale: block.get_f32("SpikeScale", 0.4),
+                fade_start: block.get_f32("FadeStart", 0.7),
+                wave_count: block.get_i32("WaveCount", 10),
+                color1a: block.get_color("Color1a", Color::srgb(0.0, 0.0, 1.0)),
+                color2a: block.get_color("Color2a", Color::srgb(1.0, 0.5, 0.0)),
+                color3a: block.get_color("Color3a", Color::srgb(1.0, 1.0, 1.0)),
+                color1b: block.get_color("Color1b", Color::srgb(0.0, 0.0, 1.0)),
+                color2b: block.get_color("Color2b", Color::srgb(1.0, 0.5, 0.0)),
+                color3b: block.get_color("Color3b", Color::srgb(1.0, 1.0, 1.0)),
+                tile: block.get_vec2("Tile", Vec2::new(1.0, 1.0)),
+                slide_rate: block.get_vec2("SlideRate", Vec2::new(0.2, -1.25)),
+                scale_rate: block.get_f32("ScaleRate", 1.0),
+                fade_duration: block.get_f32("FadeDuration", 0.2),
+                duration: block.get_f32("Duration", 0.65),
+                position: block.get_vec3("Position", Vec3::ZERO),
+                texture_name: tex_name,
+                texture_handle: tex_handle,
+            }))
+        }
         _ => None,
     }
 }

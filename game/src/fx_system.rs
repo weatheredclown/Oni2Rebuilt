@@ -541,6 +541,8 @@ fn handle_spawn_fx(
     mut images: ResMut<Assets<Image>>,
     mut quad_cache: ResMut<crate::fx_visuals::FxVisualMesh>,
     mut flash_tex_cache: ResMut<crate::fx_visuals::FxFlashTexture>,
+    mut strike_mesh_cache: ResMut<crate::fx_visuals::FxStrikeMeshCache>,
+    health_query: Query<&crate::combat::components::Health>,
 ) {
     let ev = trigger.event();
     let lower_name = ev.name.to_lowercase();
@@ -549,7 +551,6 @@ fn handle_spawn_fx(
         let ptx_ref = match fx_def {
             crate::oni2_loader::parsers::effect::EffectDef::Particle(p) => Some(&p.system),
             crate::oni2_loader::parsers::effect::EffectDef::DelayedParticle(p) => Some(&p.system),
-            crate::oni2_loader::parsers::effect::EffectDef::HealthIndicator(p) => Some(&p.system),
             _ => None,
         };
 
@@ -594,6 +595,59 @@ fn handle_spawn_fx(
                     commands.entity(parent).add_child(child_id);
                 }
             }
+        } else if let crate::oni2_loader::parsers::effect::EffectDef::HealthIndicator(hd) = fx_def {
+            // Get health percentage
+            let health_pct = ev.parent
+                .and_then(|p| health_query.get(p).ok())
+                .map(|h| h.fraction() * 100.0)
+                .unwrap_or(100.0);
+            
+            // Interpolate colors based on health
+            let color = if health_pct >= hd.mid_percentage {
+                let t = (health_pct - hd.mid_percentage) / (100.0 - hd.mid_percentage).max(0.001);
+                Color::srgb(
+                    hd.mid_color.to_linear().red * (1.0 - t) + hd.undamaged_color.to_linear().red * t,
+                    hd.mid_color.to_linear().green * (1.0 - t) + hd.undamaged_color.to_linear().green * t,
+                    hd.mid_color.to_linear().blue * (1.0 - t) + hd.undamaged_color.to_linear().blue * t,
+                )
+            } else {
+                let t = health_pct / hd.mid_percentage.max(0.001);
+                Color::srgb(
+                    hd.dead_color.to_linear().red * (1.0 - t) + hd.mid_color.to_linear().red * t,
+                    hd.dead_color.to_linear().green * (1.0 - t) + hd.mid_color.to_linear().green * t,
+                    hd.dead_color.to_linear().blue * (1.0 - t) + hd.mid_color.to_linear().blue * t,
+                )
+            };
+
+            let texture_handle = if let Some(ptx) = ptx_lib.systems.get(&hd.system.system_name.to_lowercase()) {
+                ptx.texture.clone()
+            } else {
+                return;
+            };
+
+            let world_pos = ev.at.unwrap_or(Vec3::ZERO);
+            
+            let mock_sprite = crate::oni2_loader::parsers::effect::SpriteEffectDef {
+                name: hd.name.clone(),
+                texture: texture_handle,
+                color,
+                blend_set: 1, // additive or blend? 1 = blend, 0 = additive. Let's use 1.
+                duration: if hd.duration > 0.0 { hd.duration } else { 0.5 },
+                line_length: 1.0,
+                line_width: 1.0,
+                particle_size: 1.0,
+                alignment: 0,
+            };
+
+            crate::fx_visuals::spawn_sprite(
+                &mut commands,
+                &mut quad_cache,
+                &mut meshes,
+                &mut materials,
+                &mock_sprite,
+                world_pos,
+                ev.parent,
+            );
         } else if let crate::oni2_loader::parsers::effect::EffectDef::Laser(ld) = fx_def {
             // Skip spawn entirely if the parent is asleep — the laser
             // would just retract immediately otherwise.
@@ -651,6 +705,17 @@ fn handle_spawn_fx(
             crate::fx_visuals::spawn_sprite(
                 &mut commands,
                 &mut quad_cache,
+                &mut meshes,
+                &mut materials,
+                sd,
+                world_pos,
+                ev.parent,
+            );
+        } else if let crate::oni2_loader::parsers::effect::EffectDef::Strike(sd) = fx_def {
+            let world_pos = ev.at.unwrap_or(Vec3::ZERO);
+            crate::fx_visuals::spawn_strike(
+                &mut commands,
+                &mut strike_mesh_cache,
                 &mut meshes,
                 &mut materials,
                 sd,

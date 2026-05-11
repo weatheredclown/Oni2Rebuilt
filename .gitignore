@@ -11,3 +11,4 @@ trace_summarize.py
 trace_steady_state.py
 trace_filter.py
 rb-raw.bat
+utils/mpeg2_player_v2/scripts/compare_ffmpeg_yuv.py

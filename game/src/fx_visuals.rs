@@ -21,7 +21,7 @@
  * Quad mesh + a default Flash texture (legacy hardcoded "daisyalpha")
  * are cached as resources so spawn-time is asset-free.
  */
-use crate::oni2_loader::parsers::effect::{FlashDef, SpriteEffectDef};
+use crate::oni2_loader::parsers::effect::{FlashDef, SpriteEffectDef, StrikeFxDef};
 use bevy::prelude::*;
 
 pub struct FxVisualsPlugin;
@@ -30,11 +30,13 @@ impl Plugin for FxVisualsPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<FxVisualMesh>()
             .init_resource::<FxFlashTexture>()
+            .init_resource::<FxStrikeMeshCache>()
             .add_systems(
                 Update,
                 (
                     update_flash_fx,
                     update_sprite_fx,
+                    update_strike_fx,
                 )
                     .run_if(in_state(crate::menu::AppState::InGame)),
             );
@@ -76,6 +78,104 @@ fn get_or_load_flash_texture(
     )?;
     cache.0 = Some(h.clone());
     Some(h)
+}
+
+#[derive(Resource, Default)]
+pub struct FxStrikeMeshCache(pub std::collections::HashMap<String, Handle<Mesh>>);
+
+fn clamp_range(val: f32, min: f32, max: f32) -> f32 {
+    if val <= min { return 0.0; }
+    if val >= max { return 1.0; }
+    (val - min) / (max - min)
+}
+
+fn create_strike_mesh(def: &StrikeFxDef) -> Mesh {
+    let res_x = 8;
+    let res_y = 35;
+    
+    use rand::Rng;
+    let mut rng = rand::rng();
+    let mut waves = Vec::with_capacity(def.wave_count as usize);
+    for i in 0..def.wave_count {
+        waves.push((
+            0.5f32,
+            0.0f32,
+            rng.random_range(0.0..std::f32::consts::TAU),
+            (i + 1) as f32,
+        ));
+    }
+    
+    let mut positions = Vec::with_capacity(res_x * res_y);
+    let mut uvs = Vec::with_capacity(res_x * res_y);
+    let mut colors = Vec::with_capacity(res_x * res_y);
+    let mut normals = Vec::with_capacity(res_x * res_y);
+    
+    for y in 0..res_y {
+        let ty = clamp_range(y as f32, 0.0, (res_y - 1) as f32);
+        
+        let mut sum = 1.0;
+        for (amp, offset, time, freq) in &waves {
+            sum += (ty * freq + time).sin() * amp + offset;
+        }
+        
+        for x in 0..res_x {
+            let tx = clamp_range(x as f32, 0.0, (res_x - 1) as f32);
+            
+            let angle = (1.0 - ty) * std::f32::consts::TAU;
+            let mut p = Vec3::new(tx * angle.cos(), tx * angle.sin(), 0.0);
+            
+            let radial = tx.powf(def.exponent);
+            let mut scale = radial + (1.0 - radial) * sum;
+            if y % 2 != 0 {
+                scale *= 1.0 + def.spike_scale * radial;
+            }
+            p *= scale;
+            
+            positions.push([p.x, p.y, p.z]);
+            
+            let mut u = ty * def.tile.x;
+            let mut v = tx * def.tile.y;
+            if y > 0 && y < res_y - 1 {
+                u += rng.random_range(-def.jumble..def.jumble);
+                v += rng.random_range(-def.jumble..def.jumble);
+            }
+            uvs.push([u, v]);
+            normals.push([0.0, 0.0, 1.0]);
+            
+            let alpha = 1.0 - clamp_range(tx, def.fade_start, 1.0);
+            colors.push([1.0, 1.0, 1.0, alpha]);
+        }
+    }
+    
+    let mut indices = Vec::new();
+    for y in 0..(res_y - 1) {
+        for x in 0..(res_x - 1) {
+            let i0 = (y * res_x + x) as u32;
+            let i1 = (y * res_x + x + 1) as u32;
+            let i2 = ((y + 1) * res_x + x) as u32;
+            let i3 = ((y + 1) * res_x + x + 1) as u32;
+            
+            indices.push(i0);
+            indices.push(i2);
+            indices.push(i1);
+            
+            indices.push(i1);
+            indices.push(i2);
+            indices.push(i3);
+        }
+    }
+    
+    let mut mesh = Mesh::new(
+        bevy::render::render_resource::PrimitiveTopology::TriangleList,
+        bevy::asset::RenderAssetUsages::default()
+    );
+    mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, positions);
+    mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, normals);
+    mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, uvs);
+    mesh.insert_attribute(Mesh::ATTRIBUTE_COLOR, colors);
+    mesh.insert_indices(bevy::mesh::Indices::U32(indices));
+    
+    mesh
 }
 
 // --- Flash --------------------------------------------------------------------
@@ -346,5 +446,122 @@ fn update_sprite_fx(
             }
         }
         tf.scale = Vec3::splat(sprite.size);
+    }
+}
+
+// --- Strike -------------------------------------------------------------------
+
+#[derive(Component)]
+pub struct StrikeFx {
+    pub timer: f32,
+    pub fade_duration: f32,
+    pub scale_rate: f32,
+    pub current_scale: f32,
+    pub slide_rate: Vec2,
+    pub current_slide: Vec2,
+    pub rotation: f32,
+    pub material: Handle<StandardMaterial>,
+}
+
+pub fn spawn_strike(
+    commands: &mut Commands,
+    mesh_cache: &mut FxStrikeMeshCache,
+    meshes: &mut Assets<Mesh>,
+    materials: &mut Assets<StandardMaterial>,
+    def: &StrikeFxDef,
+    world_pos: Vec3,
+    parent: Option<Entity>,
+) {
+    let mesh_handle = if let Some(h) = mesh_cache.0.get(&def.name) {
+        h.clone()
+    } else {
+        let mesh = create_strike_mesh(def);
+        let h = meshes.add(mesh);
+        mesh_cache.0.insert(def.name.clone(), h.clone());
+        h
+    };
+
+    use rand::Rng;
+    let mut rng = rand::rng();
+    let theta = rng.random_range(0.0..std::f32::consts::TAU);
+
+    let material = materials.add(StandardMaterial {
+        base_color: def.color2b.with_alpha(1.0),
+        base_color_texture: def.texture_handle.clone(),
+        alpha_mode: AlphaMode::Add,
+        unlit: true,
+        cull_mode: None,
+        double_sided: true,
+        ..default()
+    });
+
+    let mut ec = commands.spawn((
+        Name::new(format!("StrikeFx:{}", def.name)),
+        Mesh3d(mesh_handle),
+        MeshMaterial3d(material.clone()),
+        Transform::from_translation(world_pos).with_scale(Vec3::splat(0.001)),
+        Visibility::Visible,
+        bevy::camera::visibility::NoFrustumCulling,
+        bevy::light::NotShadowCaster,
+        bevy::light::NotShadowReceiver,
+        StrikeFx {
+            timer: def.duration,
+            fade_duration: def.fade_duration,
+            scale_rate: def.scale_rate,
+            current_scale: 0.0,
+            slide_rate: def.slide_rate,
+            current_slide: Vec2::ZERO,
+            rotation: theta,
+            material,
+        },
+        crate::menu::InGameEntity,
+    ));
+
+    if let Some(p) = parent {
+        ec.insert(ChildOf(p));
+    }
+}
+
+fn update_strike_fx(
+    mut commands: Commands,
+    time: Res<Time>,
+    mut strikes: Query<(Entity, &mut Transform, &mut StrikeFx)>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    camera: Query<&GlobalTransform, With<bevy::camera::Camera>>,
+) {
+    let dt = time.delta_secs();
+
+    for (entity, mut tf, mut strike) in &mut strikes {
+        strike.timer -= dt;
+        if strike.timer <= 0.0 {
+            commands.entity(entity).despawn();
+            continue;
+        }
+
+        let scale_delta = strike.scale_rate * dt;
+        strike.current_scale += scale_delta;
+        
+        let slide_delta = strike.slide_rate * dt;
+        strike.current_slide += slide_delta;
+
+        let alpha = if strike.timer < strike.fade_duration && strike.fade_duration > 0.0 {
+            (strike.timer / strike.fade_duration).powi(2)
+        } else {
+            1.0
+        };
+
+        if let Some(mat) = materials.get_mut(&strike.material) {
+            mat.base_color = mat.base_color.with_alpha(alpha);
+        }
+
+        let world_size = strike.current_scale;
+        
+        let mut base_rot = Quat::IDENTITY;
+        if let Some(cam_tf) = camera.iter().next() {
+            base_rot = cam_tf.compute_transform().rotation;
+        }
+
+        tf.rotation = base_rot * Quat::from_rotation_z(strike.rotation);
+        tf.scale = Vec3::splat(world_size.max(0.001));
     }
 }
