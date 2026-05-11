@@ -145,6 +145,97 @@ pub fn decode_intra_block(
     Ok(())
 }
 
+/// Decode one non-intra block.
+#[allow(clippy::too_many_arguments)]
+pub fn decode_non_intra_block(
+    br: &mut BitReader<'_>,
+    quant_code: u8,
+    non_intra_quant: &[u8; 64],
+    params: &PictureParams,
+    prediction: &[u8],
+    prediction_stride: usize,
+    out_samples: &mut [u8],
+    dst_stride: usize,
+) -> Result<()> {
+    let mut coeffs = [0i16; 64];
+
+    let first_tbl = dct_coeffs::first_coeff_table();
+    let ac_tbl = dct_coeffs::table_b14();
+    let scan: &[usize; 64] = if params.coding.alternate_scan {
+        &ALTERNATE_SCAN
+    } else {
+        &ZIGZAG_SCAN
+    };
+
+    let mut k: usize = 0;
+    let mut first = true;
+    loop {
+        let sym = if first {
+            vlc::decode(br, first_tbl)?
+        } else {
+            vlc::decode(br, ac_tbl)?
+        };
+        let (run, level) = match sym {
+            DctSym::Eob => {
+                if first {
+                    return Err(Error::invalid("non-intra block: EOB as first symbol"));
+                }
+                break;
+            }
+            DctSym::RunLevel { run, level_abs } => {
+                let sign = br.read(1)?;
+                let mut lv = level_abs as i32;
+                if sign == 1 {
+                    lv = -lv;
+                }
+                (run as usize, lv)
+            }
+            DctSym::Escape => decode_escape(br)?,
+        };
+        first = false;
+        k += run;
+        if k >= 64 {
+            return Err(Error::invalid("non-intra block: AC run past end"));
+        }
+        
+        let nat = scan[k];
+        let w = non_intra_quant[nat] as i32;
+        let add = if level > 0 { 1 } else { -1 };
+        let scale = quantiser_scale(quant_code, params.coding.q_scale_type);
+        let rec = ((2 * level + add) * w * scale) / 32;
+        coeffs[nat] = rec.clamp(-2048, 2047) as i16;
+        k += 1;
+    }
+
+    apply_mismatch_control(&mut coeffs);
+
+    let pixels = idct_8x8(&coeffs);
+
+    for j in 0..8 {
+        for i in 0..8 {
+            let p = prediction[j * prediction_stride + i] as i32;
+            let r = pixels[j * 8 + i] as i32;
+            let v = (p + r).clamp(0, 255);
+            out_samples[j * dst_stride + i] = v as u8;
+        }
+    }
+    Ok(())
+}
+
+/// Copy a prediction block to the output (no residual).
+pub fn copy_prediction(
+    prediction: &[u8],
+    prediction_stride: usize,
+    size: usize,
+    out_samples: &mut [u8],
+    dst_stride: usize,
+) {
+    for j in 0..size {
+        out_samples[j * dst_stride..j * dst_stride + size]
+            .copy_from_slice(&prediction[j * prediction_stride..j * prediction_stride + size]);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
