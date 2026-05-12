@@ -12,6 +12,12 @@ use crate::oni2_loader::utils::space::{
 };
 use bevy::prelude::*;
 
+/// `crStrikeReact::SetDistanceFromAttacker` mode values, ordered to match
+/// the C++ enum in rb/src/fight/attackdata.h:375-377.
+pub const REACT_TRANSLATE_MODE_PUSH: u8 = 0;
+pub const REACT_TRANSLATE_MODE_SET: u8 = 1;
+pub const REACT_TRANSLATE_MODE_TELEPORT: u8 = 2;
+
 #[derive(Debug, Clone, Reflect)]
 pub struct AtdtStrike {
     pub framenum: f32,
@@ -47,6 +53,20 @@ pub struct AtdtStrike {
     pub reactanim: [i32; 4],
     pub react_sliderphase: [[f32; 4]; 4],
     pub react_speed: [[f32; 4]; 4],
+    /// Per-react-slot snap-defender-toward-attacker flag. Default `false`
+    /// (matches `crStrikeReact::FaceWithReact=false` at
+    /// rb/src/fight/attackdata.cpp:996). When true and a hit lands, the
+    /// defender's facing is snapped to the attacker before the react anim
+    /// plays — see `sMakeTargetFace` (strike.cpp:235).
+    pub face_with_react: [bool; 4],
+    /// Per-react-slot translate mode that decides how `reactdistance`
+    /// pushes the defender:
+    ///   0 = REACT_TRANSLATE_MODE_PUSH    — push by ReactDistance over react
+    ///   1 = REACT_TRANSLATE_MODE_SET     — push so final distance = ReactDistance
+    ///   2 = REACT_TRANSLATE_MODE_TELEPORT — snap defender to position in front of attacker
+    /// Default `0` (PUSH) — matches `SetDistanceFromAttacker = REACT_TRANSLATE_MODE_PUSH`
+    /// at rb/src/fight/attackdata.cpp:997. Switch in strike.cpp:477.
+    pub set_distance_mode: [u8; 4],
 
     // --- Combo-linking timing windows ---
     pub opp2_q_start: f32,
@@ -98,6 +118,8 @@ impl Default for AtdtStrike {
             reactanim: [0; 4],
             react_sliderphase: [[0.0; 4]; 4],
             react_speed: [[0.0; 4]; 4],
+            face_with_react: [false; 4],
+            set_distance_mode: [REACT_TRANSLATE_MODE_PUSH; 4],
             opp2_q_start: 0.0,
             opp2_begin_redirect: 0.0,
             opp2_do_start: 0.75,
@@ -113,9 +135,35 @@ impl Default for AtdtStrike {
     }
 }
 
+/// Subset of `crGrabData` (rb/src/fight/grab.h) needed for the
+/// disarm pipeline.  ATDTs that drive a grab attack express their
+/// disarm intent here — `removes_weapon=1` plus a phase tells the
+/// runtime when to drop the victim's currently-held weapon.
+#[derive(Debug, Clone, Reflect, Default)]
+pub struct AtdtGrab {
+    /// True when this grab attack should disarm the victim mid-anim
+    /// (legacy `crGrabData::RemovesWeapon` — grab.cpp:743).
+    pub removes_weapon: bool,
+    /// Normalized [0..1] anim phase at which the weapon is dropped.
+    /// Mirrors `crGrabData::RemovesWeaponPhase`.  Once the grab
+    /// animation passes this phase, `DropWeaponMessage` fires on the
+    /// victim exactly once.
+    pub removes_weapon_phase: f32,
+    /// React animation alias name played on the victim
+    /// (e.g. `ANIMGRAB_DISARM_REACT_1`).  Not consumed by the disarm
+    /// pipeline yet — kept for future plumbing.
+    pub react_anim: String,
+    /// Damage application phase from the grab block.
+    pub damage_phase: f32,
+}
+
 #[derive(Debug, Clone, Reflect, Default)]
 pub struct AtdtData {
     pub strike: Option<AtdtStrike>,
+    /// Grab-attack block, populated for ATDTs whose `AttackData` carries
+    /// a `Grab { ... }` section (grapples and disarms).  `None` for
+    /// strike-only attacks.
+    pub grab: Option<AtdtGrab>,
     pub damage: f32,
     pub block_reaction: i32,
     pub guardtype: u8,
@@ -378,6 +426,46 @@ pub fn parse_atdt_content(content: &str) -> AtdtData {
                             "reactanim3" => {
                                 strike.reactanim[3] = p.read_i32(&a_key, strike.reactanim[3])
                             }
+                            "facewithreact0" => {
+                                strike.face_with_react[0] = p.read_i32(
+                                    &a_key,
+                                    if strike.face_with_react[0] { 1 } else { 0 },
+                                ) != 0
+                            }
+                            "facewithreact1" => {
+                                strike.face_with_react[1] = p.read_i32(
+                                    &a_key,
+                                    if strike.face_with_react[1] { 1 } else { 0 },
+                                ) != 0
+                            }
+                            "facewithreact2" => {
+                                strike.face_with_react[2] = p.read_i32(
+                                    &a_key,
+                                    if strike.face_with_react[2] { 1 } else { 0 },
+                                ) != 0
+                            }
+                            "facewithreact3" => {
+                                strike.face_with_react[3] = p.read_i32(
+                                    &a_key,
+                                    if strike.face_with_react[3] { 1 } else { 0 },
+                                ) != 0
+                            }
+                            "setdistfromatkr0" => {
+                                strike.set_distance_mode[0] =
+                                    p.read_i32(&a_key, strike.set_distance_mode[0] as i32) as u8
+                            }
+                            "setdistfromatkr1" => {
+                                strike.set_distance_mode[1] =
+                                    p.read_i32(&a_key, strike.set_distance_mode[1] as i32) as u8
+                            }
+                            "setdistfromatkr2" => {
+                                strike.set_distance_mode[2] =
+                                    p.read_i32(&a_key, strike.set_distance_mode[2] as i32) as u8
+                            }
+                            "setdistfromatkr3" => {
+                                strike.set_distance_mode[3] =
+                                    p.read_i32(&a_key, strike.set_distance_mode[3] as i32) as u8
+                            }
                             "atknoqueuethreshold" => {
                                 strike.opp2_q_start = p.read_float(&a_key, strike.opp2_q_start)
                             }
@@ -425,6 +513,39 @@ pub fn parse_atdt_content(content: &str) -> AtdtData {
                     strike.sliceendradians = max_bound;
 
                     data.strike = Some(strike);
+                }
+            }
+            "grab" => {
+                p.next(); // Consume "grab"
+                if p.start_anonymous() {
+                    let mut grab = AtdtGrab::default();
+                    while !p.endblock() {
+                        let inner_key = p.peek().unwrap_or("").to_lowercase();
+                        let a_key = p.peek().unwrap_or("").to_string();
+                        match inner_key.as_str() {
+                            "removesweapon" => {
+                                grab.removes_weapon = p.read_i32(
+                                    &a_key,
+                                    if grab.removes_weapon { 1 } else { 0 },
+                                ) != 0
+                            }
+                            "removesweaponphase" => {
+                                grab.removes_weapon_phase =
+                                    p.read_float(&a_key, grab.removes_weapon_phase)
+                            }
+                            "reactanim" => {
+                                grab.react_anim =
+                                    p.read_string(&a_key, &grab.react_anim);
+                            }
+                            "damagephase" => {
+                                grab.damage_phase = p.read_float(&a_key, grab.damage_phase)
+                            }
+                            _ => {
+                                p.next();
+                            }
+                        }
+                    }
+                    data.grab = Some(grab);
                 }
             }
             "damage" => data.damage = p.read_float(&actual_key, data.damage),

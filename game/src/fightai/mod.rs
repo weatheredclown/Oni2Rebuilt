@@ -260,6 +260,7 @@ pub fn attack_runtime_update_system(
             &mut crate::oni2_loader::animation::Oni2AnimState,
             &mut crate::combat::components::Fighter,
             Option<&crate::ai::components::AiFighter>,
+            Option<&crate::animator::components::ActionPlayer>,
             Option<&GlobalTransform>,
         ),
         Without<crate::oni2_loader::components::ActorAsleep>,
@@ -267,7 +268,16 @@ pub fn attack_runtime_update_system(
     transforms_q: Query<&GlobalTransform>,
 ) {
     let dt = time.delta_secs();
-    for (entity, mut runtime, anim_lib, mut anim_state, mut fighter, ai_fighter_opt, self_tf_opt) in &mut query {
+    for (entity, mut runtime, anim_lib, mut anim_state, mut fighter, ai_fighter_opt, action_player_opt, self_tf_opt) in &mut query {
+        // High-fidelity parity with aiFighter::UpdatePacketAttack:
+        // Delay attack FSM ticks if the character is transitioning (e.g. crouching to standing).
+        // This prevents attack animations from unexpectedly kicking in during stance transitions.
+        if let Some(ap) = action_player_opt {
+            if ap.is_transitioning() {
+                continue;
+            }
+        }
+
         runtime.fsm.advance_clock(dt);
         runtime.ctx.dt = dt;
         runtime.ctx.anim_num_frames = anim_state.anim.num_frames as i32;
@@ -621,6 +631,12 @@ pub fn fight_runtime_update_system(
                 && a.anim.num_frames > 1
                 && a.current_time >= (a.anim.num_frames as f32 - 1.0)
         });
+        
+        // This is the missing piece for round-robin combat among AI groups.
+        // It drives E_PREPARE_NEXT_ATTACKER, which signals the FSM to yield
+        // the combat cookie so another fighter can attack.
+        runtime.ctx.prepare_next_attacker = runtime.ctx.attack_finished;
+        
         runtime.ctx.attacked = fs_opt.is_some_and(|fs| fs.in_invuln_phase);
 
         // --- Tick ---

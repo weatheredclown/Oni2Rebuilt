@@ -42,3 +42,22 @@ impl AiFighter {
         45.0_f32.to_radians() // Default 45 deg half-angle (90 deg total view cone)
     }
 }
+
+/// Tactical shooter state for AI entities carrying weapons.
+/// Mirrors `aiShooter` from rb/src/aifight/shooter.h.
+#[derive(Component, Default)]
+pub struct AiShooter {
+    pub state: u32,
+    pub fire_timer: f32,
+    pub stop_fire_timer: f32,
+    pub can_fire_timer: f32,
+    pub burst_counter: i32,
+}
+
+/// Tactical interceptor state for AI entities pursuing targets.
+/// Mirrors `aiInterceptor` from rb/src/aifight/interceptor.h.
+#[derive(Component, Default)]
+pub struct AiInterceptor {
+    pub active: bool,
+    pub intercept_point: Option<Vec3>,
+}

@@ -116,6 +116,17 @@ impl Plugin for FightPlugin {
                     // FighterState.turn_final_target_dir each frame
                     // (crFighter::TurnLerper; fighter.cpp:1377-1387).
                     systems::fighter_turn_lerp_system,
+                    // Push the defender across the react anim by their
+                    // stashed react_distance (fighter.cpp:1390-1431).
+                    systems::react_distance_apply_system,
+                    // Face-after-run snap-toward-nearest-foe behaviour
+                    // (fighter.cpp:1581-1617).
+                    systems::face_after_run_system,
+                    // Drop weapon when a grab-attack disarm crosses its
+                    // configured anim phase (grab.cpp:743-751).
+                    systems::disarm_apply_system,
+                    // AI disarm-intent decision (fightandshoot.cpp:1095-1190).
+                    systems::update_disarming_system,
                     // Fight stance entry/exit orchestration.  `sync` must
                     // run first so FighterState.FIGHT_MODE reflects the
                     // animator's FIGHTSTANCE flag before entry/exit read it.

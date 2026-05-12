@@ -394,6 +394,250 @@ pub fn player_mouse_look_system(
 }
 
 // ---------------------------------------------------------------------------
+// EATME (Enemy Auto-Track Mistake Eliminator)
+// ---------------------------------------------------------------------------
+//
+// Port of `bhPadMapper::CalcEATME` (rb/src/behavior/padmapper.cpp:43).
+// Magnetises the player's pad input toward nearby enemies: when the
+// stick is pushed roughly in an enemy's direction, the resolved travel
+// vector snaps to point straight at that enemy.  Also exposes the
+// snapped target so attack input can preselect a strike target instead
+// of relying on the strike's wedge happening to hit something.
+//
+// Knobs (PADDATA.EnemyAutoTrac* in the C++):
+//   • cull range — radius around the player that's eligible for the snap.
+//     The legacy default is ~8 m; we mirror that.
+//   • fudge      — half-angle of the snap cone.  The legacy comment at
+//     padmapper.cpp:94 says "45 degree lw" but the real value is a
+//     PADDATA tuning slider; 45° gives a generous magnet without
+//     feeling like the game is playing for you.
+//
+// Two modes per the C++ implementation:
+//   • Stick has input (|stick|² > 0.04):  for each candidate enemy,
+//     compute the angle difference between the camera-relative pad
+//     direction and the world-space direction to the enemy; pick the
+//     enemy with the smallest |diff|; if it's within fudge°, snap
+//     `eatme_travel` to point at that enemy and stash the entity in
+//     `eatme_target`.
+//   • Stick neutral:                       just pick the enemy most
+//     directly in front of the character heading.  Sets only
+//     `eatme_target`; movement isn't biased.
+
+const EATME_CULL_RANGE: f32 = 8.0;
+const EATME_CULL_RANGE_SQ: f32 = EATME_CULL_RANGE * EATME_CULL_RANGE;
+const EATME_FUDGE_DEG: f32 = 45.0;
+const EATME_STICK_DEAD_SQ: f32 = 0.2 * 0.2;
+/// Maximum |angle diff| (radians) for the "stick neutral" pick to be
+/// considered "in front of" the character.  The C++ uses `minDiff =
+/// 1.0f` (~57° in their atan2 coord); we mirror that loose tolerance.
+const EATME_FRONT_TOLERANCE_RAD: f32 = 1.0;
+
+use crate::combat::components::Health;
+use crate::fight::components::FighterState;
+
+/// Magnetises `InputState.movement` toward nearby enemies and surfaces
+/// the locked-onto enemy via `InputState.eatme_target`.  Writes both
+/// outputs each frame regardless of whether EATME engages — the
+/// `Option` shape signals engagement.
+pub fn eatme_system(
+    mut players: Query<
+        (&Transform, &mut InputState),
+        (With<Player>, Without<crate::camera::components::CameraController>),
+    >,
+    camera_q: Query<
+        &Transform,
+        (
+            With<crate::camera::components::CameraController>,
+            Without<Player>,
+        ),
+    >,
+    candidates: Query<
+        (Entity, &Transform, &Health),
+        (
+            With<FighterState>,
+            Without<Player>,
+            Without<crate::camera::components::CameraController>,
+        ),
+    >,
+) {
+    let Some(cam_tf) = camera_q.iter().next() else {
+        // No camera — clear and bail.
+        for (_, mut input) in &mut players {
+            input.eatme_target = None;
+            input.eatme_travel = None;
+        }
+        return;
+    };
+
+    // Build camera basis once.  `cam_fwd_xz` is the camera's forward
+    // projected onto the XZ plane (the input plane).  The same
+    // transform the movement system uses — keeps the two views aligned.
+    let cam_fwd = cam_tf.forward().as_vec3();
+    let cam_right = cam_tf.right().as_vec3();
+    let cam_fwd_xz = Vec3::new(cam_fwd.x, 0.0, cam_fwd.z).normalize_or_zero();
+    let cam_right_xz = Vec3::new(cam_right.x, 0.0, cam_right.z).normalize_or_zero();
+    if cam_fwd_xz.length_squared() < 1e-6 || cam_right_xz.length_squared() < 1e-6 {
+        // Camera is looking straight up/down — bail.
+        for (_, mut input) in &mut players {
+            input.eatme_target = None;
+            input.eatme_travel = None;
+        }
+        return;
+    }
+
+    let fudge_rad = EATME_FUDGE_DEG.to_radians();
+
+    for (player_tf, mut input) in &mut players {
+        // Start fresh each tick.
+        input.eatme_target = None;
+        input.eatme_travel = None;
+
+        // Reconstruct the world-space travel direction from the raw
+        // stick using the same mapping `player_movement_system` does
+        // (W=−y forward, S=+y back, A=+x left, D=−x right).
+        let stick = input.movement;
+        let stick_mag_sq = stick.length_squared();
+        let mut travel = Vec3::ZERO;
+        if stick.y < -0.1 {
+            travel += cam_fwd_xz;
+        }
+        if stick.y > 0.1 {
+            travel -= cam_fwd_xz;
+        }
+        if stick.x > 0.1 {
+            travel -= cam_right_xz;
+        }
+        if stick.x < -0.1 {
+            travel += cam_right_xz;
+        }
+        let travel = travel.normalize_or_zero();
+
+        let player_pos = player_tf.translation;
+
+        // ── Stick-neutral branch ─────────────────────────────────────
+        // Just pick the enemy most directly in front of the character
+        // heading.  Don't bias movement.  Mirrors padmapper.cpp:131-171.
+        if stick_mag_sq < EATME_STICK_DEAD_SQ {
+            // Player's forward is +Z relative to their model; the
+            // `Transform.back()` happens to be local +Z (model faces
+            // away from camera).  Use that as the heading reference.
+            let player_fwd = player_tf.back().as_vec3();
+            let head_angle = player_fwd.x.atan2(player_fwd.z);
+
+            let mut best: Option<(f32, Entity)> = None;
+            for (ent, ent_tf, hp) in &candidates {
+                if hp.current <= 0.0 {
+                    continue;
+                }
+                let diff = ent_tf.translation - player_pos;
+                let dist_sq = diff.x * diff.x + diff.z * diff.z;
+                if dist_sq > EATME_CULL_RANGE_SQ || dist_sq < 1e-4 {
+                    continue;
+                }
+                let to_enemy = Vec3::new(diff.x, 0.0, diff.z)
+                    .try_normalize()
+                    .unwrap_or(Vec3::Z);
+                let enemy_angle = to_enemy.x.atan2(to_enemy.z);
+                let h_diff = (head_angle - enemy_angle).abs();
+                if h_diff >= EATME_FRONT_TOLERANCE_RAD {
+                    continue;
+                }
+                if best.map(|(d, _)| h_diff < d).unwrap_or(true) {
+                    best = Some((h_diff, ent));
+                }
+            }
+            if let Some((_, ent)) = best {
+                input.eatme_target = Some(ent);
+            }
+            continue;
+        }
+
+        // ── Stick-active branch ──────────────────────────────────────
+        // Find the enemy with the smallest signed angle diff between
+        // the desired travel and the direction to them.  If that diff
+        // is within fudge°, snap travel to point at them and stash
+        // them as the target.  Mirrors padmapper.cpp:49-101.
+        let travel_angle = travel.x.atan2(travel.z);
+
+        let mut best_diff = std::f32::consts::PI;
+        let mut best_dir: Vec3 = travel;
+        let mut best_ent: Option<Entity> = None;
+
+        for (ent, ent_tf, hp) in &candidates {
+            if hp.current <= 0.0 {
+                continue;
+            }
+            let diff = ent_tf.translation - player_pos;
+            let dist_sq = diff.x * diff.x + diff.z * diff.z;
+            if dist_sq > EATME_CULL_RANGE_SQ || dist_sq < 1e-4 {
+                continue;
+            }
+            let to_enemy = Vec3::new(diff.x, 0.0, diff.z)
+                .try_normalize()
+                .unwrap_or(Vec3::Z);
+            let enemy_angle = to_enemy.x.atan2(to_enemy.z);
+            let mut signed = enemy_angle - travel_angle;
+            while signed > std::f32::consts::PI {
+                signed -= std::f32::consts::TAU;
+            }
+            while signed < -std::f32::consts::PI {
+                signed += std::f32::consts::TAU;
+            }
+            if signed.abs() < best_diff.abs() {
+                best_diff = signed;
+                best_dir = to_enemy;
+                best_ent = Some(ent);
+            }
+        }
+
+        if best_diff.abs() < fudge_rad
+            && let Some(ent) = best_ent
+        {
+            input.eatme_travel = Some(best_dir);
+            input.eatme_target = Some(ent);
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// eatme_strike_target_seed_system
+// ---------------------------------------------------------------------------
+
+/// On attack press, pre-seed `FighterState.strike_target` with the
+/// current EATME target so the attacker's body locks onto that enemy
+/// from the first frame of the swing.  Without this, `strike_target`
+/// only gets set REACTIVELY after a hit lands (combat/systems.rs:483),
+/// which is too late for the per-frame body-rotation in
+/// `update_fighter_strike_facing_system` to track during the windup.
+///
+/// Mirrors the legacy `PADDATA.AttackTrackTargetIsEATMETarget` branch
+/// at rb/src/behavior/pad.cpp:813 — when set, the strike's preselected
+/// target is the EATME pick.
+pub fn eatme_strike_target_seed_system(
+    mut players: Query<(&InputState, &mut FighterState), With<Player>>,
+) {
+    for (input, mut fs) in &mut players {
+        if !(input.attack || input.attack_two || input.grab) {
+            continue;
+        }
+        let Some(target) = input.eatme_target else {
+            continue;
+        };
+        // Don't clobber an existing strike target — the attack-resolution
+        // path may have already set one this frame.
+        if fs.strike_target.is_none() {
+            fs.strike_target = Some(target);
+            // Strike targets seeded from EATME aren't auto-cleared on
+            // first use — keeping the body-lock active for the full
+            // attack feels right with how the player aims.  Set the
+            // flag to false explicitly so a prior attack's value
+            // doesn't carry over.
+            fs.clear_st_after_first_use = false;
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Physics movement
 // ---------------------------------------------------------------------------
 
@@ -476,29 +720,39 @@ pub fn player_movement_system(
             travel = (visual_front * -input.movement.y + visual_right * -input.movement.x)
                 .normalize_or_zero();
         } else if let Some(cam_tf) = camera_tf_opt {
-            let cam_fwd = cam_tf.forward().as_vec3();
-            let cam_right = cam_tf.right().as_vec3();
-            let xz_fwd = Vec3::new(cam_fwd.x, 0.0, cam_fwd.z).normalize_or_zero();
-            let xz_right = Vec3::new(cam_right.x, 0.0, cam_right.z).normalize_or_zero();
+            // EATME magnet: if `eatme_system` snapped the stick toward
+            // an enemy this frame, use the snapped direction directly
+            // instead of recomputing from camera + raw stick.  Mirrors
+            // the legacy `chrRelativeWithEATME` consumer at
+            // rb/src/behavior/pad.cpp — locomotion takes the snapped
+            // direction, look/aim takes the raw one.
+            if let Some(eatme_dir) = input.eatme_travel {
+                travel = eatme_dir.normalize_or_zero();
+            } else {
+                let cam_fwd = cam_tf.forward().as_vec3();
+                let cam_right = cam_tf.right().as_vec3();
+                let xz_fwd = Vec3::new(cam_fwd.x, 0.0, cam_fwd.z).normalize_or_zero();
+                let xz_right = Vec3::new(cam_right.x, 0.0, cam_right.z).normalize_or_zero();
 
-            if input.movement.y < -0.1 {
-                // W
-                travel += xz_fwd;
-            }
-            if input.movement.y > 0.1 {
-                // S
-                travel -= xz_fwd;
-            }
-            if input.movement.x > 0.1 {
-                // A
-                travel -= xz_right;
-            }
-            if input.movement.x < -0.1 {
-                // D
-                travel += xz_right;
-            }
+                if input.movement.y < -0.1 {
+                    // W
+                    travel += xz_fwd;
+                }
+                if input.movement.y > 0.1 {
+                    // S
+                    travel -= xz_fwd;
+                }
+                if input.movement.x > 0.1 {
+                    // A
+                    travel -= xz_right;
+                }
+                if input.movement.x < -0.1 {
+                    // D
+                    travel += xz_right;
+                }
 
-            travel = travel.normalize_or_zero();
+                travel = travel.normalize_or_zero();
+            }
 
             if travel.length_squared() > 0.001 {
                 // Since visually the model faces local +Z, we must point local -Z OPPOSITE to travel

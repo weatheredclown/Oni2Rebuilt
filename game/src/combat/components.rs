@@ -112,6 +112,12 @@ pub struct ActiveAttack {
     pub hit_entities: Vec<Entity>,
     pub has_fired_projectile: bool,
     pub end_rotation_notches: i32,
+    /// One-shot guard for grab-attack disarms: set the first frame the
+    /// anim crosses `AtdtGrab::removes_weapon_phase` so we don't fire
+    /// `DropWeaponMessage` every frame the phase remains exceeded.
+    /// Mirrors the `PassedPhase` edge-trigger in
+    /// rb/src/fight/grab.cpp:743.
+    pub has_disarmed: bool,
 }
 
 // === Combo Tracker ===

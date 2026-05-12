@@ -46,6 +46,17 @@ impl Plugin for PlayerPlugin {
                 FixedUpdate,
                 (
                     oni2_loader::moving_platform_system,
+                    // EATME magnetism: compute the snapped travel vector
+                    // and target enemy from the raw stick + nearby foes.
+                    // Must run BEFORE `player_movement_system` so the
+                    // movement system sees the populated `eatme_travel`,
+                    // and BEFORE `eatme_strike_target_seed_system` so
+                    // the seed sees the populated `eatme_target`.
+                    systems::eatme_system,
+                    // Pre-seed FighterState.strike_target on attack press
+                    // so the body-lock engages from frame 1 instead of
+                    // waiting for a hit to land.
+                    systems::eatme_strike_target_seed_system,
                     systems::player_movement_system,
                 )
                     .chain()

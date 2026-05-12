@@ -152,6 +152,50 @@ pub struct FighterState {
     /// Counts down from FighterType.leave_fight_stance_delay; 0 → exit fight stance.
     pub leave_fight_stance_timer: f32,
 
+    // --- Face-after-run timer ---
+    /// Seconds spent at full throttle without an attack/react playing.
+    /// Once this reaches `FighterType.run_before_face`, a slowdown
+    /// triggers the face-snap to the most-faced creature.  Mirrors
+    /// `crFighter::RunBeforeFaceTimer` (rb/src/fight/fighter.h:372),
+    /// accumulated at fighter.cpp:1582 and consumed/reset at
+    /// fighter.cpp:1595-1615.
+    pub run_before_face_timer: f32,
+
+    // --- Disarm accounting ---
+    /// Number of attackers committed to disarming *this* fighter this
+    /// frame (write-side counter).  Other AIs call
+    /// `report_disarming()` once per tick while they're in the
+    /// FLAG_DISARMING state.  Reset to 0 at frame start; the prior
+    /// value is preserved as `num_disarmers_last_frame` for stable
+    /// reads.  Mirrors `aiFighter::NumDisarmers`
+    /// (rb/src/aifight/fighter.h:777).
+    pub num_disarmers: i32,
+    /// Stable read-side disarmer count taken from `num_disarmers` at
+    /// the start of the new frame.  AIs query `get_num_disarmers()` to
+    /// decide whether to commit themselves — using last frame's count
+    /// gives every committed disarmer this tick a chance to be counted
+    /// before the next decision pass.  Mirrors
+    /// `aiFighter::NumDisarmersLastFrame` (fighter.h:778).
+    pub num_disarmers_last_frame: i32,
+    /// Time (seconds since start) when the target's weapon became fully
+    /// drawn — `-1.0` means "currently unarmed".  Used by
+    /// `update_disarming_system` to compute how long the target has
+    /// been a disarm candidate; only mutated when the observed
+    /// target changes armed state.  Mirrors
+    /// `aiFightAndShoot::TargetDrewWeaponTime` (fightandshoot.h:308).
+    pub target_drew_weapon_time: f64,
+    /// True while *this* fighter is committed to disarming its current
+    /// target (the legacy `FLAG_DISARMING` on aiFightAndShoot).  When
+    /// set, attack-table selection prefers the disarm table (TODO:
+    /// table swap not wired yet — the flag is bookkept and surfaced
+    /// for downstream consumers via getter).
+    pub is_disarming: bool,
+    /// Tick count for the current disarm commitment.  Used by the
+    /// legacy engine to suppress one-frame disarm flickers
+    /// (`NumDisarmFrames` at fightandshoot.cpp:1187).  We retain it
+    /// for diagnostic parity and future use.
+    pub num_disarm_frames: i32,
+
     // --- Successive attacks / combo escalation ---
     /// How many hits in a row have landed on the same target.
     pub num_successive_attacks: i32,
@@ -255,6 +299,12 @@ impl Default for FighterState {
             no_react_start_phase: 0.0,
             in_invuln_phase: false,
             leave_fight_stance_timer: 0.0,
+            run_before_face_timer: 0.0,
+            num_disarmers: 0,
+            num_disarmers_last_frame: 0,
+            target_drew_weapon_time: -1.0,
+            is_disarming: false,
+            num_disarm_frames: 0,
             num_successive_attacks: 0,
             cur_combo_index: 0,
             queue_attacks: true,
@@ -341,6 +391,32 @@ impl FighterState {
     /// (rb/src/fight/fighter.cpp:1619-1620).
     pub fn cancel_turn_lerp(&mut self) {
         self.turn_lerper = 1.0;
+    }
+
+    /// Record that *another* fighter has committed to disarming this
+    /// fighter this frame.  Each committed attacker calls this once
+    /// per tick while their `is_disarming` flag is set.  Mirrors
+    /// `aiFighter::ReportDisarming` (rb/src/aifight/fighter.h:455-456).
+    pub fn report_disarming(&mut self) {
+        self.num_disarmers += 1;
+    }
+
+    /// Withdraw a disarm commitment recorded earlier this frame — used
+    /// by the per-AI disarm-decision pass when it flips its
+    /// `is_disarming` from true→false in the same tick (so the
+    /// stable count doesn't double-bias).  Mirrors
+    /// `aiFighter::ReportNoDisarmThisFrame` (fighter.h:458-459).
+    pub fn report_no_disarm_this_frame(&mut self) {
+        self.num_disarmers_last_frame = (self.num_disarmers_last_frame - 1).max(0);
+    }
+
+    /// Stable read-side disarmer count from the prior tick.  AI
+    /// decision logic reads through this — never through
+    /// `num_disarmers` directly — so concurrently-committing
+    /// attackers don't all double-count.  Mirrors
+    /// `aiFighter::GetNumDisarmers` (fighter.h:461-462).
+    pub fn get_num_disarmers(&self) -> i32 {
+        self.num_disarmers_last_frame
     }
 
     pub fn is_grappling(&self) -> bool {
@@ -518,6 +594,13 @@ pub struct FighterType {
     pub strike_noise_range: f32,
     /// Creature-class bitmask for HasHitClass queries.
     pub creature_class: u32,
+    /// AI disarm aggressiveness, 0..100.  0 = never commit to disarming
+    /// an armed target; 100 = always commit (and allow many allies to
+    /// pile on the same target).  Mirrors `aiTuning::Disarm`
+    /// (rb/src/behavior/messages.h:261).  The decision thresholds in
+    /// `update_disarming_system` lerp against this value identically
+    /// to `aiFightAndShoot::UpdateDisarming` (fightandshoot.cpp:1128-1174).
+    pub disarm_tuning: f32,
 }
 
 impl Default for FighterType {
@@ -534,6 +617,11 @@ impl Default for FighterType {
             auto_fight_stance: true,
             strike_noise_range: 5.0,
             creature_class: 0,
+            // Legacy `aiTuning.Disarm` defaults to -1 ("inherit"); we
+            // default to 0 ("never disarm") so AIs without explicit
+            // tuning don't grab weapons unprompted.  Per-creature tune
+            // files override this once parsed.
+            disarm_tuning: 0.0,
         }
     }
 }

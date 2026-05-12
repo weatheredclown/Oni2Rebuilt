@@ -71,6 +71,27 @@ pub struct InjureMessage {
     pub attack_target: Option<AttackTarget>,
     // For handling animations resolving HitReaction logic
     pub strike_react_enum: Option<i32>,
+
+    /// World-space displacement vector to push the defender across the
+    /// react animation.  Already computed for the right react slot and
+    /// translate mode (PUSH/SET) at hit time, so the downstream
+    /// `react_distance_apply_system` only needs to divide by the react
+    /// anim duration to get a constant per-frame velocity.  `None` for
+    /// non-ATDT hits (env hazards, scripted injuries).  Mirrors the
+    /// `translateDist` Vec3 built at rb/src/fight/strike.cpp:476-507 and
+    /// stored via `SetReactDistance` (strike.cpp:513).
+    pub react_distance: Option<Vec3>,
+    /// True when the defender should snap-face the attacker as part of
+    /// the hit reaction.  Mirrors `crStrikeReact::FaceWithReact`
+    /// (rb/src/fight/attackdata.cpp:996) — default `false`; the legacy
+    /// `sMakeTargetFace` (strike.cpp:235) only runs when this is set.
+    pub face_with_react: bool,
+    /// One-shot teleport destination for the defender when the strike's
+    /// translate mode is `REACT_TRANSLATE_MODE_TELEPORT`.  When `Some`,
+    /// the injure system snaps Transform.translation to this XZ position
+    /// before the react plays.  Mirrors the `aMsgTeleport` broadcast at
+    /// rb/src/fight/strike.cpp:500-502.
+    pub teleport_to: Option<Vec3>,
 }
 
 #[derive(Message, Clone)]

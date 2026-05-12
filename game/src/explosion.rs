@@ -81,6 +81,9 @@ pub fn update_explosion_system(
                             attack_strength: None,
                             attack_target: None,
                             strike_react_enum: None, // Explode reaction!
+                            react_distance: None,
+                            face_with_react: false,
+                            teleport_to: None,
                         });
                     }
                 }

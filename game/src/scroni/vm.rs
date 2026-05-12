@@ -3013,6 +3013,9 @@ pub fn scroni_tick_system(
                         attack_strength: None,
                         attack_target: None,
                         strike_react_enum: None,
+                        react_distance: None,
+                        face_with_react: false,
+                        teleport_to: None,
                     });
                 }
                 SysRequest::AmbientSoundStop(handle) => {

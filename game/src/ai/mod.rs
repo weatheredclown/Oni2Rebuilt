@@ -10,7 +10,9 @@
 pub mod components;
 pub mod cover;
 pub mod fsm;
+pub mod interceptor;
 pub mod navigation;
+pub mod shooter;
 
 use bevy::prelude::*;
 
@@ -24,6 +26,8 @@ impl Plugin for AiPlugin {
             FixedUpdate,
             (
                 fsm::ai_attach_fsm_system,
+                interceptor::ai_interceptor_system,
+                shooter::ai_shooter_system,
                 fsm::ai_fsm_update_system,
                 navigation::path_following_system,
                 navigation::actor_follower_system,

@@ -51,6 +51,7 @@ pub struct AiPadCommands {
     pub chr_bak: bool,
     pub chr_lft: bool,
     pub chr_rgh: bool,
+    pub weapon_fire_forward: bool,
 }
 
 /// Per-AI FSM runtime.  Wraps the generic `SmRuntime<InputDriver>` +
@@ -101,7 +102,13 @@ pub fn ai_attach_fsm_system(
         };
         commands
             .entity(entity)
-            .insert((AiFsmRuntime::new(data, entity), AiPadCommands::default(), crate::ai::components::AiDrivenVelocityThisTick::default()));
+            .insert((
+                AiFsmRuntime::new(data, entity),
+                AiPadCommands::default(),
+                crate::ai::components::AiDrivenVelocityThisTick::default(),
+                crate::ai::components::AiShooter::default(),
+                crate::ai::components::AiInterceptor::default(),
+            ));
     }
 }
 
@@ -123,10 +130,18 @@ pub fn ai_fsm_update_system(
         &Oni2AnimLibrary,
         &mut Oni2AnimState,
         &mut Fighter,
+        Option<&crate::combat::components::AboutToBeHit>,
     )>,
 ) {
     let dt = time.delta_secs();
-    for (entity, mut runtime, mut cmds, anim_lib, mut anim_state, mut fighter) in &mut query {
+    for (entity, mut runtime, mut cmds, anim_lib, mut anim_state, mut fighter, about_opt) in &mut query {
+        // --- Parrying reflex ---
+        // Mirrors legacy `if (IsBeingAttacked()) Parry();` which forced BlockIndex = 0.
+        // In our pipeline, synthesizing PADCMD_BLOCK forces the AI's fsm to transition to block.
+        if about_opt.map_or(false, |a| a.active.is_some()) {
+            cmds.block = true;
+        }
+
         runtime.sm.advance_clock(dt);
 
         // Keep the context's anim-state mirror current so `Timeout` /
@@ -165,6 +180,9 @@ pub fn ai_fsm_update_system(
         }
         if cmds.chr_rgh {
             pad |= pad_flags::PADCMD_CHR_RGH;
+        }
+        if cmds.weapon_fire_forward {
+            pad |= pad_flags::PADCMD_WEAPON_FIRE_FORWARD;
         }
 
         runtime.ctx.packet = FsmPacket {

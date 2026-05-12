@@ -363,8 +363,69 @@ pub fn hit_detection_system(
             } else {
                 // ── Not blocked ───────────────────────────────────────────
                 let damage = attack_data.damage;
-                let _knockback_dir =
-                    (target_tf.translation - attacker_tf.translation).normalize_or_zero();
+
+                // ── React-slot resolution + position-lock fields ──────────
+                // Pick the first slot `i` where current phase ≤ reactphase[i];
+                // fall back to slot 0 if none match.  Mirrors strike.cpp:311-314.
+                let slot = {
+                    let mut found = 0usize;
+                    let mut any = false;
+                    for i in 0..4 {
+                        if phase <= strike.reactphase[i] {
+                            found = i;
+                            any = true;
+                            break;
+                        }
+                    }
+                    if any { found } else { 0 }
+                };
+
+                let face_with_react = strike.face_with_react[slot];
+                let mode = strike.set_distance_mode[slot];
+                let cfg_dist = strike.reactdistance[slot];
+
+                // Flat XZ direction from attacker to target.
+                let mut from_atk = target_tf.translation - attacker_tf.translation;
+                from_atk.y = 0.0;
+                let flat_dist = from_atk.length();
+                let from_dir = if flat_dist > 1e-4 {
+                    from_atk / flat_dist
+                } else {
+                    attacker_fighter.facing
+                };
+
+                use crate::oni2_loader::parsers::atdt::{
+                    REACT_TRANSLATE_MODE_PUSH, REACT_TRANSLATE_MODE_SET,
+                    REACT_TRANSLATE_MODE_TELEPORT,
+                };
+                let mut react_distance: Option<Vec3> = None;
+                let mut teleport_to: Option<Vec3> = None;
+
+                match mode {
+                    REACT_TRANSLATE_MODE_SET => {
+                        // Push so the final distance from attacker = cfg_dist.
+                        // strike.cpp:479-481: dist-=flatDistToTarg; fallthrough into PUSH.
+                        let dist = cfg_dist - flat_dist;
+                        react_distance = Some(from_dir * dist);
+                    }
+                    REACT_TRANSLATE_MODE_PUSH => {
+                        // strike.cpp:482-483: translate = from * cfg_dist.
+                        react_distance = Some(from_dir * cfg_dist);
+                    }
+                    REACT_TRANSLATE_MODE_TELEPORT => {
+                        // strike.cpp:485-502: teleport target to (attacker pos +
+                        // rotated -Z distVec).  The slice-heading rotation
+                        // requires per-strike state we don't track yet; for
+                        // the common straight-ahead case, "in front of
+                        // attacker at cfg_dist" matches the legacy intent.
+                        let dest = attacker_tf.translation + attacker_fighter.facing * cfg_dist;
+                        teleport_to = Some(Vec3::new(dest.x, target_tf.translation.y, dest.z));
+                    }
+                    _ => {
+                        // Unknown mode: fall back to PUSH semantics.
+                        react_distance = Some(from_dir * cfg_dist);
+                    }
+                }
 
                 injure_writer.write(InjureMessage {
                     target: target_entity,
@@ -378,6 +439,9 @@ pub fn hit_detection_system(
                     attack_strength: Some(attack_strength),
                     attack_target: atdt_target,
                     strike_react_enum: Some(react_enum),
+                    react_distance,
+                    face_with_react,
+                    teleport_to,
                 });
 
                 damage_writer.write(DamageMessage {
@@ -467,6 +531,7 @@ pub fn injure_system(
         Option<&HitReaction>,
         Option<&Oni2AnimState>,
         Option<&crate::fight::FighterType>,
+        Option<&mut FighterState>,
     )>,
     time: Res<Time>,
     mut reaction_writer: MessageWriter<HitReactionMessage>,
@@ -483,6 +548,7 @@ pub fn injure_system(
             hit_reaction_opt,
             _anim_state_opt,
             fighter_type_opt,
+            mut fighter_state_opt,
         )) = query.get_mut(msg.target)
         else {
             continue;
@@ -554,10 +620,27 @@ pub fn injure_system(
             }
         }
 
-        // Face and React
-        if let Some(from_pos) = msg.from
+        // Face and React.
+        //
+        // C++ `sMakeTargetFace` (rb/src/fight/strike.cpp:235) snaps the
+        // defender's yaw to face the attacker before the react plays.
+        // Strict-fidelity gate is `strikeReact.FaceWithReact`
+        // (strike.cpp:460-472), default false (attackdata.cpp:996),
+        // because the legacy engine relies on the *attacker's*
+        // per-frame `StrikeTarget` rotation (fighter.cpp:1507-1532) AND
+        // the *defender's* AI face-tracking behaviour to keep the
+        // bodies aligned even without an explicit snap.  We don't have
+        // AI face-tracking ported yet, so honour the `face_with_react`
+        // opt-in **and** snap unconditionally for any play-react path —
+        // otherwise nothing aligns the defender during the react and
+        // shipped ATDTs (which all set `facewithreact*=0`) drift apart.
+        // TODO: remove the unconditional fallback once AI face-tracking
+        // is in place; at that point only the legacy opt-in should snap.
+        let do_face_snap = msg.play_react;
+        let _strict_face = msg.face_with_react; // kept for future strict-fidelity mode
+        if do_face_snap
+            && let Some(from_pos) = msg.from
             && let Some(ref mut fighter) = fighter_opt
-            && msg.play_react
             && let Some(ref mut tf) = transform_opt
         {
             let mut to_attacker = (from_pos - tf.translation).normalize_or_zero();
@@ -568,6 +651,26 @@ pub fn injure_system(
                 }
                 fighter.facing = to_attacker;
             }
+        }
+
+        // Teleport mode — strike.cpp:485-502 broadcasts an aMsgTeleport;
+        // here we just snap the defender's transform.  Done before the
+        // react anim begins so the anim plays at the destination.
+        if msg.play_react
+            && let Some(dest) = msg.teleport_to
+            && let Some(ref mut tf) = transform_opt
+        {
+            tf.translation.x = dest.x;
+            tf.translation.z = dest.z;
+        }
+
+        // Stash the per-react displacement vector for
+        // `react_distance_apply_system` to consume over the react anim.
+        // Mirrors `SetReactDistance(translateDist)` at strike.cpp:513.
+        if msg.play_react
+            && let Some(ref mut fs) = fighter_state_opt
+        {
+            fs.react_distance = msg.react_distance.unwrap_or(Vec3::ZERO);
         }
 
         if health.current <= 0.0 && last_hp > 0.0 {

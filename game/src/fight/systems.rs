@@ -73,6 +73,14 @@ pub fn fighter_state_update_system(
         // empty before any strike evaluation this frame populates it.
         fs.reset_targets_pending();
 
+        // Disarmer-count rollover: snapshot last frame's writes into
+        // the stable read-side counter, then clear the write-side so
+        // this frame's `report_disarming()` calls accumulate fresh.
+        // Mirrors `NumDisarmersLastFrame = NumDisarmers; NumDisarmers = 0;`
+        // at rb/src/aifight/fighter.cpp:395-396.
+        fs.num_disarmers_last_frame = fs.num_disarmers;
+        fs.num_disarmers = 0;
+
         // Super meter decay
         let decay_rate = ft_opt
             .map(|ft| {
@@ -927,6 +935,496 @@ pub fn rotation_notches_system(
         if let Some(mut fs) = fs_opt {
             fs.last_attack_angle = new_forward.z.atan2(new_forward.x);
         }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// disarm_apply_system
+// ---------------------------------------------------------------------------
+
+/// Drop the victim's currently-held weapon when an attacker's grab-type
+/// disarm attack crosses its `removes_weapon_phase`.  Mirrors the
+/// `PassedPhase(GetAttackData()->RemovesWeaponPhase)` edge-trigger in
+/// rb/src/fight/grab.cpp:743-751 — when true, the C++ engine calls
+/// `inv->DropCurrentWeapon()` on the victim.
+///
+/// One-shot per attack: `ActiveAttack.has_disarmed` latches at first
+/// crossing and resets when a new attack starts (handled by
+/// `attack_sync_system` blanking `active_attack`).  Without this guard
+/// the message fires every frame the phase remains exceeded and the
+/// victim would drop every weapon they own in one tick.
+pub fn disarm_apply_system(
+    mut attackers: Query<(
+        Entity,
+        &Oni2AnimState,
+        &mut crate::combat::components::AttackState,
+        &FighterState,
+    )>,
+    inventories: Query<&crate::inventory::components::Inventory>,
+    mut drop_writer: MessageWriter<crate::inventory::events::DropWeaponMessage>,
+) {
+    for (_attacker, anim, mut attack_state, fs) in &mut attackers {
+        // No active attack? Nothing to track.
+        let Some(active) = attack_state.active_attack.as_mut() else {
+            continue;
+        };
+        if active.has_disarmed {
+            continue;
+        }
+
+        // Pull the Grab block off the currently-playing animation's
+        // attack data.  Non-grab attacks (strikes / ranged) skip.
+        let Some(attack_data) = anim.anim.attack_data.as_ref() else {
+            continue;
+        };
+        let Some(grab) = attack_data.grab.as_ref() else {
+            continue;
+        };
+        if !grab.removes_weapon {
+            continue;
+        }
+
+        // Phase check — only trip once the anim has crossed
+        // `removes_weapon_phase`.
+        if anim.anim.num_frames <= 1 {
+            continue;
+        }
+        let phase = anim.current_time / (anim.anim.num_frames as f32 - 1.0).max(1.0);
+        if phase < grab.removes_weapon_phase {
+            continue;
+        }
+
+        // Victim is the entity this fighter is grappling.  The legacy
+        // path runs the disarm strictly inside an active grapple
+        // (grab.cpp:746 — the function is on `crGrab` and operates on
+        // the held target).
+        let Some(victim) = fs.grapple_target else {
+            continue;
+        };
+
+        // Find the victim's currently-equipped weapon slot.  Skip
+        // silently if they have no inventory or are already disarmed.
+        let Ok(inv) = inventories.get(victim) else {
+            active.has_disarmed = true; // don't keep retrying
+            continue;
+        };
+        let Some(slot_index) = inv.current_weapon else {
+            active.has_disarmed = true;
+            continue;
+        };
+
+        drop_writer.write(crate::inventory::events::DropWeaponMessage {
+            entity: victim,
+            slot_index,
+        });
+        active.has_disarmed = true;
+        bevy::log::info!(
+            "disarm_apply: victim={:?} dropped weapon slot {} at phase={:.2}",
+            victim,
+            slot_index,
+            phase,
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
+// update_disarming_system
+// ---------------------------------------------------------------------------
+
+/// Per-AI disarm-decision pass mirroring
+/// `aiFightAndShoot::UpdateDisarming` (rb/src/aifight/fightandshoot.cpp:1095-1190).
+///
+/// Each tick, every AI fighter that has a current target evaluates
+/// whether to commit to disarming based on:
+///   • Target's armed state (`Inventory.current_weapon.is_some()`).
+///   • How long the target has been armed (`target_drew_weapon_time`).
+///   • Distance to target (flat XZ).
+///   • Whether the target is aiming at us — not wired yet, treated as
+///     `false` until weapon aim state is exposed.  Documented gap.
+///   • This fighter's `disarm_tuning` (0..100, higher = more committed).
+///   • How many allies have already committed
+///     (`target_fs.get_num_disarmers()`).
+///   • Whether the target is mid-react (legacy `abh.IsReacting()`).
+///
+/// When committed, this fighter:
+///   • Sets `is_disarming = true` on self.
+///   • Calls `target.report_disarming()` so the next tick's count
+///     reflects the commitment.
+///
+/// The legacy companion piece — attack-table swap to `DisarmTable` —
+/// requires the full `aifight` coordination layer that is NOT YET
+/// PORTED.  Until then the flag is set but no behavioural change
+/// follows; downstream consumers can read `fs.is_disarming` and route
+/// their attack selection.
+///
+/// Aiming-at-me detection (`bh->IsAimingAt(Actor->GetGuid())` at
+/// fightandshoot.cpp:1116) needs the weapon-aim state machine + a
+/// per-target lock.  Filed for follow-up.
+pub fn update_disarming_system(
+    time: Res<Time>,
+    inventories: Query<&crate::inventory::components::Inventory>,
+    transforms: Query<&Transform>,
+    hit_reactions: Query<&crate::combat::components::HitReaction>,
+    ai_fighters: Query<(Entity, &crate::ai::components::AiFighter)>,
+    mut fighter_states: Query<
+        (&mut FighterState, Option<&FighterType>),
+        Without<crate::oni2_loader::components::ActorAsleep>,
+    >,
+) {
+    let now = time.elapsed_secs_f64();
+
+    // ── Pass 1: read-only decision collection ────────────────────────
+    // Read each AI's state + their target's state from immutable
+    // queries.  Decisions are recorded into a Vec to apply in Pass 2,
+    // so we never alias mutable + immutable access to FighterState
+    // (Bevy B0001).
+    struct Decision {
+        entity: Entity,
+        target: Entity,
+        armed: bool,
+        update_drew_time: Option<f64>,
+        was_disarming: bool,
+        will_disarm: bool,
+    }
+    let mut decisions: Vec<Decision> = Vec::new();
+    let mut clear_to_idle: Vec<Entity> = Vec::new();
+
+    for (entity, ai) in &ai_fighters {
+        // Read this AI's own state.  `get` is immutable so we can also
+        // read the target's state from the same query.
+        let Ok((fs, ft_opt)) = fighter_states.get(entity) else {
+            continue;
+        };
+        let was_disarming = fs.is_disarming;
+        let disarm_tuning = ft_opt.map(|t| t.disarm_tuning).unwrap_or(0.0);
+        let target_drew_time = fs.target_drew_weapon_time;
+
+        let Some(target) = ai.target else {
+            clear_to_idle.push(entity);
+            continue;
+        };
+
+        // Target's armed state — `current_weapon.is_some()` is our
+        // stand-in for `bh->IsWeaponCompletelyDrawn` (fightandshoot.cpp:1114).
+        let armed = inventories
+            .get(target)
+            .ok()
+            .and_then(|inv| inv.current_weapon)
+            .is_some();
+        let was_armed = target_drew_time >= 0.0;
+        let update_drew_time = if armed && !was_armed {
+            Some(now)
+        } else if !armed {
+            Some(-1.0)
+        } else {
+            None
+        };
+
+        // Effective "drew weapon at" — what the next pass will store.
+        let effective_drew_time = update_drew_time.unwrap_or(target_drew_time);
+
+        // Flat XZ distance to target.
+        let attacker_pos = transforms.get(entity).map(|t| t.translation);
+        let target_pos = transforms.get(target).map(|t| t.translation);
+        let flat_dist_sq = match (attacker_pos, target_pos) {
+            (Ok(a), Ok(b)) => {
+                let dx = a.x - b.x;
+                let dz = a.z - b.z;
+                dx * dx + dz * dz
+            }
+            _ => f32::INFINITY,
+        };
+
+        // ── Disarm decision (fightandshoot.cpp:1128-1147) ────────────
+        let d = disarm_tuning;
+        let mut want_disarm = false;
+        if armed && effective_drew_time >= 0.0 {
+            let elapsed = (now - effective_drew_time) as f32;
+            let q = elapsed - flat_dist_sq * 0.1; // MAGIC!
+            let threshold = if d <= 0.0 {
+                f32::MAX
+            } else if d < 25.0 {
+                lerp(d / 25.0, 40.0, 10.0)
+            } else if d < 50.0 {
+                lerp((d - 25.0) / 25.0, 10.0, 0.0)
+            } else {
+                lerp((d - 50.0) / 50.0, 0.0, -10.0)
+            };
+            want_disarm = q > threshold;
+        }
+        let mut will_disarm = was_disarming || want_disarm;
+        if !armed {
+            will_disarm = false;
+        }
+
+        // Cap by max-disarmers + target-reacting (fightandshoot.cpp:1164-1180).
+        if will_disarm {
+            let target_disarmer_count = fighter_states
+                .get(target)
+                .map(|(tfs, _)| {
+                    let mut n = tfs.get_num_disarmers();
+                    if was_disarming {
+                        n -= 1; // don't double-count our own prior commit
+                    }
+                    n
+                })
+                .unwrap_or(0);
+            let max_disarmers = if d < 55.0 {
+                1
+            } else if d < 75.0 {
+                2
+            } else if d < 85.0 {
+                3
+            } else if d < 95.0 {
+                4
+            } else {
+                10_000
+            };
+            let target_reacting = hit_reactions
+                .get(target)
+                .ok()
+                .is_some_and(|hr| hr.active.is_some());
+            if target_disarmer_count >= max_disarmers || target_reacting {
+                will_disarm = false;
+            }
+        }
+
+        decisions.push(Decision {
+            entity,
+            target,
+            armed,
+            update_drew_time,
+            was_disarming,
+            will_disarm,
+        });
+    }
+
+    // ── Pass 2: apply ────────────────────────────────────────────────
+    // Mutate each AI's own state, then nudge their target's
+    // num_disarmers counter.  Self and target are different entities,
+    // so sequential `get_mut` calls don't alias.
+    for entity in clear_to_idle {
+        if let Ok((mut fs, _)) = fighter_states.get_mut(entity) {
+            fs.is_disarming = false;
+            fs.target_drew_weapon_time = -1.0;
+            fs.num_disarm_frames = 0;
+        }
+    }
+
+    for d in decisions {
+        if let Ok((mut fs, _)) = fighter_states.get_mut(d.entity) {
+            if let Some(t) = d.update_drew_time {
+                fs.target_drew_weapon_time = t;
+            }
+            fs.is_disarming = d.will_disarm;
+            if d.will_disarm {
+                fs.num_disarm_frames += 1;
+            } else {
+                fs.num_disarm_frames = 0;
+            }
+            // If target unarmed, also flush state defensively.
+            if !d.armed {
+                fs.is_disarming = false;
+                fs.target_drew_weapon_time = -1.0;
+            }
+        }
+
+        // Report to target.  Increment when newly committing this
+        // frame; decrement when withdrawing a prior commitment so the
+        // stable last-frame count doesn't carry a phantom disarmer.
+        if d.will_disarm
+            && let Ok((mut tfs, _)) = fighter_states.get_mut(d.target)
+        {
+            tfs.num_disarmers += 1;
+        } else if d.was_disarming
+            && !d.will_disarm
+            && let Ok((mut tfs, _)) = fighter_states.get_mut(d.target)
+        {
+            tfs.num_disarmers_last_frame = (tfs.num_disarmers_last_frame - 1).max(0);
+        }
+    }
+}
+
+fn lerp(t: f32, a: f32, b: f32) -> f32 {
+    a + (b - a) * t
+}
+
+// ---------------------------------------------------------------------------
+// react_distance_apply_system
+// ---------------------------------------------------------------------------
+
+/// Push the defender across the react animation by their stashed
+/// `react_distance` displacement.  Mirrors the per-frame
+/// `dist.Scale(ReactDistance,scale)` block at rb/src/fight/fighter.cpp:1390-1431
+/// that the legacy mover consumes as a `TRANSLATIONTYPE_REACT` translation.
+///
+/// We don't have a mover-translation channel; we approximate the same
+/// total displacement by writing a constant XZ velocity each tick while
+/// the react anim plays.  Velocity = `react_distance / react_duration`
+/// so the integrated motion sums back to `react_distance` over the anim.
+/// When the react anim is no longer current, `react_distance` is zeroed
+/// (mirrors fighter.cpp:1430 `ReactDistance.Zero()`).
+pub fn react_distance_apply_system(
+    mut query: Query<(
+        &mut FighterState,
+        &mut avian3d::prelude::LinearVelocity,
+        Option<&Oni2AnimState>,
+    )>,
+) {
+    for (mut fs, mut vel, anim_opt) in &mut query {
+        if fs.react_distance.length_squared() < 1e-6 {
+            continue;
+        }
+
+        let Some(anim) = anim_opt else {
+            // No animator — drop the stashed push so we don't accumulate
+            // it on a future hit.
+            fs.react_distance = Vec3::ZERO;
+            continue;
+        };
+
+        // Identify whether the currently-playing animation is the react
+        // we set up for.  Use the same lookup pattern as
+        // `fighter_state_update_system` for consistency.
+        let react_anim_id = if fs.react_anim >= 0 {
+            ANIMREACT_NAMES
+                .get(fs.react_anim as usize)
+                .map(|name| AnimId::new(name))
+        } else {
+            None
+        };
+        let playing_react = match react_anim_id {
+            Some(rid) => anim.current_anim_id == Some(rid),
+            None => false,
+        };
+
+        if !playing_react {
+            fs.react_distance = Vec3::ZERO;
+            continue;
+        }
+
+        // Total play time for the react anim at its current speed.
+        let fps = anim.fps.max(1.0);
+        let total_frames = (anim.anim.num_frames as f32 - 1.0).max(1.0);
+        let duration = total_frames / fps;
+        if duration < 1e-3 {
+            continue;
+        }
+
+        let push = fs.react_distance / duration;
+        vel.x = push.x;
+        vel.z = push.z;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// face_after_run_system
+// ---------------------------------------------------------------------------
+
+/// Port of the "face after run" hook at rb/src/fight/fighter.cpp:1581-1617.
+///
+/// Behaviour:
+///   • While throttle is at full and no attack/react/block is playing,
+///     accumulate `run_before_face_timer`.
+///   • When throttle drops below 0.25 (the legacy threshold) and the
+///     entity isn't falling, grappling, or reacting, and the timer has
+///     reached `FighterType.run_before_face`, find the creature most
+///     directly in front of the entity and start a turn-lerp toward it.
+///   • Always reset the timer to 0 in the deceleration branch — matches
+///     `RunBeforeFaceTimer=0.0f` at fighter.cpp:1615.
+///
+/// Uses the existing `FighterState::start_turn_to` to drive the lerp,
+/// which `fighter_turn_lerp_system` then advances to completion.
+pub fn face_after_run_system(
+    time: Res<Time>,
+    others: Query<
+        (Entity, &Transform, &Health),
+        (
+            With<FighterState>,
+            Without<crate::oni2_loader::components::ActorAsleep>,
+        ),
+    >,
+    mut query: Query<
+        (
+            Entity,
+            &Transform,
+            &Fighter,
+            &mut FighterState,
+            &FighterType,
+            Option<&Oni2AnimState>,
+            Option<&avian3d::prelude::LinearVelocity>,
+        ),
+        Without<crate::oni2_loader::components::ActorAsleep>,
+    >,
+) {
+    let dt = time.delta_secs();
+    const FACE_RADIUS: f32 = 3.5; // MaxCloseRadius (fighter.cpp:625)
+
+    for (entity, tf, fighter, mut fs, ft, anim_opt, vel_opt) in &mut query {
+        let anim_playing = anim_opt
+            .map(|a| a.anim.attack_data.is_some() && !a.paused)
+            .unwrap_or(false);
+        let reacting = fs.react_anim >= 0;
+        let grappling = fs.is_grappling() || fs.is_being_grappled();
+        let falling = vel_opt
+            .map(|v| v.y < -0.1 && v.y > -50.0)
+            .unwrap_or(false);
+
+        // Full-throttle, nothing playing → accumulate timer
+        // (fighter.cpp:1581-1582 `throttle==1.0f && !anythingplaying`).
+        if fighter.throttle >= 0.99 && !anim_playing {
+            fs.run_before_face_timer += dt;
+            continue;
+        }
+
+        // Otherwise (`else` branch in fighter.cpp:1583).  Only the
+        // slow-down sub-branch resets the timer and (maybe) triggers the
+        // face-snap.
+        if fighter.throttle.abs() < 0.25 && !falling {
+            let can_face = !grappling && !reacting && ft.face_after_run;
+            if can_face && fs.run_before_face_timer >= ft.run_before_face {
+                // Find the creature most directly in front of us within
+                // FACE_RADIUS.  Mirrors `GetMostFacedTowardCreature`
+                // (fighter.cpp:622-674) — pick the smallest |angle diff|
+                // between our facing and the direction to each candidate.
+                let my_pos = tf.translation;
+                let my_facing_angle = fighter.facing.x.atan2(fighter.facing.z);
+                let mut best: Option<(f32, Vec3)> = None;
+                for (other_entity, other_tf, other_health) in &others {
+                    if other_entity == entity {
+                        continue;
+                    }
+                    if other_health.current <= 0.0 {
+                        continue;
+                    }
+                    let mut to_other = other_tf.translation - my_pos;
+                    to_other.y = 0.0;
+                    let dist2 = to_other.length_squared();
+                    if dist2 > FACE_RADIUS * FACE_RADIUS || dist2 < 1e-4 {
+                        continue;
+                    }
+                    let dir = to_other.normalize();
+                    let to_angle = dir.x.atan2(dir.z);
+                    let mut diff = to_angle - my_facing_angle;
+                    while diff > std::f32::consts::PI {
+                        diff -= std::f32::consts::TAU;
+                    }
+                    while diff < -std::f32::consts::PI {
+                        diff += std::f32::consts::TAU;
+                    }
+                    let abs_diff = diff.abs();
+                    if best.map(|(d, _)| abs_diff < d).unwrap_or(true) {
+                        best = Some((abs_diff, dir));
+                    }
+                }
+                if let Some((_, dir)) = best {
+                    fs.start_turn_to(dir);
+                }
+            }
+            fs.run_before_face_timer = 0.0;
+        }
+        // (partial throttle, not slowing, anim playing, …) → timer
+        // persists — matches the legacy "do nothing" path.
     }
 }
 
