@@ -122,6 +122,10 @@ impl FxSet {
         parent: Option<Entity>,
         sound_origin: Entity,
     ) {
+        info!(
+            "FxSet::dispatch '{}' impact_fx={:?} impact_sound={:?} at={:?} parent={:?}",
+            self.name, self.impact_fx, self.impact_sound, at, parent
+        );
         if let Some(fx_name) = &self.impact_fx {
             commands.trigger(SpawnFx {
                 name: fx_name.clone(),
@@ -224,7 +228,9 @@ impl AttackFxRegistry {
 
     /// Look up an FxSet for (table_name, target, strength, class).  Returns
     /// `None` if either the table or the cell is unpopulated AND no
-    /// fallback is defined.
+    /// fallback is defined.  If `table_name` isn't registered, falls
+    /// through to the `"default"` table so per-fighter-type tables can be
+    /// added incrementally without breaking unconfigured fighters.
     pub fn lookup(
         &self,
         table_name: &str,
@@ -234,6 +240,7 @@ impl AttackFxRegistry {
     ) -> Option<&Arc<FxSet>> {
         self.tables
             .get(table_name)
+            .or_else(|| self.tables.get("default"))
             .and_then(|t| t.get(target, strength, class))
     }
 
@@ -248,13 +255,26 @@ impl AttackFxRegistry {
 // Default seed — one empty table so lookups always have structural validity
 // ---------------------------------------------------------------------------
 
-/// Register an empty "default" table on `registry`.  Cells are unpopulated
-/// — the data/loader pipeline is expected to fill them with real FxLibrary
-/// / audio-package names per fighter type.  Having the table present means
-/// `lookup("default", ...)` returns `None` cleanly rather than missing-key;
-/// callers treat `None` as "no impact FX this combo" and no-op.
+/// Default impact-FX name used by `register_default`.  The matching
+/// `EffectDef::Strike` is inserted into `FxLibrary` at startup by
+/// `setup_default_impact_strike` (game/src/fight/mod.rs).  Kept as a
+/// single shared constant so the dispatch name and the library key can't
+/// drift apart.
+pub const DEFAULT_IMPACT_STRIKE_NAME: &str = "_default_impact_strike";
+
+/// Register a "default" table whose fallback fires `DEFAULT_IMPACT_STRIKE_NAME`.
+/// Specific cells stay empty for now — every (target, strength, class) combo
+/// resolves to the fallback `FxSet`.  Once the .fxl loader / ATDT pipeline
+/// wires per-attack bundles, real cells can override this without touching
+/// the fallback path.
 pub fn register_default(registry: &mut AttackFxRegistry) {
-    registry.register_table(AttackFxTable::new("default"));
+    let fx = registry.register_set(
+        FxSet::new("_default_impact")
+            .with_fx(DEFAULT_IMPACT_STRIKE_NAME),
+    );
+    let mut table = AttackFxTable::new("default");
+    table.fallback = Some(fx);
+    registry.register_table(table);
 }
 
 // ---------------------------------------------------------------------------

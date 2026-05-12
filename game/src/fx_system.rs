@@ -548,6 +548,21 @@ fn handle_spawn_fx(
     let lower_name = ev.name.to_lowercase();
 
     if let Some(fx_def) = fx_lib.effects.get(&lower_name) {
+        let kind = match fx_def {
+            crate::oni2_loader::parsers::effect::EffectDef::Particle(_) => "Particle",
+            crate::oni2_loader::parsers::effect::EffectDef::DelayedParticle(_) => "DelayedParticle",
+            crate::oni2_loader::parsers::effect::EffectDef::Sprite(_) => "Sprite",
+            crate::oni2_loader::parsers::effect::EffectDef::Flash(_) => "Flash",
+            crate::oni2_loader::parsers::effect::EffectDef::Laser(_) => "Laser",
+            crate::oni2_loader::parsers::effect::EffectDef::Strike(_) => "Strike",
+            crate::oni2_loader::parsers::effect::EffectDef::HealthIndicator(_) => "HealthIndicator",
+            _ => "Other",
+        };
+        info!(
+            "handle_spawn_fx: name='{}' resolved kind={} at={:?} parent={:?}",
+            ev.name, kind, ev.at, ev.parent
+        );
+
         let ptx_ref = match fx_def {
             crate::oni2_loader::parsers::effect::EffectDef::Particle(p) => Some(&p.system),
             crate::oni2_loader::parsers::effect::EffectDef::DelayedParticle(p) => Some(&p.system),
@@ -713,6 +728,13 @@ fn handle_spawn_fx(
             );
         } else if let crate::oni2_loader::parsers::effect::EffectDef::Strike(sd) = fx_def {
             let world_pos = ev.at.unwrap_or(Vec3::ZERO);
+            // Resolve the target's current health for the palette tint.
+            // No parent / unknown entity → assume full health.
+            let target_health = ev
+                .parent
+                .and_then(|p| health_query.get(p).ok())
+                .map(|h| h.fraction())
+                .unwrap_or(1.0);
             crate::fx_visuals::spawn_strike(
                 &mut commands,
                 &mut strike_mesh_cache,
@@ -720,7 +742,7 @@ fn handle_spawn_fx(
                 &mut materials,
                 sd,
                 world_pos,
-                ev.parent,
+                target_health,
             );
         }
     } else {

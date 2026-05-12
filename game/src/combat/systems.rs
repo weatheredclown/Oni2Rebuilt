@@ -624,9 +624,24 @@ pub fn injure_system(
                     .map(|ft| ft.name.as_str())
                     .unwrap_or("default");
                 let hit_pos = transform_opt.as_ref().map(|tf| tf.translation);
-                if let Some(fx) = fx_registry.lookup(table_name, target, strength, class) {
+                let lookup = fx_registry.lookup(table_name, target, strength, class);
+                info!(
+                    "combat: hit dispatch table='{}' target={:?} strength={:?} class={:?} hit_pos={:?} found={}",
+                    table_name,
+                    target,
+                    strength,
+                    class,
+                    hit_pos,
+                    lookup.is_some()
+                );
+                if let Some(fx) = lookup {
                     fx.dispatch(&mut commands, hit_pos, Some(msg.target), msg.target);
                 }
+            } else {
+                info!(
+                    "combat: hit dispatch SKIPPED — missing classification (class={:?} strength={:?} target={:?})",
+                    msg.attack_class, msg.attack_strength, msg.attack_target
+                );
             }
 
             // Spawn the legacy HealthIndicator

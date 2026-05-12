@@ -290,7 +290,14 @@ fn start_playback(
         ));
 
         if existing_cameras.is_empty() {
-            commands.spawn((Camera2d, Name::new("Mpeg2VideoCamera")));
+            commands.spawn((
+                Camera2d,
+                Camera {
+                    order: 100,
+                    ..default()
+                },
+                Name::new("Mpeg2VideoCamera"),
+            ));
         }
     }
 }

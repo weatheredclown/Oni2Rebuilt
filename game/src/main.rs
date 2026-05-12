@@ -35,6 +35,7 @@ mod laser;
 mod menu;
 mod mover;
 mod mpeg2_video;
+mod imf_audio;
 mod oni2_loader;
 mod player;
 mod projectile_system;
@@ -219,7 +220,7 @@ fn main() {
                 ..default()
             })
             .set(LogPlugin {
-                filter: "info,bevy_ecs=trace,wgpu_core=warn,wgpu_hal=warn,rb_game=debug".into(),
+                filter: "info,bevy_ecs=trace,wgpu_core=warn,wgpu_hal=warn,rb_game=debug,bevy_render::camera=error".into(),
                 level: bevy::log::Level::DEBUG,
                 ..default()
             }),

@@ -17,6 +17,7 @@ pub mod bound;
 pub mod camera;
 pub mod effect;
 pub mod entity_type;
+pub mod fxl;
 pub mod expl;
 pub mod gait;
 pub mod graph;

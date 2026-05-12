@@ -135,7 +135,11 @@ fn create_strike_mesh(def: &StrikeFxDef) -> Mesh {
             
             let mut u = ty * def.tile.x;
             let mut v = tx * def.tile.y;
-            if y > 0 && y < res_y - 1 {
+            // Interior-row UV jitter.  `random_range` panics on an empty
+            // range, so guard against `jumble == 0` — common in shipped
+            // .fxl entries (e.g. `Punches_Body_Hard` has `Jumble 0`).
+            // Legacy `RangeRand(0,0)` just returned 0 in that case.
+            if y > 0 && y < res_y - 1 && def.jumble > 0.0 {
                 u += rng.random_range(-def.jumble..def.jumble);
                 v += rng.random_range(-def.jumble..def.jumble);
             }
@@ -287,7 +291,7 @@ fn update_flash_fx(
     time: Res<Time>,
     mut flashes: Query<(Entity, &mut Transform, &mut FlashFx)>,
     mut materials: ResMut<Assets<StandardMaterial>>,
-    camera: Query<&GlobalTransform, With<bevy::camera::Camera>>,
+    camera: Query<&GlobalTransform, With<Camera3d>>,
 ) {
     let dt = time.delta_secs();
     let cam_pos = camera.iter().next().map(|t| t.translation());
@@ -413,7 +417,7 @@ fn update_sprite_fx(
     mut commands: Commands,
     time: Res<Time>,
     mut sprites: Query<(Entity, &mut Transform, &mut SpriteFx)>,
-    camera: Query<&GlobalTransform, With<bevy::camera::Camera>>,
+    camera: Query<&GlobalTransform, With<Camera3d>>,
 ) {
     let dt = time.delta_secs();
     let Some(cam_xf) = camera.iter().next() else {
@@ -461,6 +465,29 @@ pub struct StrikeFx {
     pub current_slide: Vec2,
     pub rotation: f32,
     pub material: Handle<StandardMaterial>,
+    /// Health-resolved tint captured at spawn time.  Stored so the per-frame
+    /// alpha pre-multiplication in `update_strike_fx` has a stable source
+    /// (otherwise reading + re-writing `base_color` would compound-fade).
+    pub base_tint: LinearRgba,
+}
+
+/// Mirrors `fxStrikeType::UpdatePalette(health)` from rb/src/fx/strike.cpp:363.
+/// Legacy builds a full 256-entry palette where each entry is a piecewise
+/// lerp through (color1, color2, color3); each of those is itself lerped
+/// between the "a" and "b" color sets by `health²`.  We don't repalettize
+/// the texture, so we collapse the ramp to the dominant mid color (`color2`)
+/// — at full health that's `color2b`, dying it shifts toward `color2a`.
+fn resolve_strike_tint(def: &StrikeFxDef, target_health: f32) -> LinearRgba {
+    let h = target_health.clamp(0.0, 1.0);
+    let h2 = h * h;
+    let a = def.color2a.to_linear();
+    let b = def.color2b.to_linear();
+    LinearRgba::new(
+        a.red + h2 * (b.red - a.red),
+        a.green + h2 * (b.green - a.green),
+        a.blue + h2 * (b.blue - a.blue),
+        1.0,
+    )
 }
 
 pub fn spawn_strike(
@@ -470,11 +497,11 @@ pub fn spawn_strike(
     materials: &mut Assets<StandardMaterial>,
     def: &StrikeFxDef,
     world_pos: Vec3,
-    _parent: Option<Entity>,
+    target_health: f32,
 ) {
     info!(
-        "spawn_strike: def={} world_pos={:?} duration={} scale_rate={}",
-        def.name, world_pos, def.duration, def.scale_rate
+        "spawn_strike: def={} world_pos={:?} health={:.2}",
+        def.name, world_pos, target_health
     );
 
     let mesh_handle = if let Some(h) = mesh_cache.0.get(&def.name) {
@@ -490,8 +517,10 @@ pub fn spawn_strike(
     let mut rng = rand::rng();
     let theta = rng.random_range(0.0..std::f32::consts::TAU);
 
+    let base_tint = resolve_strike_tint(def, target_health);
+
     let material = materials.add(StandardMaterial {
-        base_color: def.color2b.with_alpha(1.0),
+        base_color: Color::LinearRgba(base_tint),
         base_color_texture: def.texture_handle.clone(),
         alpha_mode: AlphaMode::Add,
         unlit: true,
@@ -520,6 +549,7 @@ pub fn spawn_strike(
             current_slide: Vec2::ZERO,
             rotation: theta,
             material,
+            base_tint,
         },
         crate::menu::InGameEntity,
     ));
@@ -530,7 +560,7 @@ fn update_strike_fx(
     time: Res<Time>,
     mut strikes: Query<(Entity, &mut Transform, &mut StrikeFx)>,
     mut materials: ResMut<Assets<StandardMaterial>>,
-    camera: Query<&GlobalTransform, With<bevy::camera::Camera>>,
+    camera: Query<&GlobalTransform, With<Camera3d>>,
 ) {
     let dt = time.delta_secs();
 
@@ -555,17 +585,17 @@ fn update_strike_fx(
 
         // Bevy's `AlphaMode::Add` doesn't modulate by `base_color.a`, unlike the
         // legacy `blendSet_SrcAlpha_One` (which did `src*src.alpha + dst`).  To
-        // get the same effective fade, pre-multiply the source alpha into RGB
-        // and leave the alpha channel at 1.
+        // get the same effective fade, pre-multiply alpha into RGB each frame
+        // from the *stable* `base_tint` (not from `mat.base_color`, which we
+        // overwrite below — re-reading it would compound the fade).
         if let Some(mat) = materials.get_mut(&strike.material) {
-            let base = mat.base_color.to_linear();
-            let faded = LinearRgba::new(
-                base.red * alpha,
-                base.green * alpha,
-                base.blue * alpha,
+            let t = strike.base_tint;
+            mat.base_color = Color::LinearRgba(LinearRgba::new(
+                t.red * alpha,
+                t.green * alpha,
+                t.blue * alpha,
                 1.0,
-            );
-            mat.base_color = Color::LinearRgba(faded);
+            ));
         }
 
         // C++ folds a 0.5 into `Rotation.Set(sinθ*0.5, cosθ*0.5)`, so the
