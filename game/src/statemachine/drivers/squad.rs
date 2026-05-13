@@ -1,7 +1,7 @@
 /*
  * statemachine/drivers/squad.rs — SquadDriver stub for squad.fsm.
  *
- * squad.fsm in the legacy codebase (rb/src/aifight/squad.cpp:783) is loaded as
+ * squad.fsm in the legacy codebase is loaded as
  * a single global aiStateMachineData instance owned by aiFightManager.  It uses
  * the same FORMAT_ORIGINAL nested-brace syntax as fight.fsm (not the player/enemy
  * input-FSM syntax).  The parity port keeps the resource slot so the global

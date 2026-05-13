@@ -173,7 +173,7 @@ pub enum BlockingAction {
     /// script thread parks until GotoBehavior returns Finished.
     ///
     /// `deadline` mirrors the C++ `BehaviorDoneOrTimeout` instruction
-    /// (rb/src/scroni/xBlockingCommand.cpp:1050) — when set, the wait
+    /// — when set, the wait
     /// also resolves once `now >= deadline`, even if the behavior is
     /// still running.  Timeout resolutions clear `blocking_failed`
     /// (timeout != failure, matching the legacy `IsFailing=false` path).
@@ -278,8 +278,8 @@ pub enum SysRequest {
     },
     /// `takecover [for <duration>]` — kicks the actor's BehaviorRuntime
     /// into TAKECOVER, which finds a POINT_COVER node and walks to it.
-    /// Port of `bhMsgSetBehavior(kBehaviorTakeCover)` (rb/src/scroni/
-    /// xBlockingCommand.cpp:715).  `duration` is parsed but unused by the
+    /// Port of `bhMsgSetBehavior(kBehaviorTakeCover)`.
+    /// `duration` is parsed but unused by the
     /// runtime today (no timed-cover behavior).
     TakeCover {
         actor: Entity,
@@ -292,8 +292,7 @@ pub enum SysRequest {
     CameraSetPackage(String),
     CameraReset,
     /// `cameramode (script|game) [time <seconds>]` — mode name + optional
-    /// transition duration (rb/src/scroni/cameracommand.cpp:44).  `None`
-    /// means snap-switch with no fade.
+    /// transition duration.  `None` means snap-switch with no fade.
     CameraMode(String, Option<f32>),
     CameraSetFOV(f32, f32), // Target FOV, Duration
     CameraShake,
@@ -321,8 +320,7 @@ pub enum SysRequest {
     },
     /// Leave the frontend and run a level.  `None` for `level` means
     /// re-run the current layout (matches legacy
-    /// `GAMEDATA.GetCurrentLayoutIndex()` fallback at
-    /// rb/src/scroni/XCommand.cpp:1480).  `save_point` defaults to 0.
+    /// `GAMEDATA.GetCurrentLayoutIndex()` fallback).  `save_point` defaults to 0.
     RunGame {
         level: Option<i32>,
         save_point: i32,
@@ -453,8 +451,7 @@ pub enum ScrOniSysEvent {
     CameraSetPackage(String),
     CameraReset,
     /// `cameramode (script|game) [time <seconds>]` — mode name + optional
-    /// transition duration (rb/src/scroni/cameracommand.cpp:44).  `None`
-    /// means snap-switch with no fade.
+    /// transition duration.  `None` means snap-switch with no fade.
     CameraMode(String, Option<f32>),
     CameraSetFOV(f32, f32), // Target FOV, Duration
     CameraShake,
@@ -707,7 +704,7 @@ pub struct ScroniContext<'a, 'w_e, 's_e, 'w_t, 's_t> {
     /// `GetUIItemValue(<page>, <item>) -> f32`.  Resolves the
     /// numeric value of a frontend UI item — for `LevelList` this
     /// is the selected row index.  Mirrors `DoGetUIItemValue`
-    /// (rb/src/scroni/XPreDefFunc.cpp:334).  `None` when the
+    /// (`DoGetUIItemValue`).  `None` when the
     /// frontend isn't loaded (no-frontend builds, in-game scripts).
     pub get_ui_item_value: Option<&'a dyn Fn(&str, &str) -> f32>,
 }
@@ -2120,7 +2117,7 @@ impl ScriptExec {
                         // `status_is(actor, state)` — one predicate leg of a
                         // `status X is A, B, ...` list (see compiler's
                         // parse_comparison desugar).  Mirrors the legacy
-                        // ParseStatusList in rb/src/scroni/PreDefFunc.cpp:203,
+                        // `ParseStatusList`,
                         // which AND's per-state predicates.  Returns 1/0.
                         let actor_val = args.first().map(|e| self.eval_expr(tid, e, now, ctx));
                         let state_val = args.get(1).map(|e| self.eval_expr(tid, e, now, ctx));
@@ -2600,8 +2597,8 @@ pub fn scroni_tick_system(
         //
         // Timeout path: when `deadline` is set and `now >= deadline`, the
         // wait resolves even if the behavior is still running.  Mirrors
-        // `DoBehaviorDoneOrTimeout` (rb/src/scroni/xBlockingCommand.cpp:
-        // 1050) — timeout != failure, so `blocking_failed` is cleared.
+        // `DoBehaviorDoneOrTimeout` — timeout != failure, so
+        // `blocking_failed` is cleared.
         // The behavior keeps ticking on the actor; the script just stops
         // listening (its EndBehaviorMessage will arrive later with no
         // thread parked on it, and is harmlessly dropped).
@@ -3059,7 +3056,7 @@ pub fn scroni_tick_system(
                 // the executor inactive so `tick()` early-returns next
                 // frame.  Removing it broke the legacy `Reset()`
                 // semantic — `scrScrOniComponent` lives as long as the
-                // actor (rb/src/scroni/scronicomponent.cpp:146), and
+                // actor (legacy `scrScrOniComponent`), and
                 // a later SCRIPT handler from the frontend / a SCRIPT
                 // op from another script needs to find this component
                 // to swap in a new main thread.  Concrete trigger:

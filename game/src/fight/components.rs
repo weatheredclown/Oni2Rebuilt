@@ -1,6 +1,6 @@
 /*
  * fight/components.rs — High-fidelity port of crFighter, ftFighterData, crGrab,
- * crBlockData, and related types from rb/src/fight/.
+ * crBlockData, and related legacy fight types.
  *
  * FighterState   — per-entity mutable runtime (crFighter equivalent)
  * FighterType    — immutable per-type config (ftFighterData equivalent)
@@ -88,8 +88,29 @@ impl AnimControlBlock {
     pub fn can_queue(&self, phase: f32) -> bool {
         phase >= self.opp2_q_start
     }
+    /// Mirrors `crAtkAnimCtrlBlock::CanStartImmediately`: the next action
+    /// can fire on this exact tick when phase is in the early-end window,
+    /// inside the critical-frame window, or past the third opportunity
+    /// start.
     pub fn can_start_immediately(&self, phase: f32) -> bool {
-        phase >= self.opp2_do_start && phase <= self.opp2_do_end
+        phase < self.opp1_do_end
+            || ((phase > self.opp2_do_crit_start || phase > self.opp2_do_start)
+                && phase < self.opp2_do_end)
+            || phase > self.opp3_do_start
+    }
+    /// Mirrors `crAtkAnimCtrlBlock::GetFirstAvailableEndPhase`: when a new
+    /// anim wants to queue behind the currently-playing one, this is the
+    /// earliest phase at which we can safely cut the current anim off.
+    pub fn get_first_available_end_phase(&self, phase: f32) -> f32 {
+        if phase < self.opp2_do_end {
+            if self.in_critical_frame(phase) {
+                self.opp2_do_crit_start
+            } else {
+                self.opp2_do_start
+            }
+        } else {
+            self.opp3_do_start
+        }
     }
 }
 
@@ -99,7 +120,7 @@ impl AnimControlBlock {
 
 /// Core per-entity fighter runtime state.
 /// Add alongside Fighter for any entity that participates in the fight system
-/// (player or AI).  Mirrors crFighter from rb/src/fight/fighter.h.
+/// (player or AI).  Mirrors crFighter.
 #[derive(Component)]
 pub struct FighterState {
     // --- Flags ---
@@ -156,9 +177,8 @@ pub struct FighterState {
     /// Seconds spent at full throttle without an attack/react playing.
     /// Once this reaches `FighterType.run_before_face`, a slowdown
     /// triggers the face-snap to the most-faced creature.  Mirrors
-    /// `crFighter::RunBeforeFaceTimer` (rb/src/fight/fighter.h:372),
-    /// accumulated at fighter.cpp:1582 and consumed/reset at
-    /// fighter.cpp:1595-1615.
+    /// `crFighter::RunBeforeFaceTimer`, accumulated and consumed by
+    /// the legacy face-after-run hook.
     pub run_before_face_timer: f32,
 
     // --- Disarm accounting ---
@@ -167,22 +187,21 @@ pub struct FighterState {
     /// `report_disarming()` once per tick while they're in the
     /// FLAG_DISARMING state.  Reset to 0 at frame start; the prior
     /// value is preserved as `num_disarmers_last_frame` for stable
-    /// reads.  Mirrors `aiFighter::NumDisarmers`
-    /// (rb/src/aifight/fighter.h:777).
+    /// reads.  Mirrors `aiFighter::NumDisarmers`.
     pub num_disarmers: i32,
     /// Stable read-side disarmer count taken from `num_disarmers` at
     /// the start of the new frame.  AIs query `get_num_disarmers()` to
     /// decide whether to commit themselves — using last frame's count
     /// gives every committed disarmer this tick a chance to be counted
     /// before the next decision pass.  Mirrors
-    /// `aiFighter::NumDisarmersLastFrame` (fighter.h:778).
+    /// `aiFighter::NumDisarmersLastFrame`.
     pub num_disarmers_last_frame: i32,
     /// Time (seconds since start) when the target's weapon became fully
     /// drawn — `-1.0` means "currently unarmed".  Used by
     /// `update_disarming_system` to compute how long the target has
     /// been a disarm candidate; only mutated when the observed
     /// target changes armed state.  Mirrors
-    /// `aiFightAndShoot::TargetDrewWeaponTime` (fightandshoot.h:308).
+    /// `aiFightAndShoot::TargetDrewWeaponTime`.
     pub target_drew_weapon_time: f64,
     /// True while *this* fighter is committed to disarming its current
     /// target (the legacy `FLAG_DISARMING` on aiFightAndShoot).  When
@@ -192,8 +211,8 @@ pub struct FighterState {
     pub is_disarming: bool,
     /// Tick count for the current disarm commitment.  Used by the
     /// legacy engine to suppress one-frame disarm flickers
-    /// (`NumDisarmFrames` at fightandshoot.cpp:1187).  We retain it
-    /// for diagnostic parity and future use.
+    /// (`NumDisarmFrames`).  We retain it for diagnostic parity and
+    /// future use.
     pub num_disarm_frames: i32,
 
     // --- Successive attacks / combo escalation ---
@@ -210,14 +229,13 @@ pub struct FighterState {
     /// Turn interpolation lerp parameter [0..1].  1.0 = no turn pending
     /// (at rest); < 1.0 = actively lerping each frame by
     /// `dt * TURN_LERP_SCALE` until it reaches 1.0.  Mirrors
-    /// `crFighter::TurnLerper` (rb/src/fight/fighter.h:373).
+    /// `crFighter::TurnLerper`.
     pub turn_lerper: f32,
     /// Target facing direction the fighter is interpolating toward (XZ
     /// plane — Y component ignored).  Only meaningful while
     /// `turn_lerper < 1.0`.  Mirrors `TurnFinalTarget.LookAt(...)` in
-    /// rb/src/fight/fighter.cpp:1607-1609 (only the Y-rotation is
-    /// extracted, so a direction vector is equivalent to a matrix for
-    /// our purposes).
+    /// the legacy fighter (only the Y-rotation is extracted, so a
+    /// direction vector is equivalent to a matrix for our purposes).
     pub turn_final_target_dir: Vec3,
     /// Face-and-react rotation notches queued for the rotation system.
     pub fr_notches: i32,
@@ -261,18 +279,17 @@ pub struct FighterState {
 
     // --- Per-frame pending-hit dedup list ---
     /// Targets scheduled to be hit by the current strike frame.  Legacy
-    /// `crFighter::TargetsPending` (rb/src/fight/fighter.h:405) —
-    /// populated by `AddTargetPending` as strike probes detect hits,
-    /// reset to empty at the start of each frame (fighter.cpp:1332).
-    /// Used to dedup multi-probe strikes that overlap onto the same
-    /// target, and to queue the follow-up per-target damage / FX
-    /// pipeline on the next tick.  Capped at 10 (MAX_FIGHTTARGET_CREATURES
-    /// in fighter.h:116).
+    /// `crFighter::TargetsPending` — populated by `AddTargetPending`
+    /// as strike probes detect hits, reset to empty at the start of
+    /// each frame.  Used to dedup multi-probe strikes that overlap
+    /// onto the same target, and to queue the follow-up per-target
+    /// damage / FX pipeline on the next tick.  Capped at 10
+    /// (MAX_FIGHTTARGET_CREATURES).
     pub targets_pending: Vec<Entity>,
 }
 
 /// Cap on `FighterState::targets_pending` — mirrors
-/// `MAX_FIGHTTARGET_CREATURES` (rb/src/fight/fighter.h:116).  Strikes
+/// `MAX_FIGHTTARGET_CREATURES`.  Strikes
 /// that would hit more than this many creatures in one frame silently
 /// drop the overflow (the C++ logs a `Warningf` in dev builds).
 pub const MAX_FIGHT_TARGET_CREATURES: usize = 10;
@@ -309,7 +326,7 @@ impl Default for FighterState {
             cur_combo_index: 0,
             queue_attacks: true,
             last_attack_angle: 0.0,
-            // 1.0 = "no turn pending" (legacy default, rb/src/fight/fighter.cpp:257).
+            // 1.0 = "no turn pending" (legacy default).
             turn_lerper: 1.0,
             turn_final_target_dir: Vec3::NEG_Z,
             fr_notches: 0,
@@ -351,8 +368,7 @@ impl FighterState {
 
     /// Add a target to this frame's pending-hit list.  Deduplicated —
     /// a second call with the same entity is a no-op.  Cap at
-    /// `MAX_FIGHT_TARGET_CREATURES`.  Mirrors `crFighter::AddTargetPending`
-    /// at rb/src/fight/fighter.cpp:1281.
+    /// `MAX_FIGHT_TARGET_CREATURES`.  Mirrors `crFighter::AddTargetPending`.
     pub fn add_target_pending(&mut self, target: Entity) {
         if self.targets_pending.contains(&target) {
             return;
@@ -364,8 +380,7 @@ impl FighterState {
     }
 
     /// Clear the per-frame pending-hit list.  Called once at the start
-    /// of each fighter update tick (mirrors `NumPending = 0;` at
-    /// rb/src/fight/fighter.cpp:1332).
+    /// of each fighter update tick (mirrors `NumPending = 0;`).
     pub fn reset_targets_pending(&mut self) {
         self.targets_pending.clear();
     }
@@ -374,7 +389,7 @@ impl FighterState {
     /// Resets `turn_lerper` to 0 so `fighter_turn_lerp_system` will
     /// interpolate the fighter's facing from the current value to
     /// `direction` over ~`1/TURN_LERP_SCALE` seconds.  Mirrors the
-    /// setup at rb/src/fight/fighter.cpp:1607-1610:
+    /// legacy turn-lerper setup:
     ///   TurnFinalTarget.LookAt(target)
     ///   TurnLerper = 0.0f;
     pub fn start_turn_to(&mut self, direction: Vec3) {
@@ -387,8 +402,7 @@ impl FighterState {
 
     /// Cancel any pending turn lerp — clamps `turn_lerper` to 1.0 so
     /// the system skips this fighter.  Called when an animation starts
-    /// playing or throttle exceeds 0.25 in the legacy
-    /// (rb/src/fight/fighter.cpp:1619-1620).
+    /// playing or throttle exceeds 0.25 in the legacy fighter.
     pub fn cancel_turn_lerp(&mut self) {
         self.turn_lerper = 1.0;
     }
@@ -396,7 +410,7 @@ impl FighterState {
     /// Record that *another* fighter has committed to disarming this
     /// fighter this frame.  Each committed attacker calls this once
     /// per tick while their `is_disarming` flag is set.  Mirrors
-    /// `aiFighter::ReportDisarming` (rb/src/aifight/fighter.h:455-456).
+    /// `aiFighter::ReportDisarming`.
     pub fn report_disarming(&mut self) {
         self.num_disarmers += 1;
     }
@@ -405,7 +419,7 @@ impl FighterState {
     /// by the per-AI disarm-decision pass when it flips its
     /// `is_disarming` from true→false in the same tick (so the
     /// stable count doesn't double-bias).  Mirrors
-    /// `aiFighter::ReportNoDisarmThisFrame` (fighter.h:458-459).
+    /// `aiFighter::ReportNoDisarmThisFrame`.
     pub fn report_no_disarm_this_frame(&mut self) {
         self.num_disarmers_last_frame = (self.num_disarmers_last_frame - 1).max(0);
     }
@@ -414,7 +428,7 @@ impl FighterState {
     /// decision logic reads through this — never through
     /// `num_disarmers` directly — so concurrently-committing
     /// attackers don't all double-count.  Mirrors
-    /// `aiFighter::GetNumDisarmers` (fighter.h:461-462).
+    /// `aiFighter::GetNumDisarmers`.
     pub fn get_num_disarmers(&self) -> i32 {
         self.num_disarmers_last_frame
     }
@@ -443,7 +457,7 @@ impl FighterState {
 
     /// True when an attack animation is actively playing at full speed and
     /// we're not currently in a block.  Mirrors `crFighter::IsAttacking`
-    /// (rb/src/fight/fighter.cpp:542) — the C++ checks `channel.scale == 1.0
+    /// — the C++ checks `channel.scale == 1.0
     /// && !paused && !IsBlocking()`; we apply the same gates against
     /// `Oni2AnimState`.  Caller passes the entity's active anim state.
     pub fn is_attacking(&self, anim: &crate::oni2_loader::animation::Oni2AnimState) -> bool {
@@ -462,7 +476,7 @@ impl FighterState {
     /// True when the player has requested a block (button held) but the
     /// block animation hasn't yet started — i.e. the block is "queued"
     /// awaiting a permitting state.  Mirrors `crFighter::IsBlockQueued`
-    /// (rb/src/fight/fighter.cpp:1037), adapted for our pipeline: the C++
+    /// — adapted for our pipeline: the C++
     /// scans `AnimList` for a queued block record, but we don't push blocks
     /// onto `AnimSchedule`, so we infer "queued" from request-vs-active.
     pub fn is_block_queued(&self) -> bool {
@@ -471,8 +485,8 @@ impl FighterState {
 
     /// True iff the current/most-recent attack has landed on a target
     /// whose `FighterType.creature_class` includes `cls`.  Mirrors
-    /// `crFighter::HasHitClass` (rb/src/fight/fighter.cpp:520) which
-    /// forwards to `crAttack::HasHitClass` (attack.cpp:166) — that walks
+    /// `crFighter::HasHitClass` which forwards to
+    /// `crAttack::HasHitClass` — that walks
     /// the attack's `TargetsHit` array and tests each target's class.
     /// Update via `record_attack_hit` (on hit landing) and clear via
     /// `reset_attack_hits` (on attack start).
@@ -597,9 +611,9 @@ pub struct FighterType {
     /// AI disarm aggressiveness, 0..100.  0 = never commit to disarming
     /// an armed target; 100 = always commit (and allow many allies to
     /// pile on the same target).  Mirrors `aiTuning::Disarm`
-    /// (rb/src/behavior/messages.h:261).  The decision thresholds in
-    /// `update_disarming_system` lerp against this value identically
-    /// to `aiFightAndShoot::UpdateDisarming` (fightandshoot.cpp:1128-1174).
+    /// The decision thresholds in `update_disarming_system` lerp
+    /// against this value identically to
+    /// `aiFightAndShoot::UpdateDisarming`.
     pub disarm_tuning: f32,
 }
 
@@ -639,7 +653,7 @@ pub mod grapple_flags {
 }
 
 /// Commands a grapple holder can issue to the grapple state machine.
-/// Mirrors GRAB_ACTION_* from rb/src/fight/grab.h.
+/// Mirrors GRAB_ACTION_* from the legacy grapple data.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum GrabAction {
     #[default]
@@ -775,10 +789,11 @@ pub struct BlockDef {
     pub counter_atk: Option<String>,
     /// Override block animation name on success (instead of default block anim).
     pub successful_block_anim: Option<String>,
-    /// animReactEnum to force on the *attacker* whose attack was blocked.
-    pub block_reaction_on_attacker: i32,
-    /// animBlockEnum to play as the secondary block animation on the defender.
-    pub enemy_block_anim: i32,
+    /// Window-of-opportunity timings (`crAtkAnimCtrlBlock`) authored inside the
+    /// `.blk` file under the `AtkNoQueueThreshold..Opp3QStart` keys. Drives
+    /// `StartBlock` immediate-start gating and the queued-end-phase choice
+    /// when a block is requested while another anim is mid-play.
+    pub anim_control_block: AnimControlBlock,
 }
 
 impl BlockDef {
@@ -797,7 +812,11 @@ impl BlockDef {
         if phase < self.start_phase || phase >= self.end_phase {
             return false;
         }
-        if self.blockable_hit_types != 0 && (self.blockable_hit_types & (1u32 << hit_type)) == 0 {
+        // Mirrors crBlockData::CanBlock — the bitmask is always honored;
+        // there is no "0 = accept all" sentinel. The .blk parser defaults
+        // missing `BlockableGuardTypes` to all-bits-set, so 0 means
+        // "blocks nothing" by author intent.
+        if (self.blockable_hit_types & (1u32 << hit_type)) == 0 {
             return false;
         }
         // Angular check: attacker must be within block heading ± width_radians

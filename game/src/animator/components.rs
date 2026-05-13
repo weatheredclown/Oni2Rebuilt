@@ -512,7 +512,7 @@ impl ActionPlayer {
 
 /// Marks an entity as currently hitched to a carrier — overhead claw,
 /// crane, etc.  Mirrors the `m_PickupMtx != NULL` state of
-/// `animElbowCraneHitchComponent` (rb/src/animator/elbowcranehitch.cpp).
+/// `animElbowCraneHitchComponent`.
 /// While this component is present:
 ///   • the entity's transform is force-synced to `claw_translation +
 ///     claw_rotation` (minus `offset`) each frame,

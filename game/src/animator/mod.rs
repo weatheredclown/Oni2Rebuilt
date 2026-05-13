@@ -143,6 +143,12 @@ impl Plugin for AnimatorPlugin {
                         systems::action_player_tick_system
                             .after(systems::action_start_system)
                             .after(systems::action_end_system),
+                        // React-anim vocalization edge fire. Runs after
+                        // action_start_system so the ActionPlayer's
+                        // react_sound_name is already stamped this tick
+                        // when a fresh react starts on frame 0.
+                        systems::react_sound_tick_system
+                            .after(systems::action_start_system),
                     ),
                     (
                         // Bridge: SubState1 transition into JUMP_MAIN /

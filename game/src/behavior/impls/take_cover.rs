@@ -2,7 +2,7 @@
  * behavior/impls/take_cover.rs — TakeCoverBehavior: walk to a reserved
  * POINT_COVER nav node.
  *
- * Port of `bhTakeCover` + `bhActionCover` (rb/src/behavior/takecover.cpp).
+ * Port of `bhTakeCover` + `bhActionCover`.
  * The state-machine-on-top-of-state-machine collapses into something
  * simpler here because the heavy lifting moved to the dispatcher:
  *
@@ -96,10 +96,18 @@ impl Behavior for TakeCoverBehavior {
         let desired = dir * MOVE_SPEED;
         ctx.velocity.x = desired.x;
         ctx.velocity.z = desired.z;
-        if dir.length_squared() > 0.0 {
-            ctx.fighter.facing = dir;
+        let mut face_dir = dir;
+        if let Some(tpos) = ctx.target_position {
+            let mut delta_t = tpos - here;
+            delta_t.y = 0.0;
+            if delta_t.length() < 6.0 && delta_t.length() > 0.01 {
+                face_dir = delta_t.normalize();
+            }
+        }
+
+        if face_dir.length_squared() > 0.0 {
             // Same +Z-forward → -Z look_at flip GotoBehavior uses.
-            let look_target = here + dir;
+            let look_target = here + face_dir;
             let mut rot_tf = *ctx.transform;
             rot_tf.look_at(look_target, Vec3::Y);
             rot_tf.rotate_y(std::f32::consts::PI);
@@ -107,6 +115,12 @@ impl Behavior for TakeCoverBehavior {
                 .transform
                 .rotation
                 .slerp(rot_tf.rotation, (10.0 * dt).min(1.0));
+                
+            // Update authoritative facing from slerped rotation
+            ctx.fighter.facing = (ctx.transform.rotation * Vec3::Z).normalize_or_zero();
+            if ctx.fighter.facing.length_squared() < 0.1 {
+                ctx.fighter.facing = face_dir; // Fallback
+            }
         }
 
         BehaviorUpdate::Continue

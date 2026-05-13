@@ -2,8 +2,7 @@
  * fight/ai_attack.rs — AI strike selection.
  *
  * Mirrors `ftAIAttackData` + `aiFighter::CanStrike` /
- * `ChooseRandomStrike` from rb/src/fight/fightertype.h:185 and
- * rb/src/aifight/fighter.cpp:3035.  Each entry describes one attack an AI
+ * `ChooseRandomStrike`.  Each entry describes one attack an AI
  * can throw and carries the geometry needed to answer "can I hit THIS
  * target with THIS attack right now?" — range, cone, height window.
  *

@@ -17,8 +17,8 @@ use super::components::{ActiveCameraMode, CameraController, PrototypeElement, Pr
 
 /// Ticks down a pending mode transition started by ScrOni
 /// `cameraMode <mode> time <secs>`.  When the timer expires, commits
-/// `next_mode` as `active_mode`.  Legacy behavior (rb/src/camera/manager.cpp:706)
-/// effectively forces transitionTime to 0 for CameraMode — we honor the
+/// `next_mode` as `active_mode`.  Legacy behavior effectively forces
+/// transitionTime to 0 for CameraMode — we honor the
 /// requested duration as a delayed-switch (the old mode keeps running
 /// until the timer elapses) rather than a cross-blend, which matches
 /// intent without needing a real mode-mixer.

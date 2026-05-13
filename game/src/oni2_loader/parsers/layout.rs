@@ -10,9 +10,8 @@ use crate::oni2_loader::utils::space;
 use bevy::prelude::*;
 
 /// A parsed layout light entry.  Mirrors the legacy
-/// `lvlLight::Load` schema (rb/src/rblevel/lightmgr.cpp:53), which
-/// in turn delegates to `fxLight::Load` (rb/src/fx/light.cpp:302) →
-/// `lgtLight::Load` (rb/src/fx/light.cpp:156).  All vectors are
+/// `lvlLight::Load` schema, which in turn delegates to
+/// `fxLight::Load` → `lgtLight::Load`.  All vectors are
 /// post-converted to Bevy space (right-handed, -Z forward) inside
 /// `parse_lights_file`.
 pub struct LayoutLight {
@@ -31,7 +30,7 @@ pub struct LayoutLight {
     pub color: [f32; 4],
     /// `CastShadowRange` from `lvlLight::Load`.  Legacy:
     /// `bool CastShadow() const { return ( m_CastShadowRange > 0.0f ); }`
-    /// (rb/src/rblevel/lightmgr.h:55).  Zero means the light still
+    /// (legacy `lvlLight::CastShadow`).  Zero means the light still
     /// illuminates surfaces but is NOT registered with the shadow
     /// manager — designers used this for cheap "fill" lights that
     /// shine through geometry without paying the per-light shadow
@@ -41,7 +40,7 @@ pub struct LayoutLight {
     /// means it's also a visible glow source (lens-flare-ish corona)
     /// in addition to a real light.  See `LightGlowType` /
     /// `GlowIntensityScale`.  Legacy: `fxLight::Load`
-    /// (rb/src/fx/light.cpp:302).
+    /// reads the `fxLight` block.
     pub fx_light: bool,
     /// Named `fxLightGlow` effect type (e.g. `"LightConeDown"`).
     /// Resolved against the legacy `fxEffectTypeManager` registry to
@@ -81,9 +80,8 @@ pub struct LayoutFogFile {
 }
 
 /// Parse `<dir>/layout.lights`.  Format mirrors the legacy
-/// `lvlLight::Load` schema (rb/src/rblevel/lightmgr.cpp:53), which
-/// chains through `fxLight::Load` (rb/src/fx/light.cpp:302) →
-/// `lgtLight::Load` (rb/src/fx/light.cpp:156).
+/// `lvlLight::Load` schema, which chains through `fxLight::Load`
+/// → `lgtLight::Load`.
 ///
 /// Per-light schema (in source order, all whitespace-separated):
 /// ```text
@@ -135,7 +133,7 @@ pub fn parse_lights_file(dir: &str) -> Vec<LayoutLight> {
             direction: Vec3::Y,
             spot_angle: 45.0,
             color: [1.0, 1.0, 1.0, 1.0],
-            // Match the legacy `lvlLight` ctor default (lightmgr.cpp:40);
+            // Match the legacy `lvlLight` ctor default;
             // overridden by the file's own `CastShadowRange` line if
             // present, which it always is in shipped layouts.
             cast_shadow_range: 15.0,

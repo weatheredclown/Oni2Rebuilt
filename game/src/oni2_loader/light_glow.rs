@@ -1,11 +1,10 @@
 /*
- * oni2_loader/light_glow.rs — port of legacy `fxLightGlow`
- * (rb/src/fx/lightglows.{cpp,h}).
+ * oni2_loader/light_glow.rs — port of legacy `fxLightGlow`.
  *
  * Spawns a billboarded additive sprite at each fxLight's world position
  * and updates it per-frame for camera facing, optional occlusion fade,
  * and optional radial attenuation.  Mirrors `fxLightGlow::DrawLightGlow`
- * (lightglows.cpp:128) — the legacy renders one fullscreen-quad per
+ * — the legacy renders one fullscreen-quad per
  * light with these conditional behaviors:
  *
  *   1. Build a quad transform of size `currentIntensity` centered at
@@ -53,7 +52,7 @@ pub struct PendingGlow {
     pub glow_type_name: String,
     /// `GlowIntensityScale` from `layout.lights`; multiplied with
     /// the def's own `glow_intensity` per the legacy chain
-    /// (rb/src/fx/lightglows.h:38).
+    /// chain.
     pub glow_intensity_scale: f32,
     /// Spot lights' forward direction in Bevy space, used by the
     /// `RadialAttenuate` flag.  Pass `Vec3::ZERO` for non-spot
@@ -61,7 +60,7 @@ pub struct PendingGlow {
     pub light_dir: Vec3,
     /// Parent light's authored Color from `layout.lights`.  Legacy
     /// `fxLight::DrawGlow` passes `m_Color` into the glow draw and
-    /// it modulates the texture (lightglows.cpp:206).  The def's
+    /// it modulates the texture.  The def's
     /// own `GlowColor` is only used by standalone fxEffects (not
     /// fxLight-attached glows) — using it here would tint
     /// LightConeDown bright magenta because the def authors
@@ -76,7 +75,7 @@ pub struct PendingGlow {
 ///
 /// The per-frame max-intensity is recomputed from the **parent light's
 /// live intensity** rather than captured at spawn (legacy
-/// `fxLight::DrawGlow` at rb/src/fx/light.cpp:294 passes
+/// `fxLight::DrawGlow` passes
 /// `m_Intensity * m_GlowIntensityScale` every frame, which is `glowsize`
 /// directly — the def's `GlowIntensity` is *not* multiplied in for
 /// fxLight glows; it's the standalone-effect default).  This is what
@@ -89,12 +88,12 @@ pub struct LightGlow {
     /// spawn — this is layout-authored, not script-driven.  Multiplied
     /// each frame with the parent's live intensity to give the live
     /// `max_intensity`, matching legacy `m_Intensity * m_GlowIntensityScale`
-    /// at light.cpp:294.
+    /// each frame in the legacy draw path.
     pub intensity_scale: f32,
     /// `glow_intensity_rate_of_change` from the `LightGlowDef`.
     /// Multiplied each frame with the live `max_intensity` to give the
     /// occlusion ramp rate (matches legacy `intensityRateChange =
-    /// intensityRateOfChange * lightIntensity` at lightglows.cpp:130).
+    /// intensityRateOfChange * lightIntensity`).
     pub rate_of_change_factor: f32,
     /// Current intensity, ramped toward live `max_intensity` (visible)
     /// or 0 (occluded) per frame.
@@ -162,12 +161,12 @@ fn get_or_create_quad_mesh(
 /// it to `parent_entity` (typically the layout-light entity itself).
 /// `intensity_scale` is the per-Light `GlowIntensityScale` value
 /// from `layout.lights`.  The size formula matches legacy
-/// `fxLight::DrawGlow` (light.cpp:294): `glowsize = parent.intensity *
+/// `fxLight::DrawGlow`: `glowsize = parent.intensity *
 /// intensity_scale` per frame — the def's `GlowIntensity` is *not*
 /// multiplied in for fxLight-attached glows (that field is the default
 /// intensity for standalone fx-effect glows).  `light_color` is the
 /// parent light's authored Color, used to modulate the texture
-/// (lightglows.cpp:206) — *not* `def.glow_color`, which is a
+/// — *not* `def.glow_color`, which is a
 /// placeholder default and is bright magenta for several defs.
 pub fn spawn_light_glow(
     commands: &mut Commands,
@@ -294,7 +293,7 @@ pub fn resolve_pending_glow_system(
 ///
 /// Mirrors the legacy chain `fxLight::DrawGlow` →
 /// `fxLightGlow::DrawInstancedGlow` → `DrawLightGlow`
-/// (rb/src/fx/light.cpp:294, lightglows.cpp:128).  The crucial detail:
+/// in the legacy draw path.  The crucial detail:
 /// `lightIntensity` in `DrawLightGlow` is `m_Intensity * m_GlowIntensityScale`
 /// where `m_Intensity` is the parent light's **live** intensity, not a
 /// cached spawn-time value.  We replicate that by querying the parent
@@ -339,12 +338,12 @@ pub fn update_light_glow_billboards(
             })
             .map(|cd| cd / crate::oni2_loader::layout_loader::POINT_INTENSITY_TO_CANDELA)
             .unwrap_or(0.0);
-        // Legacy `fxLight::DrawGlow` (light.cpp:294) passes
+        // Legacy `fxLight::DrawGlow` passes
         // `m_Intensity * m_GlowIntensityScale` straight in as
         // `lightIntensity`, and `glowsize = lightIntensity` directly
-        // (lightglows.cpp:132).  The def's `GlowIntensity` field is
-        // only consumed by the standalone fx-effect path
-        // (lightglows.cpp:124, `DrawAll`).  Keep them parallel here.
+        // directly.  The def's `GlowIntensity` field is only consumed
+        // by the standalone fx-effect path (legacy `DrawAll`).
+        // Keep them parallel here.
         let max_intensity = parent_legacy_intensity * glow.intensity_scale;
         let rate_per_sec = glow.rate_of_change_factor * max_intensity;
 
@@ -383,7 +382,7 @@ pub fn update_light_glow_billboards(
 
         // 2. Radial attenuation (kRadialAttenuate) — fades as the
         //    camera moves outside the spot's forward cone.  Uses
-        //    `dot(-light_dir, lightToCam)` per legacy (lightglows.cpp:158).
+        //    `dot(-light_dir, lightToCam)` per legacy.
         if let Some(light_dir) = glow.light_dir {
             let lc = (cam_pos - glow_pos).normalize_or_zero();
             let cone_factor = (-light_dir).dot(lc).clamp(0.0, 1.0);

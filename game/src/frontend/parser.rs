@@ -24,7 +24,7 @@ pub fn parse_ui(src: &str) -> ParseResult<UiFile> {
     let mut p = BlockParser::new(src);
     let mut ui = UiFile::default();
 
-    // Header — rbmanager.cpp:30-52.
+    // Header — legacy `rbUIManager::Init` header block.
     if p.check_token("PRELOAD_LAYOUT") {
         ui.preload_layout = Some(p.get_token()?);
     }
@@ -35,7 +35,7 @@ pub fn parse_ui(src: &str) -> ParseResult<UiFile> {
         ui.string_table = Some(p.get_token()?);
     }
 
-    // Pages — rbmanager.cpp:191 (InitPages loop).
+    // Pages — legacy `InitPages` loop.
     loop {
         let kind_keyword = if p.check_token("PAGE_2D") {
             "PAGE_2D"
@@ -49,7 +49,7 @@ pub fn parse_ui(src: &str) -> ParseResult<UiFile> {
         ui.pages.push(parse_page(&mut p, kind_keyword)?);
     }
 
-    // Manager-level ON_* tail — rbmanager.cpp:68-101.
+    // Manager-level ON_* tail.
     if p.check_token("ON_STARTUP") {
         ui.startup_page = Some(p.get_token()?);
     }
@@ -79,7 +79,7 @@ pub fn parse_ui(src: &str) -> ParseResult<UiFile> {
 // ---------------------------------------------------------------------------
 
 fn parse_page(p: &mut BlockParser, kind_keyword: &str) -> ParseResult<Page> {
-    // uiPage::Init (page.cpp:33) reads TWO tokens: `ClassName` (__DEV
+    // `uiPage::Init` reads TWO tokens: `ClassName` (__DEV
     // only; release reads the same token twice into the name buffer).
     // Shipped .ui files author ONE name token — reading one here and
     // using it for both fields matches the __DEV layout and works
@@ -87,7 +87,7 @@ fn parse_page(p: &mut BlockParser, kind_keyword: &str) -> ParseResult<Page> {
     let name = p.get_token()?;
     p.get_delimiter("{")?;
 
-    // Per-kind InitCustom — rbpage.cpp.
+    // Per-kind InitCustom (legacy `uiPage` subclasses).
     let kind = match kind_keyword {
         "PAGE_2D" => {
             let background = if p.check_token("BACKGROUND") {
@@ -134,13 +134,13 @@ fn parse_page(p: &mut BlockParser, kind_keyword: &str) -> ParseResult<Page> {
         other => return Err(format!("ui parse: unknown page kind '{}'", other)),
     };
 
-    // InitCommon — page.cpp:84.
+    // InitCommon (legacy `uiPage::InitCommon`).
     let mut time_to_disable_events = 0.5_f32;
     if p.check_token("TIME_TO_DISABLE_EVENTS") {
         time_to_disable_events = p.get_float()?;
     }
 
-    // Items — rbmanager.cpp:221 (InitPageItems loop).
+    // Items — legacy `InitPageItems` loop.
     let mut items = Vec::new();
     while let Some(item) = parse_item_opt(p)? {
         items.push(item);
@@ -196,7 +196,7 @@ fn parse_item(p: &mut BlockParser, kind_keyword: &str) -> ParseResult<Item> {
         ..Default::default()
     };
 
-    // Common flags — item.cpp:21-28.
+    // Common flags (legacy `uiItem` base).
     if p.check_token("DISABLED") {
         item.is_enabled = false;
     }
@@ -204,7 +204,7 @@ fn parse_item(p: &mut BlockParser, kind_keyword: &str) -> ParseResult<Item> {
         item.is_visible = false;
     }
 
-    // Per-kind InitCustom — rbitem.cpp.
+    // Per-kind InitCustom (legacy `uiItem` subclasses).
     item.kind = match kind_keyword.to_ascii_uppercase().as_str() {
         "ITEM_INVISIBLE" => ItemKind::Invisible,
         "ITEM_ACTOR" => {
@@ -250,7 +250,7 @@ fn parse_item(p: &mut BlockParser, kind_keyword: &str) -> ParseResult<Item> {
         other => return Err(format!("ui parse: unknown item kind '{}'", other)),
     };
 
-    // Events — rbmanager.cpp:284 (InitItemEvents loop).
+    // Events — legacy `InitItemEvents` loop.
     while let Some(ev) = parse_event_opt(p)? {
         item.events.push(ev);
     }
@@ -260,7 +260,7 @@ fn parse_item(p: &mut BlockParser, kind_keyword: &str) -> ParseResult<Item> {
 }
 
 fn parse_rect2d(p: &mut BlockParser) -> ParseResult<Rect2DProps> {
-    // rbitem.cpp:69 uiItemRect2D::InitCustom.
+    // `uiItemRect2D::InitCustom`.
     p.get_delimiter("TOP_LEFT")?;
     let x = p.get_int()?;
     let y = p.get_int()?;
@@ -288,7 +288,7 @@ fn parse_rect2d(p: &mut BlockParser) -> ParseResult<Rect2DProps> {
 }
 
 fn parse_rect3d(p: &mut BlockParser) -> ParseResult<Rect3DProps> {
-    // rbitem.cpp:205 uiItemRect3D::InitCustom.
+    // `uiItemRect3D::InitCustom`.
     let attached_to = if p.check_token("ATTACHED_TO") {
         Some(p.get_token()?)
     } else {
@@ -329,7 +329,7 @@ fn parse_rect3d(p: &mut BlockParser) -> ParseResult<Rect3DProps> {
 }
 
 fn parse_string_source(p: &mut BlockParser) -> ParseResult<StringSource> {
-    // rbitem.cpp:347-359 / 496-508.  Either `STRING_ID "<id>"` or
+    // Either `STRING_ID "<id>"` or
     // bareword `STRING_LEVEL_NAME`; absent form defaults to level
     // name (legacy leaves StringID NULL in that case — close enough).
     if p.check_token("STRING_ID") {
@@ -342,7 +342,7 @@ fn parse_string_source(p: &mut BlockParser) -> ParseResult<StringSource> {
 }
 
 fn parse_slider2d_props(p: &mut BlockParser) -> ParseResult<Slider2DProps> {
-    // rbitem.cpp:652 uiItemSlider2D::InitCustom.
+    // `uiItemSlider2D::InitCustom`.
     p.get_delimiter("INDICATOR_WIDTH")?;
     let indicator_width = p.get_int()?;
     p.get_delimiter("INDICATOR_HEIGHT")?;
@@ -373,7 +373,7 @@ fn parse_slider2d_props(p: &mut BlockParser) -> ParseResult<Slider2DProps> {
 }
 
 fn parse_quad_list2d(p: &mut BlockParser) -> ParseResult<QuadList2DProps> {
-    // rbitem.cpp:946 uiItemQuadList2D::InitCustom.
+    // `uiItemQuadList2D::InitCustom`.
     let top_left = if p.check_token("TOP_LEFT") {
         Some((p.get_int()?, p.get_int()?))
     } else {
@@ -407,7 +407,7 @@ fn parse_quad_list2d(p: &mut BlockParser) -> ParseResult<QuadList2DProps> {
 }
 
 fn parse_list2d(p: &mut BlockParser) -> ParseResult<List2DProps> {
-    // rbitem.cpp:824 uiItemList2D::InitCustom — LEVEL_LIST and
+    // `uiItemList2D::InitCustom` — LEVEL_LIST and
     // LEVEL_SAVE_POINT_LIST use this unchanged.
     let rect = parse_rect2d(p)?;
     let color_highlight = if p.check_token("COLOR_HIGHLIGHT") {
@@ -470,7 +470,7 @@ fn is_event_keyword(w: &str) -> bool {
 
 fn parse_event(p: &mut BlockParser, keyword: &str) -> ParseResult<Event> {
     // Release-build C++ reads and discards an unused ClassName token
-    // after the event keyword (event.cpp:132).  No .ui file in the
+    // after the event keyword.  No .ui file in the
     // wild authors one, so we skip that read and jump straight to
     // InitCustom's payload — which is empty for most events.
     let kind = match keyword.to_ascii_uppercase().as_str() {
@@ -711,7 +711,7 @@ fn parse_optional_item(p: &mut BlockParser) -> ParseResult<Option<String>> {
 }
 
 /// Conditional-handler body: either `{ <handlers> }` or a single
-/// inline handler (event.cpp:62-72 `InitCustomConditional`).
+/// inline handler (legacy `InitCustomConditional`).
 fn parse_conditional_body(p: &mut BlockParser) -> ParseResult<Vec<Handler>> {
     let mut handlers = Vec::new();
     if p.peek() == Some("{") {

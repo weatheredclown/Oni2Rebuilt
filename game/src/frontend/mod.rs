@@ -1,5 +1,5 @@
 /*
- * frontend/ — port of legacy rb/src/rbfrontend.
+ * frontend/ — port of the legacy `rbfrontend` subsystem.
  *
  * Layer 1 (parser): `.ui` files shipped in assets/Settings/ are
  * parsed into an AST mirroring the C++ rbUIManager / uiPage /

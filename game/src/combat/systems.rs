@@ -66,30 +66,7 @@ pub fn attack_sync_system(
         // gets to switch to the next anim.  This system's only
         // remaining job here is bookkeeping: clearing per-attack state
         // and seeding the new attack's data.
-        let new_anim_name = anim_state
-            .current_anim_id
-            .as_ref()
-            .map(|id| id.to_string())
-            .unwrap_or_else(|| "<none>".to_string());
-        let new_strike_slice = anim_state
-            .anim
-            .attack_data
-            .as_ref()
-            .and_then(|d| d.strike.as_ref())
-            .map(|s| {
-                (
-                    s.slicestartradians,
-                    s.sliceendradians,
-                    s.stop_track_frame,
-                    s.spin,
-                    s.end_rotation_notches,
-                )
-            });
-        let cur_facing = fighter_opt.as_ref().map(|f| (f.facing.x, f.facing.z));
-        info!(
-            "STRIKE_DEBUG: anim-started entity={:?} new_anim='{}' cur_facing={:?} new_strike={:?}",
-            msg.entity, new_anim_name, cur_facing, new_strike_slice,
-        );
+
 
         if let Some(ref mut active) = attack_state.active_attack {
             // Reset per-attack state.  end_rotation_notches MAY still
@@ -141,9 +118,9 @@ pub fn attack_sync_system(
 /// to a new anim (FSM tick / action_player tick / etc.).  This places
 /// the Fighter / Transform rotation BEFORE the next-anim's first
 /// rendered frame, eliminating the one-frame "flash to old facing"
-/// glitch.  Mirrors the C++ `crStrike::End()` call site
-/// (rb/src/fight/strike.cpp:217-233): the rotation is part of the
-/// outgoing strike's end, not the incoming anim's start.
+/// glitch.  Mirrors the C++ `crStrike::End()` call site: the
+/// rotation is part of the outgoing strike's end, not the incoming
+/// anim's start.
 ///
 /// We mutate Fighter.facing AND Transform.rotation (+ avian Rotation)
 /// inline using the same formula `fighter_rotation_sync_system` uses
@@ -178,16 +155,7 @@ pub fn apply_end_rotation_on_anim_end_system(
         let rotation = Quat::from_rotation_y(radians);
 
         if let Some(mut fighter) = fighter_opt {
-            let pre = fighter.facing;
             fighter.facing = rotation * fighter.facing;
-            info!(
-                "STRIKE_DEBUG: end-rotation-notches-fire entity={:?} notches={} radians={:.3} pre_facing=({:.2},{:.2}) post_facing=({:.2},{:.2}) (on-anim-end)",
-                msg.entity,
-                notches,
-                radians,
-                pre.x, pre.z,
-                fighter.facing.x, fighter.facing.z,
-            );
 
             // Mirror onto Transform + avian Rotation now so any reader
             // that hits Transform before fighter_rotation_sync_system
@@ -216,10 +184,6 @@ pub fn apply_end_rotation_on_anim_end_system(
                     phys_rot.0 = transform.rotation;
                 }
             }
-            info!(
-                "STRIKE_DEBUG: end-rotation-notches-fire entity={:?} notches={} radians={:.3} (no Fighter, Transform-only) (on-anim-end)",
-                msg.entity, notches, radians,
-            );
         }
     }
 }
@@ -251,7 +215,7 @@ pub fn hit_detection_system(
     mut damage_writer: MessageWriter<DamageMessage>,
     mut injure_writer: MessageWriter<InjureMessage>,
     mut block_success_writer: MessageWriter<BlockSuccessEvent>,
-    _block_failed_writer: MessageWriter<BlockFailedEvent>,
+    mut block_failed_writer: MessageWriter<BlockFailedEvent>,
     mut strike_connected_writer: MessageWriter<StrikeConnectedEvent>,
     query_inventory: Query<&crate::inventory::components::Inventory>,
     query_weapon: Query<&crate::weapons::components::Weapon>,
@@ -438,40 +402,57 @@ pub fn hit_detection_system(
             let attack_strength = atdt_strength.unwrap_or(AttackStrength::High);
 
             // ── Block check ───────────────────────────────────────────────
-            // Determine current block animation phase on the target.
-            let block_result = block_lib_opt.and_then(|block_lib| {
-                let fs = target_fs_opt?;
-                if !fs.is_blocking() || fs.block_status == BlockStatus::NotBlocking {
-                    return None;
-                }
-                // Compute the current phase of the target's block animation.
-                let bphase = if let Some(tanim) = target_anim_opt {
-                    if tanim.anim.num_frames > 1 {
-                        tanim.current_time / (tanim.anim.num_frames as f32 - 1.0).max(1.0)
-                    } else {
-                        0.5 // assume mid-block if no frame data
-                    }
+            // Two-phase: first decide whether the target is even attempting
+            // to block, then if so consult its BlockLibrary. Mirrors the
+            // legacy `crStrike::Hit` flow — `IsBlocking()` is the gate for
+            // both the SuccessfulBlock path (CanBlock=true) and the
+            // FailedBlock path (CanBlock=false, hit still lands but with
+            // the BlockDef's failed-block react).
+            let bphase_for_target = || -> f32 {
+                if let Some(tanim) = target_anim_opt
+                    && tanim.anim.num_frames > 1
+                {
+                    tanim.current_time / (tanim.anim.num_frames as f32 - 1.0).max(1.0)
                 } else {
                     0.5
-                };
-                block_lib.find_block(
-                    target_tf.translation,
-                    target_fighter.facing,
-                    attacker_tf.translation,
-                    bphase,
-                    strike.hittype,
-                )
-            });
+                }
+            };
+            let (is_attempting_block, active_block_idx) = match (target_fs_opt, block_lib_opt) {
+                (Some(fs), Some(lib))
+                    if fs.is_blocking() && fs.block_status != BlockStatus::NotBlocking =>
+                {
+                    (true, fs.cur_block.max(0) as usize)
+                }
+                _ => (false, 0),
+            };
+            let block_result = if is_attempting_block {
+                block_lib_opt.and_then(|block_lib| {
+                    block_lib.find_block(
+                        target_tf.translation,
+                        target_fighter.facing,
+                        attacker_tf.translation,
+                        bphase_for_target(),
+                        strike.hittype,
+                    )
+                })
+            } else {
+                None
+            };
 
             if let Some((block_idx, block_def)) = block_result {
-                // ── Blocked ──────────────────────────────────────────────
+                // ── Blocked (CanBlock succeeded) ──────────────────────────
+                // block_reaction / enemy_block_anim come from the ATTACKER's
+                // ATDT — read inside the legacy `crStrike::GetBlocked` —
+                // NOT from the defender's BlockDef.
                 block_success_writer.write(BlockSuccessEvent {
                     attacker: attacker_entity,
                     blocker: target_entity,
                     block_index: block_idx,
                     counter_atk: block_def.counter_atk.clone(),
-                    enemy_block_anim: block_def.enemy_block_anim,
-                    block_reaction_on_attacker: block_def.block_reaction_on_attacker,
+                    auto_counter: block_def.auto_counter,
+                    successful_block_anim: block_def.successful_block_anim.clone(),
+                    enemy_block_anim: attack_data.enemy_block_anim,
+                    block_reaction_on_attacker: attack_data.block_reaction,
                     block_combo_count: target_fs_opt.map(|fs| fs.block_combo_count).unwrap_or(0),
                     combo_count_before_react: block_def.combo_count_before_react,
                 });
@@ -491,12 +472,27 @@ pub fn hit_detection_system(
                     attacker_entity, target_entity, block_idx, strike.hittype
                 );
             } else {
+                // Target was blocking but CanBlock said this hit slips
+                // through. Emit BlockFailedEvent so the failed-block
+                // react fires instead of the regular react — the damage
+                // path continues below as normal.
+                if is_attempting_block
+                    && let Some(block_lib) = block_lib_opt
+                    && let Some(active_def) = block_lib.blocks.get(active_block_idx)
+                {
+                    let failed_react = active_def.failed_react_for(strike.hittype);
+                    block_failed_writer.write(BlockFailedEvent {
+                        attacker: attacker_entity,
+                        blocker: target_entity,
+                        failed_react,
+                    });
+                }
                 // ── Not blocked ───────────────────────────────────────────
                 let damage = attack_data.damage;
 
                 // ── React-slot resolution + position-lock fields ──────────
                 // Pick the first slot `i` where current phase ≤ reactphase[i];
-                // fall back to slot 0 if none match.  Mirrors strike.cpp:311-314.
+                // fall back to slot 0 if none match.  Mirrors `crStrike::Hit`.
                 let slot = {
                     let mut found = 0usize;
                     let mut any = false;
@@ -534,16 +530,16 @@ pub fn hit_detection_system(
                 match mode {
                     REACT_TRANSLATE_MODE_SET => {
                         // Push so the final distance from attacker = cfg_dist.
-                        // strike.cpp:479-481: dist-=flatDistToTarg; fallthrough into PUSH.
+                        // Legacy: dist-=flatDistToTarg; fallthrough into PUSH.
                         let dist = cfg_dist - flat_dist;
                         react_distance = Some(from_dir * dist);
                     }
                     REACT_TRANSLATE_MODE_PUSH => {
-                        // strike.cpp:482-483: translate = from * cfg_dist.
+                        // Legacy: translate = from * cfg_dist.
                         react_distance = Some(from_dir * cfg_dist);
                     }
                     REACT_TRANSLATE_MODE_TELEPORT => {
-                        // strike.cpp:485-502: teleport target to (attacker pos +
+                        // Legacy: teleport target to (attacker pos +
                         // rotated -Z distVec).  The slice-heading rotation
                         // requires per-strike state we don't track yet; for
                         // the common straight-ahead case, "in front of
@@ -610,14 +606,11 @@ pub fn process_strike_connections_system(
 ) {
     for ev in events.read() {
         if let Ok(mut fs) = fs_query.get_mut(ev.attacker) {
-            info!(
-                "STRIKE_DEBUG: lock-set attacker={:?} target={:?} clear_st_after_first_use={} (headingnotlockedtotarget)",
-                ev.attacker, ev.target, ev.headingnotlockedtotarget,
-            );
+
             fs.strike_target = Some(ev.target);
             fs.clear_st_after_first_use = ev.headingnotlockedtotarget;
             // Dedup-add the hit target to this frame's pending list
-            // (mirrors AddTargetPending in rb/src/fight/strike.cpp:630).
+            // (mirrors `crStrike::AddTargetPending`).
             // The list is cleared each frame in fighter_state_update_system,
             // so entries here are short-lived and cheap.
             fs.add_target_pending(ev.target);
@@ -754,12 +747,11 @@ pub fn injure_system(
 
         // Face and React.
         //
-        // C++ `sMakeTargetFace` (rb/src/fight/strike.cpp:235) snaps the
-        // defender's yaw to face the attacker before the react plays.
-        // Strict-fidelity gate is `strikeReact.FaceWithReact`
-        // (strike.cpp:460-472), default false (attackdata.cpp:996),
-        // because the legacy engine relies on the *attacker's*
-        // per-frame `StrikeTarget` rotation (fighter.cpp:1507-1532) AND
+        // C++ `sMakeTargetFace` snaps the defender's yaw to face the
+        // attacker before the react plays.
+        // Strict-fidelity gate is `strikeReact.FaceWithReact`,
+        // default false, because the legacy engine relies on the
+        // *attacker's* per-frame `StrikeTarget` rotation AND
         // the *defender's* AI face-tracking behaviour to keep the
         // bodies aligned even without an explicit snap.  We don't have
         // AI face-tracking ported yet, so honour the `face_with_react`
@@ -785,7 +777,7 @@ pub fn injure_system(
             }
         }
 
-        // Teleport mode — strike.cpp:485-502 broadcasts an aMsgTeleport;
+        // Teleport mode — legacy `crStrike` broadcasts an aMsgTeleport;
         // here we just snap the defender's transform.  Done before the
         // react anim begins so the anim plays at the destination.
         if msg.play_react
@@ -798,7 +790,7 @@ pub fn injure_system(
 
         // Stash the per-react displacement vector for
         // `react_distance_apply_system` to consume over the react anim.
-        // Mirrors `SetReactDistance(translateDist)` at strike.cpp:513.
+        // Mirrors `SetReactDistance(translateDist)`.
         if msg.play_react
             && let Some(ref mut fs) = fighter_state_opt
         {
@@ -851,7 +843,7 @@ pub fn injure_system(
             // present — when any is `None` we skip, matching the legacy
             // "THE FOLLOWING ATDT FILES NEED TO HAVE TargetClass,
             // StrengthClass, and/or AttackClass SETUP" diagnostic
-            // (rb/src/fight/attackdata.cpp:258).
+            // diagnostic from `crAttackData::Load`.
             if let (Some(class), Some(strength), Some(target)) =
                 (msg.attack_class, msg.attack_strength, msg.attack_target)
             {
@@ -1012,7 +1004,7 @@ pub fn combo_tracking_system(
 /// Checks for dead entities and emits DeathMessages plus a one-shot
 /// `PlayDieMessage` that drives the death animation through the action
 /// dispatcher.  The die_enum chosen mirrors legacy `ActionStartDie`
-/// (rb/src/animator/action.cpp:1325-1326): the killing blow's react if
+/// — the killing blow's react if
 /// it has `CanBeDieAnimation = true`, otherwise `ANIMDIE_GENERAL`.
 pub fn death_system(
     health_query: Query<(Entity, &Health), Changed<Health>>,

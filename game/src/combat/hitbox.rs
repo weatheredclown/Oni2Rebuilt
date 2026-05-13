@@ -412,8 +412,8 @@ use crate::oni2_loader::parsers::atdt::AtdtStrike;
 /// and debug rendering share the exact same spatial bounds and inner cuts.
 ///
 /// `swept_heading` (the slice center in actor-local radians, 0 = forward) is
-/// derived the way C++ does in `crAttackSliceData::Init`
-/// (rb/src/fight/attackdata.cpp:910): the midpoint of `slicestartradians`
+/// derived the way C++ does in `crAttackSliceData::Init`: the
+/// midpoint of `slicestartradians`
 /// and `sliceendradians`.  `sliceheadingradiansb` is consulted only when
 /// `sweepheading != 0`, as the destination heading for the sweep.  Using
 /// `sliceheadingradiansb` directly (the previous bug) produced wedges that
@@ -471,7 +471,7 @@ impl EvaluatedWedge {
         };
 
         // Derive the slice center the way C++ does in
-        // `crAttackSliceData::Init` (attackdata.cpp:910-911): the file
+        // `crAttackSliceData::Init`: the file
         // stores slicestart/sliceend, and `SliceHeadingRadiansA` is their
         // midpoint.  `sliceheadingradiansb` is the END of a sweep — it's
         // used only when `sweepheading != 0`.

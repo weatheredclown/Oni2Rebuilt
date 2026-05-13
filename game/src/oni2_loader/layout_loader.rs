@@ -20,7 +20,7 @@ use crate::oni2_loader::utils::space;
 // later writing `intensity N` against the same light.
 //
 // The 3000× factor lifts the unitless legacy values (typical 30–300, see
-// `lgtLight::ContributionTo` at rb/src/fx/light.cpp:81) into Bevy's
+// `lgtLight::ContributionTo`) into Bevy's
 // candela range; tuned against Blast Chambers. Range follows from
 // intensity because legacy doesn't author it directly: `1/r²` falloff
 // means contribution drops to ~1% by `r ≈ 10·sqrt(intensity)`, and 3×
@@ -1034,7 +1034,7 @@ pub fn spawn_layout_actor(
                     // (held slot, offered queue, cookie held).
                     // Mirrors `aiFighter::Resources` +
                     // `CurrentPosition`/`ResourceTarget` fields in
-                    // rb/src/aifight/fighter.h:771-789.
+                    // legacy `aiFighter`.
                     assets.commands.entity(entity).insert((
                         crate::fightai::position::FightResources::default(),
                         crate::fightai::position::FightSlotState::default(),
@@ -1542,13 +1542,13 @@ fn load_layout_lights(
     }
 
     // Spawn lights from layout.lights.  Mirrors the legacy
-    // `lvlLightManager::AddLight` (rb/src/rblevel/lightmgr.cpp:122):
+    // `lvlLightManager::AddLight`:
     // the light is always added to the renderer, and ALSO registered
     // with the shadow manager iff `CastShadow()` (i.e. `CastShadowRange > 0`).
     // We mirror that with `shadows_enabled = (cast_shadow_range > 0.0)`.
     //
     // Intensity scaling: legacy `lgtLight::ContributionTo`
-    // (rb/src/fx/light.cpp:81) uses a `1/r²` falloff with the file's
+    // uses a `1/r²` falloff with the file's
     // `Intensity` as the numerator — same shape Bevy's PBR PointLight
     // uses by default.  But the units differ:
     //   - Legacy intensity is unitless / scene-tuned, typical 30–300.

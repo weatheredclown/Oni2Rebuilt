@@ -5,7 +5,7 @@
  *   Axis: <int>       ; ignored (legacy orientation hint)
  *   Normalize: <int>  ; 0=None, 1=Walk (deprecated), 2=Root, 3=Tracker (deprecated)
  *
- * The C++ reference (rb/src/animator/animatortype.cpp:690-750) uses this
+ * The C++ reference (legacy `animAnimatorType`) uses this
  * value to decide how to condition per-anim root motion at load time:
  *   0 (None)    — no processing; sanity-check that frame delta is zero.
  *   1 (Walk)    — asserts in C++ ("no longer handled by RB code").

@@ -360,8 +360,7 @@ pub fn exec(ctx: &mut OpsCtx, stmt: &Stmt) -> bool {
             true
         }
         Stmt::TakeCover { duration } => {
-            // Port of `DoTakeCover` + `AddBehaviorDoneOrTimeout` (rb/src/
-            // scroni/xBlockingCommand.cpp:705 / Compiler.cpp:600).  Parks
+            // Port of `DoTakeCover` + `AddBehaviorDoneOrTimeout`.  Parks
             // the thread on `WaitingForBehavior { TakeCover, deadline }`
             // and dispatches a SysRequest the bridge turns into a
             // behavior start request.  Resolves on EndBehaviorMessage —

@@ -1656,6 +1656,16 @@ pub fn spawn_oni2_creature(
             if !react_lib.entries.is_empty() {
                 commands.entity(entity).insert(react_lib);
             }
+
+            // Load block library (ANIMBLOCK_*.blk files, indexed by animBlockEnum).
+            // anim_name is the actor key (e.g. "kno"); anim_entity_dir is the
+            // disk directory (e.g. "Entity/kno") used as the fallback for
+            // entities whose blocks aren't published under entity.tune.
+            let block_lib = crate::oni2_loader::parsers::blk::load_block_library(
+                anim_name,
+                &anim_entity_dir,
+            );
+            commands.entity(entity).insert(block_lib);
         }
     }
 

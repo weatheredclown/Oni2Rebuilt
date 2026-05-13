@@ -787,8 +787,8 @@ pub fn exec(ctx: &mut OpsCtx, stmt: &Stmt) -> bool {
         }
         Stmt::SetShaderLocal { args } => {
             // `setShaderLocal <name> <value>` — writes a per-instance shader
-            // local on the actor's material. Mirrors DoSetShaderLocal in
-            // rb/src/scroni/XLevelCommand.cpp:189. The Bevy side reads
+            // local on the actor's material. Mirrors DoSetShaderLocal.
+            // The Bevy side reads
             // ShaderLocals in apply_shader_locals_system and translates
             // recognised keys (e.g. `occulation`) into material updates.
             if let (Some(name_expr), Some(val_expr)) = (args.first(), args.get(1)) {
@@ -800,8 +800,7 @@ pub fn exec(ctx: &mut OpsCtx, stmt: &Stmt) -> bool {
         }
         Stmt::SetFullScreenColor { args } => {
             // `setFullScreenColor <vector> <duration>` — full-screen
-            // color overlay fade. DoSetFullScreenColor at
-            // rb/src/scroni/XLevelCommand.cpp:136.
+            // color overlay fade.  Mirrors DoSetFullScreenColor.
             if args.len() >= 2 {
                 let color = ctx.eval_vec3(&args[0]);
                 let duration = ctx.eval_float(&args[1]);
@@ -814,8 +813,7 @@ pub fn exec(ctx: &mut OpsCtx, stmt: &Stmt) -> bool {
         }
         Stmt::SetUpdateState { target, state } => {
             // `setUpdateState <guid> <Active|Asleep|Dormant>` — toggles
-            // an actor's update state. DoSetUpdateState at
-            // rb/src/scroni/XLevelCommand.cpp:221.
+            // an actor's update state. Mirrors DoSetUpdateState.
             let target_str = ctx.eval_string(target);
             let state_str = ctx.eval_string(state);
             ctx.sys_request(SysRequest::SetUpdateState {
@@ -826,8 +824,8 @@ pub fn exec(ctx: &mut OpsCtx, stmt: &Stmt) -> bool {
         }
         Stmt::ControlHead { args } => {
             // `controlhead <mode> [args]` — head IK control on the
-            // owning actor. Mirrors DoControlHead at
-            // rb/src/scroni/XCommand.cpp:1557. The parser stamps args[0]
+            // owning actor. Mirrors DoControlHead.
+            // The parser stamps args[0]
             // with the mode string; subsequent positions depend on mode.
             use crate::oni2_loader::components::ControlHeadTask;
             let actor = ctx.exec.owner;
@@ -914,7 +912,7 @@ pub fn exec(ctx: &mut OpsCtx, stmt: &Stmt) -> bool {
             true
         }
         Stmt::RunGame { level, save_point } => {
-            // Mirrors `DoRunGame` in rb/src/scroni/XCommand.cpp:1476.
+            // Mirrors `DoRunGame`.
             // The legacy code pops the SavePoint THEN the Level off the
             // value stack, defaulting save_point to 0 and level to the
             // current layout when not specified.  We translate to a

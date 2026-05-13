@@ -397,7 +397,7 @@ pub fn player_mouse_look_system(
 // EATME (Enemy Auto-Track Mistake Eliminator)
 // ---------------------------------------------------------------------------
 //
-// Port of `bhPadMapper::CalcEATME` (rb/src/behavior/padmapper.cpp:43).
+// Port of `bhPadMapper::CalcEATME`.
 // Magnetises the player's pad input toward nearby enemies: when the
 // stick is pushed roughly in an enemy's direction, the resolved travel
 // vector snaps to point straight at that enemy.  Also exposes the
@@ -408,7 +408,7 @@ pub fn player_mouse_look_system(
 //   • cull range — radius around the player that's eligible for the snap.
 //     The legacy default is ~8 m; we mirror that.
 //   • fudge      — half-angle of the snap cone.  The legacy comment at
-//     padmapper.cpp:94 says "45 degree lw" but the real value is a
+//     legacy `bhPadMapper` says "45 degree lw" but the real value is a
 //     PADDATA tuning slider; 45° gives a generous magnet without
 //     feeling like the game is playing for you.
 //
@@ -516,7 +516,7 @@ pub fn eatme_system(
 
         // ── Stick-neutral branch ─────────────────────────────────────
         // Just pick the enemy most directly in front of the character
-        // heading.  Don't bias movement.  Mirrors padmapper.cpp:131-171.
+        // heading.  Don't bias movement.  Mirrors the legacy stick-neutral branch.
         if stick_mag_sq < EATME_STICK_DEAD_SQ {
             // Player's forward is +Z relative to their model; the
             // `Transform.back()` happens to be local +Z (model faces
@@ -556,7 +556,7 @@ pub fn eatme_system(
         // Find the enemy with the smallest signed angle diff between
         // the desired travel and the direction to them.  If that diff
         // is within fudge°, snap travel to point at them and stash
-        // them as the target.  Mirrors padmapper.cpp:49-101.
+        // them as the target.  Mirrors the legacy stick-active branch.
         let travel_angle = travel.x.atan2(travel.z);
 
         let mut best_diff = std::f32::consts::PI;
@@ -611,7 +611,7 @@ pub fn eatme_system(
 /// `update_fighter_strike_facing_system` to track during the windup.
 ///
 /// Mirrors the legacy `PADDATA.AttackTrackTargetIsEATMETarget` branch
-/// at rb/src/behavior/pad.cpp:813 — when set, the strike's preselected
+/// — when set, the strike's preselected
 /// target is the EATME pick.
 pub fn eatme_strike_target_seed_system(
     mut players: Query<(&InputState, &mut FighterState), With<Player>>,

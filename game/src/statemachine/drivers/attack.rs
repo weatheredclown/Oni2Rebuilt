@@ -341,8 +341,8 @@ pub enum AttackEvent {
     Always,
     /// Weight-walk step: decrements `runtime.random_budget` by `p`; matches
     /// when the budget drops to zero or below.  Matches the legacy
-    /// `aiAttackStateMachine::EProbability` evaluator (rb/src/aifight/
-    /// attackstatemachine.cpp:707) which walks a row of weights until the
+    /// `aiAttackStateMachine::EProbability` evaluator which walks a
+    /// row of weights until the
     /// accumulator reaches zero.  Budget is re-seeded each tick inside
     /// `SmRuntime::tick`.
     Probability(f32),

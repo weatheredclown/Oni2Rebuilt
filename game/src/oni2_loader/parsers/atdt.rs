@@ -11,7 +11,7 @@ use crate::oni2_loader::utils::space::{bevy_to_oni2_yaw_rads, oni2_to_bevy_yaw_r
 use bevy::prelude::*;
 
 /// `crStrikeReact::SetDistanceFromAttacker` mode values, ordered to match
-/// the C++ enum in rb/src/fight/attackdata.h:375-377.
+/// the legacy C++ enum.
 pub const REACT_TRANSLATE_MODE_PUSH: u8 = 0;
 pub const REACT_TRANSLATE_MODE_SET: u8 = 1;
 pub const REACT_TRANSLATE_MODE_TELEPORT: u8 = 2;
@@ -53,9 +53,9 @@ pub struct AtdtStrike {
     pub react_speed: [[f32; 4]; 4],
     /// Per-react-slot snap-defender-toward-attacker flag. Default `false`
     /// (matches `crStrikeReact::FaceWithReact=false` at
-    /// rb/src/fight/attackdata.cpp:996). When true and a hit lands, the
-    /// defender's facing is snapped to the attacker before the react anim
-    /// plays — see `sMakeTargetFace` (strike.cpp:235).
+    /// `crStrikeReact`). When true and a hit lands, the defender's
+    /// facing is snapped to the attacker before the react anim plays —
+    /// see `sMakeTargetFace`.
     pub face_with_react: [bool; 4],
     /// Per-react-slot translate mode that decides how `reactdistance`
     /// pushes the defender:
@@ -63,7 +63,7 @@ pub struct AtdtStrike {
     ///   1 = REACT_TRANSLATE_MODE_SET     — push so final distance = ReactDistance
     ///   2 = REACT_TRANSLATE_MODE_TELEPORT — snap defender to position in front of attacker
     /// Default `0` (PUSH) — matches `SetDistanceFromAttacker = REACT_TRANSLATE_MODE_PUSH`
-    /// at rb/src/fight/attackdata.cpp:997. Switch in strike.cpp:477.
+    /// in `crStrikeReact`.  Consumed by `crStrike::Hit`.
     pub set_distance_mode: [u8; 4],
 
     // --- Combo-linking timing windows ---
@@ -133,14 +133,14 @@ impl Default for AtdtStrike {
     }
 }
 
-/// Subset of `crGrabData` (rb/src/fight/grab.h) needed for the
+/// Subset of `crGrabData` needed for the
 /// disarm pipeline.  ATDTs that drive a grab attack express their
 /// disarm intent here — `removes_weapon=1` plus a phase tells the
 /// runtime when to drop the victim's currently-held weapon.
 #[derive(Debug, Clone, Reflect, Default)]
 pub struct AtdtGrab {
     /// True when this grab attack should disarm the victim mid-anim
-    /// (legacy `crGrabData::RemovesWeapon` — grab.cpp:743).
+    /// (legacy `crGrabData::RemovesWeapon`).
     pub removes_weapon: bool,
     /// Normalized [0..1] anim phase at which the weapon is dropped.
     /// Mirrors `crGrabData::RemovesWeaponPhase`.  Once the grab
@@ -164,10 +164,15 @@ pub struct AtdtData {
     pub grab: Option<AtdtGrab>,
     pub damage: f32,
     pub block_reaction: i32,
+    /// `crAttackData::EnemyBlockAnim` (animBlockEnum) — the secondary block
+    /// animation index to play on the defender when this attack is blocked.
+    /// `-1` (ANIMBLOCK_INVALID) means "use the defender's BlockDef
+    /// `successful_block_anim` instead." Consumed by `crStrike::GetBlocked`.
+    pub enemy_block_anim: i32,
     pub guardtype: u8,
 
     // Classification fields — mirror the legacy crAttackData `targetclass` /
-    // `strengthclass` / `attackclass` tokens (see rb/src/fight/attackdata.cpp:276).
+    // `strengthclass` / `attackclass` tokens.
     // All three are Option because the engine's `NONE` variant (int value 0)
     // means "not configured" — hit-detection treats these as "unknown" and
     // skips the FX-table lookup rather than picking a bogus default.
@@ -234,6 +239,10 @@ fn attack_class_from_int(v: i32) -> Option<crate::combat::components::AttackClas
 
 pub fn parse_atdt_content(content: &str) -> AtdtData {
     let mut data = AtdtData::default();
+    // crAttackData defaults: enemy_block_anim = ANIMBLOCK_INVALID (-1)
+    // means "let the defender's BlockDef pick the successful_block_anim."
+    // Derived Default gives 0 which is a real enum slot, so override here.
+    data.enemy_block_anim = -1;
     let mut p = BlockParser::new(content);
 
     // Some files might be wrapped in `{` immediately
@@ -290,8 +299,7 @@ pub fn parse_atdt_content(content: &str) -> AtdtData {
                             }
                             // Slice angles are intentionally NOT wrapped to
                             // [-π, π].  The legacy editor widget allows
-                            // [-360°, +360°] (rb/src/fight/attackdata.cpp:979,
-                            // 983), and artists author angles past ±π to
+                            // [-360°, +360°], and artists author angles past ±π to
                             // express "this wedge wraps the back."  Modern
                             // ATDTs use this convention: e.g.
                             // `kno_atk_BCH1_lft_kick.atdt` carries
@@ -516,6 +524,10 @@ pub fn parse_atdt_content(content: &str) -> AtdtData {
                             "blockreaction" => {
                                 data.block_reaction = p.read_i32(&a_key, data.block_reaction)
                             }
+                            "enemyblockanim" => {
+                                data.enemy_block_anim =
+                                    p.read_i32(&a_key, data.enemy_block_anim)
+                            }
                             _ => {
                                 p.next();
                             }
@@ -565,6 +577,9 @@ pub fn parse_atdt_content(content: &str) -> AtdtData {
             }
             "damage" => data.damage = p.read_float(&actual_key, data.damage),
             "blockreaction" => data.block_reaction = p.read_i32(&actual_key, data.block_reaction),
+            "enemyblockanim" => {
+                data.enemy_block_anim = p.read_i32(&actual_key, data.enemy_block_anim)
+            }
             "guardtype" => data.guardtype = p.read_i32(&actual_key, data.guardtype as i32) as u8,
             "targetclass" => data.target_class = target_from_int(p.read_i32(&actual_key, 0)),
             "strengthclass" => data.strength_class = strength_from_int(p.read_i32(&actual_key, 0)),

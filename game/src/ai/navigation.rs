@@ -8,6 +8,7 @@
 use bevy::prelude::*;
 use std::cmp::Ordering;
 use std::collections::{BinaryHeap, HashMap};
+use std::f32::consts::PI;
 
 use crate::oni2_loader::parsers::graph::LayoutGraph;
 
@@ -19,7 +20,7 @@ pub struct NavGraph {
     pub edge_doors: HashMap<(usize, usize), usize>,
     pub doors_open: Vec<bool>,
     /// Per-point flag bitmask carried through from layout.graph.  Bits
-    /// follow `rb/src/graphs/elements.h` (`POINT_DOOR=BIT0`,
+    /// follow the legacy `POINT_*` flags (`POINT_DOOR=BIT0`,
     /// `POINT_SHOOTING=BIT1`, `POINT_COVER=BIT2`, `POINT_RETREAT=BIT3`,
     /// `POINT_HIDING=BIT4`, …).  Same indexing as `points`.
     pub point_flags: Vec<u32>,
@@ -320,8 +321,6 @@ pub fn path_following_system(
             driven.0 = true;
         }
 
-        fighter.facing = dir;
-
         // Rotate to face movement direction. Oni2 models face +Z in local space;
         // look_at makes -Z face the target, so rotate 180° Y afterward.
         let look_target = tf.translation + dir;
@@ -329,6 +328,11 @@ pub fn path_following_system(
         target_tf.look_at(look_target, Vec3::Y);
         target_tf.rotate_y(std::f32::consts::PI);
         tf.rotation = tf.rotation.slerp(target_tf.rotation, (10.0 * dt).min(1.0));
+        
+        fighter.facing = (tf.rotation * Vec3::Z).normalize_or_zero();
+        if fighter.facing.length_squared() < 0.1 {
+            fighter.facing = dir; // Fallback
+        }
     }
 }
 
@@ -340,13 +344,14 @@ pub fn actor_follower_system(
         &mut avian3d::prelude::LinearVelocity,
         &mut crate::combat::components::Fighter,
         Option<&mut crate::ai::components::AiDrivenVelocityThisTick>,
+        Option<&crate::oni2_loader::animation::Oni2AnimState>,
     )>,
     targets: Query<&Transform, Without<crate::ai::components::ActorFollower>>,
 ) {
     let speed_multiplier = 4.5;
     let dt = time.delta_secs();
 
-    for (follower, mut tf, mut vel, mut fighter, mut driven_opt) in &mut query {
+    for (follower, mut tf, mut vel, mut fighter, mut driven_opt, anim_state_opt) in &mut query {
         if let Ok(target_tf) = targets.get(follower.target) {
             let mut to_target = target_tf.translation - tf.translation;
             to_target.y = 0.0;
@@ -366,15 +371,21 @@ pub fn actor_follower_system(
             if let Some(mut driven) = driven_opt {
                 driven.0 = true;
             }
-            fighter.facing = dir;
 
-            let look_target = tf.translation + dir;
-            let mut expected_tf = *tf;
-            expected_tf.look_at(look_target, Vec3::Y);
-            expected_tf.rotate_y(std::f32::consts::PI);
-            tf.rotation = tf
-                .rotation
-                .slerp(expected_tf.rotation, (10.0 * dt).min(1.0));
+            if !anim_state_opt.is_some_and(crate::combat::locked_movement) {
+                let look_target = tf.translation + dir;
+                let mut expected_tf = *tf;
+                expected_tf.look_at(look_target, Vec3::Y);
+                expected_tf.rotate_y(std::f32::consts::PI);
+                tf.rotation = tf
+                    .rotation
+                    .slerp(expected_tf.rotation, (10.0 * dt).min(1.0));
+                    
+                fighter.facing = (tf.rotation * Vec3::Z).normalize_or_zero();
+                if fighter.facing.length_squared() < 0.1 {
+                    fighter.facing = dir; // Fallback
+                }
+            }
         }
     }
 }

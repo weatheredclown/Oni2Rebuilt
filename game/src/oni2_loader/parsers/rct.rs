@@ -68,7 +68,7 @@ pub const ANIMREACT_NAMES: &[&str] = &[
     "ANIMREACT_FROMBACK_RUN_HRD",    // 54
     "ANIMREACT_FROM_ABOVE",          // 55
     // ANIMDIE_GENERAL shares the animReactEnum sequence in the legacy
-    // engine (animator/animenums.h:177 — "sort of a hack for backwards
+    // engine ("sort of a hack for backwards
     // compatibility to put this here").  Keeping it in the same table
     // means the death-anim lookup in the action dispatcher can index
     // either react aliases or the death fallback uniformly.
@@ -115,8 +115,7 @@ pub struct ReactData {
     pub sound_frame: i32,
     /// Whether this react animation may be used as the death animation
     /// when the actor is killed by the corresponding strike.  Mirrors
-    /// `crReactData::CanBeDieAnimation` (rb/src/fight/reactdata.h:55,
-    /// parsed at reactdata.cpp:107).  Defaults to false; the legacy
+    /// `crReactData::CanBeDieAnimation`.  Defaults to false; the legacy
     /// `ActionStartDie` falls back to `ANIMDIE_GENERAL` when the
     /// killing-blow react can't be reused as a death anim.
     pub can_be_die_animation: bool,
@@ -152,8 +151,8 @@ pub fn parse_rct_content(content: &str) -> ReactData {
             "CanFollowWithWallReact" => data.can_follow_with_wall_react = val.parse().unwrap_or(0),
             "SoundFrame" => data.sound_frame = val.parse().unwrap_or(0),
             "CanBeDieAnimation" => {
-                // Legacy stores this as `1`/`0` (reactdata.cpp:108
-                // `CanBeDieAnimation = tok.GetInt() != 0`).
+                // Legacy stores this as `1`/`0` and converts via
+                // `CanBeDieAnimation = tok.GetInt() != 0`.
                 data.can_be_die_animation = val.parse::<i32>().map(|n| n != 0).unwrap_or(false);
             }
             _ => {}

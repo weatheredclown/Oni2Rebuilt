@@ -1,7 +1,7 @@
 /*
  * frontend/runtime.rs — FrontendPlugin + state resources.
  *
- * Mirrors `rb/src/rbfrontend/rbmanager.cpp` and `manager.cpp`:
+ * Mirrors the legacy `rbUIManager` / `uiManager`:
  *   - Startup loader parses rbfrontend.ui into `UiFile`.
  *   - `FrontendState` holds the current page name + history stack
  *     (legacy `uiManager::CurrentPage` + `PageHistoryList`).
@@ -10,7 +10,7 @@
  *     deferred `PageToSelectAtEndOfFrame`).
  *   - `OnEnter(AppState::FrontEnd)` routes to `UiFile.startup_page`
  *     via the same mechanism — mirrors `PostLoadSetup` at
- *     rbmanager.cpp:113.
+ *     `PostLoadSetup`.
  *
  * Rendering + input + handler execution lives in `render.rs`.
  */
@@ -221,8 +221,7 @@ fn route_to_startup_page(
         return;
     };
     // First preference: ON_STARTUP (release builds).  Fallback: the
-    // first page in declaration order — mirrors rbmanager.cpp:147
-    // `PageList.GetHead()`.
+    // first page in declaration order — mirrors `PageList.GetHead()`.
     let target = ui_file
         .startup_page
         .clone()

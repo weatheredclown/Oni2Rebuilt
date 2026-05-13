@@ -331,8 +331,8 @@ impl Oni2AnimState {
 
     /// True iff a non-looping one-shot animation is currently mid-play
     /// (i.e. hasn't reached its final frame).  Used by both the AI
-    /// behavior LockedMovement gate (rb/src/behavior/component.cpp:1176
-    /// port) and the locomotion gait selector to suppress motion
+    /// behavior LockedMovement gate port and the locomotion gait
+    /// selector to suppress motion
     /// commands while an attack swing / block / evade / reaction
     /// animation has the actor committed.
     ///
@@ -520,6 +520,17 @@ pub fn load_anim_library(
     } else {
         String::new()
     };
+    // Aliases declared in the `.attacks` file are the only ones that should
+    // get a `.atdt` load below.  Anything declared in `.anims` (locomotion,
+    // navigation, react, fightstance, etc.) is not an attack and must not
+    // pick up strike geometry — some react anims (e.g. `kno_rct_fch_sft`)
+    // ship with an `.atdt` whose Strike block is non-empty, and loading it
+    // opportunistically causes the react animation to register hits against
+    // the original attacker (mirror-react loop).  Mirrors the C++ engine,
+    // which only resolves ATDTs for crAttackData instances created from the
+    // .attacks list.
+    let pre_attacks_keys: std::collections::HashSet<String> =
+        alias_map.keys().cloned().collect();
     if !attacks_path.is_empty() {
         if let Ok(content) = crate::vfs::read_to_string("", &attacks_path) {
             let before = alias_map.len();
@@ -538,6 +549,11 @@ pub fn load_anim_library(
     } else {
         info!("No .attacks file found for {}", entity_name);
     }
+    let attack_aliases: std::collections::HashSet<String> = alias_map
+        .keys()
+        .filter(|k| !pre_attacks_keys.contains(*k))
+        .cloned()
+        .collect();
 
     // Load the actual .anim files
     let mut anims = std::collections::HashMap::new();
@@ -581,7 +597,7 @@ pub fn load_anim_library(
 
         // Sibling `.gait` file — tiny text file next to the `.anim` that
         // declares the root-motion conditioning mode.  Mirrors the load
-        // path in rb/src/animator/animatortype.cpp:695.  Looked up with
+        // path on legacy `animAnimatorType`.  Looked up with
         // the same fallback-to-prefix-dir strategy as the .anim above.
         let gait_file = format!("{}/{}.gait", entity_dir, anim_name);
         let mut gait_content = crate::vfs::read_to_string("", &gait_file).ok();
@@ -601,31 +617,35 @@ pub fn load_anim_library(
             anim.gait_normalize = Some(gait.normalize);
         }
 
-        let tune_atdt = format!("entity.tune/{}/{}.atdt", entity_name, anim_name);
-        let base_atdt = format!("{}/{}.atdt", entity_dir, anim_name);
+        // Only attack-class aliases (declared in `.attacks`) get a `.atdt` —
+        // see the `attack_aliases` set built above for the rationale.
+        if attack_aliases.contains(alias) {
+            let tune_atdt = format!("entity.tune/{}/{}.atdt", entity_name, anim_name);
+            let base_atdt = format!("{}/{}.atdt", entity_dir, anim_name);
 
-        // Priority 1: entity.tune/kno/..
-        // Priority 2: Entity/kno/..
-        // Priority 3: fallback to prefix folder (e.g. if the mesh name differs from anim prefix)
-        let mut atdt_content = crate::vfs::read_to_string("", &tune_atdt);
-        if atdt_content.is_err() {
-            atdt_content = crate::vfs::read_to_string("", &base_atdt);
-        }
-        if atdt_content.is_err()
-            && let Some(prefix) = anim_name.split('_').next()
-        {
-            let fallback_tune = format!("entity.tune/{}/{}.atdt", prefix, anim_name);
-            atdt_content = crate::vfs::read_to_string("", &fallback_tune);
+            // Priority 1: entity.tune/kno/..
+            // Priority 2: Entity/kno/..
+            // Priority 3: fallback to prefix folder (e.g. if the mesh name differs from anim prefix)
+            let mut atdt_content = crate::vfs::read_to_string("", &tune_atdt);
             if atdt_content.is_err() {
-                let fallback_base = format!("Entity/{}/{}.atdt", prefix, anim_name);
-                atdt_content = crate::vfs::read_to_string("", &fallback_base);
+                atdt_content = crate::vfs::read_to_string("", &base_atdt);
             }
-        }
+            if atdt_content.is_err()
+                && let Some(prefix) = anim_name.split('_').next()
+            {
+                let fallback_tune = format!("entity.tune/{}/{}.atdt", prefix, anim_name);
+                atdt_content = crate::vfs::read_to_string("", &fallback_tune);
+                if atdt_content.is_err() {
+                    let fallback_base = format!("Entity/{}/{}.atdt", prefix, anim_name);
+                    atdt_content = crate::vfs::read_to_string("", &fallback_base);
+                }
+            }
 
-        if let Ok(atdt_data) = atdt_content {
-            anim.attack_data = Some(crate::oni2_loader::parsers::atdt::parse_atdt_content(
-                &atdt_data,
-            ));
+            if let Ok(atdt_data) = atdt_content {
+                anim.attack_data = Some(crate::oni2_loader::parsers::atdt::parse_atdt_content(
+                    &atdt_data,
+                ));
+            }
         }
 
         if alias.starts_with("ANIMREACT_") {
@@ -1376,7 +1396,7 @@ pub fn update_oni2_animation(
         // tick.  Priority:
         //   1. If the anim has a `.gait` file, honour its Normalize value —
         //      `Root` (2) strips; every other value preserves.  Mirrors
-        //      rb/src/animator/animatortype.cpp:722.
+        //      the legacy `animAnimatorType` gait-resolution path.
         //   2. Otherwise fall back to the legacy loop heuristic (strip while
         //      looping, preserve on one-shots) — a reasonable default for
         //      creatures where no .gait file ships.

@@ -1,9 +1,9 @@
 /*
  * ai/cover.rs — CoverPointManager: nav-graph cover-spot reservation manager.
  *
- * Port of `bhCoverPointManager` (rb/src/behavior/takecover.cpp:223–471).
- * Owns the set of `POINT_COVER` graph points (flag BIT2 from
- * `rb/src/graphs/elements.h`) and tracks per-actor reservations so that
+ * Port of `bhCoverPointManager`.
+ * Owns the set of `POINT_COVER` graph points (flag BIT2) and tracks
+ * per-actor reservations so that
  * concurrent `takecover` requests don't all converge on the same spot.
  *
  * The C++ original ran a multi-frame request/grant handshake with hysteresis
@@ -18,7 +18,7 @@ use std::collections::HashMap;
 
 use crate::ai::navigation::NavGraph;
 
-/// `POINT_COVER` flag bit from `rb/src/graphs/elements.h:116`.
+/// `POINT_COVER` flag bit from the legacy graph-element flags.
 pub const POINT_COVER: u32 = 1 << 2;
 
 /// Per-level resource: indices into NavGraph.points that are flagged

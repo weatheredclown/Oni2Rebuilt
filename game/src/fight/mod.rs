@@ -16,7 +16,7 @@ pub mod systems;
 use bevy::prelude::*;
 
 use crate::combat::components::{AttackClass, AttackStrength, AttackTarget};
-use crate::combat::systems::{hit_reaction_system, injure_system};
+use crate::combat::systems::{hit_detection_system, hit_reaction_system, injure_system};
 use crate::fight::fx_table::{AttackFxTable, FxSet};
 use crate::menu::AppState;
 use crate::oni2_loader::parsers::effect::{EffectDef, StrikeFxDef};
@@ -76,6 +76,11 @@ impl Plugin for FightPlugin {
                     // react_data_apply runs BEFORE hit_reaction_system so FighterState
                     // fields are populated before the animation starts.
                     systems::react_data_apply_system.before(hit_reaction_system),
+                    // Block state-sync runs BEFORE hit_detection so cur_block /
+                    // block_status / rate / hold-loop are current when the
+                    // strike test inspects them. Also applies the hold-loop
+                    // mid-point clamp every tick a block anim is playing.
+                    systems::block_state_sync_system.before(hit_detection_system),
                     // Block success/failed responses run after hit_detection but before injure.
                     systems::block_success_system.after(injure_system),
                     systems::block_failed_system.after(injure_system),
@@ -114,18 +119,17 @@ impl Plugin for FightPlugin {
                     systems::update_fighter_strike_facing_system,
                     // Interpolate Fighter.facing toward
                     // FighterState.turn_final_target_dir each frame
-                    // (crFighter::TurnLerper; fighter.cpp:1377-1387).
+                    // (crFighter::TurnLerper).
                     systems::fighter_turn_lerp_system,
                     // Push the defender across the react anim by their
-                    // stashed react_distance (fighter.cpp:1390-1431).
+                    // stashed react_distance.
                     systems::react_distance_apply_system,
-                    // Face-after-run snap-toward-nearest-foe behaviour
-                    // (fighter.cpp:1581-1617).
+                    // Face-after-run snap-toward-nearest-foe behaviour.
                     systems::face_after_run_system,
                     // Drop weapon when a grab-attack disarm crosses its
-                    // configured anim phase (grab.cpp:743-751).
+                    // configured anim phase.
                     systems::disarm_apply_system,
-                    // AI disarm-intent decision (fightandshoot.cpp:1095-1190).
+                    // AI disarm-intent decision.
                     systems::update_disarming_system,
                     // Fight stance entry/exit orchestration.  `sync` must
                     // run first so FighterState.FIGHT_MODE reflects the

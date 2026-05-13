@@ -4,7 +4,7 @@
  *
  * The FSM cursor IS the current behavior: Idle / Fight / Follow / Goto /
  * Patrol / Retreat / Pad.  Matches the legacy `bhBehaviorComponent` shape
- * from rb/src/behavior/ but uses our FSM+hybrid-action pattern instead of
+ * from the legacy behavior subsystem but uses our FSM+hybrid-action pattern instead of
  * the C++ inheritance hierarchy: the FSM file owns the transition graph
  * (readable spec), a Rust-side `Behavior` trait impl owns the per-frame
  * work for whichever state is current.
@@ -31,7 +31,7 @@ use super::parse_input_fsm::parse_input_fsm;
 // ---------------------------------------------------------------------------
 
 /// One of the top-level AI behaviors.  Parallel to the legacy `bhBehaviors`
-/// enum (rb/src/behavior/messages.h BEHAVIORLIST).  Used as both the FSM
+/// enum (legacy `BEHAVIORLIST`).  Used as both the FSM
 /// action payload (`StartBehavior(kind)`) and the key in `BehaviorRegistry`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum BehaviorKind {
@@ -43,7 +43,7 @@ pub enum BehaviorKind {
     Retreat,
     Pad,
     /// `takecover` — find a POINT_COVER nav node and walk to it.  Port of
-    /// `bhBehaviors::kBehaviorTakeCover` (rb/src/behavior/takecover.cpp).
+    /// `bhBehaviors::kBehaviorTakeCover`.
     TakeCover,
 }
 

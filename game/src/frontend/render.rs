@@ -1453,7 +1453,7 @@ fn queue_handler_forward(
 // mis-decoding.  The paired `.imf` sidecars are a custom Angel
 // Studios IMA-ADPCM audio format — no off-the-shelf decoder exists.
 // The legacy C++ `rbMoviePlayer` was itself entirely stubbed out
-// (movieplayer.cpp:69-219 — every `gfxMPEG::*` call commented).
+// (every `gfxMPEG::*` call commented out in `rbMoviePlayer`).
 // Asset-pipeline preprocessing is off the table because users bring
 // their own RB.DAT; we never own or redistribute these files.
 //
@@ -1478,7 +1478,7 @@ fn queue_handler_forward(
 //      `ImageNode` points at.
 //   4. EOF on stdout → fire `ON_MOVIE_COMPLETE`.  OK/Start pressed
 //      → kill the Child, fire `ON_MOVIE_COMPLETE` early (legacy
-//      skip behavior, movieplayer.cpp:180-187).
+//      skip behavior).
 //   5. IMF audio: separate problem.  The .imf format is Angel
 //      Studios proprietary IMA-ADPCM; likely need to hand-roll the
 //      decode (the format is documented in community PS2 reversing

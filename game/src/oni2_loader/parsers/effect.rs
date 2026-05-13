@@ -125,10 +125,10 @@ pub struct LaserFxDef {
     /// Beam cross-section width in world units (meters).
     pub width: f32,
     /// Head sprite scale multiplier (applied as `0.5 * width * head_scale`
-    /// per rb/src/fx/laser.cpp:280).
+    /// in the legacy `fxLaser`).
     pub head_scale: f32,
     /// Size of the ring-buffer of past positions — how many frames of tail
-    /// are retained.  C++ `Length` (int) at rb/src/fx/laser.cpp:43.  NOT a
+    /// are retained.  C++ `Length` (int) on legacy `fxLaser`.  NOT a
     /// spatial length; the beam's visible length depends on projectile
     /// speed × `length` × frame time.
     pub length: usize,
@@ -153,12 +153,12 @@ pub struct BlastFireDef {
     pub path2: Vec3,
 }
 
-/// Mirrors legacy `fxLightGlow` (rb/src/fx/lightglows.{cpp,h}).  A
+/// Mirrors legacy `fxLightGlow`.  A
 /// named billboard-corona fx-effect-type referenced by Light entries
 /// in `layout.lights` (when they include the `fxLight` flag) and by
 /// per-effect `LIGHTGLOW` blocks in `rb.fx`.  Fields map 1:1 to the
 /// flag bits + intensity values legacy reads in
-/// `fxLightGlow::Load` (lightglows.cpp:245+).
+/// `fxLightGlow::Load`.
 #[derive(Debug, Clone)]
 pub struct LightGlowDef {
     pub name: String,
@@ -175,14 +175,14 @@ pub struct LightGlowDef {
     /// `kGlowBillboard` flag — if 1, Y-axis billboard: face the camera
     /// horizontally (rotate around world Y) but keep "up" pointing at
     /// world Y.  Cylindrical billboard.  Takes priority over
-    /// `glow_look_at` (legacy lightglows.cpp:166).
+    /// `glow_look_at` (legacy `fxLightGlow`).
     pub glow_billboard: i32,
     /// `kOccludeGlow` flag — if 1, ray-cast from glow to camera.  When
     /// blocked by physical geometry, fade the glow alpha down (at
     /// `glow_intensity_rate_of_change` speed) toward zero; when
     /// unblocked, fade back up toward `glow_intensity`.  Also disables
     /// depth-test so the glow renders over occluders during the fade
-    /// (legacy lightglows.cpp:198).
+    /// (legacy `fxLightGlow`).
     pub occlude_glow: i32,
     /// `kRadialAttenuate` flag — if 1, scale glowsize by
     /// `dot(-light_dir, lightToCam)`, i.e. fade out as the camera
@@ -198,7 +198,7 @@ pub struct LightGlowDef {
     /// on each axis (so a value of 10 → a 20-unit-wide quad).
     pub glow_intensity: f32,
     /// Speed of intensity change toward target each frame, scaled by
-    /// `glow_intensity` (legacy lightglows.cpp:130).  Only meaningful
+    /// `glow_intensity` (legacy `fxLightGlow`).  Only meaningful
     /// when `occlude_glow` is enabled.
     pub glow_intensity_rate_of_change: f32,
     /// Color tint applied to the texture sample.  Alpha is multiplied
@@ -376,7 +376,7 @@ pub fn parse_effect(
         })),
         "LASER" => {
             // Legacy laser textures live under Entity/GunFx (see
-            // rb/src/fx/laser.cpp:140 `RBPushFolder("entity/gunfx")`).
+            // legacy `fxLaser::Load` calls `RBPushFolder("entity/gunfx")`).
             // Fall back to the generic texture/ tree if not found there.
             let head_name = block.get_string("HeadTexture").unwrap_or_default();
             let tail_name = block.get_string("TailTexture").unwrap_or_default();

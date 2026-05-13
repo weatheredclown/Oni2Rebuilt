@@ -53,7 +53,7 @@ pub enum AnimatorEvent {
     /// double-jump re-entry: a second `PADCMD_JUMP` press is only valid
     /// after the first jump has fully launched (mirrors legacy
     /// `if (SubState1 != ACT_S1_JUMP_MAIN) return ACT_DENIED;` in
-    /// rb/src/animator/action.cpp:620).  Without this gate, spamming jump
+    /// the legacy `ActionStartJump` gate).  Without this gate, spamming jump
     /// during COMPRESS re-fires the takeoff schedule.
     JumpInAir,
     /// AI / script asked to start a CustomAnim this tick.
@@ -365,7 +365,7 @@ if Damaged                    { Broadcast StartReact;         goto REACT }
 if GroundRegained             { Broadcast StartLand;          goto LAND }
 if WallGrabAvailable          { Broadcast StartLedgeGrab;     goto LEDGE_HANG }
 ; Double-jump gate: requires `JumpInAir` so the second press is rejected
-; while still in COMPRESS.  Mirrors action.cpp:620's substate guard.
+; while still in COMPRESS.  Mirrors the legacy substate guard.
 if PadPressed("PADCMD_JUMP") && JumpsAvailable && JumpInAir { Broadcast StartJumpCompress;  goto JUMP }
 
 #FALL
@@ -519,7 +519,7 @@ mod tests {
     fn pressing_jump_during_compress_phase_does_not_re_fire() {
         // Regression: while in #JUMP and in the COMPRESS phase (not yet
         // airborne in JUMP_MAIN), a fresh `PADCMD_JUMP` press must NOT
-        // trigger a second StartJumpCompress.  Mirrors action.cpp:620's
+        // trigger a second StartJumpCompress.  Mirrors the legacy
         // `if(SubState1 != ACT_S1_JUMP_MAIN) return ACT_DENIED;` gate.
         let data = Arc::new(load_embedded().expect("parses"));
         let jump = data.index_of_or_zero("JUMP");

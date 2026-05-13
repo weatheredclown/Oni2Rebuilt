@@ -1,7 +1,7 @@
 /*
  * laser.rs — projectile laser trail renderer.
  *
- * Ports rb/src/fx/laser.cpp: a ring buffer of recent projectile positions
+ * Ports the legacy `fxLaser`: a ring buffer of recent projectile positions
  * drawn as a camera-aligned ribbon with an additive-blended tail texture,
  * plus a billboarded head sprite at the leading edge and a pulsing point
  * light.  Replaces the solid cylinder fx_system.rs used to spawn — the
@@ -240,8 +240,8 @@ fn empty_ribbon_mesh() -> Mesh {
 // Systems
 // ---------------------------------------------------------------------------
 
-/// Advance the ring buffer each frame.  Mirrors rb/src/fx/laser.cpp:212
-/// UpdateAll — push Head while controlled, advance Tail while not, drop
+/// Advance the ring buffer each frame.  Mirrors the legacy
+/// `fxLaser::UpdateAll` — push Head while controlled, advance Tail while not, drop
 /// the laser when Tail == Head with no source left.
 fn laser_trail_update(
     time: Res<Time>,
@@ -365,7 +365,7 @@ fn laser_ribbon_rebuild(
             let half_w = 0.5 * trail.width;
 
             // Width axis computed ONCE per beam from the head's view
-            // vector — matches rb/src/fx/laser.cpp:306-308:
+            // vector — matches the legacy:
             //   matrix.b = camera - path[Head];  // head→camera
             //   matrix.a = cross(matrix.b, matrix.c);  // matrix.c = beam_dir
             // (the C++ uses `cross(b, c)`; `beam_dir.cross(head_to_cam)`
@@ -400,7 +400,7 @@ fn laser_ribbon_rebuild(
                 let p_world = trail.path[j];
                 let t = k as f32 * inv_count;
                 // Tail vertex gets alpha=0 to mask the hard edge
-                // (laser.cpp:319 "to help fix hard edge at tail").
+                // (legacy comment: "to help fix hard edge at tail").
                 let alpha = if j == trail.tail { 0.0 } else { 1.0 };
 
                 let p_local = p_world - origin;
@@ -475,8 +475,8 @@ fn laser_ribbon_rebuild(
 }
 
 /// Billboard the head sprite to face the camera and place it at the
-/// most-recent path position.  Hidden while uncontrolled (laser.cpp:348
-/// "don't draw head after impact").
+/// most-recent path position.  Hidden while uncontrolled
+/// (legacy: "don't draw head after impact").
 fn laser_head_billboard(
     parent_q: Query<(&LaserTrail, &Children)>,
     mut head_q: Query<(&mut Transform, &mut Visibility), With<LaserHead>>,
@@ -533,8 +533,8 @@ fn laser_head_billboard(
 }
 
 /// Ramp the point light intensity up while active, down while fading.
-/// Mirrors laser.cpp:365 — multiply-by-2 up to LightMax, halve per
-/// frame when goal is zero.
+/// Mirrors the legacy laser light ramp — multiply-by-2 up to LightMax,
+/// halve per frame when goal is zero.
 fn laser_light_animate(
     parent_q: Query<(&LaserTrail, &LaserLightRef)>,
     mut light_q: Query<(&mut PointLight, &mut Transform)>,

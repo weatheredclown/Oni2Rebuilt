@@ -4,9 +4,8 @@
  * Centralizes the "actor is committed to something — don't drive it
  * with movement / locomotion selection / pad input" rules so every
  * consumer sees the same answer.  Mirrors legacy
- * `bhBehaviorComponent::LockedMovement` (rb/src/behavior/component.cpp:
- * 1176), which is consulted from many places (the packet→velocity path
- * at component.cpp:674, gotopoint.cpp:1122/2322/2475, pad.cpp:1214).
+ * `bhBehaviorComponent::LockedMovement`, which is consulted from many
+ * places (the packet→velocity path, `bhGotoPoint`, `bhPadMapper`).
  */
 
 use crate::oni2_loader::animation::Oni2AnimState;
@@ -14,8 +13,8 @@ use crate::oni2_loader::animation::Oni2AnimState;
 /// Returns true iff movement / locomotion / pad-driven steering should
 /// be suppressed for this actor this tick.
 ///
-/// **Legacy reference:** `bhBehaviorComponent::LockedMovement`
-/// (rb/src/behavior/component.cpp:1176).  Legacy ORs together
+/// **Legacy reference:** `bhBehaviorComponent::LockedMovement`.
+/// Legacy ORs together
 /// `IsReacting() / IsBlocking() / IsGrappling() / IsAttacking()` (with
 /// a jump carve-out), then also defers to the animator's
 /// `LockOutInput()`.  Each of those four predicates ultimately implied

@@ -63,11 +63,24 @@ pub struct BlockSuccessEvent {
     pub blocker: Entity,
     /// Index of the BlockDef that was active (into BlockLibrary.blocks).
     pub block_index: i32,
-    /// Counter-attack animation alias to play on the blocker (if any).
+    /// Counter-attack animation alias to play on the blocker (only used
+    /// when the defender's BlockDef has `auto_counter` set).
     pub counter_atk: Option<String>,
+    /// `auto_counter` flag from the defender's BlockDef — gates whether
+    /// `counter_atk` actually fires this tick.
+    pub auto_counter: bool,
+    /// Successful-block anim name from the defender's BlockDef — the
+    /// secondary anim to play on the blocker when the block succeeds
+    /// (mirrors `crBlockData::SuccessfulBlockAnim`).
+    pub successful_block_anim: Option<String>,
     /// animBlockEnum to play as secondary block response on the blocker.
+    /// Sourced from the **attacker's** ATDT (`AtdtData::enemy_block_anim`),
+    /// not from the defender's BlockDef — mirrors
+    /// `GetAttackData()->EnemyBlockAnim` in `crStrike::GetBlocked`.
     pub enemy_block_anim: i32,
     /// animReactEnum to force on the *attacker* (block-break reaction).
+    /// Sourced from the **attacker's** ATDT (`AtdtData::block_reaction`)
+    /// — mirrors `GetAttackData()->BlockReaction` in `crStrike::GetBlocked`.
     pub block_reaction_on_attacker: i32,
     /// Number of consecutive hits the blocker has taken this block session.
     pub block_combo_count: i32,

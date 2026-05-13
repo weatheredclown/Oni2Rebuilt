@@ -106,7 +106,7 @@ impl FightFsmCache {
 /// Caches the singleton `squad.fsm` state machine data.
 ///
 /// Mirrors the legacy `aiSquadStateMachineData` singleton owned by
-/// `aiFightManager` (rb/src/aifight/squad.cpp:783).  The driver/parser vocabulary
+/// `aiFightManager`.  The driver/parser vocabulary
 /// is currently a stub — loading succeeds but the parsed machine is effectively
 /// empty until the Format-2 nested-brace parser + squad coordinator land.
 #[derive(Resource, Default)]
@@ -239,8 +239,7 @@ impl Plugin for FightAiPlugin {
 }
 
 /// Advance every actor's `AttackRuntime` once per FixedUpdate.  Mirrors the
-/// legacy `aiAttackStateMachine::Update` (rb/src/aifight/
-/// attackstatemachine.cpp:318): refresh the ctx with the current anim
+/// legacy `aiAttackStateMachine::Update`: refresh the ctx with the current anim
 /// state (so `ActionAttack::update` can detect anim completion), tick the
 /// SM, and drain any `attack_anim`/`block_anim`/etc. output into the
 /// shared `do_attack` / `do_block` / … helpers — the same terminal DNA
@@ -390,8 +389,7 @@ pub fn attack_runtime_update_system(
 }
 
 /// Tick each actor's `FightRuntime` once per FixedUpdate.  Mirrors the
-/// legacy `aiFightStateMachine::Update` loop (rb/src/aifight/
-/// fightstatemachine.cpp).
+/// legacy `aiFightStateMachine::Update` loop.
 ///
 /// Inputs wired today (from components that already exist):
 ///   • `has_target` ← `AiFighter.target.is_some()`
@@ -426,8 +424,7 @@ pub fn attack_runtime_update_system(
 ///     whoever grabbed first.
 ///
 ///     Wiring sketch (legacy formula:
-///     `!IsAttacking() || AttackStateMachine->IsDelayingCookie()` —
-///     rb/src/aifight/fighter.cpp:2797):
+///     `!IsAttacking() || AttackStateMachine->IsDelayingCookie()`):
 ///       1. The "anim-ended" half is already in `ctx.attack_finished` —
 ///          set `prepare_next_attacker = ctx.attack_finished` and
 ///          combat will at least round-robin on swing end.
@@ -440,7 +437,7 @@ pub fn attack_runtime_update_system(
 ///          on `FightResources` (offer-system can force-clear
 ///          `cookie_holder` if the holder has held longer than the
 ///          timeout without an `IsAttacking` window) — that's the
-///          legacy safety net at attackstatemachine.cpp:399.
+///          legacy `aiAttackStateMachine` safety net.
 ///
 ///     See also `FightCtx::prepare_next_attacker` and
 ///     `FightEvent::PrepareNextAttacker` for the field/event docs.
@@ -540,9 +537,8 @@ pub fn fight_runtime_update_system(
         if let Some(slot) = slot_state_opt.as_deref() {
             runtime.ctx.has_position =
                 slot.current_position >= 0 && slot.resource_target == ai_target && ai_target.is_some();
-            // Legacy `CanAttackFromHere` returns true unconditionally
-            // (rb/src/aifight/fighter.cpp:2226).  Mirror that until
-            // range/heading checks need adding.
+            // Legacy `CanAttackFromHere` returns true unconditionally.
+            // Mirror that until range/heading checks need adding.
             runtime.ctx.can_attack = runtime.ctx.has_position;
             runtime.ctx.position_offered = !slot.offered_positions.is_empty();
             runtime.ctx.cookie_offered = slot
@@ -583,9 +579,8 @@ pub fn fight_runtime_update_system(
             }
         }
 
-        // Set `ctx.mode` mirroring `aiFightStateMachine::Update`
-        // (rb/src/aifight/statemachine.cpp:302-329).  Legacy
-        // recomputes mode EVERY tick from `ECanAttack` — i.e.
+        // Set `ctx.mode` mirroring `aiFightStateMachine::Update`.
+        // Legacy recomputes mode EVERY tick from `ECanAttack` — i.e.
         // `has_position && has_target` — so a positionless fighter
         // gets routed through CHASE-mode states (S_STARTING_CHASE →
         // S_REQUESTING_POSITION → ...) where `A_REQUEST_POSITION`

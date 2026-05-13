@@ -1,7 +1,6 @@
 /*
- * fightai/position.rs — port of `aifight::resources` (rb/src/aifight/
- * resources.{cpp,h}) plus the position/cookie helpers on `aiFighter`
- * (rb/src/aifight/fighter.cpp:966-1136).
+ * fightai/position.rs — port of `aifight::resources` plus the
+ * position/cookie helpers on `aiFighter`.
  *
  * Two ECS components:
  *
@@ -28,7 +27,7 @@
  *                      whether we hold a cookie, plus a deferred-op
  *                      queue the FSM writes into during its tick.
  *                      Mirrors the position/cookie fields on
- *                      `aiFighter` (rb/src/aifight/fighter.h:780).
+ *                      `aiFighter`.
  *
  * Two systems:
  *
@@ -66,8 +65,7 @@ pub const NUM_POSITIONS: usize = 8;
 // Types
 // ---------------------------------------------------------------------------
 
-/// One slot around a fighter.  Mirrors `aiFightPosition`
-/// (rb/src/aifight/resources.h:40-124).
+/// One slot around a fighter.  Mirrors `aiFightPosition`.
 #[derive(Default, Clone, Debug)]
 pub struct PositionSlot {
     /// Requesters waiting for this slot.  We sort by priority desc on each
@@ -86,9 +84,9 @@ pub struct PositionSlot {
     pub grabbed_by_owner: bool,
 }
 
-/// Defender-side resources component.  Mirrors `aiFightResources`
-/// (rb/src/aifight/resources.h:222-356).  Lives on every fighter,
-/// because in legacy any actor can be attacked at any time.
+/// Defender-side resources component.  Mirrors `aiFightResources`.
+/// Lives on every fighter, because in legacy any actor can be
+/// attacked at any time.
 #[derive(Component, Debug)]
 pub struct FightResources {
     pub positions: [PositionSlot; NUM_POSITIONS],
@@ -118,7 +116,7 @@ impl Default for FightResources {
 /// Attacker-side state component.  Lives on every fighter (the player
 /// side too — defending against a fighter that grabs a position needs
 /// the same fields).  Mirrors the position/cookie fields on
-/// `aiFighter` (rb/src/aifight/fighter.h:771-789).
+/// `aiFighter`.
 #[derive(Component, Debug)]
 pub struct FightSlotState {
     /// Who we're currently engaged with (the holder of `current_position`
@@ -198,8 +196,7 @@ pub enum ResourceOp {
 /// order.  Index 0 is "+X" (legacy choice), then CCW by 45°.  Used to
 /// place the slot circles for debug rendering and to find the closest
 /// direction when assigning a slot at request time.  Mirrors the static
-/// `xz[8]` table in `aiPrimaryDirections::GetLocation`
-/// (rb/src/aifight/resources.cpp:320-329).
+/// `xz[8]` table in `aiPrimaryDirections::GetLocation`.
 const SLOT_DIRECTIONS: [(f32, f32); NUM_POSITIONS] = [
     (1.0, 0.0),
     (std::f32::consts::FRAC_1_SQRT_2, std::f32::consts::FRAC_1_SQRT_2),
@@ -223,8 +220,7 @@ pub fn slot_world_pos(target_pos: Vec3, slot_idx: usize, range: f32) -> Vec3 {
 
 /// Find the slot/direction closest to `attacker_pos` relative to
 /// `target_pos`.  Bit-twiddling port of
-/// `aiPrimaryDirections::ClosestDirection` (rb/src/aifight/
-/// resources.cpp:340-371).  Returns 0..7.
+/// `aiPrimaryDirections::ClosestDirection`.  Returns 0..7.
 pub fn closest_direction(attacker_pos: Vec3, target_pos: Vec3) -> i32 {
     let dx0 = attacker_pos.x - target_pos.x;
     let dz0 = attacker_pos.z - target_pos.z;

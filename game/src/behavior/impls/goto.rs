@@ -87,12 +87,19 @@ impl Behavior for GotoBehavior {
         let desired = dir_to_current * self.speed;
         ctx.velocity.x = desired.x;
         ctx.velocity.z = desired.z;
-        if dir_to_current.length_squared() > 0.0 {
-            ctx.fighter.facing = dir_to_current;
+        let mut face_dir = dir_to_current;
+        if let Some(tpos) = ctx.target_position {
+            let mut delta_t = tpos - here;
+            delta_t.y = 0.0;
+            if delta_t.length() < 6.0 && delta_t.length() > 0.01 {
+                face_dir = delta_t.normalize();
+            }
+        }
 
-            // Face movement direction.  Oni2 models face +Z locally; look_at
-            // points -Z at target, so rotate 180° Y afterward.
-            let look_target = here + dir_to_current;
+        if face_dir.length_squared() > 0.0 {
+            // Face movement direction or locked target.  Oni2 models face +Z locally;
+            // look_at points -Z at target, so rotate 180° Y afterward.
+            let look_target = here + face_dir;
             let mut rot_tf = *ctx.transform;
             rot_tf.look_at(look_target, Vec3::Y);
             rot_tf.rotate_y(std::f32::consts::PI);
@@ -100,6 +107,14 @@ impl Behavior for GotoBehavior {
                 .transform
                 .rotation
                 .slerp(rot_tf.rotation, (10.0 * dt).min(1.0));
+                
+            // Update the authoritative fighter.facing to match the slerped rotation
+            // so it doesn't snap instantly, and doesn't get instantly overwritten by
+            // fighter_rotation_sync_system.
+            ctx.fighter.facing = (ctx.transform.rotation * Vec3::Z).normalize_or_zero();
+            if ctx.fighter.facing.length_squared() < 0.1 {
+                ctx.fighter.facing = face_dir; // Fallback
+            }
         }
 
         BehaviorUpdate::Continue

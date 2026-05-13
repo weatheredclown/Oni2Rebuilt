@@ -5,8 +5,7 @@ use crate::combat::components::Health;
 use crate::combat::faction::{Faction, FactionManager, FactionStatus};
 
 /// High-fidelity port of the target-acquisition half of
-/// `aiInterceptor` / `crFighter::GetClosestCreature`
-/// (rb/src/fight/fighter.cpp:676-735).
+/// `aiInterceptor` / `crFighter::GetClosestCreature`.
 ///
 /// For each AI fighter, scan every faction-bearing candidate in the
 /// world.  A candidate is eligible iff:

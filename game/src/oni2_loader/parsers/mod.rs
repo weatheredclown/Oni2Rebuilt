@@ -12,6 +12,7 @@ pub mod animation;
 pub mod anims;
 pub mod atdt;
 pub mod audiopackages;
+pub mod blk;
 pub mod block_parser;
 pub mod bound;
 pub mod camera;

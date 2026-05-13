@@ -6,8 +6,7 @@
  * `enemy_pipe.fsm`, `enemy_disarm.fsm`, `noattacks.fsm`, `empty.fsm` —
  * every file that's parsed with the Format-1 `#STATE`/`if` grammar and
  * driven by `InputDriver`.  Analogous to legacy
- * `aiInputStateMachineData::GetStateMachineData` (rb/src/behavior/
- * istatemachine.cpp:1084).
+ * `aiInputStateMachineData::GetStateMachineData`.
  *
  * Called from two code paths:
  *   • normal gameplay — the player entity's FSM attach reads its

@@ -210,7 +210,7 @@ pub(crate) fn build_jump_schedule(
             // Mid-air flip — no compress phase.  The impulse fires as soon as
             // SubState1 becomes JUMP_SOMERSAULT (which is "fresh" on start).
             // RUN_DBL is the somersault flip; RUN_2_EXT is a generic airborne
-            // hold.  Mirrors action.cpp:621-630 which adds both to the
+            // hold.  Mirrors the legacy `ActionStartJump` which adds both to the
             // AnimList in JUMP_SOMERSAULT substate (DBL plays once, then EXT
             // holds at end until ground contact).  If RUN_DBL is missing from
             // the loaded library, the schedule auto-skips to EXT — the same
@@ -443,10 +443,27 @@ fn try_start_action(
             // append a follow-up getup entry from `FighterState.pending_getup_anim`
             // after this returns — that's how knockdown→getup auto-advances
             // in lockstep with the FSM REACT state, mirroring legacy
-            // `ActionStartReact`'s 2-batch react+getup queue
-            // (rb/src/animator/action.cpp:1253-1259).
+            // `ActionStartReact`'s 2-batch react+getup queue.
             if !lib.play(alias, state) {
                 return ActionResult::Failed;
+            }
+            // ReactData sound trigger (mirrors the legacy
+            // `ActionStartReact` which copies `crReactData::SoundPackage`
+            // and `crReactData::SoundFrame` onto the action player). Stamp
+            // the ActionPlayer with the react anim's SoundPackage +
+            // SoundFrame so `react_sound_tick_system` can fire the
+            // vocalization the tick the anim's frame counter reaches
+            // `sound_frame`. Empty package = no sound; explicitly clear so
+            // a previous react's unfired sound doesn't leak.
+            match state.anim.react_data.as_ref() {
+                Some(rd) if !rd.sound_package.is_empty() => {
+                    ap.react_sound_name = Some(rd.sound_package.clone());
+                    ap.react_sound_frame = rd.sound_frame;
+                }
+                _ => {
+                    ap.react_sound_name = None;
+                    ap.react_sound_frame = 0;
+                }
             }
             ap.record_new_substate_1(sub_state_1::REACT);
             let entry = AnimScheduleEntry::new(alias, sub_state_1::REACT);
@@ -460,7 +477,7 @@ fn try_start_action(
             // Mark the action player dead.  Most other actions' REJECTLIST_*
             // already include `DEAD`, so further fight/jump/crouch/etc.
             // requests get rejected automatically — that's our equivalent of
-            // legacy `ACT_FLAG_DEAD` (rb/src/animator/action.h:174).
+            // legacy `ACT_FLAG_DEAD`.
             ap.flags |= action_flags::DEAD;
 
             // Pick the death-anim alias.  `substate` is the die_enum chosen
@@ -476,7 +493,7 @@ fn try_start_action(
 
             // Install a single-entry held schedule and force looping=false.
             // Mirrors legacy `AnimList.SetIfEmpty(ANIMLIST_HOLD)` at
-            // animator/action.cpp:1338 — the corpse plays the death anim
+            // legacy `ActionStartDie` — the corpse plays the death anim
             // once and clamps on the last frame indefinitely (until the
             // DestroyOnDeath timer despawns it).  This is the same hold
             // pattern used by Fall (see actions/fall.rs:64-77).
@@ -684,8 +701,8 @@ pub fn action_start_system(
         };
 
         // For React, append the pending getup anim as a second schedule
-        // entry.  Mirrors legacy `ActionStartReact` (rb/src/animator/
-        // action.cpp:1253-1259) which queued react + getup as two batches
+        // entry.  Mirrors legacy `ActionStartReact` which queued
+        // react + getup as two batches
         // of the same ACT_REACT action — the FSM stays in REACT for both
         // and the schedule's auto-advance handles the visual transition.
         // Pre-fix this was a separate `knockdown_getup_system` doing a
@@ -772,6 +789,37 @@ pub fn action_end_system(
 ///     arm IK, crouch pickup) — mirrors the state-based section of
 ///     crAnimActionPlayer::Update().
 ///   • Detect end-of-jump via `sub_state_1_is_fresh` + landing conditions.
+/// Fire the per-react vocalization the tick the anim's frame counter
+/// first reaches the `sound_frame` authored in the entity's `.rct`.
+/// `react_sound_name` / `react_sound_frame` are stamped onto the
+/// `ActionPlayer` by the React arm of `action_start_system` when a react
+/// action starts; this system watches the playing anim and triggers a
+/// single `PlaySound` event when the threshold is crossed, clearing the
+/// name to prevent re-fires on looped or interrupted-but-restarted
+/// reacts. Frame=0 with a non-empty name fires immediately on the same
+/// tick the react begins, matching the Die-path behavior (which uses
+/// frame=0 for the death vocalization).
+pub fn react_sound_tick_system(
+    mut commands: Commands,
+    mut query: Query<(Entity, &mut ActionPlayer, &Oni2AnimState)>,
+) {
+    for (entity, mut ap, anim) in &mut query {
+        let Some(name) = ap.react_sound_name.clone() else {
+            continue;
+        };
+        // current_time is measured in frames; trigger as soon as the
+        // anim has advanced to the authored frame.
+        if anim.current_time >= ap.react_sound_frame as f32 {
+            commands.trigger(crate::fx_system::PlaySound {
+                script_entity: entity,
+                actor: None,
+                name,
+            });
+            ap.react_sound_name = None;
+        }
+    }
+}
+
 pub fn action_player_tick_system(mut query: Query<(&mut ActionPlayer, &Oni2AnimState)>) {
     for (mut ap, anim) in &mut query {
         // 1) Promote the previous sub_state_1 for `sub_state_1_is_fresh()`.
@@ -1417,7 +1465,7 @@ pub fn anim_start_emit_system(
 // ---------------------------------------------------------------------------
 //
 // Mirror animElbowCraneHitchComponent::HandlePickupMatrix / HandleDrop
-// (rb/src/animator/elbowcranehitch.cpp:101-154).  On SetPickupMatrix:
+// (legacy `animElbowCraneHitchComponent`).  On SetPickupMatrix:
 // stash the claw's world transform on a PickupHitched component so
 // `pickup_sync_system` can force the entity's transform to track the
 // claw each tick; also start the CRANESTRUGGLE action.  On Drop: teleport

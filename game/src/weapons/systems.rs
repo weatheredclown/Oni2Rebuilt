@@ -264,7 +264,7 @@ pub fn ammo_system(
 /// Body-turn component of aim IK.  Mirrors the "rotate character so
 /// the aim is within the arm's reach" branch of
 /// `animAnimatorComponent::TargetWithArm` at
-/// rb/src/animator/animator.cpp:1733-1742:
+/// the legacy aim IK path:
 ///
 ///     mv->ApplyWorldYRotation(extra);  // rotate body if arm can't cover
 ///
@@ -582,8 +582,7 @@ pub fn weapon_update_system(
             // ensures bullets always visually fire straight out of the gun.
             let aim_blend = muzzle_dir_local;
 
-            // Apply shooter inaccuracy (rb/src/weapons/weapontype.cpp:1401-
-            // 1412).  accX/accY are independent random angles in
+            // Apply shooter inaccuracy.  accX/accY are independent random angles in
             // [-inaccuracy, +inaccuracy] (radians).  accX rotates the
             // direction around world-Y (horizontal spread), accY tilts
             // it up/down.  The C++ also adds a muzzle-inherent

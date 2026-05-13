@@ -25,7 +25,8 @@ use crate::oni2_loader::animation::{AnimId, Oni2AnimLibrary, Oni2AnimState};
 use crate::oni2_loader::parsers::rct::ANIMREACT_NAMES;
 
 use super::components::{
-    BlockStatus, FighterState, FighterType, GrabAction, GrappleState, fighter_flags, grapple_flags,
+    BlockLibrary, BlockStatus, FighterState, FighterType, GrabAction, GrappleState, fighter_flags,
+    grapple_flags,
 };
 use super::events::{
     ApplyRotationNotchesEvent, BlockFailedEvent, BlockSuccessEvent, GrappleEndEvent,
@@ -36,8 +37,8 @@ use super::events::{
 pub const NOTCH_RADIANS: f32 = std::f32::consts::FRAC_PI_4;
 
 /// Rate at which TurnLerper advances each second.  Legacy constant
-/// `scale = 15.0f` in rb/src/fight/fighter.cpp:1381 — gives a ~67ms
-/// settle time from turn-start to alignment.
+/// `scale = 15.0f` — gives a ~67ms settle time from turn-start to
+/// alignment.
 pub const TURN_LERP_SCALE: f32 = 15.0;
 
 // ---------------------------------------------------------------------------
@@ -67,8 +68,8 @@ pub fn fighter_state_update_system(
     for (mut fs, ft_opt, anim_opt) in &mut query {
         fs.tick_frame_flags(dt);
         // New frame — clear the per-frame pending-hit dedup list.
-        // Mirrors `NumPending = 0;` at rb/src/fight/fighter.cpp:1332
-        // (called once per update before strike probes run).  Keeping
+        // Mirrors `NumPending = 0;` (called once per update before
+        // strike probes run).  Keeping
         // this at the top of fighter_state_update ensures the list is
         // empty before any strike evaluation this frame populates it.
         fs.reset_targets_pending();
@@ -76,8 +77,7 @@ pub fn fighter_state_update_system(
         // Disarmer-count rollover: snapshot last frame's writes into
         // the stable read-side counter, then clear the write-side so
         // this frame's `report_disarming()` calls accumulate fresh.
-        // Mirrors `NumDisarmersLastFrame = NumDisarmers; NumDisarmers = 0;`
-        // at rb/src/aifight/fighter.cpp:395-396.
+        // Mirrors `NumDisarmersLastFrame = NumDisarmers; NumDisarmers = 0;`.
         fs.num_disarmers_last_frame = fs.num_disarmers;
         fs.num_disarmers = 0;
 
@@ -200,16 +200,153 @@ pub fn strike_debug_facing_watcher(
 }
 
 // ---------------------------------------------------------------------------
+// block_state_sync_system — connect Oni2AnimState transitions to FighterState
+//   block bookkeeping, apply BlockDef.rate to anim playback, run the
+//   hold-button mid-point loop. Mirrors the bits of crBlockData::StartBlock /
+//   StopBlock that aren't already covered by the FSM's `do_block` helper.
+// ---------------------------------------------------------------------------
+
+/// Watches every fighter for transitions into and out of a block animation.
+///
+/// On a transition INTO a block alias (matched against `ANIMBLOCK_NAMES`):
+///   * sets `FighterState.cur_block` to the BlockLibrary index,
+///   * stamps `block_start_time` for the max-hold timer,
+///   * resets per-session counters (`block_combo_count`, `block_counter_executed`),
+///   * applies `BlockDef.rate` to the anim's `speed_multiplier`.
+///
+/// While IN a block, if `BlockDef.max_hold_button > 0` and the actor is still
+/// "holding":
+///   * AnimMidPoint == AnimMidPointEnd → freeze `current_time` at AnimMidPoint
+///     (HOLD mode, crBlockData::StartBlock ANIMLIST_HOLD branch),
+///   * AnimMidPoint != AnimMidPointEnd → wrap `current_time` back to
+///     AnimMidPoint when it crosses AnimMidPointEnd (LOOP mode, ANIMLIST_LOOP).
+///
+/// "Holding" is `input.blocking` for the player and an implicit `true` for AI
+/// (the FSM is responsible for transitioning AI out of a block by playing a
+/// different anim — when the alias leaves the ANIMBLOCK_ set this system
+/// notices on the next tick and clears state). The `max_hold_button` timer
+/// also forces hold→released even while the button is still down, mirroring
+/// the `StopBlocking()` call the legacy `crFighter::StartBlock` makes on
+/// hold timeout.
+///
+/// On a transition OUT (current anim is not a block alias):
+///   * clears `cur_block` to -1, `block_status` to NotBlocking, and the
+///     hold/counter flags. The exit transition (AnimMidPointEnd → 1.0) is
+///     left to the animator's normal forward play, matching the C++
+///     `StopBlock` which queues a tail segment from AnimMidPointEnd to 1.0.
+pub fn block_state_sync_system(
+    time: Res<Time>,
+    mut query: Query<(
+        &mut Oni2AnimState,
+        &mut FighterState,
+        &BlockLibrary,
+        &Oni2AnimLibrary,
+        Option<&crate::player::components::InputState>,
+    )>,
+) {
+    let now = time.elapsed_secs_f64();
+
+    for (mut anim_state, mut fs, block_lib, anim_lib, input_opt) in &mut query {
+        // Resolve the currently-playing anim's alias string. AnimId is just
+        // an FNV hash; debug_names is the reverse map.
+        let current_alias = anim_state
+            .current_anim_id
+            .and_then(|id| anim_lib.debug_names.get(&id))
+            .cloned();
+        let block_idx = current_alias
+            .as_deref()
+            .and_then(crate::oni2_loader::parsers::blk::block_index_for_alias);
+
+        match block_idx {
+            None => {
+                if fs.cur_block >= 0 {
+                    fs.cur_block = -1;
+                    fs.block_status = BlockStatus::NotBlocking;
+                    fs.block_held = false;
+                    fs.block_counter_executed = false;
+                }
+            }
+            Some(idx) => {
+                let Some(block) = block_lib.blocks.get(idx as usize) else {
+                    continue;
+                };
+
+                // Edge: transitioned into a different block (or any block
+                // when previously not blocking) — seed the per-session state.
+                if fs.cur_block != idx {
+                    fs.cur_block = idx;
+                    fs.block_status = BlockStatus::Untested;
+                    fs.block_start_time = now;
+                    fs.block_combo_count = 0;
+                    fs.block_counter_executed = false;
+                }
+
+                // BlockDef.Rate — legacy engine applies this via
+                // `animList.SetRate(Rate)` at the end of `crBlockData::StartBlock`.
+                // Cheap idempotent assign — the threshold avoids triggering
+                // any change-detection waste.
+                if block.rate > 0.0
+                    && (anim_state.speed_multiplier - block.rate).abs() > 1e-4
+                {
+                    anim_state.speed_multiplier = block.rate;
+                }
+
+                // Hold-button state. AI has no InputState so we treat them
+                // as "always holding"; their FSM ends the block by playing
+                // a non-block anim, at which point block_idx becomes None
+                // above and we clear state.
+                let still_held = input_opt.map(|i| i.blocking).unwrap_or(true);
+                let elapsed = (now - fs.block_start_time) as f32;
+                let timed_out =
+                    block.max_hold_button > 0.0 && elapsed >= block.max_hold_button;
+                let held = still_held && !timed_out;
+                fs.block_held = held;
+
+                // Hold-loop / hold-freeze: only when BlockDef opts in via
+                // max_hold_button > 0 AND we're still in the hold window.
+                if block.max_hold_button > 0.0 && held && anim_state.anim.num_frames > 1 {
+                    let denom = (anim_state.anim.num_frames as f32 - 1.0).max(1.0);
+                    let phase = anim_state.current_time / denom;
+                    let mp = block.anim_mid_point;
+                    let mpe = block.anim_mid_point_end;
+
+                    if (mp - mpe).abs() < 1e-4 {
+                        // ANIMLIST_HOLD: pin at AnimMidPoint.
+                        if phase > mp {
+                            anim_state.current_time = mp * denom;
+                        }
+                    } else if phase > mpe {
+                        // ANIMLIST_LOOP: wrap mpe → mp.
+                        anim_state.current_time = mp * denom;
+                    }
+                }
+                // Once held becomes false (released or hold timer expired),
+                // we leave current_time alone — the anim plays through its
+                // post-AnimMidPointEnd exit portion normally, matching
+                // crBlockData::StopBlock which queues a segment from
+                // AnimMidPointEnd → 1.0.
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // block_success_system
 // ---------------------------------------------------------------------------
 
-/// Handles BlockSuccessEvents:
-///   1. Force a block-reaction on the attacker (animReactEnum from BlockDef)
-///   2. Increment block_combo_count; if it exceeds combo_count_before_react,
-///      play ANIMREACT_BLOCKED on the blocker
-///   3. If auto_counter or counter_atk present, queue the counter animation
-///
-/// Mirrors the logic in crStrike::GetBlocked(crFighter *tgFighter).
+/// Handles BlockSuccessEvents — the legacy equivalent is
+/// `crStrike::GetBlocked`. Flow:
+///   1. If combo pressure on the blocker exceeded `combo_count_before_react`,
+///      play the attacker-side break reaction (`block_reaction_on_attacker`,
+///      sourced from the attacker's ATDT).
+///   2. Mark blocker `BlockStatus::Successful` and increment the
+///      consecutive-block counter.
+///   3. Play `successful_block_anim` on the blocker (if any) — the legacy
+///      `StartSecondaryBlock` path inside `crStrike::GetBlocked`. This is
+///      the defender's reaction to a clean block, NOT a counter-attack.
+///   4. Only if the BlockDef has `auto_counter` set AND a `counter_atk`
+///      is defined, fire the counter on the same tick (player-initiated
+///      counters come from input, not this system).
 pub fn block_success_system(
     mut events: MessageReader<BlockSuccessEvent>,
     mut query: Query<(
@@ -239,7 +376,10 @@ pub fn block_success_system(
             blocker_fs.block_combo_count += 1;
             blocker_fs.block_status = BlockStatus::Successful;
 
-            // Combo pressure: too many consecutive blocks → break reaction
+            // Combo pressure: too many consecutive blocks → forced
+            // break-react on the blocker. Mirrors the legacy
+            // `GetCurComboIndex() > GetComboCountBeforeCausingReact()`
+            // check inside `crStrike::GetBlocked`.
             if blocker_fs.block_combo_count >= ev.combo_count_before_react
                 && ev.combo_count_before_react > 0
             {
@@ -250,19 +390,41 @@ pub fn block_success_system(
                     react_enum: 18, // ANIMREACT_BLOCKED
                 });
                 blocker_fs.block_combo_count = 0;
-            } else {
-                // Play the successful block animation / counter
-                if let Some(counter_name) = &ev.counter_atk
-                    && let (Some(mut anim), Some(lib)) = (anim_state_opt, lib_opt)
-                {
-                    let played = lib.play(counter_name, &mut anim);
-                    if !played {
-                        warn!(
-                            "block_success: counter anim '{}' not in library",
-                            counter_name
-                        );
-                    }
-                }
+                continue;
+            }
+
+            // Pull animator + library once so we can play the
+            // successful-block anim and (optionally) the counter without
+            // borrowing twice.
+            let Some(mut anim) = anim_state_opt else { continue };
+            let Some(lib) = lib_opt else { continue };
+
+            // Successful-block anim: the defender's clean-block reaction.
+            // Plays on every successful block regardless of auto_counter
+            // (mirrors the `StartSecondaryBlock` branch inside the legacy
+            // `crStrike::GetBlocked`).
+            if let Some(sba_name) = &ev.successful_block_anim
+                && !lib.play(sba_name, &mut anim)
+            {
+                warn!(
+                    "block_success: successful_block_anim '{}' not in library",
+                    sba_name
+                );
+            }
+
+            // Auto-counter: only fires when the BlockDef's `auto_counter`
+            // flag is set. Without it, the counter_atk is informational
+            // (player can still trigger it manually via input) and this
+            // system does not play it. Matches the auto-counter branch in
+            // the legacy `crFighter::StartBlock`.
+            if ev.auto_counter
+                && let Some(counter_name) = &ev.counter_atk
+                && !lib.play(counter_name, &mut anim)
+            {
+                warn!(
+                    "block_success: counter anim '{}' not in library",
+                    counter_name
+                );
             }
         }
     }
@@ -599,16 +761,7 @@ pub fn attack_spin_system(
         // The original Oni2 game runs at 60 fps, so spin × 60 × dt gives correct world-rate.
         let spin_rads = strike.spin * 60.0 * dt;
         let rotation = Quat::from_rotation_y(spin_rads);
-        let pre = fighter.facing;
         fighter.facing = rotation * fighter.facing;
-        info!(
-            "STRIKE_DEBUG: spin-apply spin={:.4} rads_this_tick={:.4} pre_facing=({:.2},{:.2}) post_facing=({:.2},{:.2}) frame={:.2}",
-            strike.spin,
-            spin_rads,
-            pre.x, pre.z,
-            fighter.facing.x, fighter.facing.z,
-            frame,
-        );
     }
 }
 
@@ -620,19 +773,19 @@ pub fn attack_spin_system(
 /// animation is active, ensuring proper locked orientations during combos.
 /// Ticks any pending turn lerp on each FighterState, interpolating
 /// `Fighter.facing` toward `turn_final_target_dir` by
-/// `dt * TURN_LERP_SCALE` per frame.  Mirrors the matrix-interpolation
-/// block at rb/src/fight/fighter.cpp:1377-1387.  Callers invoke
+/// `dt * TURN_LERP_SCALE` per frame.  Mirrors the legacy
+/// matrix-interpolation block on `crFighter`.  Callers invoke
 /// `FighterState::start_turn_to(dir)` to trigger a lerp; this system
 /// drives it to completion.
 pub fn fighter_turn_lerp_system(
     time: Res<Time>,
     mut query: Query<
-        (&mut Fighter, &mut FighterState),
+        (Entity, &mut Fighter, &mut FighterState),
         Without<crate::oni2_loader::components::ActorAsleep>,
     >,
 ) {
     let dt = time.delta_secs();
-    for (mut fighter, mut fs) in &mut query {
+    for (entity, mut fighter, mut fs) in &mut query {
         if fs.turn_lerper >= 1.0 {
             continue;
         }
@@ -690,8 +843,7 @@ pub fn current_slice_heading(
 /// rotation applied to `dir`:
 ///     fighter.facing = Quat::from_rotation_y(-slice_heading) * dir
 ///
-/// Equivalent to (and a port of) the C++ snippet at
-/// `rb/src/fight/fighter.cpp:1510-1519`:
+/// Equivalent to (and a port of) the legacy C++ snippet:
 ///     m.LookAt(target);
 ///     m.RotateY(slice_heading);
 ///     mv.SetWorldYRotation(GetRotationFromMatrix(m));
@@ -729,22 +881,10 @@ pub fn update_fighter_strike_facing_system(
         // Need the active anim to read the strike's slice heading and to
         // gate the lock on actually-attacking.
         let Some(anim) = anim_opt else {
-            info!(
-                "STRIKE_DEBUG: lock-clear entity={:?} reason=no-anim",
-                entity
-            );
             fs.strike_target = None;
             continue;
         };
         if !fs.is_attacking(anim) {
-            info!(
-                "STRIKE_DEBUG: lock-clear entity={:?} reason=not-attacking anim_id={:?} attack_data={} paused={} speed={}",
-                entity,
-                anim.current_anim_id,
-                anim.anim.attack_data.is_some(),
-                anim.paused,
-                anim.speed_multiplier,
-            );
             fs.strike_target = None;
             continue;
         }
@@ -753,7 +893,7 @@ pub fn update_fighter_strike_facing_system(
         // `stop_track_frame` mark — this is what lets the
         // `end_rotation_notches` rotation at attack-end take effect
         // cleanly instead of being immediately overridden by the lock.
-        // Mirrors `crStrike::Update` (rb/src/fight/strike.cpp:929-940):
+        // Mirrors `crStrike::Update`:
         //
         //     if (GetCurrentPhase() >= StopTrackPhase) {
         //         Fighter->ClearStrikeTarget();
@@ -774,14 +914,6 @@ pub fn update_fighter_strike_facing_system(
                 let cur_phase =
                     anim.current_time / (anim.anim.num_frames as f32 - 1.0).max(1.0);
                 if cur_phase >= stop_track_phase {
-                    info!(
-                        "STRIKE_DEBUG: lock-clear entity={:?} reason=stop-track phase={:.3} >= stop_track_phase={:.3} (frame={} num_frames={})",
-                        entity,
-                        cur_phase,
-                        stop_track_phase,
-                        anim.current_time,
-                        anim.anim.num_frames,
-                    );
                     fs.strike_target = None;
                     continue;
                 }
@@ -803,32 +935,14 @@ pub fn update_fighter_strike_facing_system(
                 .map(|strike| current_slice_heading(strike, anim.current_time))
                 .unwrap_or(0.0);
 
-            let pre_facing = fighter.facing;
             if let Some(new_facing) =
                 strike_facing_for_target(attacker_tf.translation, target_pos, slice_heading)
             {
                 fighter.facing = new_facing;
-                // Edge-trigger: only log when facing actually changes
-                // meaningfully (avoid spamming when locked steady).
-                if pre_facing.distance_squared(new_facing) > 1e-4 {
-                    info!(
-                        "STRIKE_DEBUG: lock-apply entity={:?} slice_heading={:.3} attacker_pos=({:.2},{:.2}) target_pos=({:.2},{:.2}) pre_facing=({:.2},{:.2}) new_facing=({:.2},{:.2})",
-                        entity,
-                        slice_heading,
-                        attacker_tf.translation.x, attacker_tf.translation.z,
-                        target_pos.x, target_pos.z,
-                        pre_facing.x, pre_facing.z,
-                        new_facing.x, new_facing.z,
-                    );
-                }
             }
         }
 
         if fs.clear_st_after_first_use {
-            info!(
-                "STRIKE_DEBUG: lock-clear entity={:?} reason=clear-st-after-first-use",
-                entity
-            );
             fs.strike_target = None;
         }
     }
@@ -1110,24 +1224,10 @@ pub fn rotation_notches_system(
         let new_forward = if let Some(mut fighter) = fighter_opt {
             // Because we have fighter_rotation_sync_system, we only mutate
             // Fighter.facing here so it can natively propagate to Avian and Transform
-            let pre = fighter.facing;
             fighter.facing = rotation * fighter.facing;
-            info!(
-                "STRIKE_DEBUG: notches-apply entity={:?} notches={} radians={:.3} pre_facing=({:.2},{:.2}) post_facing=({:.2},{:.2})",
-                ev.entity,
-                ev.notches,
-                radians,
-                pre.x, pre.z,
-                fighter.facing.x, fighter.facing.z,
-            );
             fighter.facing
         } else {
-            let pre_rot = transform.rotation;
             transform.rotation = rotation * transform.rotation;
-            info!(
-                "STRIKE_DEBUG: notches-apply entity={:?} notches={} radians={:.3} (no Fighter — applied to Transform only) pre_rot={:?} post_rot={:?}",
-                ev.entity, ev.notches, radians, pre_rot, transform.rotation,
-            );
             transform.rotation * Vec3::Z
         };
 
@@ -1144,8 +1244,8 @@ pub fn rotation_notches_system(
 
 /// Drop the victim's currently-held weapon when an attacker's grab-type
 /// disarm attack crosses its `removes_weapon_phase`.  Mirrors the
-/// `PassedPhase(GetAttackData()->RemovesWeaponPhase)` edge-trigger in
-/// rb/src/fight/grab.cpp:743-751 — when true, the C++ engine calls
+/// `PassedPhase(GetAttackData()->RemovesWeaponPhase)` edge-trigger
+/// in `crGrab` — when true, the C++ engine calls
 /// `inv->DropCurrentWeapon()` on the victim.
 ///
 /// One-shot per attack: `ActiveAttack.has_disarmed` latches at first
@@ -1196,8 +1296,7 @@ pub fn disarm_apply_system(
 
         // Victim is the entity this fighter is grappling.  The legacy
         // path runs the disarm strictly inside an active grapple
-        // (grab.cpp:746 — the function is on `crGrab` and operates on
-        // the held target).
+        // (the function is on `crGrab` and operates on the held target).
         let Some(victim) = fs.grapple_target else {
             continue;
         };
@@ -1232,7 +1331,7 @@ pub fn disarm_apply_system(
 // ---------------------------------------------------------------------------
 
 /// Per-AI disarm-decision pass mirroring
-/// `aiFightAndShoot::UpdateDisarming` (rb/src/aifight/fightandshoot.cpp:1095-1190).
+/// `aiFightAndShoot::UpdateDisarming`.
 ///
 /// Each tick, every AI fighter that has a current target evaluates
 /// whether to commit to disarming based on:
@@ -1257,9 +1356,9 @@ pub fn disarm_apply_system(
 /// follows; downstream consumers can read `fs.is_disarming` and route
 /// their attack selection.
 ///
-/// Aiming-at-me detection (`bh->IsAimingAt(Actor->GetGuid())` at
-/// fightandshoot.cpp:1116) needs the weapon-aim state machine + a
-/// per-target lock.  Filed for follow-up.
+/// Aiming-at-me detection (`bh->IsAimingAt(Actor->GetGuid())`)
+/// needs the weapon-aim state machine + a per-target lock.
+/// Filed for follow-up.
 pub fn update_disarming_system(
     time: Res<Time>,
     inventories: Query<&crate::inventory::components::Inventory>,
@@ -1305,7 +1404,7 @@ pub fn update_disarming_system(
         };
 
         // Target's armed state — `current_weapon.is_some()` is our
-        // stand-in for `bh->IsWeaponCompletelyDrawn` (fightandshoot.cpp:1114).
+        // stand-in for `bh->IsWeaponCompletelyDrawn`.
         let armed = inventories
             .get(target)
             .ok()
@@ -1335,7 +1434,7 @@ pub fn update_disarming_system(
             _ => f32::INFINITY,
         };
 
-        // ── Disarm decision (fightandshoot.cpp:1128-1147) ────────────
+        // ── Disarm decision ──────────────────────────────────────────
         let d = disarm_tuning;
         let mut want_disarm = false;
         if armed && effective_drew_time >= 0.0 {
@@ -1357,7 +1456,7 @@ pub fn update_disarming_system(
             will_disarm = false;
         }
 
-        // Cap by max-disarmers + target-reacting (fightandshoot.cpp:1164-1180).
+        // Cap by max-disarmers + target-reacting.
         if will_disarm {
             let target_disarmer_count = fighter_states
                 .get(target)
@@ -1455,15 +1554,15 @@ fn lerp(t: f32, a: f32, b: f32) -> f32 {
 
 /// Push the defender across the react animation by their stashed
 /// `react_distance` displacement.  Mirrors the per-frame
-/// `dist.Scale(ReactDistance,scale)` block at rb/src/fight/fighter.cpp:1390-1431
-/// that the legacy mover consumes as a `TRANSLATIONTYPE_REACT` translation.
+/// `dist.Scale(ReactDistance,scale)` block on `crFighter` that the
+/// legacy mover consumes as a `TRANSLATIONTYPE_REACT` translation.
 ///
 /// We don't have a mover-translation channel; we approximate the same
 /// total displacement by writing a constant XZ velocity each tick while
 /// the react anim plays.  Velocity = `react_distance / react_duration`
 /// so the integrated motion sums back to `react_distance` over the anim.
 /// When the react anim is no longer current, `react_distance` is zeroed
-/// (mirrors fighter.cpp:1430 `ReactDistance.Zero()`).
+/// (mirrors the legacy `ReactDistance.Zero()`).
 pub fn react_distance_apply_system(
     mut query: Query<(
         &mut FighterState,
@@ -1521,7 +1620,7 @@ pub fn react_distance_apply_system(
 // face_after_run_system
 // ---------------------------------------------------------------------------
 
-/// Port of the "face after run" hook at rb/src/fight/fighter.cpp:1581-1617.
+/// Port of the legacy "face after run" hook on `crFighter`.
 ///
 /// Behaviour:
 ///   • While throttle is at full and no attack/react/block is playing,
@@ -1531,7 +1630,7 @@ pub fn react_distance_apply_system(
 ///     reached `FighterType.run_before_face`, find the creature most
 ///     directly in front of the entity and start a turn-lerp toward it.
 ///   • Always reset the timer to 0 in the deceleration branch — matches
-///     `RunBeforeFaceTimer=0.0f` at fighter.cpp:1615.
+///     `RunBeforeFaceTimer=0.0f` in the legacy reset branch.
 ///
 /// Uses the existing `FighterState::start_turn_to` to drive the lerp,
 /// which `fighter_turn_lerp_system` then advances to completion.
@@ -1558,7 +1657,7 @@ pub fn face_after_run_system(
     >,
 ) {
     let dt = time.delta_secs();
-    const FACE_RADIUS: f32 = 3.5; // MaxCloseRadius (fighter.cpp:625)
+    const FACE_RADIUS: f32 = 3.5; // MaxCloseRadius (legacy)
 
     for (entity, tf, fighter, mut fs, ft, anim_opt, vel_opt) in &mut query {
         let anim_playing = anim_opt
@@ -1571,13 +1670,13 @@ pub fn face_after_run_system(
             .unwrap_or(false);
 
         // Full-throttle, nothing playing → accumulate timer
-        // (fighter.cpp:1581-1582 `throttle==1.0f && !anythingplaying`).
+        // (legacy: `throttle==1.0f && !anythingplaying`).
         if fighter.throttle >= 0.99 && !anim_playing {
             fs.run_before_face_timer += dt;
             continue;
         }
 
-        // Otherwise (`else` branch in fighter.cpp:1583).  Only the
+        // Otherwise (legacy `else` branch).  Only the
         // slow-down sub-branch resets the timer and (maybe) triggers the
         // face-snap.
         if fighter.throttle.abs() < 0.25 && !falling {
@@ -1585,8 +1684,8 @@ pub fn face_after_run_system(
             if can_face && fs.run_before_face_timer >= ft.run_before_face {
                 // Find the creature most directly in front of us within
                 // FACE_RADIUS.  Mirrors `GetMostFacedTowardCreature`
-                // (fighter.cpp:622-674) — pick the smallest |angle diff|
-                // between our facing and the direction to each candidate.
+                // — pick the smallest |angle diff| between our facing
+                // and the direction to each candidate.
                 let my_pos = tf.translation;
                 let my_facing_angle = fighter.facing.x.atan2(fighter.facing.z);
                 let mut best: Option<(f32, Vec3)> = None;

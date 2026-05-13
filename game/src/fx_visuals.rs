@@ -3,14 +3,8 @@
  *
  * Houses spawners + per-frame tickers for the fx-effect-types that
  * render as textured billboard sprites:
- *   • Flash  — a popping additive sprite that scales up while fading
- *              out (legacy fxFlashType, rb/src/fx/flash.cpp).  Used
- *              for explosion blowouts, weapon-impact pops, and other
- *              one-shot bursts.
- *   • Sprite — a textured billboard that lingers for a duration
- *              (legacy fxSpriteEffect, rb/src/fx/sprite.cpp).  Used
- *              for muzzle flashes, charge-up halos, and other
- *              continuous-while-controlled overlays.
+ *   • Flash  — a popping additive sprite that scales up while fading out.  Used for explosion blowouts, weapon-impact pops, and other one-shot bursts.
+ *   • Sprite — a textured billboard that lingers for a duration.  Used for muzzle flashes, charge-up halos, and other continuous-while-controlled overlays.
  *
  * Both are dispatched from fx_system::handle_spawn_fx via the SpawnFx
  * event pipeline.  Each spawn produces one entity with a unit-quad
@@ -33,11 +27,7 @@ impl Plugin for FxVisualsPlugin {
             .init_resource::<FxStrikeMeshCache>()
             .add_systems(
                 Update,
-                (
-                    update_flash_fx,
-                    update_sprite_fx,
-                    update_strike_fx,
-                )
+                (update_flash_fx, update_sprite_fx, update_strike_fx)
                     .run_if(in_state(crate::menu::AppState::InGame)),
             );
     }
@@ -59,8 +49,7 @@ fn get_or_create_quad(cache: &mut FxVisualMesh, meshes: &mut Assets<Mesh>) -> Ha
     h
 }
 
-/// Lazily-loaded `daisyalpha.tga` — the legacy hard-coded Flash texture
-/// (rb/src/fx/flash.cpp:136).  None until first Flash spawn.
+/// Lazily-loaded `daisyalpha.tga`; None until first Flash spawn.
 #[derive(Resource, Default)]
 pub struct FxFlashTexture(Option<Handle<Image>>);
 
@@ -71,11 +60,8 @@ fn get_or_load_flash_texture(
     if let Some(h) = &cache.0 {
         return Some(h.clone());
     }
-    let (h, _) = crate::oni2_loader::parsers::texture::load_tga_file(
-        "texture",
-        "daisyalpha.tga",
-        images,
-    )?;
+    let (h, _) =
+        crate::oni2_loader::parsers::texture::load_tga_file("texture", "daisyalpha.tga", images)?; // TODO: THIS should be the .tex file, the TGA file is not ensured to be here
     cache.0 = Some(h.clone());
     Some(h)
 }
@@ -84,15 +70,19 @@ fn get_or_load_flash_texture(
 pub struct FxStrikeMeshCache(pub std::collections::HashMap<String, Handle<Mesh>>);
 
 fn clamp_range(val: f32, min: f32, max: f32) -> f32 {
-    if val <= min { return 0.0; }
-    if val >= max { return 1.0; }
+    if val <= min {
+        return 0.0;
+    }
+    if val >= max {
+        return 1.0;
+    }
     (val - min) / (max - min)
 }
 
 fn create_strike_mesh(def: &StrikeFxDef) -> Mesh {
     let res_x = 8;
     let res_y = 35;
-    
+
     use rand::Rng;
     let mut rng = rand::rng();
     let mut waves = Vec::with_capacity(def.wave_count as usize);
@@ -104,35 +94,35 @@ fn create_strike_mesh(def: &StrikeFxDef) -> Mesh {
             (i + 1) as f32,
         ));
     }
-    
+
     let mut positions = Vec::with_capacity(res_x * res_y);
     let mut uvs = Vec::with_capacity(res_x * res_y);
     let mut colors = Vec::with_capacity(res_x * res_y);
     let mut normals = Vec::with_capacity(res_x * res_y);
-    
+
     for y in 0..res_y {
         let ty = clamp_range(y as f32, 0.0, (res_y - 1) as f32);
-        
+
         let mut sum = 1.0;
         for (amp, offset, time, freq) in &waves {
             sum += (ty * freq + time).sin() * amp + offset;
         }
-        
+
         for x in 0..res_x {
             let tx = clamp_range(x as f32, 0.0, (res_x - 1) as f32);
-            
+
             let angle = (1.0 - ty) * std::f32::consts::TAU;
             let mut p = Vec3::new(tx * angle.cos(), tx * angle.sin(), 0.0);
-            
+
             let radial = tx.powf(def.exponent);
             let mut scale = radial + (1.0 - radial) * sum;
             if y % 2 != 0 {
                 scale *= 1.0 + def.spike_scale * radial;
             }
             p *= scale;
-            
+
             positions.push([p.x, p.y, p.z]);
-            
+
             let mut u = ty * def.tile.x;
             let mut v = tx * def.tile.y;
             // Interior-row UV jitter.  `random_range` panics on an empty
@@ -145,12 +135,12 @@ fn create_strike_mesh(def: &StrikeFxDef) -> Mesh {
             }
             uvs.push([u, v]);
             normals.push([0.0, 0.0, 1.0]);
-            
+
             let alpha = 1.0 - clamp_range(tx, def.fade_start, 1.0);
             colors.push([1.0, 1.0, 1.0, alpha]);
         }
     }
-    
+
     let mut indices = Vec::new();
     for y in 0..(res_y - 1) {
         for x in 0..(res_x - 1) {
@@ -158,34 +148,34 @@ fn create_strike_mesh(def: &StrikeFxDef) -> Mesh {
             let i1 = (y * res_x + x + 1) as u32;
             let i2 = ((y + 1) * res_x + x) as u32;
             let i3 = ((y + 1) * res_x + x + 1) as u32;
-            
+
             indices.push(i0);
             indices.push(i2);
             indices.push(i1);
-            
+
             indices.push(i1);
             indices.push(i2);
             indices.push(i3);
         }
     }
-    
+
     let mut mesh = Mesh::new(
         bevy::render::render_resource::PrimitiveTopology::TriangleList,
-        bevy::asset::RenderAssetUsages::default()
+        bevy::asset::RenderAssetUsages::default(),
     );
     mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, positions);
     mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, normals);
     mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, uvs);
     mesh.insert_attribute(Mesh::ATTRIBUTE_COLOR, colors);
     mesh.insert_indices(bevy::mesh::Indices::U32(indices));
-    
+
     mesh
 }
 
 // --- Flash --------------------------------------------------------------------
 
 /// Per-instance Flash state.  Mirrors the `fxFlashInst` lifecycle from
-/// `fxFlashType::UpdateAll` (rb/src/fx/flash.cpp:194):
+/// `fxFlashType::UpdateAll`:
 ///
 ///   • `current_scale` Approach()s `goal_scale` at `rate` per second.
 ///   • `alpha = clamp(fade * (goal_scale - current_scale), 0..1)`
@@ -206,7 +196,7 @@ pub struct FlashFx {
 
 /// Spawn a Flash burst at `world_pos`, optionally parented to `parent`.
 /// Picks `goal_scale` randomly in `[scale_min, scale_max]` per
-/// legacy `RangeRand(ScaleMin, ScaleMax)` (flash.cpp:217).
+/// legacy `RangeRand(ScaleMin, ScaleMax)`.
 pub fn spawn_flash(
     commands: &mut Commands,
     quad_cache: &mut FxVisualMesh,
@@ -234,13 +224,13 @@ pub fn spawn_flash(
         def.scale_min
     };
     // Random Z rotation, mirrors the per-instance orientation in
-    // legacy (`flash.cpp:218 — frand()*2*PI` with the 2D `Rotation`
-    // basis).  Keeps stacked flashes from looking identical.
+    // legacy (`frand()*2*PI` with the 2D `Rotation` basis).
+    // Keeps stacked flashes from looking identical.
     use rand::Rng;
     let theta = rand::rng().random_range(0.0..std::f32::consts::TAU);
 
     // Color1 is the primary tint; Color2/3 in the def are cycle
-    // colors used by the legacy palette animator (flash.cpp:365+).
+    // colors used by the legacy palette animator.
     // Static Color1 covers the visible behavior for now — a future
     // pass can interpolate between the three.
     let material = materials.add(StandardMaterial {
@@ -306,8 +296,7 @@ fn update_flash_fx(
             flash.current_scale += step * remaining.signum();
         }
 
-        let alpha = (flash.fade * (flash.goal_scale - flash.current_scale))
-            .clamp(0.0, 1.0);
+        let alpha = (flash.fade * (flash.goal_scale - flash.current_scale)).clamp(0.0, 1.0);
         if alpha <= 1e-3 {
             commands.entity(entity).despawn();
             continue;
@@ -335,8 +324,8 @@ fn update_flash_fx(
 
 // --- Sprite -------------------------------------------------------------------
 
-/// Per-instance Sprite state.  Mirrors `fxSpriteEffect` lifecycle
-/// (rb/src/fx/sprite.cpp:347): sits at its position for `duration`
+/// Per-instance Sprite state.  Mirrors `fxSpriteEffect` lifecycle:
+/// sits at its position for `duration`
 /// seconds (or indefinitely if `duration == 0` and the spawner stays
 /// controlled), then despawns.  Camera-billboarded each frame.
 #[derive(Component)]
@@ -371,7 +360,11 @@ pub fn spawn_sprite(
     } else {
         // Legacy default when ParticleSize is 0 — use line_width as a
         // fallback for line-style sprites, else 1.0.
-        if def.line_width > 0.0 { def.line_width } else { 1.0 }
+        if def.line_width > 0.0 {
+            def.line_width
+        } else {
+            1.0
+        }
     };
     // Legacy `BlendSet 1` = `blendSet_SrcAlpha_One` (additive); other
     // values fall back to alpha blending.  Most muzzle/flare uses are
@@ -391,7 +384,11 @@ pub fn spawn_sprite(
     // Duration of 0 in the legacy means "stay until controller stops" —
     // since we don't have the FxEffect controller layer, give it a
     // short visible window so the spawn is at least seen.
-    let lifetime = if def.duration > 0.0 { def.duration } else { 0.1 };
+    let lifetime = if def.duration > 0.0 {
+        def.duration
+    } else {
+        0.1
+    };
     let mut ec = commands.spawn((
         Name::new(format!("SpriteFx:{}", def.name)),
         Mesh3d(mesh),
@@ -471,7 +468,7 @@ pub struct StrikeFx {
     pub base_tint: LinearRgba,
 }
 
-/// Mirrors `fxStrikeType::UpdatePalette(health)` from rb/src/fx/strike.cpp:363.
+/// Mirrors `fxStrikeType::UpdatePalette(health)`.
 /// Legacy builds a full 256-entry palette where each entry is a piecewise
 /// lerp through (color1, color2, color3); each of those is itself lerped
 /// between the "a" and "b" color sets by `health²`.  We don't repalettize
@@ -573,7 +570,7 @@ fn update_strike_fx(
 
         let scale_delta = strike.scale_rate * dt;
         strike.current_scale += scale_delta;
-        
+
         let slide_delta = strike.slide_rate * dt;
         strike.current_slide += slide_delta;
 

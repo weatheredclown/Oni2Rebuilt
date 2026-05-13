@@ -1,6 +1,5 @@
 /*
- * debug_atdt.rs — On-screen ATDT progress bar (port of crStrikeProfile/
- * crAtkAnimCtrlBlock::Draw from rb/src/fight/fighter.cpp + attackdata.cpp).
+ * debug_atdt.rs — On-screen ATDT progress bar.
  *
  * Renders a 2D bar showing the player's current attack animation progress
  * with the queue / no-queue / do windows colored.  Mirrors the legacy
@@ -232,10 +231,7 @@ fn setup_atdt_debug(mut commands: Commands) {
 fn toggle_atdt_debug(keyboard: Res<ButtonInput<KeyCode>>, mut visible: ResMut<AtdtDebugVisible>) {
     if keyboard.just_pressed(KeyCode::F9) {
         visible.0 = !visible.0;
-        info!(
-            "ATDT debug bar: {}",
-            if visible.0 { "ON" } else { "OFF" }
-        );
+        info!("ATDT debug bar: {}", if visible.0 { "ON" } else { "OFF" });
     }
 }
 
@@ -243,18 +239,8 @@ fn update_atdt_debug(
     visible: Res<AtdtDebugVisible>,
     player_q: Query<(&Oni2AnimState, &FsmRuntime), With<Player>>,
     mut root_q: Query<&mut Node, (With<AtdtDebugRoot>, Without<AtdtSeg>, Without<AtdtBar>)>,
-    mut bar_q: Query<
-        &mut Node,
-        (
-            With<AtdtBar>,
-            Without<AtdtDebugRoot>,
-            Without<AtdtSeg>,
-        ),
-    >,
-    mut seg_q: Query<
-        (&AtdtSeg, &mut Node),
-        (Without<AtdtDebugRoot>, Without<AtdtBar>),
-    >,
+    mut bar_q: Query<&mut Node, (With<AtdtBar>, Without<AtdtDebugRoot>, Without<AtdtSeg>)>,
+    mut seg_q: Query<(&AtdtSeg, &mut Node), (Without<AtdtDebugRoot>, Without<AtdtBar>)>,
     mut label_q: Query<&mut Text, With<AtdtLabel>>,
 ) {
     let Ok(mut root_node) = root_q.single_mut() else {
@@ -269,7 +255,11 @@ fn update_atdt_debug(
     // Pull the player's current strike + phase + queued state.
     let (label_str, windows, phase, queued) = match player_q.single() {
         Ok((anim, runtime)) => {
-            let strike = anim.anim.attack_data.as_ref().and_then(|a| a.strike.as_ref());
+            let strike = anim
+                .anim
+                .attack_data
+                .as_ref()
+                .and_then(|a| a.strike.as_ref());
             let total = (anim.anim.num_frames as f32 - 1.0).max(1.0);
             let phase = (anim.current_time / total).clamp(0.0, 1.0);
             let queued = runtime.ctx.queued_attack || runtime.ctx.queued_attack_two;

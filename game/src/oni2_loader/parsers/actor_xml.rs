@@ -352,7 +352,7 @@ pub fn parse_actor_xml(dir: &str, filename: &str, template_dir: &str) -> Option<
     // <Behavior> ... <Pad_FSM value="player"/> ... — which input FSM to load
     // for this actor.  Legacy `SUB_ATTRIBUTE(Pad, FSM)` → `bhPadTuningData::FSM`,
     // consumed by `aiInputStateMachineData::GetStateMachineData(name)`
-    // (rb behavior/pad.cpp:267).
+    // in the legacy pad-tuning loader.
     let behavior_block = extract_component(&chain, has_components_xml, "Behavior");
     let mut pad_fsm: Option<String> = None;
     if let Some(block) = behavior_block

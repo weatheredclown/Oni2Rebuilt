@@ -74,7 +74,7 @@ struct AtkOption {
     /// "event", "block").  Stored as a string because the grammar treats
     /// group names as arbitrary identifiers — the C++ loader reads the
     /// token straight into `aiAtkActionGroup::Identifier` without a fixed
-    /// whitelist (see rb/src/aifight/attackstatemachine.cpp:1228).
+    /// whitelist.
     #[allow(dead_code)]
     category: String,
     verb: String,

@@ -197,9 +197,9 @@ pub enum Stmt {
     /// `retreat [to <expr>]`
     Retreat(Option<Expr>),
     /// `takecover [for <expr>]` — block until the actor's cover behavior
-    /// reports done or failed.  `duration` mirrors the legacy timeout knob
-    /// (rb/src/scroni/BlockingCommand.cpp:734); not yet surfaced to the
-    /// runtime.  See behavior::impls::take_cover for the AI side.
+    /// reports done or failed.  `duration` mirrors the legacy timeout knob;
+    /// not yet surfaced to the runtime.  See behavior::impls::take_cover
+    /// for the AI side.
     TakeCover { duration: Option<Expr> },
     /// `destroy <expr>`
     Destroy(Expr),
@@ -325,7 +325,7 @@ pub enum Stmt {
     /// Camera commands
     CameraReset,
     /// `cameraMode (script|game) [time <seconds>]` — `time` is the
-    /// transition duration (rb/src/scroni/cameracommand.cpp:44).
+    /// transition duration.
     CameraMode {
         mode: Expr,
         time: Option<Expr>,
@@ -432,13 +432,11 @@ pub enum Stmt {
         list: String,
     },
     /// `clear <listvar>` — reset an actor-list variable to empty.  Legacy
-    /// semantic: ADDINST(ClearList) on the named symbol
-    /// (rb/src/scroni/Command.cpp:868).
+    /// semantic: ADDINST(ClearList) on the named symbol.
     ClearList {
         list: String,
     },
-    /// `normalize <vectorvar>` — normalize a vector variable in-place
-    /// (rb/src/scroni/Command.cpp:1200).
+    /// `normalize <vectorvar>` — normalize a vector variable in-place.
     Normalize {
         var: String,
     },
@@ -474,7 +472,7 @@ pub enum Stmt {
     /// `RunGame [Level <expr> [SavePoint <expr>]]` — leaves the
     /// frontend and starts gameplay at the given level (and save
     /// point).  Bare `RunGame` re-runs the current level.  Mirrors
-    /// `scrCompiler::ParseRunGame` (rb/src/scroni/Command.cpp:1550).
+    /// `scrCompiler::ParseRunGame`.
     RunGame {
         level: Option<Expr>,
         save_point: Option<Expr>,

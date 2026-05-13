@@ -115,8 +115,7 @@ pub struct ActiveAttack {
     /// One-shot guard for grab-attack disarms: set the first frame the
     /// anim crosses `AtdtGrab::removes_weapon_phase` so we don't fire
     /// `DropWeaponMessage` every frame the phase remains exceeded.
-    /// Mirrors the `PassedPhase` edge-trigger in
-    /// rb/src/fight/grab.cpp:743.
+    /// Mirrors the `PassedPhase` edge-trigger on `crGrab`.
     pub has_disarmed: bool,
 }
 
@@ -233,8 +232,7 @@ impl ReactLibrary {
     }
 
     /// Pick the death animation enum given the killing-blow's `react_enum`.
-    /// Mirrors `crReactData::GetCanBeDieAnimation` decision at
-    /// `rb/src/animator/action.cpp:1325-1326`: if the killing react has
+    /// Mirrors `crReactData::GetCanBeDieAnimation`: if the killing react has
     /// `CanBeDieAnimation = true`, reuse that react as the death anim;
     /// otherwise fall back to `ANIMDIE_GENERAL` (index 56 in the unified
     /// react/die enum table).

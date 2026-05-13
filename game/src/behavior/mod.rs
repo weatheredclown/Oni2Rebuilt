@@ -657,6 +657,8 @@ pub fn behavior_update_dispatch_system(
         let pad_commands_mut = pad_commands_opt.map(|p| p.into_inner());
         let anim_state_mut = anim_state_opt.map(|s| s.into_inner());
         let attack_runtime_mut = attack_runtime_opt.map(|r| r.into_inner());
+        let pre_facing = fighter.facing;
+        let pre_rotation = transform.rotation;
         let mut ctx = BehaviorRunCtx {
             entity,
             params: &params_snapshot,
@@ -674,8 +676,8 @@ pub fn behavior_update_dispatch_system(
 
         let outcome = current.update(&mut ctx, dt);
 
-        // Enforce the legacy `bhBehaviorComponent::LockedMovement` gate
-        // (rb/src/behavior/component.cpp:1176): if the actor is currently
+        // Enforce the legacy `bhBehaviorComponent::LockedMovement` gate:
+        // if the actor is currently
         // committed to a one-shot animation (attack swing, block, evade,
         // hit reaction, …), zero the horizontal velocity that the
         // behavior just wrote.  Behaviors stay clean (no per-impl
@@ -690,6 +692,8 @@ pub fn behavior_update_dispatch_system(
         {
             ctx.velocity.x = 0.0;
             ctx.velocity.z = 0.0;
+            ctx.fighter.facing = pre_facing;
+            ctx.transform.rotation = pre_rotation;
         }
 
         if let Some(mut driven) = driven_opt {

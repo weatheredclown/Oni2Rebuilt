@@ -265,7 +265,7 @@ pub struct SmRuntime<D: SmDriver> {
     /// `AttackEvent::Probability(p)` uses this: each rule in a pick-row
     /// subtracts `p`; the first rule whose subtraction drives the budget
     /// to `<= 0` fires.  Mirrors legacy `aiAttackStateMachine::
-    /// EProbability` (rb/src/aifight/attackstatemachine.cpp:707).
+    /// EProbability`.
     pub random_budget: AtomicU32,
 
     /// xorshift seed.  Pub so the host can synchronize a shadow runtime to a

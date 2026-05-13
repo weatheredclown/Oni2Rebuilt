@@ -53,16 +53,16 @@ pub mod pad_flags {
     pub const ACK_TWO_FORWARD_RIGHT: u64 = 1 << 36;
     pub const ACK_TWO_BACKWARD_LEFT: u64 = 1 << 37;
     pub const ACK_TWO_BACKWARD_RIGHT: u64 = 1 << 38;
-    /// Low-attack button (legacy `PADCMD_ATTACK_LOW` —
-    /// rb/src/behavior/padmapper.h:43).  Used by `enemy.fsm`'s
+    /// Low-attack button (legacy `PADCMD_ATTACK_LOW`).
+    /// Used by `enemy.fsm`'s
     /// `if Packet(PADCMD_ATTACK_LOW)` rule to fire `ANIMATTACK_2`.
     /// MUST be present in `build_pad_table` (input.rs) — without it the
     /// parser silently drops the symbol and the rule's PacketCondition
     /// ends up all-zero, which used to make every empty-condition rule
     /// match every packet (every AI fired ANIMATTACK_2 on spawn).
     pub const PADCMD_ATTACK_LOW: u64 = 1 << 39;
-    /// Generic action / "use object" button (legacy `PADCMD_ACTION` —
-    /// rb/src/behavior/padmapper.h:66).  Referenced by `.fsm` rules.
+    /// Generic action / "use object" button (legacy `PADCMD_ACTION`).
+    /// Referenced by `.fsm` rules.
     pub const PADCMD_ACTION: u64 = 1 << 40;
     /// Controller-shake input.  No legacy `PADCMD_SHAKE` exists (legacy
     /// uses analog-stick `pdAnalogShake` for this concept), but Rust-port

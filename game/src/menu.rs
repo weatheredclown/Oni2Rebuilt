@@ -51,7 +51,7 @@ pub struct MenuScrollState {
 /// `PER_ACTOR_SECS` per actor gives a fill whose DURATION scales with
 /// real level size (172 actors → ~1.72s, 30 → ~0.3s), which is what
 /// the user sees and expects.  Legacy ran at 90 seconds for a PS2 disc
-/// load (rb/src/rbgame/loadthread.cpp:75) — totally fake too, but a
+/// load — totally fake too, but a
 /// constant.
 #[derive(Resource, Default)]
 pub struct LoadingProgress {
@@ -81,7 +81,7 @@ impl LoadingProgress {
 pub const PER_ACTOR_SECS: f32 = 0.01;
 
 /// Legacy bar rect on a 512×448 framebuffer: `(348, 56)` origin,
-/// `122×10` pixels (rb/src/rbgame/loadthread.cpp:164).  Normalized
+/// `122×10` pixels.  Normalized
 /// percentages so the bar lands in the same relative screen spot at
 /// any window size.
 pub const LOADING_BAR_X_PCT: f32 = 348.0 / 512.0 * 100.0;

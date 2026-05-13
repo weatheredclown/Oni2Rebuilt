@@ -54,7 +54,7 @@ pub struct InputState {
     /// Enemy currently picked by the EATME magnetism pass.  Set when an
     /// enemy is within the auto-track cull range and (if the stick is
     /// active) within fudge° of the pad-input direction.  Mirrors
-    /// `bhPadMapper::EATMETarget` (rb/src/behavior/padmapper.h:338) —
+    /// `bhPadMapper::EATMETarget` —
     /// downstream consumers use it to preselect a strike target the
     /// instant attack is pressed, and to drive Z-lock acquisition.
     pub eatme_target: Option<Entity>,
@@ -64,6 +64,6 @@ pub struct InputState {
     /// when EATME didn't engage (stick neutral, no enemies in range,
     /// or angle outside fudge°); `player_movement_system` falls back
     /// to the raw camera-relative computation in that case.  Mirrors
-    /// `bhPadMapper::ChrRelativeDir` (padmapper.h:329).
+    /// `bhPadMapper::ChrRelativeDir`.
     pub eatme_travel: Option<Vec3>,
 }

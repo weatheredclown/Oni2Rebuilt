@@ -85,7 +85,7 @@ pub fn compute_animated_bone_transforms(
             // layout.
             //
             // Layout mirrors `crAnimFrame::Pose`
-            // (rb/src/cranimation/frame.asm.cpp:668-676):
+            // (legacy `crAnimFrame`):
             //
             //   • channels 0/1/2     = root TRANSLATION (overrides
             //                          bone 0's rest-pose position).

@@ -4,7 +4,7 @@
  * `AiFighter`: per-entity marker for AI-controlled creatures.  Carries the
  *   current combat `target` (written by scripts via `SetAiTarget`/`TriggerFight`,
  *   read by the fight FSM) and `manual_target` to lock out auto-acquisition.
- *   Mirrors `aiFighter` in rb/src/aifight/fighter.h — the data surface (target,
+ *   Mirrors `aiFighter` — the data surface (target,
  *   mode) lives here; behavior lives in the FSM runtimes (`AiFsmRuntime`,
  *   `FightRuntime`, `AttackRuntime`).
  *
@@ -44,7 +44,7 @@ impl AiFighter {
 }
 
 /// Tactical shooter state for AI entities carrying weapons.
-/// Mirrors `aiShooter` from rb/src/aifight/shooter.h.
+/// Mirrors `aiShooter`.
 #[derive(Component, Default)]
 pub struct AiShooter {
     pub state: u32,
@@ -55,7 +55,7 @@ pub struct AiShooter {
 }
 
 /// Tactical interceptor state for AI entities pursuing targets.
-/// Mirrors `aiInterceptor` from rb/src/aifight/interceptor.h.
+/// Mirrors `aiInterceptor`.
 #[derive(Component, Default)]
 pub struct AiInterceptor {
     pub active: bool,

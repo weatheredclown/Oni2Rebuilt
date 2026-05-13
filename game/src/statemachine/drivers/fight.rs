@@ -63,7 +63,7 @@ pub enum FightEvent {
     /// other queued attackers never get offered the cookie — combat
     /// degenerates to one fighter swinging in a tight loop.
     ///
-    /// Legacy formula (rb/src/aifight/fighter.cpp:2797):
+    /// Legacy formula:
     /// ```cpp
     /// bool aiFighter::PrepareNextAttacker() const {
     ///     return !IsAttacking() || AttackStateMachine->IsDelayingCookie();
@@ -152,8 +152,7 @@ pub struct FightCtx {
     ///     end so the next queued attacker can grab it.
     ///
     /// One additional legacy nuance the formula above doesn't capture:
-    /// `aiAttackStateMachine::Update` (rb/src/aifight/
-    /// attackstatemachine.cpp:399) ALSO force-yields the cookie when
+    /// `aiAttackStateMachine::Update` ALSO force-yields the cookie when
     /// a fighter has held it longer than `FIGHTMGR.CookieHogTime`
     /// without swinging.  That's a watchdog timer separate from this
     /// flag — port it as a duration check on `FightResources` rather

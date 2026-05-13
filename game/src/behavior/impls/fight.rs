@@ -41,10 +41,6 @@ impl Behavior for FightBehavior {
         // coordinator is online.
         if let Some(atk) = ctx.attack_runtime.as_deref_mut() {
             atk.ctx.got_cookie = true;
-            bevy::log::info!(
-                "FightBehavior::on_enter: granted cookie on {:?}",
-                ctx.entity
-            );
         }
         // Stop any residual steering from the previous behavior.
         ctx.velocity.x = 0.0;
@@ -69,6 +65,7 @@ impl Behavior for FightBehavior {
             if dist > 0.01 {
                 let dir = delta / dist;
                 ctx.fighter.facing = dir;
+                
                 let look_target = here + dir;
                 let mut rot_tf = *ctx.transform;
                 rot_tf.look_at(look_target, Vec3::Y);
@@ -89,7 +86,6 @@ impl Behavior for FightBehavior {
         // on its next pick.
         if let Some(atk) = ctx.attack_runtime.as_deref_mut() {
             atk.ctx.got_cookie = false;
-            bevy::log::info!("FightBehavior::on_exit: revoked cookie on {:?}", ctx.entity);
         }
     }
 }

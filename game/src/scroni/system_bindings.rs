@@ -262,7 +262,7 @@ pub fn scroni_sys_event_observer(
         }
         ScrOniSysEvent::CameraMode(mode, time) => {
             // Scripts use `script` (scripted camera) / `game` (player
-            // control) — see rb/src/scroni/cameracommand.cpp:50.  The
+            // control).  The
             // navigation/fight/targeting strings are legacy internal names
             // we still honor for back-compat.
             let active = match mode.to_ascii_lowercase().as_str() {
@@ -394,7 +394,7 @@ pub fn scroni_sys_event_observer(
             }
         }
         ScrOniSysEvent::RunGame { level, save_point } => {
-            // Mirrors `DoRunGame` (rb/src/scroni/XCommand.cpp:1476).
+            // Mirrors `DoRunGame`.
             // Legacy `GAMEDATA.SetCurrentLayoutIndex(idx)` +
             // `RestartLevel()` is, in our world, "look up the layout
             // folder by index in the FrontendLevelList, stash it as

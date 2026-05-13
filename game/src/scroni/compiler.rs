@@ -421,8 +421,8 @@ impl Compiler {
             TokenCode::Face => self.parse_face(),
             TokenCode::Goto => self.parse_goto(),
             TokenCode::Fight => {
-                // `fight [<guid>] [leader (support|attack)] [for <duration>]`
-                // (rb/src/scroni/BlockingCommand.cpp:394).  The leader-mode
+                // `fight [<guid>] [leader (support|attack)] [for <duration>]`.
+                // The leader-mode
                 // and duration modifiers aren't surfaced to the runtime
                 // yet — just consume them so they don't dangle as hanging
                 // values (seen in gruntsC.oni `fight tgtActor leader
@@ -497,8 +497,8 @@ impl Compiler {
                 Stmt::Retreat(target)
             }
             TokenCode::TakeCover => {
-                // `takecover [for <expr>]` — port of rb/src/scroni/
-                // BlockingCommand.cpp:726.  The optional duration consumes
+                // `takecover [for <expr>]` — port of the legacy
+                // blocking `takecover` command.  The optional duration consumes
                 // the same `for <value>` that the C++ parser accepts; we
                 // capture it but the runtime currently treats takecover as
                 // run-until-done (cover reached) or run-until-failed (no
@@ -635,8 +635,7 @@ impl Compiler {
                 Stmt::CameraReset
             }
             TokenCode::CameraMode => {
-                // `cameramode (script|game) [time <value>]`
-                // (rb/src/scroni/cameracommand.cpp:44).
+                // `cameramode (script|game) [time <value>]`.
                 self.advance();
                 let mode = self.parse_expr();
                 let time = if self.skip_if(TokenCode::Time) {
@@ -772,23 +771,21 @@ impl Compiler {
                 Stmt::Color { r, g, b, a }
             }
             TokenCode::Clear => {
-                // `clear <listvar>` — empty an actor-list variable
-                // (rb/src/scroni/Command.cpp:868).
+                // `clear <listvar>` — empty an actor-list variable.
                 self.advance();
                 let list = self.peek().text.clone().to_lowercase();
                 self.advance();
                 Stmt::ClearList { list }
             }
             TokenCode::Normalize => {
-                // `normalize <vectorvar>` — normalize in-place
-                // (rb/src/scroni/Command.cpp:1200).
+                // `normalize <vectorvar>` — normalize in-place.
                 self.advance();
                 let var = self.peek().text.clone().to_lowercase();
                 self.advance();
                 Stmt::Normalize { var }
             }
             TokenCode::SetHud => {
-                // `sethud <value>` (rb/src/scroni/Command.cpp:1430).  HUD
+                // `sethud <value>`.  HUD
                 // rendering isn't wired yet; consume the arg.
                 self.advance();
                 let arg = self.parse_expr();
@@ -798,8 +795,8 @@ impl Compiler {
                 }
             }
             TokenCode::SetFogRange => {
-                // `setFogRange <a> <b> <c>` three numeric args
-                // (rb/src/scroni/LevelCommand.cpp:75).  Fog isn't wired.
+                // `setFogRange <a> <b> <c>` three numeric args.
+                // Fog isn't wired.
                 self.advance();
                 let mut args = Vec::new();
                 for _ in 0..3 {
@@ -827,7 +824,7 @@ impl Compiler {
                 }
             }
             TokenCode::Form => {
-                // `form <string>` (rb/src/scroni/Command.cpp:1481).
+                // `form <string>`.
                 self.advance();
                 let arg = self.parse_expr();
                 Stmt::Unimplemented {
@@ -837,8 +834,7 @@ impl Compiler {
             }
             TokenCode::PadRumbleLargeMotor => {
                 // `padRumbleLargeMotor [totaltime N] [rampuptime N]
-                //    [dampentime N] [frequency N] [min N] [max N]`
-                // (rb/src/scroni/padrumblecommand.cpp:17).
+                //    [dampentime N] [frequency N] [min N] [max N]`.
                 self.advance();
                 let mut args = Vec::new();
                 loop {
@@ -890,7 +886,7 @@ impl Compiler {
                 // `jump [index <val> | onlyrunning | onlystanding]
                 //    [from <vec>] to <vec>`
                 // or `jump [index <val>] [from <vec>] [to <vec>]`
-                // (rb/src/scroni/BlockingCommand.cpp:302).  Consume all
+                // Consume all
                 // modifiers.  Runtime effect is stubbed — the AI jump
                 // pathing isn't wired yet.
                 self.advance();
@@ -947,7 +943,7 @@ impl Compiler {
 
             TokenCode::RunGame => {
                 // `RunGame [Level <expr> [SavePoint <expr>]]` — mirrors
-                // `scrCompiler::ParseRunGame` (rb/src/scroni/Command.cpp:1550).
+                // `scrCompiler::ParseRunGame`.
                 // Bare `RunGame` re-runs the current level; `Level <n>`
                 // sets the index; `SavePoint <n>` is only valid after
                 // `Level`.
@@ -1679,7 +1675,7 @@ impl Compiler {
     }
 
     fn parse_control_head(&mut self) -> Stmt {
-        // Grammar (rb/src/scroni/Command.cpp:1611):
+        // Grammar:
         //   controlhead trackactor <guid>
         //   controlhead trackpos <vector>
         //   controlhead trackclosest
@@ -1851,8 +1847,7 @@ impl Compiler {
                     let first = self.parse_additive();
 
                     // Special-case `status <actor> is <state>[, <state>...]`.
-                    // Legacy C++ (rb/src/scroni/PreDefFunc.cpp:203
-                    // `ParseStatusList`) parses the RHS as a comma-separated
+                    // Legacy C++ `ParseStatusList` parses the RHS as a comma-separated
                     // list where each entry is an independent boolean
                     // PREDICATE against the actor (alive/enemy/knockeddown/
                     // etc.) — AND-reduced.  Equality-against-single-string
@@ -2594,8 +2589,8 @@ end
 
     #[test]
     fn compile_takecover_with_duration() {
-        // The C++ parser also accepts `takecover for <expr>`
-        // (rb/src/scroni/BlockingCommand.cpp:734); even though no
+        // The C++ parser also accepts `takecover for <expr>`;
+        // even though no
         // shipping script in the current corpus uses it, the parser
         // shouldn't reject it.
         let src = r#"

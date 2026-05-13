@@ -1,8 +1,8 @@
 /*
  * fight/fx_table.rs — impact FX lookup keyed on (target, strength, class).
  *
- * Mirrors `crAttackFXSetTable` + `crAttackFXSetTableManager`
- * (rb/src/fight/fxtable.h:18, .cpp).  The C++ stores a fixed-size 3D table
+ * Mirrors `crAttackFXSetTable` + `crAttackFXSetTableManager`.
+ * The C++ stores a fixed-size 3D table
  * indexed on attack target × strength × class; each cell holds a pointer to
  * an `fxEffectSet` describing the particle / sound / decal bundle to play
  * when an attack of that combination lands.
@@ -200,7 +200,7 @@ impl AttackFxTable {
 // ---------------------------------------------------------------------------
 
 /// Bevy resource holding every named FxSet and AttackFxTable.  Mirrors
-/// `crAttackFXSetTableManager` (fxtable.h:39).  Hit-detection systems look
+/// `crAttackFXSetTableManager`.  Hit-detection systems look
 /// up by table name (per fighter type) + the hit's (target, strength, class)
 /// tuple, then call `fx_set.dispatch(...)` to fire the real events.
 #[derive(Resource, Default)]
