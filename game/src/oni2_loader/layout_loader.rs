@@ -1064,7 +1064,17 @@ pub fn spawn_layout_actor(
                 assets
                     .commands
                     .entity(entity)
-                    .insert(crate::combat::FighterBundle::default());
+                    .insert(crate::combat::FighterBundle {
+                        fighter_type: crate::fight::components::FighterType {
+                            name: actor
+                                .fighter_type
+                                .clone()
+                                .or_else(|| actor.animator_type.clone())
+                                .unwrap_or_else(|| actor.entity_type.clone()),
+                            ..Default::default()
+                        },
+                        ..Default::default()
+                    });
                 assets
                     .commands
                     .entity(entity)

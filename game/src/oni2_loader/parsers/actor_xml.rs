@@ -38,6 +38,8 @@ pub struct LayoutActor {
     pub orientation_o2: Vec3, // euler angles in degrees (rx, ry, rz)
     /// AnimatorType from Animator component (resolved through templates).
     pub animator_type: Option<String>,
+    /// FighterType from Fighter component (resolved through templates).
+    pub fighter_type: Option<String>,
     /// Whether this actor has a Creature component (animated character).
     pub is_creature: bool,
     /// Whether this creature is the player (Player="1" in Creature component).
@@ -248,6 +250,8 @@ pub fn parse_actor_xml(dir: &str, filename: &str, template_dir: &str) -> Option<
     let fight_ai_block = extract_component(&chain, has_components_xml, "FightAI")
         .or_else(|| extract_component(&chain, has_components_xml, "FightAi"));
     let fight_vector_block = extract_component(&chain, has_components_xml, "FightVectorTrigger");
+    let broadcast_trigger_block = extract_component(&chain, has_components_xml, "BroadcastTrigger");
+    let fighter_block = extract_component(&chain, has_components_xml, "Fighter");
 
     // Extract Animator props
     let mut animator_type: Option<String> = None;
@@ -255,6 +259,14 @@ pub fn parse_actor_xml(dir: &str, filename: &str, template_dir: &str) -> Option<
         && let Some(v) = extract_xml_attr(&block, "AnimatorType")
     {
         animator_type = Some(v);
+    }
+
+    // Extract Fighter props
+    let mut fighter_type: Option<String> = None;
+    if let Some(block) = fighter_block
+        && let Some(v) = extract_xml_attr(&block, "FighterType")
+    {
+        fighter_type = Some(v);
     }
 
     // Extract Creature props
@@ -453,6 +465,7 @@ pub fn parse_actor_xml(dir: &str, filename: &str, template_dir: &str) -> Option<
         position,
         orientation_o2,
         animator_type,
+        fighter_type,
         is_creature,
         is_player,
         faction,

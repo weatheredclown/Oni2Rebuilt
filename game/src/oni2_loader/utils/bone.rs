@@ -78,35 +78,68 @@ pub fn compute_animated_bone_transforms(
 
     for i in 0..num_bones {
         if !has_flags {
-            // Legacy struct fallback mapping
-            if i == 0 {
-                let euler_x = *frame_channels.first().unwrap_or(&0.0);
-                let euler_y = *frame_channels.get(1).unwrap_or(&0.0);
-                let euler_z = *frame_channels.get(2).unwrap_or(&0.0);
-                let mut tx = *frame_channels.get(3).unwrap_or(&skel.local_offsets[i][0]);
-                let ty = *frame_channels.get(4).unwrap_or(&skel.local_offsets[i][1]);
-                let mut tz = *frame_channels.get(5).unwrap_or(&skel.local_offsets[i][2]);
-                if strip_root_xz {
-                    // Capture the channel-space translation relative to the
-                    // rest offset before we overwrite it.  `Y` left at 0 —
-                    // vertical root motion is preserved.
-                    stripped_root_offset = Vec3::new(
-                        tx - skel.local_offsets[i][0],
-                        0.0,
-                        tz - skel.local_offsets[i][2],
-                    );
-                    tx = skel.local_offsets[i][0];
-                    tz = skel.local_offsets[i][2];
-                }
-                let rot = Quat::from_euler(EulerRot::YZX, euler_y, euler_z, euler_x);
-                result[0] = (rot, Vec3::new(tx, ty, tz));
-            } else {
-                let ch_base = i * 3 + 3;
-                let euler_x = *frame_channels.get(ch_base).unwrap_or(&0.0);
-                let euler_y = *frame_channels.get(ch_base + 1).unwrap_or(&0.0);
-                let euler_z = *frame_channels.get(ch_base + 2).unwrap_or(&0.0);
-                let local_rot = Quat::from_euler(EulerRot::YZX, euler_y, euler_z, euler_x);
+            // Legacy struct fallback — used when the .skel file omits
+            // explicit `transX/Y/Z` / `rotX/Y/Z` channel declarations
+            // (e.g. `edi.skel`).  When per-bone flags ARE present
+            // (e.g. `kno.skel`) the dynamic path below handles channel
+            // layout.
+            //
+            // Layout mirrors `crAnimFrame::Pose`
+            // (rb/src/cranimation/frame.asm.cpp:668-676):
+            //
+            //   • channels 0/1/2     = root TRANSLATION (overrides
+            //                          bone 0's rest-pose position).
+            //   • channels (i*3 + 3) = bone i's EULER (x, y, z) — for
+            //                          ALL bones, including i==0.
+            //
+            // The original Rust port had bone 0's euler at channels
+            // 0/1/2 and translation at 3/4/5 — the inverse of the C++
+            // layout.  That worked silently for characters with
+            // channel-flag-bearing skeletons (those go down the
+            // dynamic-path branch and never touch this code), but for
+            // characters like edi the per-frame Z-translation (stride
+            // progression up to `stride_z` ~= 2.33 over a run cycle)
+            // landed on bone 0's Z-rotation slot and produced a
+            // visible barrel-roll across the loop.
+            let ch_base = i * 3 + 3;
+            let euler_x = *frame_channels.get(ch_base).unwrap_or(&0.0);
+            let euler_y = *frame_channels.get(ch_base + 1).unwrap_or(&0.0);
+            let euler_z = *frame_channels.get(ch_base + 2).unwrap_or(&0.0);
+            let local_rot = Quat::from_euler(EulerRot::YZX, euler_y, euler_z, euler_x);
 
+            if i == 0 {
+                // Root translation — channels 0/1/2 are stored as
+                // DELTAS from the rest-pose offset, not absolute local
+                // positions.  Match what the dynamic-mapping path
+                // does (`bone.rs` ~line 169): `final = channel + rest`.
+                //
+                // Originally this path used the channel as absolute,
+                // which put edi's hip at world Y=0 instead of at the
+                // rest height (`+1.037869` in edi.skel), sinking the
+                // character ~1m into the ground.
+                //
+                // `unwrap_or(&0.0)` (not the rest offset) is correct
+                // for the channel-too-short fallback: if the channel
+                // is absent, the delta is 0, and the final position is
+                // exactly the rest offset.
+                let ch_dx = *frame_channels.first().unwrap_or(&0.0);
+                let ch_dy = *frame_channels.get(1).unwrap_or(&0.0);
+                let ch_dz = *frame_channels.get(2).unwrap_or(&0.0);
+                let mut tx = ch_dx + skel.local_offsets[0][0];
+                let ty = ch_dy + skel.local_offsets[0][1];
+                let mut tz = ch_dz + skel.local_offsets[0][2];
+                if strip_root_xz {
+                    // The channel-space delta IS the gameplay-driven
+                    // root motion — capture it for downstream
+                    // consumption, then pin tx/tz to the rest offset
+                    // so the visual stays anchored.  Y left as-is so
+                    // hip bob still shows.
+                    stripped_root_offset = Vec3::new(ch_dx, 0.0, ch_dz);
+                    tx = skel.local_offsets[0][0];
+                    tz = skel.local_offsets[0][2];
+                }
+                result[0] = (local_rot, Vec3::new(tx, ty, tz));
+            } else {
                 let local_offset = Vec3::from(skel.local_offsets[i]);
                 let parent_idx = skel.parent_indices[i].unwrap_or(0);
                 let (parent_rot, parent_pos) = result[parent_idx];

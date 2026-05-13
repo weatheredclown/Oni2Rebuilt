@@ -720,39 +720,41 @@ pub fn player_movement_system(
             travel = (visual_front * -input.movement.y + visual_right * -input.movement.x)
                 .normalize_or_zero();
         } else if let Some(cam_tf) = camera_tf_opt {
-            // EATME magnet: if `eatme_system` snapped the stick toward
-            // an enemy this frame, use the snapped direction directly
-            // instead of recomputing from camera + raw stick.  Mirrors
-            // the legacy `chrRelativeWithEATME` consumer at
-            // rb/src/behavior/pad.cpp — locomotion takes the snapped
-            // direction, look/aim takes the raw one.
-            if let Some(eatme_dir) = input.eatme_travel {
-                travel = eatme_dir.normalize_or_zero();
-            } else {
-                let cam_fwd = cam_tf.forward().as_vec3();
-                let cam_right = cam_tf.right().as_vec3();
-                let xz_fwd = Vec3::new(cam_fwd.x, 0.0, cam_fwd.z).normalize_or_zero();
-                let xz_right = Vec3::new(cam_right.x, 0.0, cam_right.z).normalize_or_zero();
+            // Locomotion uses the RAW camera-relative stick direction —
+            // EATME does NOT magnetise navigation.  The earlier port
+            // routed `input.eatme_travel` into `travel` here, which
+            // visibly pulled the player toward nearby enemies during
+            // normal running.  EATME's only locomotion-side effect in
+            // the legacy engine is the strike-target preselection
+            // (`eatme_strike_target_seed_system`) — the player still
+            // moves where the stick points.  `eatme_target`/
+            // `eatme_travel` remain populated each tick for the
+            // attack-time seed and for any future consumer that wants
+            // a magnetised aim (e.g. Z-lock acquisition), but they're
+            // not fed into world movement.
+            let cam_fwd = cam_tf.forward().as_vec3();
+            let cam_right = cam_tf.right().as_vec3();
+            let xz_fwd = Vec3::new(cam_fwd.x, 0.0, cam_fwd.z).normalize_or_zero();
+            let xz_right = Vec3::new(cam_right.x, 0.0, cam_right.z).normalize_or_zero();
 
-                if input.movement.y < -0.1 {
-                    // W
-                    travel += xz_fwd;
-                }
-                if input.movement.y > 0.1 {
-                    // S
-                    travel -= xz_fwd;
-                }
-                if input.movement.x > 0.1 {
-                    // A
-                    travel -= xz_right;
-                }
-                if input.movement.x < -0.1 {
-                    // D
-                    travel += xz_right;
-                }
-
-                travel = travel.normalize_or_zero();
+            if input.movement.y < -0.1 {
+                // W
+                travel += xz_fwd;
             }
+            if input.movement.y > 0.1 {
+                // S
+                travel -= xz_fwd;
+            }
+            if input.movement.x > 0.1 {
+                // A
+                travel -= xz_right;
+            }
+            if input.movement.x < -0.1 {
+                // D
+                travel += xz_right;
+            }
+
+            travel = travel.normalize_or_zero();
 
             if travel.length_squared() > 0.001 {
                 // Since visually the model faces local +Z, we must point local -Z OPPOSITE to travel

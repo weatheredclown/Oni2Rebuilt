@@ -312,17 +312,24 @@ pub fn build_ai_attack_tables_system(
     query: Query<(Entity, &super::FighterType, &Oni2AnimLibrary, &Name), Without<AiAttackTable>>,
 ) {
     for (entity, fighter_type, lib, name) in &query {
-        let cached = cache.get_or_build(&fighter_type.name, lib);
-        if cached.attacks.is_empty() {
+        let is_empty = cache.get_or_build(&fighter_type.name, lib).attacks.is_empty();
+        if is_empty {
+            // Remove the empty entry so we legitimately retry next tick
+            // when the animation library has actually hot-loaded.
+            let key = fighter_type.name.clone();
+            cache.by_type.remove(&key);
+
             debug!(
                 "ai_attack: '{}' (type '{}') produced no usable attacks \
-                 from its library — skipping table insert (will retry \
+                 from its library - skipping table insert (will retry \
                  on next tick in case the library hot-reloads).",
                 name.as_str(),
                 fighter_type.name,
             );
             continue;
         }
+
+        let cached = cache.by_type.get(&fighter_type.name).unwrap();
         let attack_count = cached.attacks.len();
         let table = cached.clone();
         debug!(
