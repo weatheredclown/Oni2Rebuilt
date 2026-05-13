@@ -283,7 +283,7 @@ pub fn parse_effect(
         "SPRITEEFFECT" => {
             let tex_name = block.get_string("TextureName").unwrap_or_default();
             let tex_handle = if let Some((h, _)) =
-                crate::oni2_loader::parsers::texture::load_tga_texture("texture", &tex_name, images)
+                crate::oni2_loader::parsers::texture::load_texture("texture", &tex_name, images)
             {
                 h
             } else {
@@ -383,7 +383,7 @@ pub fn parse_effect(
             let head_handle = if head_name.is_empty() || head_name.eq_ignore_ascii_case("none") {
                 None
             } else {
-                Some(crate::oni2_loader::parsers::texture::load_tga_texture(
+                Some(crate::oni2_loader::parsers::texture::load_texture(
                     "Entity/GunFx",
                     &head_name,
                     images,
@@ -395,7 +395,7 @@ pub fn parse_effect(
             let tail_handle = if tail_name.is_empty() || tail_name.eq_ignore_ascii_case("none") {
                 None
             } else {
-                Some(crate::oni2_loader::parsers::texture::load_tga_texture(
+                Some(crate::oni2_loader::parsers::texture::load_texture(
                     "Entity/GunFx",
                     &tail_name,
                     images,
@@ -431,7 +431,7 @@ pub fn parse_effect(
             // above) so spawn-time of fxLight glows is asset-free.
             let glow_texture_handle = if glow_texture_name.is_empty() {
                 None
-            } else if let Some((h, _)) = crate::oni2_loader::parsers::texture::load_tga_texture(
+            } else if let Some((h, _)) = crate::oni2_loader::parsers::texture::load_texture(
                 "texture",
                 &glow_texture_name,
                 images,
@@ -481,7 +481,7 @@ pub fn parse_effect(
             let tex_handle = if tex_name.is_empty() || tex_name.eq_ignore_ascii_case("none") {
                 None
             } else {
-                Some(crate::oni2_loader::parsers::texture::load_tga_texture(
+                Some(crate::oni2_loader::parsers::texture::load_texture(
                     "entity/strikefx",
                     &tex_name,
                     images,

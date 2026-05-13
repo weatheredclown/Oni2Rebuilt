@@ -10,7 +10,7 @@
  */
 use super::*;
 use crate::oni2_loader::parsers::texture::decode_tex;
-use crate::oni2_loader::parsers::texture::load_tga_texture;
+use crate::oni2_loader::parsers::texture::load_texture;
 use crate::oni2_loader::utils::space;
 
 // Light intensity / range scaling — used both at spawn time
@@ -938,7 +938,7 @@ pub fn spawn_layout_actor(
                         };
 
                         if let Some((tex_handle, _)) =
-                            load_tga_texture(&entity_dir, &tex_name, assets.images)
+                            load_texture(&entity_dir, &tex_name, assets.images)
                         {
                             frames.push(tex_handle);
                         }
@@ -1773,7 +1773,7 @@ fn load_skyhat(
         } else {
             model.materials.get(mat_idx).and_then(|oni_mat| {
                 oni_mat.texture_name.as_ref().and_then(|tex_name| {
-                    load_tga_texture(layout_path, tex_name, images).map(|(handle, _)| handle)
+                    load_texture(layout_path, tex_name, images).map(|(handle, _)| handle)
                 })
             })
         };

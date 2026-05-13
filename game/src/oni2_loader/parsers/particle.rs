@@ -96,7 +96,7 @@ pub fn parse_ptx(
         match key.as_str() {
             "TextureName" => {
                 if let Some(tex_name) = p.read_string_opt("TextureName") {
-                    if let Some((h, _)) = crate::oni2_loader::parsers::texture::load_tga_texture(
+                    if let Some((h, _)) = crate::oni2_loader::parsers::texture::load_texture(
                         "texture", &tex_name, images,
                     ) {
                         def.texture = h;

@@ -61,7 +61,7 @@ fn get_or_load_flash_texture(
         return Some(h.clone());
     }
     let (h, _) =
-        crate::oni2_loader::parsers::texture::load_tga_file("texture", "daisyalpha.tga", images)?; // TODO: THIS should be the .tex file, the TGA file is not ensured to be here
+        crate::oni2_loader::parsers::texture::load_texture("texture", "daisyalpha", images)?;
     cache.0 = Some(h.clone());
     Some(h)
 }

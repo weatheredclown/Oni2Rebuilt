@@ -45,11 +45,15 @@ pub fn fight_camera_system(
             channel.desired_azimuth = channel.current_focus_azimuth;
         }
 
-        // Adjust desired distance natively based on running
+        // Push the camera back when the player is moving — gives a
+        // wider view during chases.  No idle pull-in: standing still
+        // used to drift the camera toward the lower clamp (2 m from
+        // the focus, which sits at chest height), parking it inside
+        // the player's face.  Letting `desired_distance` hold its
+        // current value while idle keeps the framing wherever the
+        // last action left it.
         if channel.is_moving {
             channel.desired_distance += 0.5 * dt;
-        } else {
-            channel.desired_distance -= 0.5 * dt;
         }
 
         // Z-Lock

@@ -3,7 +3,7 @@
  *
  * decode_tex: decodes the ONI2 proprietary .tex format (various pixel types:
  * RGBA4444, RGBA5551, RGB565, A8, etc.) into raw RGBA8 bytes.
- * load_tga_texture: loads a .tga file from the VFS into a Bevy Image handle.
+ * load_texture: loads a texture file from the VFS into a Bevy Image handle.
  * Used by spawn.rs and layout_loader.rs when building StandardMaterial instances.
  */
 use bevy::prelude::*;
@@ -205,7 +205,7 @@ pub fn load_tga_file(
     Some((images.add(image), has_alpha))
 }
 
-pub fn load_tga_texture(
+pub fn load_texture(
     entity_dir: &str,
     texture_name: &str,
     images: &mut Assets<Image>,
@@ -263,7 +263,7 @@ pub fn load_tga_texture(
                         "Shader {} redirects to texture {}",
                         shader_filename, actual_tex
                     );
-                    return load_tga_texture(entity_dir, actual_tex, images);
+                    return load_texture(entity_dir, actual_tex, images);
                 }
             }
         }

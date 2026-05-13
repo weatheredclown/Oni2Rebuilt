@@ -21,7 +21,7 @@ use crate::fight::fx_table::{AttackFxTable, FxSet};
 use crate::menu::AppState;
 use crate::oni2_loader::parsers::effect::{EffectDef, StrikeFxDef};
 use crate::oni2_loader::parsers::fxl;
-use crate::oni2_loader::parsers::texture::load_tga_texture;
+use crate::oni2_loader::parsers::texture::load_texture;
 use crate::oni2_loader::registries::{FxLibrary, load_global_registries};
 use crate::vfs;
 
@@ -168,7 +168,7 @@ fn setup_default_impact_strike(mut fx_lib: ResMut<FxLibrary>, mut images: ResMut
         return;
     }
 
-    let texture_handle = load_tga_texture("entity/strikefx", "bam", &mut images).map(|(h, _)| h);
+    let texture_handle = load_texture("entity/strikefx", "bam", &mut images).map(|(h, _)| h);
 
     let def = StrikeFxDef {
         name: fx_table::DEFAULT_IMPACT_STRIKE_NAME.to_string(),

@@ -8,7 +8,7 @@
  */
 use super::*;
 use crate::env_reflect_material::EnvReflectMaterial;
-use crate::oni2_loader::parsers::texture::load_tga_texture;
+use crate::oni2_loader::parsers::texture::load_texture;
 use crate::oni2_loader::utils::bone::{compute_inverse_bind_poses, is_model_local_heuristic};
 use crate::oni2_loader::utils::space;
 
@@ -31,7 +31,7 @@ fn build_pass_material(
         .unwrap_or(false);
 
     let (texture_handle, has_alpha) = match pass.texture_name.as_ref() {
-        Some(tex_name) => match load_tga_texture(entity_dir, tex_name, images) {
+        Some(tex_name) => match load_texture(entity_dir, tex_name, images) {
             Some((h, alpha)) => (Some(h), alpha),
             None => (None, false),
         },
@@ -1495,12 +1495,23 @@ pub fn spawn_oni2_entity_with_rotation(
                     Mesh3d(mesh_handle.clone()),
                     MeshMaterial3d(h),
                     Transform::default(),
+                    // Sub-mesh AABBs are computed from rest-pose vertex
+                    // positions, so the head/arms have small local AABBs
+                    // that don't cover their animated silhouette.  When
+                    // the camera punches in close (fight camera, tight
+                    // shots), those per-sub-mesh AABBs can fall outside
+                    // the frustum even though the body's larger AABB
+                    // still intersects — producing the "head/arms vanish
+                    // but the body stays" symptom.  Opt out per the same
+                    // pattern as the laser ribbon's dynamic verts.
+                    bevy::camera::visibility::NoFrustumCulling,
                 )),
                 PassMaterial::EnvReflect(h) => commands.spawn((
                     pass_name,
                     Mesh3d(mesh_handle.clone()),
                     MeshMaterial3d(h),
                     Transform::default(),
+                    bevy::camera::visibility::NoFrustumCulling,
                 )),
             };
 
