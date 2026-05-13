@@ -689,7 +689,7 @@ pub fn scroni_sys_event_observer(
             use crate::oni2_loader::components::ActiveHeadIK;
             if let Ok(mut entity_cmds) = commands.get_entity(actor) {
                 entity_cmds.insert(ActiveHeadIK { task: task.clone() });
-                debug!("VM: Observed ControlHead {:?} onto actor {:?}", task, actor);
+                trace!("VM: Observed ControlHead {:?} onto actor {:?}", task, actor);
             }
         }
         ScrOniSysEvent::SetAiTarget { actor, target } => {

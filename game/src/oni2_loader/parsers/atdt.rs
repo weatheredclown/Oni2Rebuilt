@@ -7,9 +7,7 @@
  * attack_sync_system and hit_detection_system.
  */
 use super::block_parser::BlockParser;
-use crate::oni2_loader::utils::space::{
-    bevy_to_oni2_yaw_rads, oni2_to_bevy_yaw_rads, wrap_angle_to_pi,
-};
+use crate::oni2_loader::utils::space::{bevy_to_oni2_yaw_rads, oni2_to_bevy_yaw_rads};
 use bevy::prelude::*;
 
 /// `crStrikeReact::SetDistanceFromAttacker` mode values, ordered to match
@@ -290,23 +288,38 @@ pub fn parse_atdt_content(content: &str) -> AtdtData {
                             "maxradiusframe" => {
                                 strike.maxradiusframe = p.read_float(&a_key, strike.maxradiusframe)
                             }
+                            // Slice angles are intentionally NOT wrapped to
+                            // [-π, π].  The legacy editor widget allows
+                            // [-360°, +360°] (rb/src/fight/attackdata.cpp:979,
+                            // 983), and artists author angles past ±π to
+                            // express "this wedge wraps the back."  Modern
+                            // ATDTs use this convention: e.g.
+                            // `kno_atk_BCH1_lft_kick.atdt` carries
+                            // slicestart=-3.83 / sliceend=-2.47, both
+                            // outside [-π, π], but in the same rotation
+                            // cycle — so `SliceHeadingRadiansA = (a+b)/2`
+                            // resolves to ≈-π (directly behind), and the
+                            // half-width to ≈39°.  Wrapping each end
+                            // independently would split them across the
+                            // discontinuity and turn a 78° back wedge into
+                            // a 282° forward arc with the pivot 10 m off
+                            // the attacker.  Quat::from_rotation_y handles
+                            // out-of-range angles natively, so downstream
+                            // consumers don't care.
                             "slicestartradians" => {
                                 let def_oni2 = bevy_to_oni2_yaw_rads(strike.slicestartradians);
-                                strike.slicestartradians = wrap_angle_to_pi(
-                                    oni2_to_bevy_yaw_rads(p.read_float(&a_key, def_oni2)),
-                                );
+                                strike.slicestartradians =
+                                    oni2_to_bevy_yaw_rads(p.read_float(&a_key, def_oni2));
                             }
                             "sliceendradians" => {
                                 let def_oni2 = bevy_to_oni2_yaw_rads(strike.sliceendradians);
-                                strike.sliceendradians = wrap_angle_to_pi(
-                                    oni2_to_bevy_yaw_rads(p.read_float(&a_key, def_oni2)),
-                                );
+                                strike.sliceendradians =
+                                    oni2_to_bevy_yaw_rads(p.read_float(&a_key, def_oni2));
                             }
                             "sliceheadingradiansb" => {
                                 let def_oni2 = bevy_to_oni2_yaw_rads(strike.sliceheadingradiansb);
-                                strike.sliceheadingradiansb = wrap_angle_to_pi(
-                                    oni2_to_bevy_yaw_rads(p.read_float(&a_key, def_oni2)),
-                                );
+                                strike.sliceheadingradiansb =
+                                    oni2_to_bevy_yaw_rads(p.read_float(&a_key, def_oni2));
                             }
                             "headingnotlockedtotarget" => {
                                 strike.headingnotlockedtotarget = p.read_i32(
@@ -342,18 +355,20 @@ pub fn parse_atdt_content(content: &str) -> AtdtData {
                                     p.read_i32(&a_key, if strike.can_redirect { 1 } else { 0 }) != 0
                             }
                             "endrotationnotches" => {
-                                // Notches are integer counts of NOTCH_RADIANS (PI/4) yaw
-                                // applied via `Quat::from_rotation_y(n * NOTCH_RADIANS)` in
-                                // rotation_notches_system.  Since the same PI/4 constant is
-                                // used as a raw Bevy angle downstream, we must flip the sign
-                                // here to match the Oni2→Bevy yaw inversion
-                                // (`oni2_to_bevy_yaw_rads` negates) — same pattern as the
-                                // sibling `slicestartradians`/`sliceendradians`/
-                                // `sliceheadingradiansb` conversions above.  Authored Oni2
-                                // CCW notches thus come out as Bevy-correct notches at every
-                                // use site with no additional conversion.
-                                let raw = p.read_i32(&a_key, -strike.end_rotation_notches);
-                                strike.end_rotation_notches = -raw;
+                                // The legacy value is stored as-authored — no Oni2→Bevy
+                                // sign flip.  The post-attack rotation is applied via
+                                // `Quat::from_rotation_y(notches * NOTCH_RADIANS)` in
+                                // `rotation_notches_system`, and the file's CW-positive
+                                // convention happens to produce visually-correct
+                                // results when fed directly through Bevy's CCW-positive
+                                // `from_rotation_y` for the combo cases that exist in
+                                // the shipped data.  An earlier commit (07c5c9b)
+                                // negated this by analogy with the slice-angle yaw
+                                // conversion, but that broke the JAB_RIGHT →
+                                // ELBOW_SPIN_RIGHT combo end-rotation by 180° —
+                                // see the post-mortem in `notches-apply` debug logs.
+                                strike.end_rotation_notches =
+                                    p.read_i32(&a_key, strike.end_rotation_notches);
                             }
                             "stoptrackframe" => {
                                 strike.stop_track_frame =
@@ -605,5 +620,153 @@ mod class_tests {
         assert_eq!(d.target_class, Some(AttackTarget::Head));
         let d = parse_atdt_content("targetclass 3\n");
         assert_eq!(d.target_class, Some(AttackTarget::Legs));
+    }
+}
+
+#[cfg(test)]
+mod end_rotation_notches_tests {
+    use super::*;
+    use bevy::math::{Quat, Vec3};
+
+    // Regression suite for the JAB_RIGHT → ELBOW_SPIN_RIGHT bug:
+    // commit 07c5c9b added a `let raw = -...; -raw` negate to the
+    // endrotationnotches parser by analogy with the slice-angle yaw
+    // conversion.  That broke the post-attack rotation by 180° because
+    // notches have a different sign convention than the slice yaw —
+    // they pre-multiply NOTCH_RADIANS (π/4) which is itself unsigned,
+    // and the file value's CW-positive convention happens to align
+    // visually with Bevy's CCW-positive `Quat::from_rotation_y` when
+    // fed through directly.  These tests pin the post-revert behavior.
+
+    #[test]
+    fn endrotationnotches_passes_through_unchanged_negative() {
+        // Real value from kno_atk_comb_rht_p_elbowLH.atdt (mapped to
+        // ANIMATTACK_ELBOW_SPIN_RIGHT).  Must NOT be negated by the
+        // parser.
+        let src = r#"
+strike {
+    framenum 0
+    frameduration 1
+    endrotationnotches -2
+}
+"#;
+        let data = parse_atdt_content(src);
+        let strike = data.strike.expect("strike block should parse");
+        assert_eq!(
+            strike.end_rotation_notches, -2,
+            "file value `-2` must be preserved as-is; if this is `+2` the parser's negate was reintroduced",
+        );
+    }
+
+    #[test]
+    fn endrotationnotches_passes_through_unchanged_positive() {
+        // Real value from kno_swp_FRH_BCH.atdt (mapped to
+        // ANIMATTACK_SWEEP_RIGHT).  Positive notches must also pass
+        // through unchanged.
+        let src = "strike {\n    framenum 0\n    frameduration 1\n    endrotationnotches 3\n}";
+        let data = parse_atdt_content(src);
+        let strike = data.strike.expect("strike block should parse");
+        assert_eq!(strike.end_rotation_notches, 3);
+    }
+
+    #[test]
+    fn endrotationnotches_zero_is_zero() {
+        // The vast majority of attacks (342/363 shipped ATDTs) have
+        // endrotationnotches 0 — no post-attack rotation.
+        let src = "strike {\n    framenum 0\n    frameduration 1\n    endrotationnotches 0\n}";
+        let data = parse_atdt_content(src);
+        let strike = data.strike.expect("strike block should parse");
+        assert_eq!(strike.end_rotation_notches, 0);
+    }
+
+    /// Helper: NOTCH_RADIANS is π/4, matching `fight::systems::NOTCH_RADIANS`.
+    /// Hardcoding the constant locally avoids a cross-crate test
+    /// dependency for this parser-side suite.
+    const NOTCH_RADIANS: f32 = std::f32::consts::FRAC_PI_4;
+
+    #[test]
+    fn negative_notches_rotate_visually_right_in_bevy() {
+        // Pipeline contract: file value `-2` should produce a 90°
+        // VISUAL right turn when applied to fighter.facing via
+        // `Quat::from_rotation_y(notches * NOTCH_RADIANS) * facing`.
+        // Bevy's `from_rotation_y(-π/2)` is CW from above, which takes
+        // NEG_Z (forward) to POS_X (right) — that's the user-perceived
+        // "right turn."
+        let notches: i32 = -2;
+        let rotation = Quat::from_rotation_y(notches as f32 * NOTCH_RADIANS);
+        let rotated = rotation * Vec3::NEG_Z;
+        assert!(
+            rotated.dot(Vec3::X) > 0.99,
+            "notches=-2 applied to forward (NEG_Z) should produce a vector close to POS_X (right); got {:?}",
+            rotated,
+        );
+    }
+
+    #[test]
+    fn positive_notches_rotate_visually_left_in_bevy() {
+        // Mirror of the above: file value `+2` should produce a 90°
+        // VISUAL left turn — NEG_Z (forward) → NEG_X (left).
+        let notches: i32 = 2;
+        let rotation = Quat::from_rotation_y(notches as f32 * NOTCH_RADIANS);
+        let rotated = rotation * Vec3::NEG_Z;
+        assert!(
+            rotated.dot(Vec3::NEG_X) > 0.99,
+            "notches=+2 applied to forward (NEG_Z) should produce a vector close to NEG_X (left); got {:?}",
+            rotated,
+        );
+    }
+
+    #[test]
+    fn elbow_spin_right_end_rotation_lands_visually_right() {
+        // Integration test against the actual ELBOW_SPIN_RIGHT data
+        // from the user's reported bug.  Pre-bug behavior: file -2
+        // produced a rightward visual rotation.  The 07c5c9b commit
+        // flipped it to leftward (180° wrong).  This test verifies the
+        // full pipeline (file value → parser → rotation_notches math)
+        // produces a rightward turn when applied to a fighter facing
+        // forward.
+        let src = "strike {\n    framenum 0\n    frameduration 1\n    endrotationnotches -2\n}";
+        let strike = parse_atdt_content(src).strike.unwrap();
+        let rotation =
+            Quat::from_rotation_y(strike.end_rotation_notches as f32 * NOTCH_RADIANS);
+        let rotated = rotation * Vec3::NEG_Z;
+        assert!(
+            rotated.dot(Vec3::X) > 0.99,
+            "ELBOW_SPIN_RIGHT-style notches=-2 must rotate facing-forward (NEG_Z) to facing-right (POS_X); got {:?} — if this fails, the parser sign-flip was reintroduced (see commit 07c5c9b)",
+            rotated,
+        );
+    }
+
+    #[test]
+    fn sweep_right_end_rotation_lands_visually_left() {
+        // Counterpoint: kno_swp_FRH_BCH.atdt (ANIMATTACK_SWEEP_RIGHT)
+        // has endrotationnotches 3.  With the post-revert pipeline,
+        // this produces +3 × π/4 = 3π/4 radians CCW = a leftward
+        // rotation of ~135°.  This is the ONE attack where the missing
+        // EndWithMirror XOR could in theory produce a different result
+        // — see the gait-mirror investigation in the chat history.
+        // Test pinned to current behavior; if SWEEP_RIGHT feels wrong
+        // in play, this test will catch a fix that changes its
+        // direction.
+        let src = "strike {\n    framenum 0\n    frameduration 1\n    endrotationnotches 3\n}";
+        let strike = parse_atdt_content(src).strike.unwrap();
+        let rotation =
+            Quat::from_rotation_y(strike.end_rotation_notches as f32 * NOTCH_RADIANS);
+        let rotated = rotation * Vec3::NEG_Z;
+        // 135° CCW from NEG_Z lands in the (NEG_X, POS_Z) quadrant —
+        // back-and-left.  Both components positive in (-X, +Z) ≈
+        // (0.71, 0, 0.71)? Wait: cos/sin signs — let me just check
+        // the resulting direction has BOTH a left component and a
+        // back component.
+        assert!(
+            rotated.x < -0.5,
+            "SWEEP_RIGHT notches=+3 should leave a strong leftward (NEG_X) component; got x={}",
+            rotated.x,
+        );
+        assert!(
+            rotated.z > 0.5,
+            "SWEEP_RIGHT notches=+3 should leave a strong backward (POS_Z) component; got z={}",
+            rotated.z,
+        );
     }
 }

@@ -66,9 +66,9 @@ use crate::menu::AppState;
 
 pub use components::{MainAction, sub_state_0};
 pub use events::{
-    ActionEndedMessage, ActionStartedMessage, AnimStartedMessage, ControlAnimMessage, DropMessage,
-    EndActionMessage, HeadIkModeMessage, JumpImpulseMessage, PlayDieMessage, PlayReactMessage,
-    SetPickupMatrixMessage, StartActionMessage,
+    ActionEndedMessage, ActionStartedMessage, AnimEndedMessage, AnimStartedMessage,
+    ControlAnimMessage, DropMessage, EndActionMessage, HeadIkModeMessage, JumpImpulseMessage,
+    PlayDieMessage, PlayReactMessage, SetPickupMatrixMessage, StartActionMessage,
 };
 
 pub struct AnimatorPlugin;
@@ -85,6 +85,7 @@ impl Plugin for AnimatorPlugin {
         app
             // --- Messages ---
             .add_message::<AnimStartedMessage>()
+            .add_message::<AnimEndedMessage>()
             .add_message::<StartActionMessage>()
             .add_message::<EndActionMessage>()
             .add_message::<ActionStartedMessage>()

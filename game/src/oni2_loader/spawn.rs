@@ -398,8 +398,6 @@ pub fn creature_movement_anim_system(
         Option<&crate::animator::components::ActionPlayer>,
     )>,
 ) {
-    const WALK_THRESHOLD: f32 = 0.5;
-    const RUN_THRESHOLD: f32 = 3.0;
     const MAX_RUN_SPEED: f32 = 6.0;
 
     for (

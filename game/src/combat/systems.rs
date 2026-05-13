@@ -16,7 +16,7 @@ use bevy::ecs::relationship::Relationship;
 use rb_shared::events::CombatEvent;
 
 use crate::fight::components::{BlockLibrary, BlockStatus, FighterState};
-use crate::fight::events::{ApplyRotationNotchesEvent, BlockFailedEvent, BlockSuccessEvent};
+use crate::fight::events::{BlockFailedEvent, BlockSuccessEvent};
 use crate::oni2_loader::animation::{AnimId, Oni2AnimLibrary, Oni2AnimState};
 use crate::oni2_loader::parsers::rct::ANIMREACT_NAMES;
 use crate::projectile_system::SpawnProjectileEvent;
@@ -25,7 +25,7 @@ use crate::telemetry::bridge::TelemetryChannel;
 use super::components::*;
 use super::events::*;
 
-const INVULN_DURATION: f64 = 0.2;
+
 /// Height of the physics capsule center above ground (capsule_half_height + snap_buffer).
 /// Must match the value used in spawn.rs / NeedsGroundSnap.
 const CAPSULE_CENTER_HEIGHT: f32 = 1.1;
@@ -44,24 +44,63 @@ pub fn attack_sync_system(
         &mut AttackState,
         &crate::oni2_loader::animation::Oni2AnimState,
         Option<&mut crate::animator::components::ActionPlayer>,
+        Option<&Fighter>,
     )>,
-    mut rotation_writer: MessageWriter<ApplyRotationNotchesEvent>,
 ) {
     for msg in reader.read() {
-        let Ok((mut attack_state, anim_state, ap_opt)) = query.get_mut(msg.entity) else {
+        let Ok((mut attack_state, anim_state, ap_opt, fighter_opt)) = query.get_mut(msg.entity)
+        else {
             continue;
         };
         let mut has_fire = false;
 
-        // New animation started!
+        // New animation started — log entry and (re)seed ActiveAttack.
+        //
+        // Note: `end_rotation_notches` is NO LONGER applied here.  It
+        // used to fire at the start of the NEXT animation, which left a
+        // one-frame visual gap where the new anim was already rendering
+        // at the un-rotated orientation.  The rotation is now applied
+        // by `apply_end_rotation_on_anim_end_system` via
+        // `AnimEndedMessage`, which fires the tick the PREVIOUS anim's
+        // phase advances past its last frame — *before* any system
+        // gets to switch to the next anim.  This system's only
+        // remaining job here is bookkeeping: clearing per-attack state
+        // and seeding the new attack's data.
+        let new_anim_name = anim_state
+            .current_anim_id
+            .as_ref()
+            .map(|id| id.to_string())
+            .unwrap_or_else(|| "<none>".to_string());
+        let new_strike_slice = anim_state
+            .anim
+            .attack_data
+            .as_ref()
+            .and_then(|d| d.strike.as_ref())
+            .map(|s| {
+                (
+                    s.slicestartradians,
+                    s.sliceendradians,
+                    s.stop_track_frame,
+                    s.spin,
+                    s.end_rotation_notches,
+                )
+            });
+        let cur_facing = fighter_opt.as_ref().map(|f| (f.facing.x, f.facing.z));
+        info!(
+            "STRIKE_DEBUG: anim-started entity={:?} new_anim='{}' cur_facing={:?} new_strike={:?}",
+            msg.entity, new_anim_name, cur_facing, new_strike_slice,
+        );
+
         if let Some(ref mut active) = attack_state.active_attack {
-            // Apply end_rotation_notches from the PREVIOUS attack if any
-            if active.end_rotation_notches != 0 {
-                rotation_writer.write(ApplyRotationNotchesEvent {
-                    entity: msg.entity,
-                    notches: active.end_rotation_notches,
-                });
-            }
+            // Reset per-attack state.  end_rotation_notches MAY still
+            // be non-zero here as a fallback for anims that ended
+            // without `update_oni2_animation` running its end-edge
+            // (e.g. attack interrupted by react / death / scripted
+            // anim swap before the phase advanced past the end).  Move
+            // the stale value into the new active so that the next
+            // anim-end path can still drain it, but DO NOT apply it —
+            // visual continuity is best preserved by skipping the
+            // rotation on an interrupted attack.
             active.end_rotation_notches = 0;
             active.hit_entities.clear();
             active.has_fired_projectile = false;
@@ -88,6 +127,99 @@ pub fn attack_sync_system(
             if let Some(mut ap) = ap_opt {
                 ap.weapon_state = crate::animator::components::WeaponState::Drawn;
             }
+        }
+    }
+}
+
+/// Apply the post-attack `end_rotation_notches` rotation the tick the
+/// attack animation crosses past its last frame — emitted by
+/// `update_oni2_animation` as `AnimEndedMessage`.
+///
+/// Critical timing: runs in `FixedUpdate` immediately AFTER
+/// `update_oni2_animation` (so it sees this tick's edge events) and
+/// BEFORE any system that would react to the anim ending by switching
+/// to a new anim (FSM tick / action_player tick / etc.).  This places
+/// the Fighter / Transform rotation BEFORE the next-anim's first
+/// rendered frame, eliminating the one-frame "flash to old facing"
+/// glitch.  Mirrors the C++ `crStrike::End()` call site
+/// (rb/src/fight/strike.cpp:217-233): the rotation is part of the
+/// outgoing strike's end, not the incoming anim's start.
+///
+/// We mutate Fighter.facing AND Transform.rotation (+ avian Rotation)
+/// inline using the same formula `fighter_rotation_sync_system` uses
+/// — that system runs later in FixedUpdate but the inline write keeps
+/// the Transform consistent for any system reading it before then.
+pub fn apply_end_rotation_on_anim_end_system(
+    mut reader: MessageReader<crate::animator::AnimEndedMessage>,
+    mut query: Query<(
+        &mut AttackState,
+        Option<&mut Fighter>,
+        Option<&mut Transform>,
+        Option<&mut avian3d::prelude::Rotation>,
+    )>,
+) {
+    for msg in reader.read() {
+        let Ok((mut attack_state, fighter_opt, transform_opt, avian_rot_opt)) =
+            query.get_mut(msg.entity)
+        else {
+            continue;
+        };
+        let Some(ref mut active) = attack_state.active_attack else {
+            continue;
+        };
+        let notches = active.end_rotation_notches;
+        if notches == 0 {
+            continue;
+        }
+        // Drain so we don't double-apply if anim-start fires later.
+        active.end_rotation_notches = 0;
+
+        let radians = notches as f32 * crate::fight::systems::NOTCH_RADIANS;
+        let rotation = Quat::from_rotation_y(radians);
+
+        if let Some(mut fighter) = fighter_opt {
+            let pre = fighter.facing;
+            fighter.facing = rotation * fighter.facing;
+            info!(
+                "STRIKE_DEBUG: end-rotation-notches-fire entity={:?} notches={} radians={:.3} pre_facing=({:.2},{:.2}) post_facing=({:.2},{:.2}) (on-anim-end)",
+                msg.entity,
+                notches,
+                radians,
+                pre.x, pre.z,
+                fighter.facing.x, fighter.facing.z,
+            );
+
+            // Mirror onto Transform + avian Rotation now so any reader
+            // that hits Transform before fighter_rotation_sync_system
+            // (which runs later this same FixedUpdate) sees the new
+            // rotation.  Formula matches `fighter_rotation_sync_system`.
+            if fighter.facing.length_squared() > 0.001 {
+                let dir = fighter.facing.normalize();
+                if let Some(mut transform) = transform_opt {
+                    transform.look_to(dir, Vec3::Y);
+                    transform.rotate_y(std::f32::consts::PI);
+                    if let Some(mut phys_rot) = avian_rot_opt {
+                        phys_rot.0 = transform.rotation;
+                    }
+                } else if let Some(mut phys_rot) = avian_rot_opt {
+                    let mut tmp = Transform::IDENTITY;
+                    tmp.look_to(dir, Vec3::Y);
+                    tmp.rotate_y(std::f32::consts::PI);
+                    phys_rot.0 = tmp.rotation;
+                }
+            }
+        } else {
+            // No Fighter — rotate Transform directly.
+            if let Some(mut transform) = transform_opt {
+                transform.rotation = rotation * transform.rotation;
+                if let Some(mut phys_rot) = avian_rot_opt {
+                    phys_rot.0 = transform.rotation;
+                }
+            }
+            info!(
+                "STRIKE_DEBUG: end-rotation-notches-fire entity={:?} notches={} radians={:.3} (no Fighter, Transform-only) (on-anim-end)",
+                msg.entity, notches, radians,
+            );
         }
     }
 }
@@ -255,9 +387,7 @@ pub fn hit_detection_system(
             if active_attack.hit_entities.contains(&target_entity) {
                 continue;
             }
-            if now < health.invulnerable_until {
-                continue;
-            }
+
 
             // Check FighterState phase-based invulnerability (crReactData.does_not_take_damage_after_phase)
             if let Some(fs) = target_fs_opt {
@@ -480,6 +610,10 @@ pub fn process_strike_connections_system(
 ) {
     for ev in events.read() {
         if let Ok(mut fs) = fs_query.get_mut(ev.attacker) {
+            info!(
+                "STRIKE_DEBUG: lock-set attacker={:?} target={:?} clear_st_after_first_use={} (headingnotlockedtotarget)",
+                ev.attacker, ev.target, ev.headingnotlockedtotarget,
+            );
             fs.strike_target = Some(ev.target);
             fs.clear_st_after_first_use = ev.headingnotlockedtotarget;
             // Dedup-add the hit target to this frame's pending list
@@ -554,9 +688,7 @@ pub fn injure_system(
             continue;
         };
 
-        if now < health.invulnerable_until {
-            continue;
-        }
+
 
         let is_env_hazard = msg.hit_type.eq_ignore_ascii_case("environmentalhazard");
 
@@ -1062,14 +1194,15 @@ pub fn fighter_rotation_sync_system(
 ) {
     for (_entity, fighter, mut transform, rot_opt) in &mut query {
         if fighter.facing.length_squared() > 0.001 {
-            // We use Y-up coordinates, but the model inherently faces local +Z
-            // (so it looks backwards natively). We must rotate such that its
-            // local +Z points ALONG fighter.facing.
-            let target_rot = Quat::from_rotation_arc(Vec3::Z, fighter.facing.normalize());
-            transform.rotation = target_rot;
-
+            // Bevy's look_to aligns -Z with the target direction.
+            // Oni2 models inherently face local +Z. We must rotate 180 degrees
+            // to get the mesh's face (+Z) pointing along fighter.facing.
+            let dir = fighter.facing.normalize();
+            transform.look_to(dir, Vec3::Y);
+            transform.rotate_y(std::f32::consts::PI);
+            
             if let Some(mut phys_rot) = rot_opt {
-                phys_rot.0 = target_rot;
+                phys_rot.0 = transform.rotation;
             }
         }
     }

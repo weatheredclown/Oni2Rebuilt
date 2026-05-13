@@ -3,6 +3,11 @@
 ## Project Structure & Module Organization
 Oni2Rebuilt is a Cargo workspace that unifies three crates: `game/` (Bevy client, asset tooling, and gameplay systems), `server/` (Axum/DataFusion telemetry backends), and `shared/` (protobuf schemas plus shared data utilities). Keep extracted ISO data such as `RB.DAT` outside the repo and pass its directory to commands via flags instead of committing binaries.
 
+## Important Distinctions between Bungee-developed Oni and Angel Studios-developed Oni 2
+The original Oni game developed by Bungee is a well understood and deeply reversed engineers. It shared no technical overlap with this code-base, and does not share any extentions/file formats/animation/scripting conventions in common.
+"Oni 1" had bsl files and other types that are irrelevant even though your corpus/internet search results may suggest
+these file types and well known quirks or system behaviors when writing Oni code or mods. DO NOT CONFUSE THESE SYSTEMS.
+
 ## Build, Test, and Development Commands
 - `cargo build --workspace` — compile every crate using the optimized-deps dev profile in `Cargo.toml`.
 - `cargo run --bin rb-game -- --dat path/to/iso` — launch the client; add `--path custom/raw` to override assets for quick iteration.

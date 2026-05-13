@@ -49,6 +49,34 @@ pub struct AnimStartedMessage {
 }
 
 // ---------------------------------------------------------------------------
+// AnimEndedMessage — anim-phase-crosses-end edge as an event
+// ---------------------------------------------------------------------------
+
+/// Fired the tick a non-looping animation's phase advances past its
+/// last frame — i.e. the frame the anim CLAMP fires inside
+/// `update_oni2_animation`.  Emitted *before* any downstream system
+/// gets a chance to switch to the next animation, so consumers (most
+/// notably the post-attack `end_rotation_notches` apply path) can
+/// mutate Fighter / Transform state on the same tick the anim wraps
+/// up — eliminating the one-frame visual flash where the new anim
+/// would otherwise render at the un-rotated orientation.
+///
+/// Mirrors the C++ call site: the rotation is part of the
+/// strike's end, not of the next strike's start.
+///
+/// Note: the message fires ONCE per anim end — the
+/// "just-ended-this-tick" edge is set when the anim's natural
+/// advancement would cross `num_frames - 1`, before the clamp.  A
+/// paused anim won't fire it (no advancement), and a looping anim
+/// won't fire it (no end).
+#[derive(Message, Clone, Debug)]
+pub struct AnimEndedMessage {
+    pub entity: Entity,
+    /// The anim that just ended.  Most non-degenerate cases have this set.
+    pub anim_id: Option<AnimId>,
+}
+
+// ---------------------------------------------------------------------------
 // Action dispatch
 // ---------------------------------------------------------------------------
 

@@ -5,7 +5,7 @@ use crate::ai::fsm::AiPadCommands;
 use crate::behavior::BehaviorRuntime;
 use crate::inventory::components::Inventory;
 
-/// High-fidelity port of `aiShooter::Update` from legacy C++.
+/// High-fidelity port from legacy C++.
 /// This system evaluates tactical positioning, line-of-sight (LOS),
 /// and trigger-control for AI entities armed with ranged weapons.
 pub fn ai_shooter_system(
@@ -23,9 +23,13 @@ pub fn ai_shooter_system(
 ) {
     let dt = time.delta_secs();
 
-    for (entity, mut cmds, mut shooter, fighter, inv_opt, mut behavior_rt_opt, self_tf) in &mut query {
-        let Some(inv) = inv_opt else { continue; };
-        
+    for (entity, mut cmds, mut shooter, fighter, inv_opt, mut behavior_rt_opt, self_tf) in
+        &mut query
+    {
+        let Some(inv) = inv_opt else {
+            continue;
+        };
+
         // If we don't have a weapon, the shooter subsystem goes dormant.
         if inv.current_weapon_entity().is_none() {
             shooter.state = 0; // STATE_INIT
@@ -53,7 +57,7 @@ pub fn ai_shooter_system(
         let self_pos = self_tf.translation();
         let tgt_pos = tgt_tf.translation();
         let dist_sq = self_pos.distance_squared(tgt_pos);
-        
+
         // -------------------------------------------------------------------
         // Simplified tactical firing state machine (MVP)
         // -------------------------------------------------------------------

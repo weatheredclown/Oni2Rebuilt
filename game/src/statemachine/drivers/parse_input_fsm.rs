@@ -77,11 +77,8 @@ pub fn parse_input_fsm<D: SmDriver>(
 
                 if !name.is_empty() {
                     if depth != 0 {
-                        bevy::log::warn!(
-                            "input_fsm parser: state '#{}' found at brace depth {} — \
-                             likely an unclosed `{{` in the previous state.  Resyncing.",
-                            name, depth
-                        );
+                        // Narrow exception for shipped FSMs: a new `#state` implicitly
+                        // closes any unterminated `if {}` blocks from the previous state.
                         depth = 0;
                     }
                     state_index.insert(name.clone(), sm_states.len());

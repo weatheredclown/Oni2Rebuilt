@@ -1247,6 +1247,7 @@ pub fn update_oni2_animation(
         Option<&mut avian3d::prelude::LinearVelocity>,
         Option<&mut avian3d::prelude::AngularVelocity>,
     )>,
+    mut anim_ended_writer: MessageWriter<crate::animator::AnimEndedMessage>,
 ) {
     for (entity, mut anim_state, debug_skel, render_offset, asleep_opt) in &mut anim_query {
         // Diagnostic: dump every anim transition's playback config exactly
@@ -1286,6 +1287,8 @@ pub fn update_oni2_animation(
             anim_state.pending_step = 0;
         } else {
             // Advance time
+            let last_frame = (num_frames as f32 - 1.0).max(0.0);
+            let prev_time = anim_state.current_time;
             anim_state.current_time +=
                 time.delta_secs() * anim_state.fps * anim_state.speed_multiplier;
             if anim_state.looping {
@@ -1293,7 +1296,25 @@ pub fn update_oni2_animation(
                     anim_state.current_time %= num_frames as f32;
                 }
             } else {
-                anim_state.current_time = anim_state.current_time.min(num_frames as f32 - 1.0);
+                // Edge-trigger: emit `AnimEndedMessage` the FIRST tick a
+                // non-looping anim's natural advancement would cross its
+                // last frame.  Done BEFORE the clamp so consumers
+                // (post-attack `end_rotation_notches` apply, etc.) get a
+                // chance to mutate Fighter / Transform state in the same
+                // FixedUpdate iteration the anim ends — fixing the
+                // one-frame visual flash where the new anim would
+                // otherwise render at the un-rotated orientation.
+                //
+                // `prev_time < last_frame` gates this to a single edge:
+                // an anim already pinned at the last frame (e.g. holding
+                // pose) doesn't re-fire.
+                if anim_state.current_time > last_frame && prev_time < last_frame {
+                    anim_ended_writer.write(crate::animator::AnimEndedMessage {
+                        entity,
+                        anim_id: anim_state.current_anim_id,
+                    });
+                }
+                anim_state.current_time = anim_state.current_time.min(last_frame);
             }
         }
         let frame_idx = (anim_state.current_time as usize).min(anim_state.anim.frames.len() - 1);

@@ -157,6 +157,49 @@ pub fn fighter_state_update_system(
 }
 
 // ---------------------------------------------------------------------------
+// strike_debug_facing_watcher
+// ---------------------------------------------------------------------------
+
+/// Diagnostic system: logs `fighter.facing` changes between ticks for
+/// every Fighter entity.  Intended for tracking down which system is
+/// rotating a fighter during an attack.  Only logs when facing changes
+/// by more than a tiny threshold so it doesn't spam unchanging frames.
+///
+/// Runs LAST in FixedUpdate so it captures the final post-tick value
+/// (after all other systems have had a chance to mutate facing).
+///
+/// Remove or gate on a feature flag once the bug is found.
+pub fn strike_debug_facing_watcher(
+    time: Res<Time>,
+    mut last_facing: Local<bevy::ecs::entity::EntityHashMap<Vec3>>,
+    query: Query<(Entity, &Fighter, Option<&Oni2AnimState>)>,
+) {
+    let t = time.elapsed_secs();
+    for (entity, fighter, anim_opt) in &query {
+        let prev = last_facing.get(&entity).copied().unwrap_or(fighter.facing);
+        let delta = fighter.facing.distance_squared(prev);
+        if delta > 1e-4 {
+            let anim_name = anim_opt
+                .and_then(|a| a.current_anim_id.as_ref())
+                .map(|id| id.to_string())
+                .unwrap_or_else(|| "<none>".to_string());
+            let anim_frame = anim_opt.map(|a| a.current_time).unwrap_or(0.0);
+            info!(
+                "STRIKE_DEBUG: facing-changed entity={:?} t={:.3} anim='{}' frame={:.2} prev=({:.3},{:.3}) cur=({:.3},{:.3}) delta_sq={:.6}",
+                entity,
+                t,
+                anim_name,
+                anim_frame,
+                prev.x, prev.z,
+                fighter.facing.x, fighter.facing.z,
+                delta,
+            );
+        }
+        last_facing.insert(entity, fighter.facing);
+    }
+}
+
+// ---------------------------------------------------------------------------
 // block_success_system
 // ---------------------------------------------------------------------------
 
@@ -556,7 +599,16 @@ pub fn attack_spin_system(
         // The original Oni2 game runs at 60 fps, so spin × 60 × dt gives correct world-rate.
         let spin_rads = strike.spin * 60.0 * dt;
         let rotation = Quat::from_rotation_y(spin_rads);
+        let pre = fighter.facing;
         fighter.facing = rotation * fighter.facing;
+        info!(
+            "STRIKE_DEBUG: spin-apply spin={:.4} rads_this_tick={:.4} pre_facing=({:.2},{:.2}) post_facing=({:.2},{:.2}) frame={:.2}",
+            strike.spin,
+            spin_rads,
+            pre.x, pre.z,
+            fighter.facing.x, fighter.facing.z,
+            frame,
+        );
     }
 }
 
@@ -604,6 +656,62 @@ pub fn fighter_turn_lerp_system(
     }
 }
 
+/// Compute the slice-heading angle for the current frame of an active
+/// strike.  Mirrors the midpoint logic in `EvaluatedWedge::evaluate`:
+/// `slice_a = (slicestart + sliceend) / 2`, optionally sweep-lerped
+/// toward `sliceheadingradiansb` while `SweepHeading != 0`.
+///
+/// Extracted from `update_fighter_strike_facing_system` so we can unit-test
+/// the rotation math without ECS scaffolding.
+pub fn current_slice_heading(
+    strike: &crate::oni2_loader::parsers::atdt::AtdtStrike,
+    current_time: f32,
+) -> f32 {
+    let slice_a = (strike.slicestartradians + strike.sliceendradians) * 0.5;
+    if strike.sweepheading != 0 {
+        let sweep_t = if strike.frameduration > 0.0 {
+            ((current_time - strike.framenum) / strike.frameduration).clamp(0.0, 1.0)
+        } else {
+            1.0
+        };
+        slice_a + (strike.sliceheadingradiansb - slice_a) * sweep_t
+    } else {
+        slice_a
+    }
+}
+
+/// Compute the world-space `fighter.facing` direction that orients an
+/// attacker so the wedge for the current strike lands on `target_pos`.
+///
+/// The wedge math in `EvaluatedWedge::evaluate` builds:
+///     wedge_world = Quat::from_rotation_y(slice_heading) * fighter.facing
+/// Solving for `fighter.facing` given a desired
+/// `wedge_world = (target - attacker).normalize()` yields the inverse
+/// rotation applied to `dir`:
+///     fighter.facing = Quat::from_rotation_y(-slice_heading) * dir
+///
+/// Equivalent to (and a port of) the C++ snippet at
+/// `rb/src/fight/fighter.cpp:1510-1519`:
+///     m.LookAt(target);
+///     m.RotateY(slice_heading);
+///     mv.SetWorldYRotation(GetRotationFromMatrix(m));
+///
+/// Returns `None` if `attacker_pos` and `target_pos` are at the same XZ
+/// position (degenerate `dir`).
+pub fn strike_facing_for_target(
+    attacker_pos: Vec3,
+    target_pos: Vec3,
+    slice_heading: f32,
+) -> Option<Vec3> {
+    let mut dir = target_pos - attacker_pos;
+    dir.y = 0.0;
+    if dir.length_squared() < 1e-6 {
+        return None;
+    }
+    let dir_norm = dir.normalize();
+    Some(Quat::from_rotation_y(-slice_heading) * dir_norm)
+}
+
 pub fn update_fighter_strike_facing_system(
     mut transform_query: Query<&mut Transform>,
     mut attackers: Query<(
@@ -618,14 +726,66 @@ pub fn update_fighter_strike_facing_system(
             continue;
         };
 
-        if let Some(anim) = anim_opt {
-            if !fs.is_attacking(anim) {
-                fs.strike_target = None;
-                continue;
-            }
-        } else {
+        // Need the active anim to read the strike's slice heading and to
+        // gate the lock on actually-attacking.
+        let Some(anim) = anim_opt else {
+            info!(
+                "STRIKE_DEBUG: lock-clear entity={:?} reason=no-anim",
+                entity
+            );
             fs.strike_target = None;
             continue;
+        };
+        if !fs.is_attacking(anim) {
+            info!(
+                "STRIKE_DEBUG: lock-clear entity={:?} reason=not-attacking anim_id={:?} attack_data={} paused={} speed={}",
+                entity,
+                anim.current_anim_id,
+                anim.anim.attack_data.is_some(),
+                anim.paused,
+                anim.speed_multiplier,
+            );
+            fs.strike_target = None;
+            continue;
+        }
+
+        // Release tracking once the strike's anim has passed its
+        // `stop_track_frame` mark — this is what lets the
+        // `end_rotation_notches` rotation at attack-end take effect
+        // cleanly instead of being immediately overridden by the lock.
+        // Mirrors `crStrike::Update` (rb/src/fight/strike.cpp:929-940):
+        //
+        //     if (GetCurrentPhase() >= StopTrackPhase) {
+        //         Fighter->ClearStrikeTarget();
+        //     }
+        //
+        // The C++ gates this on `FLAG_CLEAR_STRIKETARGET` so an attack
+        // that's already locked onto a target from a *previous* hit
+        // keeps the lock through the whole anim.  We simplify: any
+        // strike with `stop_track_frame > 0` releases at that phase.
+        // Without this, the lock kept rotating the body each frame
+        // through the recovery tail, and the post-attack
+        // `end_rotation_notches` had nothing to act on — the next
+        // tick's strike_facing immediately reset facing back to the
+        // locked angle.
+        if let Some(strike) = anim.anim.attack_data.as_ref().and_then(|d| d.strike.as_ref()) {
+            if strike.stop_track_frame > 0.0 && anim.anim.num_frames > 1 {
+                let stop_track_phase = strike.stop_track_frame / anim.anim.num_frames as f32;
+                let cur_phase =
+                    anim.current_time / (anim.anim.num_frames as f32 - 1.0).max(1.0);
+                if cur_phase >= stop_track_phase {
+                    info!(
+                        "STRIKE_DEBUG: lock-clear entity={:?} reason=stop-track phase={:.3} >= stop_track_phase={:.3} (frame={} num_frames={})",
+                        entity,
+                        cur_phase,
+                        stop_track_phase,
+                        anim.current_time,
+                        anim.anim.num_frames,
+                    );
+                    fs.strike_target = None;
+                    continue;
+                }
+            }
         }
 
         let Ok(target_tf) = transform_query.get(target_entity) else {
@@ -635,14 +795,40 @@ pub fn update_fighter_strike_facing_system(
         let target_pos = target_tf.translation;
 
         if let Ok(attacker_tf) = transform_query.get_mut(entity) {
-            let mut dir = target_pos - attacker_tf.translation;
-            dir.y = 0.0;
-            if dir.length_squared() > 0.001 {
-                fighter.facing = dir.normalize();
+            let slice_heading = anim
+                .anim
+                .attack_data
+                .as_ref()
+                .and_then(|d| d.strike.as_ref())
+                .map(|strike| current_slice_heading(strike, anim.current_time))
+                .unwrap_or(0.0);
+
+            let pre_facing = fighter.facing;
+            if let Some(new_facing) =
+                strike_facing_for_target(attacker_tf.translation, target_pos, slice_heading)
+            {
+                fighter.facing = new_facing;
+                // Edge-trigger: only log when facing actually changes
+                // meaningfully (avoid spamming when locked steady).
+                if pre_facing.distance_squared(new_facing) > 1e-4 {
+                    info!(
+                        "STRIKE_DEBUG: lock-apply entity={:?} slice_heading={:.3} attacker_pos=({:.2},{:.2}) target_pos=({:.2},{:.2}) pre_facing=({:.2},{:.2}) new_facing=({:.2},{:.2})",
+                        entity,
+                        slice_heading,
+                        attacker_tf.translation.x, attacker_tf.translation.z,
+                        target_pos.x, target_pos.z,
+                        pre_facing.x, pre_facing.z,
+                        new_facing.x, new_facing.z,
+                    );
+                }
             }
         }
 
         if fs.clear_st_after_first_use {
+            info!(
+                "STRIKE_DEBUG: lock-clear entity={:?} reason=clear-st-after-first-use",
+                entity
+            );
             fs.strike_target = None;
         }
     }
@@ -924,10 +1110,24 @@ pub fn rotation_notches_system(
         let new_forward = if let Some(mut fighter) = fighter_opt {
             // Because we have fighter_rotation_sync_system, we only mutate
             // Fighter.facing here so it can natively propagate to Avian and Transform
+            let pre = fighter.facing;
             fighter.facing = rotation * fighter.facing;
+            info!(
+                "STRIKE_DEBUG: notches-apply entity={:?} notches={} radians={:.3} pre_facing=({:.2},{:.2}) post_facing=({:.2},{:.2})",
+                ev.entity,
+                ev.notches,
+                radians,
+                pre.x, pre.z,
+                fighter.facing.x, fighter.facing.z,
+            );
             fighter.facing
         } else {
+            let pre_rot = transform.rotation;
             transform.rotation = rotation * transform.rotation;
+            info!(
+                "STRIKE_DEBUG: notches-apply entity={:?} notches={} radians={:.3} (no Fighter — applied to Transform only) pre_rot={:?} post_rot={:?}",
+                ev.entity, ev.notches, radians, pre_rot, transform.rotation,
+            );
             transform.rotation * Vec3::Z
         };
 
@@ -1473,5 +1673,267 @@ pub fn react_data_apply_system(
         // Clear in_invuln so the new animation can enter the window fresh
         fs.in_invuln_phase = false;
         fs.react_anim = msg.react_enum;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Strike-facing math tests
+// ---------------------------------------------------------------------------
+//
+// Unit-test the math that orients an attacker's body to keep their
+// wedge on the target.  The four cardinal directions (forward, back,
+// left, right) are the high-value cases — earlier regressions:
+//   • +slice_heading instead of -slice_heading: forward/back looked
+//     fine (rotations self-inverse at 0 and ±π) but side strikes
+//     locked 180° wrong.
+//   • wrap_angle_to_pi on the slice angles in the parser: split
+//     back-kick slice across the ±π discontinuity, collapsing a 78°
+//     back wedge into a 282° forward arc.
+// Both bugs would be obvious in the test grid below.
+//
+// Geometry contract: when fighter.facing is fed back into
+// `EvaluatedWedge::evaluate` together with the same slice_heading, the
+// resulting wedge direction must point at the target.  Tests assert
+// this round-trip property directly.
+
+#[cfg(test)]
+mod strike_facing_tests {
+    use super::*;
+    use std::f32::consts::{FRAC_PI_2, PI};
+
+    /// Round-trip helper: given an attacker pos, target pos, and
+    /// slice_heading, compute the locked fighter.facing and verify the
+    /// resulting wedge (= Quat(slice_heading) * facing) actually points
+    /// at the target.
+    fn assert_wedge_lands_on_target(
+        attacker_pos: Vec3,
+        target_pos: Vec3,
+        slice_heading: f32,
+        label: &str,
+    ) {
+        let facing = strike_facing_for_target(attacker_pos, target_pos, slice_heading)
+            .expect("non-degenerate dir");
+        let wedge_dir = Quat::from_rotation_y(slice_heading) * facing;
+        let mut expected = target_pos - attacker_pos;
+        expected.y = 0.0;
+        let expected_norm = expected.normalize();
+        let dot = wedge_dir.dot(expected_norm);
+        assert!(
+            dot > 0.999,
+            "{}: wedge {:?} should align with dir-to-target {:?} (dot={})",
+            label,
+            wedge_dir,
+            expected_norm,
+            dot,
+        );
+    }
+
+    #[test]
+    fn forward_attack_faces_target() {
+        // Forward attack: slice_heading = 0, target in front (NEG_Z).
+        // Player should rotate to face target directly.
+        let facing = strike_facing_for_target(
+            Vec3::ZERO,
+            Vec3::new(0.0, 0.0, -5.0), // target straight ahead
+            0.0,
+        )
+        .unwrap();
+        assert!(
+            facing.dot(Vec3::NEG_Z) > 0.999,
+            "forward attack should leave fighter facing NEG_Z (toward target); got {:?}",
+            facing,
+        );
+        assert_wedge_lands_on_target(Vec3::ZERO, Vec3::new(0.0, 0.0, -5.0), 0.0, "forward");
+    }
+
+    #[test]
+    fn back_attack_faces_away_from_target() {
+        // Back kick: slice_heading = π in Bevy (after-parser midpoint
+        // of a back-wedge ATDT; equivalent to -π since rotations are
+        // mod 2π).  Target behind player (POS_Z).
+        // Expected: player keeps facing forward (NEG_Z), so the
+        // back-foot wedge stays glued to the target behind them.
+        let facing = strike_facing_for_target(
+            Vec3::ZERO,
+            Vec3::new(0.0, 0.0, 5.0), // target behind
+            PI,
+        )
+        .unwrap();
+        assert!(
+            facing.dot(Vec3::NEG_Z) > 0.999,
+            "back attack should leave fighter facing NEG_Z (forward); got {:?}",
+            facing,
+        );
+        assert_wedge_lands_on_target(Vec3::ZERO, Vec3::new(0.0, 0.0, 5.0), PI, "back");
+        // -π is the same rotation as +π — verify symmetry.
+        assert_wedge_lands_on_target(Vec3::ZERO, Vec3::new(0.0, 0.0, 5.0), -PI, "back-neg");
+    }
+
+    #[test]
+    fn right_attack_target_ends_on_right() {
+        // Right-side attack: slice_heading = -π/2 in Bevy (C++ +π/2
+        // CW → negated by oni2_to_bevy_yaw_rads).  Target on player's
+        // right (POS_X).  Expected: player faces forward (NEG_Z),
+        // target stays to their right.
+        let facing = strike_facing_for_target(
+            Vec3::ZERO,
+            Vec3::new(5.0, 0.0, 0.0), // target on right
+            -FRAC_PI_2,
+        )
+        .unwrap();
+        assert!(
+            facing.dot(Vec3::NEG_Z) > 0.999,
+            "right-side attack should leave fighter facing NEG_Z (forward); got {:?} (this fails if the earlier +slice_heading bug returns)",
+            facing,
+        );
+        assert_wedge_lands_on_target(
+            Vec3::ZERO,
+            Vec3::new(5.0, 0.0, 0.0),
+            -FRAC_PI_2,
+            "right",
+        );
+    }
+
+    #[test]
+    fn left_attack_target_ends_on_left() {
+        // Left-side attack: slice_heading = +π/2 in Bevy (C++ -π/2 CW
+        // → negated).  Target on player's left (NEG_X).
+        // Expected: player faces forward (NEG_Z), target on their left.
+        let facing = strike_facing_for_target(
+            Vec3::ZERO,
+            Vec3::new(-5.0, 0.0, 0.0), // target on left
+            FRAC_PI_2,
+        )
+        .unwrap();
+        assert!(
+            facing.dot(Vec3::NEG_Z) > 0.999,
+            "left-side attack should leave fighter facing NEG_Z (forward); got {:?}",
+            facing,
+        );
+        assert_wedge_lands_on_target(
+            Vec3::ZERO,
+            Vec3::new(-5.0, 0.0, 0.0),
+            FRAC_PI_2,
+            "left",
+        );
+    }
+
+    #[test]
+    fn diagonal_attack_round_trip() {
+        // Diagonal: slice_heading is the parsed midpoint of
+        // kno_atk_comb_rht_p_elbowLH (slicestart 1.26 / sliceend 1.58
+        // negate-and-sort → midpoint ≈ -1.42).  Target on player's
+        // forward-right at +X+(-Z).  The lock should rotate the player
+        // so this off-axis attack lands on the right diagonal target.
+        let slice_heading = -1.42_f32; // Bevy-space midpoint
+        let target = Vec3::new(3.5, 0.0, -2.0);
+        let facing =
+            strike_facing_for_target(Vec3::ZERO, target, slice_heading).unwrap();
+        assert_wedge_lands_on_target(Vec3::ZERO, target, slice_heading, "right-diagonal");
+
+        // The fighter should NOT end up facing the target directly
+        // (that would be the slice_heading = 0 case).  It should be
+        // rotated by +1.42 rad from the direction-to-target.  Verify
+        // by checking the cross product is non-trivial.
+        let to_target = target.normalize();
+        let cross = facing.cross(to_target).y;
+        assert!(
+            cross.abs() > 0.1,
+            "diagonal attack facing {:?} should NOT align with to_target {:?}; got cross.y={}",
+            facing,
+            to_target,
+            cross,
+        );
+    }
+
+    #[test]
+    fn slice_heading_midpoint_back_kick_data() {
+        // Regression: real back-kick ATDT data
+        // (kno_atk_BCH1_lft_kick.atdt) carries angles outside
+        // [-π, π] — slicestart=-3.829, sliceend=-2.467 in the file.
+        // After `oni2_to_bevy_yaw_rads` (negate only — no wrap):
+        // +3.829, +2.468; sort: +2.468, +3.829; midpoint ≈ +3.149 ≈ π.
+        // `current_slice_heading` should NOT collapse this to 0.
+        let strike = crate::oni2_loader::parsers::atdt::AtdtStrike {
+            framenum: 0.0,
+            frameduration: 1.0,
+            slicestartradians: 2.468,
+            sliceendradians: 3.829,
+            sliceheadingradiansb: 0.0,
+            sweepheading: 0,
+            ..Default::default()
+        };
+        let h = current_slice_heading(&strike, 0.5);
+        // Should resolve to ≈π regardless of sign — rotation-equivalent
+        // to "directly behind."
+        let heading_vec = Quat::from_rotation_y(h) * Vec3::NEG_Z;
+        assert!(
+            heading_vec.dot(Vec3::Z) > 0.95,
+            "back-kick slice midpoint should produce a back-facing heading; got {:?}",
+            heading_vec,
+        );
+    }
+
+    #[test]
+    fn slice_heading_midpoint_right_elbow_data() {
+        // Regression: real right-elbow ATDT (kno_atk_comb_rht_p_elbowLH).
+        // File values slicestart=1.26 / sliceend=1.58 are in the
+        // principal range, so `oni2_to_bevy_yaw_rads` just negates
+        // them → -1.26 / -1.58; sort → -1.58 / -1.26; midpoint ≈ -1.42.
+        // Heading direction should be roughly right (POS_X) — that's
+        // what a right-side wedge looks like in Bevy after the negate.
+        let strike = crate::oni2_loader::parsers::atdt::AtdtStrike {
+            framenum: 0.0,
+            frameduration: 1.0,
+            slicestartradians: -1.58,
+            sliceendradians: -1.26,
+            sliceheadingradiansb: 0.0,
+            sweepheading: 0,
+            ..Default::default()
+        };
+        let h = current_slice_heading(&strike, 0.5);
+        let heading_vec = Quat::from_rotation_y(h) * Vec3::NEG_Z;
+        assert!(
+            heading_vec.dot(Vec3::X) > 0.9,
+            "right-elbow slice should produce a right-facing heading; got {:?}",
+            heading_vec,
+        );
+    }
+
+    #[test]
+    fn degenerate_dir_returns_none() {
+        // If attacker and target are at the same XZ position, dir is
+        // zero — `strike_facing_for_target` should return None so the
+        // caller skips the facing update (avoiding NaN propagation).
+        assert!(strike_facing_for_target(Vec3::ZERO, Vec3::new(0.0, 5.0, 0.0), 0.0).is_none());
+        assert!(strike_facing_for_target(Vec3::ZERO, Vec3::ZERO, 0.0).is_none());
+    }
+
+    #[test]
+    fn sweep_heading_lerps_across_attack() {
+        // SweepHeading on means slice_heading lerps from slice_a (the
+        // midpoint at attack start) toward sliceheadingradiansb across
+        // the frameduration.  At t=framenum the lerp should be 0
+        // (slice_a), at t=framenum+frameduration it should be 1
+        // (sliceheadingradiansb).
+        let strike = crate::oni2_loader::parsers::atdt::AtdtStrike {
+            framenum: 10.0,
+            frameduration: 4.0,
+            slicestartradians: -0.1,
+            sliceendradians: 0.1, // midpoint 0
+            sliceheadingradiansb: PI, // sweep to behind
+            sweepheading: 1,
+            ..Default::default()
+        };
+        let h_start = current_slice_heading(&strike, 10.0); // sweep_t = 0
+        assert!((h_start - 0.0).abs() < 1e-4, "start of sweep is slice_a");
+        let h_end = current_slice_heading(&strike, 14.0); // sweep_t = 1
+        assert!((h_end - PI).abs() < 1e-4, "end of sweep is sliceheadingradiansb");
+        let h_mid = current_slice_heading(&strike, 12.0); // sweep_t = 0.5
+        assert!(
+            (h_mid - PI * 0.5).abs() < 1e-4,
+            "midpoint of sweep is halfway, got {}",
+            h_mid
+        );
     }
 }

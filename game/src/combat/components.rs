@@ -34,7 +34,7 @@ pub struct FighterId(pub Uuid);
 pub struct Health {
     pub current: f32,
     pub max: f32,
-    pub invulnerable_until: f64,
+
 }
 
 impl Health {
@@ -42,7 +42,7 @@ impl Health {
         Self {
             current: max,
             max,
-            invulnerable_until: 0.0,
+
         }
     }
 

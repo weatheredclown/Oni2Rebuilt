@@ -340,10 +340,14 @@ mod tests {
 
 
     #[test]
-    fn parsed_back_kick_atdt_lands_in_principal_range() {
+    fn parsed_back_kick_atdt_resolves_to_back_facing_wedge() {
         // Round-trip: a synthetic .atdt body with the real back-kick
-        // angles must parse to slice bounds that are inside [-π, π].
-        // This is the contract the runtime relies on.
+        // angles must parse to slice bounds whose midpoint is ≈ ±π
+        // (directly behind) and whose half-width is the intended narrow
+        // arc.  The parser is NOT allowed to wrap these to [-π, π]
+        // individually — that splits them across the discontinuity and
+        // collapses the wedge into the wrong-axis 280° arc that was
+        // the original bug (see EvaluatedWedge docs for the postmortem).
         let src = r#"
 strike {
     framenum 8.65
@@ -358,18 +362,32 @@ strike {
 "#;
         let data = crate::oni2_loader::parsers::atdt::parse_atdt_content(src);
         let strike = data.strike.expect("strike block should parse");
-        assert!(
-            strike.slicestartradians.abs() <= PI + 1e-5,
-            "slicestartradians {} out of [-π, π]",
-            strike.slicestartradians
-        );
-        assert!(
-            strike.sliceendradians.abs() <= PI + 1e-5,
-            "sliceendradians {} out of [-π, π]",
-            strike.sliceendradians
-        );
-        // Also: the parser's min/max swap means start <= end after parsing.
+        // After negate-only (no wrap), both should sit in the same
+        // rotation cycle (+3.1847 .. +3.3847).
         assert!(strike.slicestartradians <= strike.sliceendradians);
+        let mid = (strike.slicestartradians + strike.sliceendradians) * 0.5;
+        let half = (strike.sliceendradians - strike.slicestartradians).abs() * 0.5;
+        // The runtime feeds `mid` through `Quat::from_rotation_y` which
+        // handles out-of-range angles natively, so what matters is the
+        // resulting heading direction — not the raw radian value.  A
+        // back-facing wedge produces a slice heading dotting strongly
+        // with +Z when forward is -Z.
+        let heading = Quat::from_rotation_y(mid) * Vec3::NEG_Z;
+        let dot_back = heading.dot(Vec3::Z);
+        assert!(
+            dot_back > 0.95,
+            "slice heading {:?} should point back (+Z); dot(+Z) = {}",
+            heading,
+            dot_back,
+        );
+        // Half-width = 0.1 rad (~6°) — the narrow back arc the file
+        // authored.  If this comes out as ~141° (≈ π/2 × 0.9), the wrap
+        // is back and the wedge is broken.
+        assert!(
+            (half - 0.1).abs() < 0.01,
+            "half-width {} should be ~0.1 rad",
+            half
+        );
     }
 
     #[test]

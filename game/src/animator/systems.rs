@@ -217,8 +217,7 @@ pub(crate) fn build_jump_schedule(
             // behavior as the C++ `if (!(a1 || a2))` graceful fallback.
             AnimScheduleEntry::new("ANIMJUMP_RUN_DBL", sub_state_1::JUMP_SOMERSAULT)
                 .with_rate(main_rate("ANIMJUMP_RUN_DBL")),
-            AnimScheduleEntry::new("ANIMJUMP_RUN_2_EXT", sub_state_1::JUMP_SOMERSAULT)
-                .with_hold(),
+            AnimScheduleEntry::new("ANIMJUMP_RUN_2_EXT", sub_state_1::JUMP_SOMERSAULT).with_hold(),
         ],
         sub_state_0::JUMP_WALL_COMPRESS => vec![AnimScheduleEntry::new(
             "ANIMJUMP_RUN_WALL_COMPRESS",
@@ -1496,9 +1495,7 @@ pub fn drop_message_system(
 /// Per-tick: while an entity has PickupHitched, force its Transform to
 /// track the claw matrix.  Runs AFTER `pickup_matrix_system` so newly-
 /// hitched entities snap on the same frame they're picked up.
-pub fn pickup_sync_system(
-    mut query: Query<(&super::components::PickupHitched, &mut Transform)>,
-) {
+pub fn pickup_sync_system(mut query: Query<(&super::components::PickupHitched, &mut Transform)>) {
     for (hitch, mut tf) in &mut query {
         tf.translation = hitch.claw_translation - hitch.claw_rotation * hitch.offset;
         tf.rotation = hitch.claw_rotation;
