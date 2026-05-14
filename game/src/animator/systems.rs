@@ -351,9 +351,19 @@ fn try_start_action(
             let leaving = substate == sub_state_0::TRANSITION_FIGHTSTANCE_END;
 
             if leaving {
-                // Leaving fight stance: only valid if we're currently in it.
-                // No reject list applies — a fight-stance exit should always
-                // succeed when requested.
+                // Leaving fight stance.  Deny the exit while the actor
+                // is committed to a one-shot anim (react/getup/attack/
+                // evade) — otherwise FIGHT_TO_STAND would clobber the
+                // queued anim and pop the actor straight to standing.
+                // Mirrors the legacy `ActionEndFightStance` guard
+                // (`if (AnimList.IsPlaying()) return ACT_DENIED`).
+                // `fight_stance_exit_system` re-tries on the rising
+                // edge of "timed out AND not locked," so a react that
+                // runs past the timer deadline still exits stance the
+                // tick the react finishes.
+                if crate::combat::locked_movement(state) {
+                    return ActionResult::Denied;
+                }
                 ap.flags &= !action_flags::FIGHTSTANCE;
                 play_and_record(
                     "ANIMFIGHTSTANCE_FIGHT_TO_STAND",
@@ -370,8 +380,19 @@ fn try_start_action(
                 ap.flags &= !action_flags::OVERRIDELIST_FIGHTSTANCE;
                 ap.flags |= action_flags::FIGHTSTANCE;
 
+                // "Silent switch" — when the actor is committed to a
+                // one-shot (react/getup/attack/evade), set the
+                // FIGHTSTANCE flag but DO NOT touch sub_state_1 or
+                // overwrite the playing anim. Mirrors the legacy
+                // `ActionStartFightStance` `else` branch which silently
+                // overrides the gait blender's underlying anim while
+                // leaving `SubState1` whatever it was (REACT during a
+                // getup, ATTACK during a swing, etc.). The previous
+                // version of this arm forced sub_state_1 = IDLE here,
+                // which made `ap.is_reacting()` return false mid-getup
+                // — defeating every "don't interrupt the react" gate
+                // and letting the FSM/AI clobber the queued getup.
                 if crate::combat::locked_movement(state) {
-                    ap.record_new_substate_1(sub_state_1::IDLE);
                     return ActionResult::Succeeded;
                 }
 

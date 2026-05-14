@@ -1143,10 +1143,10 @@ pub fn fight_stance_entry_system(
 /// happens in `fighter_state_update_system`; this one just fires the edge.
 pub fn fight_stance_exit_system(
     mut writer: MessageWriter<StartActionMessage>,
-    query: Query<(Entity, &FighterState, Option<&ActionPlayer>)>,
-    mut was_timed_out: Local<bevy::ecs::entity::EntityHashMap<bool>>,
+    query: Query<(Entity, &FighterState, Option<&ActionPlayer>, Option<&Oni2AnimState>)>,
+    mut was_ready: Local<bevy::ecs::entity::EntityHashMap<bool>>,
 ) {
-    for (entity, fs, ap_opt) in &query {
+    for (entity, fs, ap_opt, anim_opt) in &query {
         let Some(ap) = ap_opt else {
             continue;
         };
@@ -1154,7 +1154,7 @@ pub fn fight_stance_exit_system(
         // anim is meaningless otherwise.  `in_fight_mode()` reads the synced
         // FighterState mirror which tracks the animator flag.
         if !ap.check_flags(ap_flags::FIGHTSTANCE) {
-            was_timed_out.insert(entity, false);
+            was_ready.insert(entity, false);
             continue;
         }
         // A corpse can be in FIGHTSTANCE at the moment of death (died mid-fight
@@ -1162,16 +1162,28 @@ pub fn fight_stance_exit_system(
         // the corpse and FIGHT_TO_STAND replaces the held death pose, popping
         // the body to standing.  Mirrors the DEAD check on the entry side.
         if ap.check_flags(ap_flags::DEAD) {
-            was_timed_out.insert(entity, false);
+            was_ready.insert(entity, false);
             continue;
         }
 
-        let timed_out = fs.leave_fight_stance_timer <= 0.0;
-        let prev = was_timed_out.get(&entity).copied().unwrap_or(false);
-        was_timed_out.insert(entity, timed_out);
+        // Block the exit while the actor is committed to a one-shot
+        // (react/getup/attack/evade). Without this, the leave timer
+        // can elapse mid-react and `FIGHT_TO_STAND` clobbers the
+        // queued getup animation. Mirrors the legacy
+        // `ActionEndFightStance` `if (AnimList.IsPlaying()) return
+        // ACT_DENIED` guard. The edge-trigger fires once the actor is
+        // both timed-out AND no longer locked, so a react that runs
+        // past the leave-timer deadline gracefully exits stance the
+        // tick the react finishes.
+        let locked = anim_opt
+            .map(crate::combat::locked_movement)
+            .unwrap_or(false);
+        let ready = fs.leave_fight_stance_timer <= 0.0 && !locked;
+        let prev = was_ready.get(&entity).copied().unwrap_or(false);
+        was_ready.insert(entity, ready);
 
-        // Edge-trigger: fire exactly once when the timer crosses 0.
-        if timed_out && !prev {
+        // Edge-trigger: fire exactly once on the rising edge of `ready`.
+        if ready && !prev {
             writer.write(StartActionMessage {
                 entity,
                 action: crate::animator::components::MainAction::FightStance,

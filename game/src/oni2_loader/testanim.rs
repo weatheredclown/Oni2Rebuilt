@@ -101,9 +101,12 @@ pub fn setup_testanim_scene(
         scoped.clone(),
     ));
 
-    // Orbit camera centered on character
+    // Orbit camera centered on character.  Target raised 2 m above the
+    // previous chest-height pivot so the starting view sits higher and
+    // catches the head + arms cleanly on tall anims (jump apex, getup
+    // tail, etc.) without a manual scroll.
     let orbit = OrbitCamera {
-        target: Vec3::new(0.0, 0.8, 0.0),
+        target: Vec3::new(0.0, 2.0, 0.0),
         distance: 3.0,
         yaw: 0.0,
         pitch: 0.15,
