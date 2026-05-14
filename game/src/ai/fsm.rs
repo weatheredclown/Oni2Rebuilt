@@ -131,10 +131,13 @@ pub fn ai_fsm_update_system(
         &mut Oni2AnimState,
         &mut Fighter,
         Option<&crate::combat::components::AboutToBeHit>,
+        Option<&crate::animator::components::ActionPlayer>,
     )>,
 ) {
     let dt = time.delta_secs();
-    for (entity, mut runtime, mut cmds, anim_lib, mut anim_state, mut fighter, about_opt) in &mut query {
+    for (entity, mut runtime, mut cmds, anim_lib, mut anim_state, mut fighter, about_opt, ap_opt)
+        in &mut query
+    {
         // --- Parrying reflex ---
         // Mirrors legacy `if (IsBeingAttacked()) Parry();` which forced BlockIndex = 0.
         // In our pipeline, synthesizing PADCMD_BLOCK forces the AI's fsm to transition to block.
@@ -202,24 +205,33 @@ pub fn ai_fsm_update_system(
         // the underlying combat pipeline picks up the newly-played
         // animation via its ATDT on the next tick regardless of who
         // kicked it off.
-        if let Some((anim_name, rotation_notches)) = &output.attack_anim {
-            info!("AI FSM: DoAttack → '{}' (entity {:?})", anim_name, entity);
-            do_attack(
-                anim_lib,
-                &mut anim_state,
-                &mut fighter,
-                anim_name,
-                *rotation_notches,
-            );
-        }
-        if let Some(anim_name) = &output.block_anim {
-            do_block(anim_lib, &mut anim_state, anim_name);
-        }
-        if let Some((anim_name, mirror)) = &output.evade_anim {
-            do_evade(anim_lib, &mut anim_state, anim_name, *mirror);
-        }
-        if let Some(anim_name) = &output.custom_anim {
-            do_custom_anim(anim_lib, &mut anim_state, anim_name);
+        //
+        // Gate the dispatch on `ap.is_reacting()` — while the actor is
+        // committed to a react+getup queue, swallow new anim requests
+        // so the getup isn't cut short. Mirrors the legacy
+        // `CanStartAttack` / `CanStartBlock` gates which return false
+        // during `IsReacting()`.
+        let is_reacting = ap_opt.is_some_and(|ap| ap.is_reacting());
+        if !is_reacting {
+            if let Some((anim_name, rotation_notches)) = &output.attack_anim {
+                info!("AI FSM: DoAttack → '{}' (entity {:?})", anim_name, entity);
+                do_attack(
+                    anim_lib,
+                    &mut anim_state,
+                    &mut fighter,
+                    anim_name,
+                    *rotation_notches,
+                );
+            }
+            if let Some(anim_name) = &output.block_anim {
+                do_block(anim_lib, &mut anim_state, anim_name);
+            }
+            if let Some((anim_name, mirror)) = &output.evade_anim {
+                do_evade(anim_lib, &mut anim_state, anim_name, *mirror);
+            }
+            if let Some(anim_name) = &output.custom_anim {
+                do_custom_anim(anim_lib, &mut anim_state, anim_name);
+            }
         }
 
         // Clear pulses — decision systems must re-set each tick.

@@ -670,7 +670,6 @@ pub fn action_start_system(
         &mut Oni2AnimState,
         Option<&JumpController>,
     )>,
-    mut fighter_query: Query<&mut crate::fight::components::FighterState>,
 ) {
     for msg in reader.read() {
         // Migration: actions registered in the new pipeline are handled
@@ -700,26 +699,14 @@ pub fn action_start_system(
             ActionResult::Failed
         };
 
-        // For React, append the pending getup anim as a second schedule
-        // entry.  Mirrors legacy `ActionStartReact` which queued
-        // react + getup as two batches
-        // of the same ACT_REACT action — the FSM stays in REACT for both
-        // and the schedule's auto-advance handles the visual transition.
-        // Pre-fix this was a separate `knockdown_getup_system` doing a
-        // bare `lib.play` outside the action pipeline, which raced the
-        // FSM (REACT timed out and hit IDLE before getup installed,
-        // teleporting the actor to standing).
-        if result == ActionResult::Succeeded
-            && msg.action == MainAction::React
-            && let Some(schedule) = schedule_out.as_mut()
-            && let Ok(mut fs) = fighter_query.get_mut(msg.entity)
-            && let Some(getup) = fs.pending_getup_anim.take()
-            && !getup.is_empty()
-        {
-            schedule
-                .entries
-                .push(AnimScheduleEntry::new(getup, sub_state_1::REACT));
-        }
+        // NOTE: combat-driven reactions don't flow through this system.
+        // `combat::hit_reaction_system` builds and installs the
+        // react+getup `AnimSchedule` directly from the
+        // `HitReactionMessage` it receives. If a future code path
+        // routes scripted reactions through this action pipeline (via
+        // `StartActionMessage { action: React, .. }`), it should query
+        // `ReactLibrary` here and push the getup as a second schedule
+        // entry the same way `hit_reaction_system` does.
 
         // Attach the multi-stage schedule (if built).  The
         // anim_schedule_tick_system picks it up next tick.

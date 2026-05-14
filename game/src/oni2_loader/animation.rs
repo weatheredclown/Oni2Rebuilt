@@ -287,6 +287,10 @@ pub struct Oni2AnimState {
     /// inside their normal Update/FixedUpdate systems and observe a
     /// clean single-tick pulse per anim transition.
     pub anim_just_started: bool,
+    /// Internal flag for root motion delta extraction. Set by `play_id` and cleared by
+    /// `update_oni2_animation` to ensure the first frame of root motion is zeroed out
+    /// and doesn't cause a teleport spike using the previous animation's root offset.
+    pub root_motion_just_started: bool,
     /// Physics/grounding state tracked for use by animation FX dispatch
     pub is_grounded: bool,
     pub material_stood_on: Option<String>,
@@ -437,6 +441,7 @@ impl Oni2AnimLibrary {
             // single-tick pulse this frame.  `reset_anim_transition_edges`
             // clears it at the end of the frame.
             state.anim_just_started = true;
+            state.root_motion_just_started = true;
 
             // Resize current_frame to match animation channel count
             let num_channels = anim.num_channels as usize;
@@ -1422,12 +1427,33 @@ pub fn update_oni2_animation(
         // when the anim didn't strip (non-stripping anims produce no root
         // motion signal — gameplay should treat delta==0 as "no anim-driven
         // displacement this tick").
-        anim_state.root_offset_prev_frame = anim_state.root_offset_this_frame;
-        anim_state.root_offset_this_frame = bone_result.stripped_root_offset;
+        if anim_state.root_motion_just_started {
+            anim_state.root_offset_prev_frame = bone_result.stripped_root_offset;
+            anim_state.root_offset_this_frame = bone_result.stripped_root_offset;
+            anim_state.root_motion_just_started = false;
+        } else {
+            anim_state.root_offset_prev_frame = anim_state.root_offset_this_frame;
+            anim_state.root_offset_this_frame = bone_result.stripped_root_offset;
+        }
 
         // Creature render offset (capsule Y compensation + facing)
         let y_offset = render_offset.map(|o| o.y_offset).unwrap_or(0.0);
         let facing = render_offset.map(|o| o.facing).unwrap_or(Quat::IDENTITY);
+
+        // Apply root motion displacement directly to the actor's Transform.
+        // This ensures animations with baked-in translation (e.g. knockdown
+        // throwbacks, lunges) physically move the character through the world.
+        let delta = anim_state.root_motion_delta();
+        if delta != Vec3::ZERO {
+            let bevy_delta = space::to_bevy_space_pos(delta);
+            if let Ok((mut tf, _, _)) = transform_query.get_mut(entity) {
+                // The delta extracted from the animation is in the same local coordinate
+                // space as the visual mesh (after to_bevy_space_pos).
+                // Multiply by the actual entity's world rotation to apply it along the heading!
+                let world_delta = tf.rotation * bevy_delta;
+                tf.translation += world_delta;
+            }
+        }
 
         // Update joint entity transforms for GPU skinning
         for (i, (rot, pos)) in bone_transforms.iter().enumerate() {

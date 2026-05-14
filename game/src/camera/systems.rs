@@ -75,6 +75,10 @@ pub fn camera_mode_toggle_system(
             let (yaw, pitch, _) = main_tf.rotation.to_euler(EulerRot::YXZ);
             commands.spawn((
                 Camera3d::default(),
+                bevy::post_process::motion_blur::MotionBlur {
+                    shutter_angle: 1.0,
+                    samples: 4,
+                },
                 Transform::from_translation(main_tf.translation).with_rotation(main_tf.rotation),
                 crate::camera::components::DebugFreeCamera {
                     yaw,

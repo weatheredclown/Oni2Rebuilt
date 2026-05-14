@@ -30,12 +30,14 @@ mod frontend;
 mod fx_system;
 mod fx_visuals;
 mod hud;
+mod imf_audio;
+#[cfg(feature = "intro_videos")]
+mod intro_video;
 mod inventory;
 mod laser;
 mod menu;
 mod mover;
 mod mpeg2_video;
-mod imf_audio;
 mod oni2_loader;
 mod player;
 mod projectile_system;
@@ -44,8 +46,6 @@ mod shadow_lod;
 mod statemachine;
 mod telemetry;
 mod weapons;
-#[cfg(feature = "intro_videos")]
-mod intro_video;
 pub use filesystem::dave_vfs;
 pub use filesystem::vfs;
 
@@ -205,9 +205,7 @@ fn main() {
     // back cleanly when focus returns.  Keeps focused mode at full FPS.
     app.insert_resource(WinitSettings {
         focused_mode: UpdateMode::Continuous,
-        unfocused_mode: UpdateMode::reactive_low_power(
-            std::time::Duration::from_millis(500),
-        ),
+        unfocused_mode: UpdateMode::reactive_low_power(std::time::Duration::from_millis(500)),
     });
 
     app.add_plugins(
@@ -468,7 +466,7 @@ fn setup_scene(
     // Attach player components to layout entity, or spawn a fallback capsule
     let player_id = if let Some(ref pi) = layout_player_info {
         let pad_fsm = pi.pad_fsm.clone().unwrap_or_else(|| "player".to_string());
-        
+
         let mut player_bundle = crate::player::PlayerIdentityBundle::new(
             pi.faction.clone().unwrap_or_default(),
             pi.max_hitpoints.unwrap_or(100.0),
@@ -503,6 +501,14 @@ fn setup_scene(
     // Camera
     commands.spawn((
         Camera3d::default(),
+        // Technically this is cheating to add this to the game
+        // An effect like this would have been pretty out-of-reach
+        // for a PS2 game, but it's used here for visual fidelity
+        // as part of the "rebuilt" experience.
+        bevy::post_process::motion_blur::MotionBlur {
+            shutter_angle: 1.0,
+            samples: 4,
+        },
         Transform::from_xyz(0.0, 8.0, -12.0).looking_at(Vec3::new(0.0, 1.0, 0.0), Vec3::Y),
         scoped,
         IsDefaultUiCamera,

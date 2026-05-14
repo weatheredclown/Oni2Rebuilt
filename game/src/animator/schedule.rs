@@ -23,7 +23,7 @@ use bevy::prelude::*;
 
 use crate::oni2_loader::animation::{Oni2AnimLibrary, Oni2AnimState};
 
-use super::components::ActionPlayer;
+use super::components::{ActionPlayer, sub_state_1};
 
 // ---------------------------------------------------------------------------
 // AnimScheduleEntry
@@ -257,6 +257,25 @@ pub fn anim_schedule_tick_system(
             sched.cursor += 1;
             if sched.cursor >= sched.entries.len() {
                 sched.finished = true;
+                // Schedule's last entry just drained — return the
+                // action player to IDLE so the FSM / AI / locomotion
+                // gates that read `is_reacting()` (`sub_state_1 == REACT`)
+                // release this entity. Mirrors the legacy substate
+                // shift in the action player's update tick: once the
+                // AnimList drains, `SubState1` rolls back to IDLE and
+                // `IsReacting()` returns false. Without this, a react+
+                // getup schedule would leave `SubState1` stuck on REACT,
+                // permanently blocking new attacks/blocks/etc.
+                if let Some(mut ap) = ap_opt {
+                    let last_sub = sched
+                        .entries
+                        .last()
+                        .map(|e| e.substate_1)
+                        .unwrap_or(sub_state_1::IDLE);
+                    if ap.sub_state_1 == last_sub {
+                        ap.record_new_substate_1(sub_state_1::IDLE);
+                    }
+                }
             } else {
                 sched.needs_play = true;
             }

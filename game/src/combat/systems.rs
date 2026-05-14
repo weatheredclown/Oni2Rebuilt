@@ -894,13 +894,16 @@ pub fn hit_reaction_system(
         &mut LinearVelocity,
         Option<&mut Oni2AnimState>,
         Option<&Oni2AnimLibrary>,
+        Option<&mut crate::animator::components::ActionPlayer>,
+        Option<&ReactLibrary>,
     )>,
+    mut commands: Commands,
     time: Res<Time>,
 ) {
     let dt = time.delta_secs();
 
     // Tick existing reactions — clear when react anim finishes, or fallback timer.
-    for (mut reaction, _vel, anim_state_opt, _lib) in &mut query {
+    for (mut reaction, _vel, anim_state_opt, _lib, _ap_opt, _react_lib) in &mut query {
         let Some(ref mut active) = reaction.active else {
             continue;
         };
@@ -934,8 +937,14 @@ pub fn hit_reaction_system(
 
     // Apply new reactions: play animation + physics impulse.
     for msg in reader.read() {
-        let Ok((mut reaction, mut velocity, mut anim_state_opt, lib_opt)) =
-            query.get_mut(msg.entity)
+        let Ok((
+            mut reaction,
+            mut velocity,
+            mut anim_state_opt,
+            lib_opt,
+            mut ap_opt,
+            react_lib_opt,
+        )) = query.get_mut(msg.entity)
         else {
             continue;
         };
@@ -943,12 +952,67 @@ pub fn hit_reaction_system(
         let mut active = ActiveReaction::new(msg.kind, msg.direction, msg.react_enum);
 
         // Play the ANIMREACT_* animation and record its id for completion detection.
+        // If the react has a pending get-up anim queued by
+        // `react_data_apply_system` (from the .rct's `GetUpAnim` field),
+        // install an `AnimSchedule` that auto-advances to it once the
+        // react finishes — mirrors the legacy `ActionStartReact`
+        // two-batch react+getup queue. Without this, knockdown reacts
+        // play, then snap straight back to fight stance, skipping the
+        // visible "roll over / stand up" anim.
         if let (Some(ref mut anim_state), Some(lib)) = (anim_state_opt.as_mut(), lib_opt)
             && msg.react_enum >= 0
             && let Some(&anim_name) = ANIMREACT_NAMES.get(msg.react_enum as usize)
         {
             if lib.play(anim_name, anim_state) {
                 active.react_anim_id = AnimId::new(anim_name).0;
+
+                // Force the react to play as a one-shot. If the .anim was
+                // mis-authored as looping, the schedule's auto-advance to
+                // the getup would never fire (it only triggers on a
+                // non-looping anim reaching its last frame).
+                anim_state.looping = false;
+
+                // Mark the actor as REACTing on the action player so all
+                // the `is_reacting()` consumers (FSM dispatch, AI
+                // attack-state, locomotion gates) treat this entity as
+                // committed for the whole react+getup duration — matches
+                // the legacy `ActionStartReact` setting `SubState1 =
+                // ACT_S1_REACT` for both queued anims.
+                if let Some(ref mut ap) = ap_opt {
+                    ap.record_new_substate_1(
+                        crate::animator::components::sub_state_1::REACT,
+                    );
+                }
+
+                // Look up the getup directly from the ReactLibrary.
+                // Reading the React table directly here keeps the
+                // schedule install race-free: routing the lookup
+                // through `FighterState.pending_getup_anim` and a
+                // separate writer system would invite cross-plugin
+                // ordering hazards (the writer can fire after this
+                // reader on the same FixedUpdate tick despite a
+                // `.before(...)` annotation).
+                let pending_getup = react_lib_opt
+                    .and_then(|lib| lib.get(msg.react_enum))
+                    .map(|rd| rd.get_up_anim.clone())
+                    .filter(|s| !s.is_empty());
+                if let Some(getup) = pending_getup {
+                    use crate::animator::components::sub_state_1;
+                    use crate::animator::schedule::{AnimSchedule, AnimScheduleEntry};
+
+                    let entries = vec![
+                        AnimScheduleEntry::new(anim_name, sub_state_1::REACT),
+                        AnimScheduleEntry::new(getup, sub_state_1::REACT),
+                    ];
+                    let mut schedule = AnimSchedule::new(entries);
+                    // The react anim is already playing (we just called
+                    // `lib.play` above) — skip the schedule's first-play
+                    // step so it doesn't restart frame 0. The schedule's
+                    // auto-advance will fire the getup when the react
+                    // finishes its last frame.
+                    schedule.mark_first_played();
+                    commands.entity(msg.entity).insert(schedule);
+                }
             } else {
                 warn!("hit_reaction: react anim '{}' not in library", anim_name);
             }

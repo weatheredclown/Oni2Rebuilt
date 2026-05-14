@@ -1753,10 +1753,11 @@ pub fn react_data_apply_system(
             continue;
         };
 
-        // Pending get-up anim (for knockdown reactions)
-        if !react_data.get_up_anim.is_empty() {
-            fs.pending_getup_anim = Some(react_data.get_up_anim.clone());
-        }
+        // Note: the getup anim itself is wired by `hit_reaction_system`
+        // which reads `ReactLibrary` directly to install a 2-entry
+        // `AnimSchedule` for the react+getup pair. That read is
+        // race-free (no cross-system data hop), so we don't stash the
+        // getup name here on `FighterState`.
 
         // End-rotation notches to apply after animation ends
         fs.pending_end_rotation_notches = react_data.end_rotation_notches;

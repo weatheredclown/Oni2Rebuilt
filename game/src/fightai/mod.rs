@@ -349,24 +349,43 @@ pub fn attack_runtime_update_system(
             );
         }
 
-        if let Some(anim_name) = &output.attack_anim {
-            bevy::log::info!("AttackRuntime: DoAttack → '{}' on {:?}", anim_name, entity);
-            crate::statemachine::runtime::do_attack(
-                anim_lib,
-                &mut anim_state,
-                &mut fighter,
-                anim_name,
-                0,
-            );
-        }
-        if let Some(anim_name) = &output.block_anim {
-            crate::statemachine::runtime::do_block(anim_lib, &mut anim_state, anim_name);
-        }
-        if let Some((anim_name, mirror)) = &output.evade_anim {
-            crate::statemachine::runtime::do_evade(anim_lib, &mut anim_state, anim_name, *mirror);
-        }
-        if let Some(anim_name) = &output.custom_anim {
-            crate::statemachine::runtime::do_custom_anim(anim_lib, &mut anim_state, anim_name);
+        // Suppress anim dispatch while the actor is in the react+getup
+        // queue. The AttackRuntime FSM keeps ticking (so cookies and
+        // state get reaped on schedule) but any swing/block/evade
+        // pulse it produces is dropped — matches the legacy gates
+        // (`CanStartAttack` / `CanStartBlock` return false while
+        // `IsReacting()`) and prevents the queued getup from being
+        // clobbered the moment the react reaches its last frame.
+        let is_reacting = action_player_opt.is_some_and(|ap| ap.is_reacting());
+        if !is_reacting {
+            if let Some(anim_name) = &output.attack_anim {
+                bevy::log::info!("AttackRuntime: DoAttack → '{}' on {:?}", anim_name, entity);
+                crate::statemachine::runtime::do_attack(
+                    anim_lib,
+                    &mut anim_state,
+                    &mut fighter,
+                    anim_name,
+                    0,
+                );
+            }
+            if let Some(anim_name) = &output.block_anim {
+                crate::statemachine::runtime::do_block(anim_lib, &mut anim_state, anim_name);
+            }
+            if let Some((anim_name, mirror)) = &output.evade_anim {
+                crate::statemachine::runtime::do_evade(
+                    anim_lib,
+                    &mut anim_state,
+                    anim_name,
+                    *mirror,
+                );
+            }
+            if let Some(anim_name) = &output.custom_anim {
+                crate::statemachine::runtime::do_custom_anim(
+                    anim_lib,
+                    &mut anim_state,
+                    anim_name,
+                );
+            }
         }
         if let Some(target_distance) = output.start_following_distance.take() {
             if let Some(ai) = ai_fighter_opt {

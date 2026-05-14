@@ -265,8 +265,6 @@ pub struct FighterState {
     pub anim_control_block: Option<AnimControlBlock>,
 
     // --- Post-reaction ---
-    /// Animation name to play immediately after a knockdown react completes.
-    pub pending_getup_anim: Option<String>,
     /// End-rotation notches to apply once the current react finishes.
     pub pending_end_rotation_notches: i32,
 
@@ -340,7 +338,6 @@ impl Default for FighterState {
             last_hit_type: -1,
             last_successive_react_hit_type: -1,
             anim_control_block: None,
-            pending_getup_anim: None,
             pending_end_rotation_notches: 0,
             attack_hit_classes: Vec::new(),
             targets_pending: Vec::new(),

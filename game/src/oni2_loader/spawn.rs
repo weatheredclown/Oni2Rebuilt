@@ -473,8 +473,17 @@ pub fn creature_movement_anim_system(
 
             let mut best_gait = None;
 
-            // Hysteresis: prevent physics micro-fluctuations from dropping states (bias against falling out below)
-            if let Some(cur_id) = anim_state.current_anim_id
+            // Hysteresis: prevent physics micro-fluctuations from dropping
+            // states (bias against falling out below).  Skipped when
+            // `throttle` is exactly 0 — that's the snapped-to-zero rest
+            // condition, and gaits whose range butts up against 0 at one
+            // end (e.g. ANIMWALK_BACK with [0, -1]) would otherwise satisfy
+            // the hysteresis test forever after a backward run, pinning
+            // the back-run anim while the body sits still.  At a true
+            // stop the picker should always be free to return to the
+            // rest gait (ANIMWALK_STAND).
+            if throttle != 0.0
+                && let Some(cur_id) = anim_state.current_anim_id
                 && let Some(cur_gait) = gaits.iter().find(|g| g.anim == cur_id)
             {
                 let lower = cur_gait.min_throttle.min(cur_gait.max_throttle) - 0.15;
@@ -1444,6 +1453,7 @@ pub fn spawn_oni2_entity_with_rotation(
                 current_anim_id: None,
                 previous_anim_id: None,
                 anim_just_started: false,
+                root_motion_just_started: false,
                 is_grounded: true,
                 material_stood_on: None,
                 root_offset_this_frame: Vec3::ZERO,

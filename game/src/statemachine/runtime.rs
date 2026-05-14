@@ -514,6 +514,7 @@ pub fn fsm_update_system(
             &mut Transform,
             Option<&crate::fight::components::FighterState>,
             Option<&crate::inventory::components::Inventory>,
+            Option<&crate::animator::components::ActionPlayer>,
         ),
         With<Player>,
     >,
@@ -543,6 +544,7 @@ pub fn fsm_update_system(
         _transform,
         fighter_state_opt,
         inventory_opt,
+        ap_opt,
     ) in &mut query
     {
         let dt = time.delta_secs();
@@ -598,7 +600,19 @@ pub fn fsm_update_system(
         let runtime = runtime.into_inner();
         let output = runtime.sm.tick(&mut runtime.ctx);
 
-        if let Some((anim_name, rotation_notches)) = &output.attack_anim {
+        // While the actor is reacting (substate stays REACT for the
+        // whole react+getup queue), swallow FSM-issued anim dispatches —
+        // mirrors the legacy `CanStartAttack` / `CanStartBlock` gates
+        // (both return false during `IsReacting()`). Without this, the
+        // FSM's Timeout transition fires the moment the react reaches
+        // its last frame and clobbers the queued getup with whatever
+        // attack/block the next state wants.
+        let is_reacting = ap_opt.is_some_and(|ap| ap.is_reacting());
+
+        if is_reacting {
+            // continue; — fall through so we still drop the per-tick
+            // pulses below if any; but skip the anim-output dispatch.
+        } else if let Some((anim_name, rotation_notches)) = &output.attack_anim {
             info!(
                 "FSM: DoAttack → '{}', pad_flags: {:#x}, ctrl_flags: {:#x}",
                 anim_name, packet.pad_flags, packet.ctrl_flags
