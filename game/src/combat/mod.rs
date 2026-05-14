@@ -70,18 +70,21 @@ impl Plugin for CombatPlugin {
                 (
                     // Apply post-attack `end_rotation_notches` on the
                     // SAME tick the anim crosses its last frame.  Must
-                    // run BEFORE the rest of the combat FixedUpdate
+                    // run AFTER `update_oni2_animation` (which emits
+                    // `AnimEndedMessage` when the anim crosses its
+                    // last frame) and BEFORE the rest of the combat
                     // chain (and before any FSM/animator system that
-                    // might switch to a new anim) so the rotation lands
-                    // before the new anim's first rendered frame.
-                    // `AnimEndedMessage` is emitted by
-                    // `update_oni2_animation` (oni2_loader) — that
-                    // system lives in a different schedule
-                    // registration, so we don't bind an explicit
-                    // ordering here; the Message buffering means this
-                    // consumer picks up the edge within the same
-                    // FixedUpdate iteration regardless.
-                    systems::apply_end_rotation_on_anim_end_system,
+                    // might switch to a new anim) so the rotation
+                    // lands before the new anim's first rendered
+                    // frame.  Without the explicit `.after`, the
+                    // scheduler could place this system before
+                    // `update_oni2_animation` in the same tick — the
+                    // `AnimEndedMessage` then waits one tick for the
+                    // reader cursor, leaving a one-frame visual where
+                    // the new anim already rendered at the old
+                    // (un-rotated) Transform.
+                    systems::apply_end_rotation_on_anim_end_system
+                        .after(crate::oni2_loader::animation::update_oni2_animation),
                     systems::ground_detection_system,
                     systems::hit_detection_system,
                     systems::process_strike_connections_system,

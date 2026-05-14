@@ -122,6 +122,15 @@ pub fn attack_sync_system(
 /// rotation is part of the outgoing strike's end, not the incoming
 /// anim's start.
 ///
+/// The `.after(update_oni2_animation)` constraint in `combat/mod.rs`
+/// is load-bearing.  Bevy's per-system event cursors mean a consumer
+/// that runs BEFORE the producer in the same tick won't see this
+/// tick's emissions — they're picked up next tick.  Without the
+/// explicit `.after`, the scheduler is free to interleave us before
+/// `update_oni2_animation` and the rotation lands one tick late,
+/// reintroducing the visible "old pose at old rotation → new pose at
+/// new rotation" blink at combo boundaries.
+///
 /// We mutate Fighter.facing AND Transform.rotation (+ avian Rotation)
 /// inline using the same formula `fighter_rotation_sync_system` uses
 /// — that system runs later in FixedUpdate but the inline write keeps
