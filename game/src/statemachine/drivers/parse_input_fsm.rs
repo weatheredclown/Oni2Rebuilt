@@ -102,7 +102,16 @@ pub fn parse_input_fsm<D: SmDriver>(
         } else {
             tokens.len()
         };
-        parse_rules_block(&tokens, start, end, cur, event_parser, action_parser, &state_index, &mut sm_states);
+        parse_rules_block(
+            &tokens,
+            start,
+            end,
+            cur,
+            event_parser,
+            action_parser,
+            &state_index,
+            &mut sm_states,
+        );
     }
 
     Ok(SmData {
@@ -131,10 +140,7 @@ fn parse_rules_block<D: SmDriver>(
         // Collect the event text from `if Event(args)` (or whatever
         // precedes the `{`).  Stop at `{` or `}`.
         let mut event_str = String::new();
-        while i < tokens.len()
-            && tokens[i] != Token::Punct('{')
-            && tokens[i] != Token::Punct('}')
-        {
+        while i < tokens.len() && tokens[i] != Token::Punct('{') && tokens[i] != Token::Punct('}') {
             match &tokens[i] {
                 Token::Word(w) => {
                     if !event_str.is_empty() && !event_str.ends_with('(') {
@@ -212,10 +218,7 @@ fn parse_rules_block<D: SmDriver>(
                             if let Some(&idx) = state_index.get(w) {
                                 goto_state = Some(idx);
                             } else {
-                                bevy::log::warn!(
-                                    "input_fsm parser: unknown goto target '{}'",
-                                    w
-                                );
+                                bevy::log::warn!("input_fsm parser: unknown goto target '{}'", w);
                             }
                             i += 1;
                         }
@@ -230,10 +233,7 @@ fn parse_rules_block<D: SmDriver>(
                             if let Some(&idx) = state_index.get(w) {
                                 goto_state = Some(idx);
                             } else {
-                                bevy::log::warn!(
-                                    "input_fsm parser: unknown goto target '{}'",
-                                    w
-                                );
+                                bevy::log::warn!("input_fsm parser: unknown goto target '{}'", w);
                             }
                             i += 1;
                         }
@@ -296,9 +296,8 @@ if Always
     Display "in second state"
 }
 "#;
-        let data =
-            parse_input_fsm::<SquadDriver>(src, SQUAD_EVENT_PARSER, SQUAD_ACTION_PARSER)
-                .expect("parse should not fail");
+        let data = parse_input_fsm::<SquadDriver>(src, SQUAD_EVENT_PARSER, SQUAD_ACTION_PARSER)
+            .expect("parse should not fail");
         assert!(data.state_index.contains_key("FIRST_STATE"));
         assert!(
             data.state_index.contains_key("SECOND_STATE"),
@@ -315,9 +314,8 @@ if Always
 #B
 #C
 "#;
-        let data =
-            parse_input_fsm::<SquadDriver>(src, SQUAD_EVENT_PARSER, SQUAD_ACTION_PARSER)
-                .expect("parse should not fail");
+        let data = parse_input_fsm::<SquadDriver>(src, SQUAD_EVENT_PARSER, SQUAD_ACTION_PARSER)
+            .expect("parse should not fail");
         for name in ["A", "B", "C"] {
             assert!(data.state_index.contains_key(name));
         }
@@ -342,9 +340,8 @@ if True
     Display "second"  ; <- but kept the action block
 }
 "#;
-        let data =
-            parse_input_fsm::<SquadDriver>(src, SQUAD_EVENT_PARSER, SQUAD_ACTION_PARSER)
-                .expect("parse should not fail");
+        let data = parse_input_fsm::<SquadDriver>(src, SQUAD_EVENT_PARSER, SQUAD_ACTION_PARSER)
+            .expect("parse should not fail");
         // Both rules should land on state A.  SquadDriver collapses every
         // event to Always, so we just confirm the count and that no panic
         // occurred — the regression here is that the second rule used to
@@ -375,9 +372,8 @@ if Always
     Display "b"
 }
 "#;
-        let data =
-            parse_input_fsm::<SquadDriver>(src, SQUAD_EVENT_PARSER, SQUAD_ACTION_PARSER)
-                .expect("parse should not fail");
+        let data = parse_input_fsm::<SquadDriver>(src, SQUAD_EVENT_PARSER, SQUAD_ACTION_PARSER)
+            .expect("parse should not fail");
         assert_eq!(data.state_index.get("A").copied(), Some(0));
         assert_eq!(data.state_index.get("B").copied(), Some(1));
     }

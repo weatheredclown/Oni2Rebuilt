@@ -199,7 +199,7 @@ impl SmDriver for BehaviorDriver {
         match action {
             BehaviorAction::StartBehavior(kind) => {
                 output.started_behavior = Some(*kind);
-                // Clear the behavior_done flag immediately so that the FSM doesn't 
+                // Clear the behavior_done flag immediately so that the FSM doesn't
                 // instantly cascade and kill the newly started behavior on the same tick.
                 ctx.behavior_done = false;
             }

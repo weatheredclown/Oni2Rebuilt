@@ -701,8 +701,7 @@ mod tests {
         // Integration: tim_attacks.atk adds a `block` group beyond the
         // move/attack/event trio — exercises the arbitrary-identifier
         // group parser (see parse_groups / parse_row).
-        let content =
-            std::fs::read_to_string("../oni2/zips/assets/Statemachine/tim_attacks.atk");
+        let content = std::fs::read_to_string("../oni2/zips/assets/Statemachine/tim_attacks.atk");
         let Ok(content) = content else {
             return;
         };

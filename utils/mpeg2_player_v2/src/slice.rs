@@ -13,9 +13,8 @@ use crate::bitstream::BitReader;
 use crate::error::{Error, Result};
 use crate::headers::PictureType;
 use crate::mb::{
-    decode_inter_mb, decode_intra_mb, fill_bidir_predict, fill_forward_predict,
-    parse_direction_mvs, parse_mpeg2_macroblock_modes, SliceState,
-    DIR_BWD, DIR_FWD,
+    DIR_BWD, DIR_FWD, SliceState, decode_inter_mb, decode_intra_mb, fill_bidir_predict,
+    fill_forward_predict, parse_direction_mvs, parse_mpeg2_macroblock_modes,
 };
 use crate::picture::PictureBuffer;
 use crate::picture_params::PictureParams;
@@ -75,7 +74,7 @@ pub fn decode_slice(
             incr += sym as u32;
             break;
         }
-        
+
         let prev_mb_addr = mb_addr;
         mb_addr += incr as i32;
         if mb_addr >= (mb_row + 1) * mb_width {
@@ -230,7 +229,8 @@ pub fn decode_slice(
         }
 
         if !matches!(picture_type, PictureType::B) {
-            state.last_had_forward = mb_type_flags.motion_forward || (!mb_type_flags.intra && matches!(picture_type, PictureType::P));
+            state.last_had_forward = mb_type_flags.motion_forward
+                || (!mb_type_flags.intra && matches!(picture_type, PictureType::P));
             state.last_had_backward = mb_type_flags.motion_backward;
         }
 

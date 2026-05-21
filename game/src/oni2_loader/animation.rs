@@ -534,8 +534,7 @@ pub fn load_anim_library(
     // the original attacker (mirror-react loop).  Mirrors the C++ engine,
     // which only resolves ATDTs for crAttackData instances created from the
     // .attacks list.
-    let pre_attacks_keys: std::collections::HashSet<String> =
-        alias_map.keys().cloned().collect();
+    let pre_attacks_keys: std::collections::HashSet<String> = alias_map.keys().cloned().collect();
     if !attacks_path.is_empty() {
         if let Ok(content) = crate::vfs::read_to_string("", &attacks_path) {
             let before = alias_map.len();
@@ -1085,7 +1084,11 @@ pub fn debug_draw_attack_wedges(
 
         // Character physics capsule centers are hardcoded to ground + 1.1m.
         let attacker_feet_y = transform.translation.y - 1.1;
-        let attacker_base = Vec3::new(transform.translation.x, attacker_feet_y, transform.translation.z);
+        let attacker_base = Vec3::new(
+            transform.translation.x,
+            attacker_feet_y,
+            transform.translation.z,
+        );
 
         let wedge = crate::combat::hitbox::EvaluatedWedge::evaluate(
             strike,
@@ -1496,6 +1499,101 @@ pub fn update_oni2_animation(
                 .iter()
                 .map(|(_, pos)| space::to_bevy_space_pos(pos))
                 .collect();
+        }
+    }
+}
+
+/// Refresh skinned-mesh joints for any entity whose `Oni2AnimState` was
+/// just swapped to a new anim this frame (`anim_just_started == true`)
+/// but hasn't been ticked by `update_oni2_animation` yet.
+///
+/// Runs in `PostUpdate` after the player FSM (`fsm_update_system`, which
+/// lives in `Update` and calls `lib.play(...)` mid-frame).  Without this
+/// pass, the joint transforms last rebuilt by `update_oni2_animation`
+/// reflect the *previous* animation's last frame, so the render frame
+/// after a combo-end shows the OLD pose under the NEW (post-notch)
+/// `Transform.rotation` — a 1-frame blink.
+///
+/// We deliberately **do not** clear `anim_just_started` here — the
+/// `anim_start_emit_system` in next `FixedUpdate` is the authoritative
+/// drainer, and its `AnimStartedMessage` is still required by
+/// downstream consumers (`attack_sync_system`, etc.). Stamping
+/// `last_rendered_time = current_time` is safe: the next FixedUpdate's
+/// `update_oni2_animation` advances `current_time` past it, so the
+/// rebuild gate trips again on the next physics tick.
+///
+/// Skipped paths: single-channel anims (root-Y rotation only — rare for
+/// combo transitions and handled fine by the existing FixedUpdate
+/// rebuild on the next tick), root-motion delta application (we're
+/// refreshing the *current frame* pose, not advancing through the
+/// animation).
+pub fn refresh_anim_joints_post_fsm_system(
+    mut anim_query: Query<(
+        Entity,
+        &mut Oni2AnimState,
+        Option<&CreatureRenderOffset>,
+        Option<&crate::oni2_loader::components::ActorAsleep>,
+    )>,
+    mut transform_query: Query<&mut Transform>,
+) {
+    for (entity, mut anim_state, render_offset, asleep_opt) in &mut anim_query {
+        if !anim_state.anim_just_started {
+            continue;
+        }
+        if asleep_opt.is_some() {
+            continue;
+        }
+        if anim_state.anim.num_channels == 1 {
+            // Single-channel root-Y rotation anims don't move joints —
+            // the next FixedUpdate's `update_oni2_animation` writes the
+            // root rotation. Skipping here avoids re-implementing that
+            // small branch.
+            continue;
+        }
+        let num_frames = anim_state.anim.num_frames as usize;
+        if num_frames <= 1 {
+            continue;
+        }
+
+        let frame_idx = (anim_state.current_time as usize).min(anim_state.anim.frames.len() - 1);
+        let mut next_idx = frame_idx + 1;
+        if next_idx >= anim_state.anim.frames.len() {
+            next_idx = if anim_state.looping { 0 } else { frame_idx };
+        }
+        let blend = anim_state.current_time - (anim_state.current_time as usize) as f32;
+
+        let expected_len = anim_state.anim.frames[frame_idx].len();
+        if anim_state.current_frame.len() != expected_len {
+            anim_state.current_frame = vec![0.0; expected_len];
+        }
+
+        frame_lerp(&mut anim_state, frame_idx, next_idx, blend);
+        anim_state.last_rendered_time = anim_state.current_time;
+
+        let frame = &anim_state.current_frame;
+        let strip_root = match anim_state.anim.gait_normalize {
+            Some(mode) => mode.should_strip_root(),
+            None => render_offset.is_some() && anim_state.looping,
+        };
+        let bone_result = crate::oni2_loader::utils::bone::compute_animated_bone_transforms(
+            &anim_state.skeleton,
+            frame,
+            strip_root,
+        );
+
+        let y_offset = render_offset.map(|o| o.y_offset).unwrap_or(0.0);
+        let facing = render_offset.map(|o| o.facing).unwrap_or(Quat::IDENTITY);
+
+        for (i, (rot, pos)) in bone_result.bones.iter().enumerate() {
+            if let Some(&joint_entity) = anim_state.joint_entities.get(i)
+                && let Ok(mut joint_tf) = transform_query.get_mut(joint_entity)
+            {
+                let bevy_pos = space::to_bevy_space_pos(Vec3::new(pos.x, pos.y + y_offset, pos.z));
+                let bevy_rot = Quat::from_xyzw(-rot.x, rot.y, -rot.z, rot.w);
+                let final_rot = facing * bevy_rot;
+                let final_pos = facing * bevy_pos;
+                *joint_tf = Transform::from_translation(final_pos).with_rotation(final_rot);
+            }
         }
     }
 }

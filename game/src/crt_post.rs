@@ -18,12 +18,13 @@
  * tweak per-camera or change the constants in `CrtSettings::ps2_crt`.
  */
 use bevy::asset::weak_handle;
+use bevy::core_pipeline::FullscreenShader;
 use bevy::core_pipeline::core_2d::graph::{Core2d, Node2d};
 use bevy::core_pipeline::core_3d::graph::{Core3d, Node3d};
-use bevy::core_pipeline::FullscreenShader;
 use bevy::ecs::query::QueryItem;
 use bevy::prelude::*;
 use bevy::render::{
+    Render, RenderApp, RenderSystems,
     extract_component::{
         ComponentUniforms, DynamicUniformIndex, ExtractComponent, ExtractComponentPlugin,
         UniformComponentPlugin,
@@ -32,16 +33,15 @@ use bevy::render::{
         NodeRunError, RenderGraphContext, RenderGraphExt, RenderLabel, ViewNode, ViewNodeRunner,
     },
     render_resource::{
-        binding_types::{sampler, texture_2d, uniform_buffer},
         BindGroupEntries, BindGroupLayoutDescriptor, CachedRenderPipelineId, ColorTargetState,
         ColorWrites, DynamicBindGroupLayoutEntries, FragmentState, LoadOp, MultisampleState,
-        Operations, PipelineCache, PrimitiveState, RenderPassColorAttachment,
-        RenderPassDescriptor, RenderPipelineDescriptor, Sampler, SamplerBindingType,
-        SamplerDescriptor, ShaderStages, ShaderType, StoreOp, TextureFormat, TextureSampleType,
+        Operations, PipelineCache, PrimitiveState, RenderPassColorAttachment, RenderPassDescriptor,
+        RenderPipelineDescriptor, Sampler, SamplerBindingType, SamplerDescriptor, ShaderStages,
+        ShaderType, StoreOp, TextureFormat, TextureSampleType,
+        binding_types::{sampler, texture_2d, uniform_buffer},
     },
     renderer::{RenderContext, RenderDevice},
     view::ViewTarget,
-    Render, RenderApp, RenderSystems,
 };
 use bevy::shader::Shader;
 
@@ -247,8 +247,7 @@ fn init_crt_pipeline(
             uniform_buffer::<CrtSettings>(true),
         ),
     );
-    let layout_desc =
-        BindGroupLayoutDescriptor::new("crt_post_bind_group_layout", &entries);
+    let layout_desc = BindGroupLayoutDescriptor::new("crt_post_bind_group_layout", &entries);
 
     let sampler = render_device.create_sampler(&SamplerDescriptor::default());
 

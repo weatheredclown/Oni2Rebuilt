@@ -12,6 +12,7 @@
 mod ai;
 mod animator;
 mod behavior;
+mod blast_fx;
 mod camera;
 mod combat;
 mod common;

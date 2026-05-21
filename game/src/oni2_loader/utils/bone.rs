@@ -302,11 +302,7 @@ pub fn is_model_local_heuristic(
                 .get(adj.vertex_idx as usize)
                 .copied()
                 .unwrap_or([0.0; 3]);
-            let bone_pos = skel
-                .positions
-                .get(global_bone)
-                .copied()
-                .unwrap_or([0.0; 3]);
+            let bone_pos = skel.positions.get(global_bone).copied().unwrap_or([0.0; 3]);
 
             // Model-local interpretation: raw is already entity-local Oni2;
             // entity-local Bevy is just X/Z negate.

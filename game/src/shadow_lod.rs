@@ -65,19 +65,11 @@ fn update_shadow_lod_system(
     mut counter: ResMut<ShadowLodFrameCounter>,
     settings: Res<ShadowLodSettings>,
     player_q: Query<&GlobalTransform, With<Player>>,
-    mut point_q: Query<
-        (Entity, &GlobalTransform, &mut PointLight),
-        With<ShadowCandidate>,
-    >,
-    mut spot_q: Query<
-        (Entity, &GlobalTransform, &mut SpotLight),
-        With<ShadowCandidate>,
-    >,
+    mut point_q: Query<(Entity, &GlobalTransform, &mut PointLight), With<ShadowCandidate>>,
+    mut spot_q: Query<(Entity, &GlobalTransform, &mut SpotLight), With<ShadowCandidate>>,
 ) {
     counter.0 = counter.0.wrapping_add(1);
-    if settings.update_interval_frames == 0
-        || counter.0 % settings.update_interval_frames != 0
-    {
+    if settings.update_interval_frames == 0 || counter.0 % settings.update_interval_frames != 0 {
         return;
     }
 

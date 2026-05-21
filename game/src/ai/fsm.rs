@@ -100,15 +100,13 @@ pub fn ai_attach_fsm_system(
             );
             continue;
         };
-        commands
-            .entity(entity)
-            .insert((
-                AiFsmRuntime::new(data, entity),
-                AiPadCommands::default(),
-                crate::ai::components::AiDrivenVelocityThisTick::default(),
-                crate::ai::components::AiShooter::default(),
-                crate::ai::components::AiInterceptor::default(),
-            ));
+        commands.entity(entity).insert((
+            AiFsmRuntime::new(data, entity),
+            AiPadCommands::default(),
+            crate::ai::components::AiDrivenVelocityThisTick::default(),
+            crate::ai::components::AiShooter::default(),
+            crate::ai::components::AiInterceptor::default(),
+        ));
     }
 }
 
@@ -135,8 +133,8 @@ pub fn ai_fsm_update_system(
     )>,
 ) {
     let dt = time.delta_secs();
-    for (entity, mut runtime, mut cmds, anim_lib, mut anim_state, mut fighter, about_opt, ap_opt)
-        in &mut query
+    for (entity, mut runtime, mut cmds, anim_lib, mut anim_state, mut fighter, about_opt, ap_opt) in
+        &mut query
     {
         // --- Parrying reflex ---
         // Mirrors legacy `if (IsBeingAttacked()) Parry();` which forced BlockIndex = 0.

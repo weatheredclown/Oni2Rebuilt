@@ -147,14 +147,18 @@ impl AtkAction for ActionAttack {
         if ctx.anim_num_frames <= 1 {
             bevy::log::trace!(
                 "ActionAttack::update '{}' waiting: anim_num_frames={} (need >1)",
-                self.anim_name, ctx.anim_num_frames
+                self.anim_name,
+                ctx.anim_num_frames
             );
             return false;
         }
         if !self.saw_our_anim {
             bevy::log::trace!(
                 "ActionAttack::update '{}' waiting saw_our_anim: t={:.2} num={} looping={}",
-                self.anim_name, ctx.anim_current_time, ctx.anim_num_frames, ctx.anim_looping
+                self.anim_name,
+                ctx.anim_current_time,
+                ctx.anim_num_frames,
+                ctx.anim_looping
             );
             if ctx.anim_current_time < 0.5 {
                 self.saw_our_anim = true;
@@ -166,7 +170,9 @@ impl AtkAction for ActionAttack {
         if done {
             bevy::log::info!(
                 "ActionAttack::update '{}' DONE: t={:.2}/{:.2}",
-                self.anim_name, ctx.anim_current_time, last_frame
+                self.anim_name,
+                ctx.anim_current_time,
+                last_frame
             );
         }
         done
@@ -529,7 +535,15 @@ impl SmDriver for AttackDriver {
                     .entity
                     .map(crate::debug::debug_name)
                     .unwrap_or_else(|| "<no_entity>".to_string());
-                bevy::log::info!("atk {} [{}]: Starting action {} '{}'", debug_str, ctx.entity.map(|e| format!("{:?}", e)).unwrap_or("?".to_string()), name, args);
+                bevy::log::info!(
+                    "atk {} [{}]: Starting action {} '{}'",
+                    debug_str,
+                    ctx.entity
+                        .map(|e| format!("{:?}", e))
+                        .unwrap_or("?".to_string()),
+                    name,
+                    args
+                );
                 let mut new_action = build_atk_action(name, args);
                 if call_action_start(ctx, output, &mut *new_action) {
                     ctx.current_action = Some(new_action);

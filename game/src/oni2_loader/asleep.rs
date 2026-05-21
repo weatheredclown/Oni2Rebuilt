@@ -72,9 +72,7 @@ fn asleep_on_insert_system(
 /// Runs every tick for asleep actors — pins LinearVelocity to zero so
 /// any impulse applied elsewhere (e.g. a broadcast explosion that fires
 /// before the target's sleep-gate is checked) doesn't move the body.
-fn asleep_pin_velocity_system(
-    mut query: Query<&mut LinearVelocity, With<ActorAsleep>>,
-) {
+fn asleep_pin_velocity_system(mut query: Query<&mut LinearVelocity, With<ActorAsleep>>) {
     for mut v in &mut query {
         if v.0 != Vec3::ZERO {
             v.0 = Vec3::ZERO;

@@ -137,15 +137,6 @@ impl Plugin for FightPlugin {
                     systems::fight_stance_sync_system,
                     systems::fight_stance_entry_system.after(systems::fight_stance_sync_system),
                     systems::fight_stance_exit_system.after(systems::fight_stance_sync_system),
-                    // Diagnostic: log per-tick fighter.facing deltas.
-                    // Should be the LAST thing to run so it captures the
-                    // post-tick value after all other systems mutated.
-                    systems::strike_debug_facing_watcher
-                        .after(systems::update_fighter_strike_facing_system)
-                        .after(systems::fighter_turn_lerp_system)
-                        .after(systems::react_distance_apply_system)
-                        .after(systems::face_after_run_system)
-                        .after(systems::attack_spin_system),
                     // Build AiAttackTable for any FighterType that doesn't
                     // have one yet.  One-shot per entity: the Without<...>
                     // filter means this is a no-op once every fighter has

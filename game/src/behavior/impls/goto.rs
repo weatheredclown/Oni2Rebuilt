@@ -107,7 +107,7 @@ impl Behavior for GotoBehavior {
                 .transform
                 .rotation
                 .slerp(rot_tf.rotation, (10.0 * dt).min(1.0));
-                
+
             // Update the authoritative fighter.facing to match the slerped rotation
             // so it doesn't snap instantly, and doesn't get instantly overwritten by
             // fighter_rotation_sync_system.

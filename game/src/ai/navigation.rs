@@ -200,7 +200,11 @@ impl NavGraph {
 
         let path_opt = self.a_star(start_idx, end_idx);
         path_opt.map(|mut path| {
-            if path.last().map(|&last_pos| last_pos.distance_squared(end) > 0.01).unwrap_or(true) {
+            if path
+                .last()
+                .map(|&last_pos| last_pos.distance_squared(end) > 0.01)
+                .unwrap_or(true)
+            {
                 path.push(end);
             }
             path
@@ -328,7 +332,7 @@ pub fn path_following_system(
         target_tf.look_at(look_target, Vec3::Y);
         target_tf.rotate_y(std::f32::consts::PI);
         tf.rotation = tf.rotation.slerp(target_tf.rotation, (10.0 * dt).min(1.0));
-        
+
         fighter.facing = (tf.rotation * Vec3::Z).normalize_or_zero();
         if fighter.facing.length_squared() < 0.1 {
             fighter.facing = dir; // Fallback
@@ -380,7 +384,7 @@ pub fn actor_follower_system(
                 tf.rotation = tf
                     .rotation
                     .slerp(expected_tf.rotation, (10.0 * dt).min(1.0));
-                    
+
                 fighter.facing = (tf.rotation * Vec3::Z).normalize_or_zero();
                 if fighter.facing.length_squared() < 0.1 {
                     fighter.facing = dir; // Fallback
@@ -490,22 +494,25 @@ pub fn retreat_steering_system(
 }
 
 pub fn ai_velocity_residual_clamp_system(
-    mut query: Query<(
-        &mut avian3d::prelude::LinearVelocity,
-        &mut crate::ai::components::AiDrivenVelocityThisTick,
-        Option<&crate::animator::components::ActionPlayer>,
-        Option<&crate::oni2_loader::animation::Oni2AnimState>,
-    ), With<crate::ai::components::AiFighter>>,
+    mut query: Query<
+        (
+            &mut avian3d::prelude::LinearVelocity,
+            &mut crate::ai::components::AiDrivenVelocityThisTick,
+            Option<&crate::animator::components::ActionPlayer>,
+            Option<&crate::oni2_loader::animation::Oni2AnimState>,
+        ),
+        With<crate::ai::components::AiFighter>,
+    >,
 ) {
     for (mut vel, mut driven, ap_opt, anim_state_opt) in &mut query {
         let mut is_reacting_or_airborne = false;
-        
+
         if let Some(ap) = ap_opt {
             if ap.sub_state_1 == crate::animator::components::sub_state_1::REACT {
                 is_reacting_or_airborne = true;
             }
         }
-        
+
         if let Some(anim_state) = anim_state_opt {
             if !anim_state.is_grounded {
                 is_reacting_or_airborne = true;

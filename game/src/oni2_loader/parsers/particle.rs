@@ -111,7 +111,8 @@ pub fn parse_ptx(
                 def.radius_birth = vec;
             }
             "RadiusDeathPercent" => {
-                def.radius_death_percent = p.read_float("RadiusDeathPercent", def.radius_death_percent)
+                def.radius_death_percent =
+                    p.read_float("RadiusDeathPercent", def.radius_death_percent)
             }
             "Life" => def.life = p.read_float("Life", def.life),
             "LifeVar" => def.life_var = p.read_float("LifeVar", def.life_var),
@@ -137,7 +138,9 @@ pub fn parse_ptx(
                 let a = p.read_float_val(1.0);
                 def.color_death = Color::srgba(r, g, b, a);
             }
-            "ColorRamp" => def.color_ramp = p.read_i32("ColorRamp", if def.color_ramp { 1 } else { 0 }) != 0,
+            "ColorRamp" => {
+                def.color_ramp = p.read_i32("ColorRamp", if def.color_ramp { 1 } else { 0 }) != 0
+            }
             "Rate" => def.rate = p.read_float("Rate", def.rate),
             "BlendSet" => def.blend_set = p.read_i32("BlendSet", def.blend_set),
             "Type" => def.system_type = p.read_i32("Type", def.system_type),

@@ -442,7 +442,10 @@ use crate::fight::components::FighterState;
 pub fn eatme_system(
     mut players: Query<
         (&Transform, &mut InputState),
-        (With<Player>, Without<crate::camera::components::CameraController>),
+        (
+            With<Player>,
+            Without<crate::camera::components::CameraController>,
+        ),
     >,
     camera_q: Query<
         &Transform,
@@ -667,8 +670,7 @@ pub fn player_movement_system(
 ) {
     let camera_tf_opt = camera_query.iter().next();
 
-    for (entity, input, transform, mut velocity, mut fighter, fsm_opt, anim_state_opt) in
-        &mut query
+    for (entity, input, transform, mut velocity, mut fighter, fsm_opt, anim_state_opt) in &mut query
     {
         if let Some(fsm) = fsm_opt {
             // Lock movement and steering while an attack/block animation is actively playing

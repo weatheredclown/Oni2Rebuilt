@@ -218,6 +218,14 @@ pub(crate) fn build_jump_schedule(
             AnimScheduleEntry::new("ANIMJUMP_RUN_DBL", sub_state_1::JUMP_SOMERSAULT)
                 .with_rate(main_rate("ANIMJUMP_RUN_DBL")),
             AnimScheduleEntry::new("ANIMJUMP_RUN_2_EXT", sub_state_1::JUMP_SOMERSAULT).with_hold(),
+            // Land on RUN_3 (the forwards running land).  Legacy groups
+            // SOMERSAULT with JUMP_FORWARD and JUMP_WALL_SPRING into a
+            // single `StartLandAnimations(ANIMJUMP_RUN_3)` branch
+            // (`action.cpp:1722-1726`).  Without this entry the
+            // `JumpAction::update` "advance to JUMP_LAND" loop runs
+            // off the end of the schedule and locomotion stomps the
+            // pose straight to ANIMNAV_STAND with no visible landing.
+            AnimScheduleEntry::new("ANIMJUMP_RUN_3", sub_state_1::JUMP_LAND),
         ],
         sub_state_0::JUMP_WALL_COMPRESS => vec![AnimScheduleEntry::new(
             "ANIMJUMP_RUN_WALL_COMPRESS",
@@ -1317,16 +1325,23 @@ pub fn replenish_jumps_on_ground_system(
 ) {
     for (anim_state_opt, mut ap) in &mut query {
         let is_grounded = anim_state_opt.is_none_or(|s| s.is_grounded);
-        // Skip during the COMPRESS phase of an in-progress jump.  COMPRESS
-        // is the squat-down animation that plays *before* the impulse
-        // fires — the actor is still grounded, but `StartJumpCompress` has
-        // already decremented `jumps_remaining`.  Refilling here would let
-        // the next press see `is_first_jump=true` and fire a second
-        // regular takeoff instead of the somersault, producing a visible
-        // "jump → jump-again → somersault" triple jump.  JUMP_LAND is
-        // grounded too but is the natural reset point, so we *do* want
-        // the refill there.
-        if ap.sub_state_1 == sub_state_1::JUMP_COMPRESS {
+        // Don't refill while a jump is in flight.  `is_grounded` can
+        // be transiently true mid-jump: between the COMPRESS→MAIN
+        // schedule handoff and the physics tick that applies the
+        // impulse, the actor is still touching the floor but the
+        // logical jump is already committed.  Earlier this skip was
+        // gated on `sub_state_1 == JUMP_COMPRESS`, which missed that
+        // one-tick window — the replenisher would refill the budget
+        // and the next press misclassified as a fresh first jump
+        // (the somersault decision in `animator_broadcast_handler`
+        // now uses `sub_state_1 == JUMP_MAIN` directly, but skipping
+        // the refill here too is the load-bearing half: the budget
+        // must stay decremented or a held button could fire three
+        // takeoffs in a row).  JUMP_LAND grounds the actor for real
+        // and is the natural reset point, so we *do* want the refill
+        // there — hence the broader JUMPING flag check rather than
+        // a substate enumeration.
+        if ap.check_flags(action_flags::JUMPING) {
             continue;
         }
         if is_grounded && ap.jumps_remaining < ap.max_jumps {
@@ -1353,13 +1368,26 @@ pub fn animator_broadcast_handler(
         match ev.payload.as_str() {
             "StartJumpCompress" => {
                 if let Ok((mut ap, input_opt)) = player_query.get_mut(ev.entity) {
-                    // Ensure jumps are replenished if we're technically grounded or starting our first jump
-                    let is_first_jump = ap.jumps_remaining == ap.max_jumps;
+                    // Mid-air press → somersault.  Mirror the legacy
+                    // gate (`action.cpp:618` ACT_S0_JUMP_SOMERSAULT
+                    // `if (SubState1 != ACT_S1_JUMP_MAIN) return
+                    // ACT_DENIED`) — the question is *"am I already
+                    // airborne in a jump?"*, not "have I used a jump
+                    // slot?".  The earlier `jumps_remaining ==
+                    // max_jumps` heuristic raced with
+                    // `replenish_jumps_on_ground_system`: at the
+                    // COMPRESS→MAIN handoff tick `sub_state_1` flips
+                    // to JUMP_MAIN before the physics impulse fires,
+                    // so `is_grounded` is still true and the
+                    // replenisher refills the budget — making the
+                    // next press look like a fresh first jump.
+                    let mid_air =
+                        ap.sub_state_1 == crate::animator::components::sub_state_1::JUMP_MAIN;
                     if ap.jumps_remaining > 0 {
                         ap.jumps_remaining -= 1;
                     }
 
-                    let substate = if !is_first_jump {
+                    let substate = if mid_air {
                         crate::animator::sub_state_0::JUMP_SOMERSAULT
                     } else if let Some(input) = input_opt {
                         if input.movement.length_squared() > 0.05 {

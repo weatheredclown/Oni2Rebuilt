@@ -65,7 +65,7 @@ impl Behavior for FightBehavior {
             if dist > 0.01 {
                 let dir = delta / dist;
                 ctx.fighter.facing = dir;
-                
+
                 let look_target = here + dir;
                 let mut rot_tf = *ctx.transform;
                 rot_tf.look_at(look_target, Vec3::Y);

@@ -128,9 +128,7 @@ pub fn frontend_menu_camera_apply_seq(
     if let Some(target) = seq.track_point {
         let pos = tf.translation;
         let forward = target - pos;
-        if forward.length_squared() > 1e-6
-            && forward.normalize().dot(Vec3::Y).abs() < 0.999
-        {
+        if forward.length_squared() > 1e-6 && forward.normalize().dot(Vec3::Y).abs() < 0.999 {
             tf.look_at(target, Vec3::Y);
         }
     }

@@ -147,8 +147,7 @@ impl Plugin for AnimatorPlugin {
                         // action_start_system so the ActionPlayer's
                         // react_sound_name is already stamped this tick
                         // when a fresh react starts on frame 0.
-                        systems::react_sound_tick_system
-                            .after(systems::action_start_system),
+                        systems::react_sound_tick_system.after(systems::action_start_system),
                     ),
                     (
                         // Bridge: SubState1 transition into JUMP_MAIN /

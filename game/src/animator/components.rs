@@ -537,4 +537,3 @@ pub struct PickupHitched {
     /// reference: `mat.d -= GetOffset()` in HandleDrop.
     pub offset: bevy::prelude::Vec3,
 }
-

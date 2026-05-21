@@ -15,7 +15,7 @@ use crate::oni2_loader::utils::space;
 /// Build the Bevy material handle for a single shader pass.  Dispatches on
 /// `texgen=reflect` to swap the standard PBR material out for the sphere-
 /// mapped `EnvReflectMaterial` (the gold-statue / matcap path).
-fn build_pass_material(
+pub(crate) fn build_pass_material(
     pass: &Oni2MaterialPass,
     pass_idx: usize,
     diffuse: Color,
@@ -50,6 +50,22 @@ fn build_pass_material(
         .as_ref()
         .map(|s| s == "decal")
         .unwrap_or(false);
+
+    // `modulate2x` (or plain `add`) is the legacy "additive, brightened"
+    // texcombine used by glow / fire / spark FX shaders.  The exact AGE
+    // semantics multiply src×dst×2, which we approximate as
+    // `AlphaMode::Add` (additive blend, no depth write) plus routing
+    // the texture into `emissive_texture` so the pixels render at
+    // full intensity regardless of scene lighting.  Without this branch
+    // FX shaders like `blast_fire.shader` would land on the opaque path
+    // and render as a dim, lighting-attenuated square instead of a
+    // glowing flame.
+    let is_additive = pass
+        .texcombine
+        .as_ref()
+        .map(|s| s == "modulate2x" || s == "add")
+        .unwrap_or(false);
+
     // `blendset normal` is the legacy default for OPAQUE materials with
     // standard SrcAlpha/OneMinusSrcAlpha blending — when the texture has no
     // alpha channel (which is the common case) it renders identically to
@@ -65,26 +81,43 @@ fn build_pass_material(
         .map(|s| !matches!(s.as_str(), "opaque" | "normal"))
         .unwrap_or(false);
 
+    let alpha_mode = if is_additive {
+        AlphaMode::Add
+    } else if has_alpha || is_decal || is_blend {
+        AlphaMode::Blend
+    } else {
+        AlphaMode::Opaque
+    };
+
     PassMaterial::Standard(materials.add(StandardMaterial {
         base_color: if texture_handle.is_some() {
             Color::WHITE
         } else {
             diffuse
         },
-        base_color_texture: texture_handle,
-        cull_mode: None,
-        alpha_mode: if has_alpha || is_decal || is_blend {
-            AlphaMode::Blend
+        // Additive passes route the texture into `emissive` so it
+        // contributes at full intensity without being darkened by
+        // ambient lighting.  Non-additive passes keep the existing
+        // diffuse-only path.
+        base_color_texture: if is_additive {
+            None
         } else {
-            AlphaMode::Opaque
+            texture_handle.clone()
         },
+        emissive: if is_additive {
+            LinearRgba::WHITE
+        } else {
+            LinearRgba::BLACK
+        },
+        emissive_texture: if is_additive { texture_handle } else { None },
+        cull_mode: None,
+        alpha_mode,
         perceptual_roughness: 1.0,
         reflectance: 0.0,
         depth_bias: pass_idx as f32 * 10.0,
         ..default()
     }))
 }
-
 
 #[derive(Component)]
 pub struct CreatureRenderOffset {
@@ -518,7 +551,8 @@ pub fn creature_movement_anim_system(
                         if id == crate::oni2_loader::animation::AnimId::new("ANIMNORMAL_IDLE").0
                             || id == crate::oni2_loader::animation::AnimId::new("ANIMNAV_STAND").0
                         {
-                            g.anim = crate::oni2_loader::animation::AnimId::new("ANIMFIGHTSTANCE_FIGHT");
+                            g.anim =
+                                crate::oni2_loader::animation::AnimId::new("ANIMFIGHTSTANCE_FIGHT");
                         }
                     }
                 }
@@ -528,6 +562,7 @@ pub fn creature_movement_anim_system(
                 && Some(gait.anim) != anim_state.current_anim_id
             {
                 let prev_num_frames = anim_state.anim.frames.len().max(1) as f32;
+                let prev_was_looping = anim_state.looping;
                 let prev_phase = if prev_num_frames > 1.0 {
                     anim_state.current_time / (prev_num_frames - 1.0)
                 } else {
@@ -537,9 +572,26 @@ pub fn creature_movement_anim_system(
                 if library.play_id(gait.anim, &mut anim_state) {
                     *move_anim = CreatureMovementAnim::Stand; // Prevent legacy code from desyncing state
 
-                    // Sync the new animation length directly to the previous phase percentage
+                    // Phase-match the new gait only when transitioning
+                    // between locomotion gaits (both looping). When the
+                    // previous anim was a one-shot (attack / react /
+                    // block / evade), `play_id` already reset
+                    // `current_time` to 0 — leave it there so the gait
+                    // starts at its neutral pose.
+                    //
+                    // Why this matters: a one-shot ending at phase ~1.0
+                    // would, with unconditional phase-matching, restart
+                    // the new gait at its LAST frame. Composed with the
+                    // freshly-rotated parent Transform (from
+                    // `end_rotation_notches`), the gait's tail-frame
+                    // body pose renders for one tick at the new rotation
+                    // before the loop wraps around to frame 0 — a
+                    // visible "snap to wrong pose" blink at every combo
+                    // boundary, especially with side-rotating attacks
+                    // where the parent + gait-tail composite is most
+                    // visibly off-axis.
                     let new_num_frames = anim_state.anim.frames.len().max(1) as f32;
-                    if new_num_frames > 1.0 {
+                    if new_num_frames > 1.0 && prev_was_looping {
                         anim_state.current_time = prev_phase * (new_num_frames - 1.0);
                     }
                 } else {
@@ -572,8 +624,7 @@ pub fn spawn_mod_file(
         .materials
         .iter()
         .map(|oni_mat| {
-            let diffuse =
-                Color::srgb(oni_mat.diffuse[0], oni_mat.diffuse[1], oni_mat.diffuse[2]);
+            let diffuse = Color::srgb(oni_mat.diffuse[0], oni_mat.diffuse[1], oni_mat.diffuse[2]);
             let mut handles = Vec::new();
             if !oni_mat.passes.is_empty() {
                 for (pass_idx, pass) in oni_mat.passes.iter().enumerate() {
@@ -655,13 +706,16 @@ pub fn spawn_mod_file(
         .with_children(|parent| {
             for (mat_idx, mesh) in sub_meshes {
                 let mesh_handle = meshes.add(mesh);
-                let pass_handles = bevy_materials.get(mat_idx).cloned().unwrap_or_else(|| {
-                    vec![PassMaterial::Standard(fallback_mat.clone())]
-                });
+                let pass_handles = bevy_materials
+                    .get(mat_idx)
+                    .cloned()
+                    .unwrap_or_else(|| vec![PassMaterial::Standard(fallback_mat.clone())]);
 
                 for (pass_idx, pass_mat) in pass_handles.into_iter().enumerate() {
-                    let name =
-                        Name::new(format!("{}::submesh_{}_pass_{}", label_owned, mat_idx, pass_idx));
+                    let name = Name::new(format!(
+                        "{}::submesh_{}_pass_{}",
+                        label_owned, mat_idx, pass_idx
+                    ));
                     match pass_mat {
                         PassMaterial::Standard(h) => {
                             parent.spawn((
@@ -727,31 +781,54 @@ pub fn spawn_oni2_entity(
 /// Load an ONI2 entity from a directory and spawn it with position and rotation.
 /// If `anim_path` is provided, load that specific anim file instead of the default.
 
-fn parse_sawtooth_speed(payload: &str) -> f32 {
+/// Extract a per-second rate from one of the AGE shader UV-animation
+/// directives (`slides`/`slidet`/`rotate`/`scalet`).  Handles the two
+/// waveform shapes that appear in shipping shaders:
+///
+///   sawtooth <rate> <unit?> <a?> <b?>   — rate is the token after "sawtooth"
+///   linear   <p1> <p2> <p3> <rate>       — rate is the 4th param after "linear"
+///
+/// `rotate` extends from the same family in the AGE spec.  Other shapes
+/// (square, time, …) are not currently observed in shipping shaders;
+/// returning 0 leaves the channel un-animated until we encounter one.
+fn parse_waveform_speed(payload: &str) -> f32 {
     let parts: Vec<&str> = payload.split_whitespace().collect();
+
     if let Some(idx) = parts.iter().position(|&x| x == "sawtooth")
         && idx + 1 < parts.len()
     {
         return parts[idx + 1].parse().unwrap_or(0.0);
     }
+
+    // `linear 0 0 0 <rate>` — observed only on `scalet` so far
+    // (`scalet waveform 0 linear 0 0 0 0.5` in blast_fire.shader, etc.).
+    // The 4th parameter is the per-second rate; the first three are the
+    // ramp's start phase/value bounds, which we don't model — at runtime
+    // the existing `uv_animator_system` just advances UV by `rate * dt`.
+    if let Some(idx) = parts.iter().position(|&x| x == "linear")
+        && idx + 4 < parts.len()
+    {
+        return parts[idx + 4].parse().unwrap_or(0.0);
+    }
+
     0.0
 }
 
-fn parse_uv_animator(
+pub(crate) fn parse_uv_animator(
     pass: &crate::oni2_loader::parsers::types::Oni2MaterialPass,
 ) -> crate::oni2_loader::registries::TextureUVAnimator {
     let mut anim = crate::oni2_loader::registries::TextureUVAnimator::default();
     if let Some(s) = &pass.slides {
-        anim.slides_speed = parse_sawtooth_speed(s);
+        anim.slides_speed = parse_waveform_speed(s);
     }
     if let Some(s) = &pass.slidet {
-        anim.slidet_speed = parse_sawtooth_speed(s);
+        anim.slidet_speed = parse_waveform_speed(s);
     }
     if let Some(s) = &pass.rotate {
-        anim.rotate_speed = parse_sawtooth_speed(s);
+        anim.rotate_speed = parse_waveform_speed(s);
     }
     if let Some(s) = &pass.scalet {
-        anim.scalet_speed = parse_sawtooth_speed(s);
+        anim.scalet_speed = parse_waveform_speed(s);
     }
     anim
 }
@@ -1418,7 +1495,10 @@ pub fn spawn_oni2_entity_with_rotation(
     });
 
     if default_anim.is_some() {
-        println!("PLAY_ANIM (SPAWN): '<loaded override>' on entity '{}'", name);
+        println!(
+            "PLAY_ANIM (SPAWN): '<loaded override>' on entity '{}'",
+            name
+        );
     }
 
     // Insert AnimState and Library even if there is no skeleton (for root-motion only animations)
@@ -1487,9 +1567,11 @@ pub fn spawn_oni2_entity_with_rotation(
 
     // 4. Mesh sub_meshes
     for (mat_idx, mesh_handle) in &ent_type.sub_meshes {
-        let pass_handles = ent_type.materials.get(*mat_idx).cloned().unwrap_or_else(|| {
-            vec![PassMaterial::Standard(fallback_mat.clone())]
-        });
+        let pass_handles = ent_type
+            .materials
+            .get(*mat_idx)
+            .cloned()
+            .unwrap_or_else(|| vec![PassMaterial::Standard(fallback_mat.clone())]);
 
         let pass_animators = ent_type
             .material_animators
@@ -1682,10 +1764,8 @@ pub fn spawn_oni2_creature(
             // anim_name is the actor key (e.g. "kno"); anim_entity_dir is the
             // disk directory (e.g. "Entity/kno") used as the fallback for
             // entities whose blocks aren't published under entity.tune.
-            let block_lib = crate::oni2_loader::parsers::blk::load_block_library(
-                anim_name,
-                &anim_entity_dir,
-            );
+            let block_lib =
+                crate::oni2_loader::parsers::blk::load_block_library(anim_name, &anim_entity_dir);
             commands.entity(entity).insert(block_lib);
         }
     }

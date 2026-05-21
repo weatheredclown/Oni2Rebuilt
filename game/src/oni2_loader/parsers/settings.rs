@@ -92,7 +92,7 @@ fn parse_block(tokens: &[String], start_idx: usize) -> (SettingsBlock, usize) {
         // In our simplistic tokenizer, we just grab until the next token that looks like a key
         // but we'll cheat by just grabbing the rest of the line (tokenizer keeps lines separate)
         let mut _vals: Vec<String> = Vec::new();
-        while i < tokens.len() && tokens[i] != "}" && tokens[i] != "{" {
+        if i < tokens.len() && tokens[i] != "}" && tokens[i] != "{" {
             // Very naive line-break detection isn't in this token stream,
             // so we just grab strings/numbers.
             // Actually, we'll need a slightly smarter tokenizer that groups by line,

@@ -418,7 +418,10 @@ pub fn scroni_sys_event_observer(
                 None => None, // re-run current — handled below via existing SelectedLayout
             };
             if let Some(folder) = resolved_layout {
-                info!("scroni RunGame: launching '{}' (level idx {:?})", folder, level);
+                info!(
+                    "scroni RunGame: launching '{}' (level idx {:?})",
+                    folder, level
+                );
                 commands.insert_resource(crate::menu::SelectedLayout(folder));
                 next_app_state.set(crate::menu::AppState::LoadingLayout);
             } else if level.is_none() {

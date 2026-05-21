@@ -26,9 +26,9 @@
 
 use crate::error::Result;
 
+use crate::bitstream::BitReader;
 use crate::tables::motion;
 use crate::vlc;
-use crate::bitstream::BitReader;
 
 /// Motion vector predictor state, reset at slice boundaries and whenever a
 /// non-intra macroblock without a forward/backward vector is encountered.

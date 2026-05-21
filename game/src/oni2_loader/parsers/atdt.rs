@@ -450,28 +450,24 @@ pub fn parse_atdt_content(content: &str) -> AtdtData {
                                 strike.reactanim[3] = p.read_i32(&a_key, strike.reactanim[3])
                             }
                             "facewithreact0" => {
-                                strike.face_with_react[0] = p.read_i32(
-                                    &a_key,
-                                    if strike.face_with_react[0] { 1 } else { 0 },
-                                ) != 0
+                                strike.face_with_react[0] = p
+                                    .read_i32(&a_key, if strike.face_with_react[0] { 1 } else { 0 })
+                                    != 0
                             }
                             "facewithreact1" => {
-                                strike.face_with_react[1] = p.read_i32(
-                                    &a_key,
-                                    if strike.face_with_react[1] { 1 } else { 0 },
-                                ) != 0
+                                strike.face_with_react[1] = p
+                                    .read_i32(&a_key, if strike.face_with_react[1] { 1 } else { 0 })
+                                    != 0
                             }
                             "facewithreact2" => {
-                                strike.face_with_react[2] = p.read_i32(
-                                    &a_key,
-                                    if strike.face_with_react[2] { 1 } else { 0 },
-                                ) != 0
+                                strike.face_with_react[2] = p
+                                    .read_i32(&a_key, if strike.face_with_react[2] { 1 } else { 0 })
+                                    != 0
                             }
                             "facewithreact3" => {
-                                strike.face_with_react[3] = p.read_i32(
-                                    &a_key,
-                                    if strike.face_with_react[3] { 1 } else { 0 },
-                                ) != 0
+                                strike.face_with_react[3] = p
+                                    .read_i32(&a_key, if strike.face_with_react[3] { 1 } else { 0 })
+                                    != 0
                             }
                             "setdistfromatkr0" => {
                                 strike.set_distance_mode[0] =
@@ -525,8 +521,7 @@ pub fn parse_atdt_content(content: &str) -> AtdtData {
                                 data.block_reaction = p.read_i32(&a_key, data.block_reaction)
                             }
                             "enemyblockanim" => {
-                                data.enemy_block_anim =
-                                    p.read_i32(&a_key, data.enemy_block_anim)
+                                data.enemy_block_anim = p.read_i32(&a_key, data.enemy_block_anim)
                             }
                             _ => {
                                 p.next();
@@ -551,18 +546,15 @@ pub fn parse_atdt_content(content: &str) -> AtdtData {
                         let a_key = p.peek().unwrap_or("").to_string();
                         match inner_key.as_str() {
                             "removesweapon" => {
-                                grab.removes_weapon = p.read_i32(
-                                    &a_key,
-                                    if grab.removes_weapon { 1 } else { 0 },
-                                ) != 0
+                                grab.removes_weapon =
+                                    p.read_i32(&a_key, if grab.removes_weapon { 1 } else { 0 }) != 0
                             }
                             "removesweaponphase" => {
                                 grab.removes_weapon_phase =
                                     p.read_float(&a_key, grab.removes_weapon_phase)
                             }
                             "reactanim" => {
-                                grab.react_anim =
-                                    p.read_string(&a_key, &grab.react_anim);
+                                grab.react_anim = p.read_string(&a_key, &grab.react_anim);
                             }
                             "damagephase" => {
                                 grab.damage_phase = p.read_float(&a_key, grab.damage_phase)
@@ -742,8 +734,7 @@ strike {
         // forward.
         let src = "strike {\n    framenum 0\n    frameduration 1\n    endrotationnotches -2\n}";
         let strike = parse_atdt_content(src).strike.unwrap();
-        let rotation =
-            Quat::from_rotation_y(strike.end_rotation_notches as f32 * NOTCH_RADIANS);
+        let rotation = Quat::from_rotation_y(strike.end_rotation_notches as f32 * NOTCH_RADIANS);
         let rotated = rotation * Vec3::NEG_Z;
         assert!(
             rotated.dot(Vec3::X) > 0.99,
@@ -765,8 +756,7 @@ strike {
         // direction.
         let src = "strike {\n    framenum 0\n    frameduration 1\n    endrotationnotches 3\n}";
         let strike = parse_atdt_content(src).strike.unwrap();
-        let rotation =
-            Quat::from_rotation_y(strike.end_rotation_notches as f32 * NOTCH_RADIANS);
+        let rotation = Quat::from_rotation_y(strike.end_rotation_notches as f32 * NOTCH_RADIANS);
         let rotated = rotation * Vec3::NEG_Z;
         // 135° CCW from NEG_Z lands in the (NEG_X, POS_Z) quadrant —
         // back-and-left.  Both components positive in (-X, +Z) ≈

@@ -166,10 +166,7 @@ fn parse_rules_block<D: SmDriver>(
         // is the bare event call (no `if` keyword) — e.g. `E_MODE(IDLE)`,
         // `!E_HAS_TARGET`, or empty (default true rule).
         let mut event_str = String::new();
-        while i < end
-            && tokens[i] != Token::Punct('{')
-            && tokens[i] != Token::Punct('}')
-        {
+        while i < end && tokens[i] != Token::Punct('{') && tokens[i] != Token::Punct('}') {
             match &tokens[i] {
                 Token::Word(w) => {
                     if !event_str.is_empty() && !event_str.ends_with('(') {
@@ -243,10 +240,7 @@ fn parse_rules_block<D: SmDriver>(
                             if let Some(&idx) = state_index.get(w) {
                                 goto_state = Some(idx);
                             } else {
-                                bevy::log::warn!(
-                                    "aifight_sm parser: unknown goto target '{}'",
-                                    w
-                                );
+                                bevy::log::warn!("aifight_sm parser: unknown goto target '{}'", w);
                             }
                             i += 1;
                         }
@@ -261,10 +255,7 @@ fn parse_rules_block<D: SmDriver>(
                             if let Some(&idx) = state_index.get(w) {
                                 goto_state = Some(idx);
                             } else {
-                                bevy::log::warn!(
-                                    "aifight_sm parser: unknown goto target '{}'",
-                                    w
-                                );
+                                bevy::log::warn!("aifight_sm parser: unknown goto target '{}'", w);
                             }
                             i += 1;
                         }
@@ -324,9 +315,8 @@ mod tests {
     }
 }
 "#;
-        let data =
-            parse_aifight_sm::<SquadDriver>(src, SQUAD_EVENT_PARSER, SQUAD_ACTION_PARSER)
-                .expect("parse should not fail");
+        let data = parse_aifight_sm::<SquadDriver>(src, SQUAD_EVENT_PARSER, SQUAD_ACTION_PARSER)
+            .expect("parse should not fail");
         assert_eq!(data.state_index.get("S_FIRST").copied(), Some(0));
         assert_eq!(data.state_index.get("S_SECOND").copied(), Some(1));
     }
@@ -357,9 +347,8 @@ mod tests {
     }
 }
 "#;
-        let data =
-            parse_aifight_sm::<SquadDriver>(src, SQUAD_EVENT_PARSER, SQUAD_ACTION_PARSER)
-                .expect("parse should not fail");
+        let data = parse_aifight_sm::<SquadDriver>(src, SQUAD_EVENT_PARSER, SQUAD_ACTION_PARSER)
+            .expect("parse should not fail");
         assert_eq!(data.states.len(), 1);
         assert!(data.state_index.contains_key("S_ONLY"));
         // Crucially, no spurious `Float`/`Title`/`P_TIMEOUTDELAY` states.

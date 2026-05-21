@@ -168,12 +168,7 @@ pub fn exec(ctx: &mut OpsCtx, stmt: &Stmt) -> bool {
                         }
 
                         // Status checks first (so we can see if player is recognized as enemy even if behind them)
-                        let cur_status = ctx
-                            .ctx
-                            .actor_statuses
-                            .get(&ent)
-                            .copied()
-                            .unwrap_or("");
+                        let cur_status = ctx.ctx.actor_statuses.get(&ent).copied().unwrap_or("");
                         let mut passes_filter = true;
 
                         let is_player = ctx.ctx.player == Some(ent);
@@ -377,10 +372,11 @@ pub fn exec(ctx: &mut OpsCtx, stmt: &Stmt) -> bool {
                 actor: ctx.exec.owner,
                 duration: dur,
             });
-            ctx.thread_mut().blocking = Some(crate::scroni::vm::BlockingAction::WaitingForBehavior {
-                kind: crate::statemachine::drivers::behavior::BehaviorKind::TakeCover,
-                deadline,
-            });
+            ctx.thread_mut().blocking =
+                Some(crate::scroni::vm::BlockingAction::WaitingForBehavior {
+                    kind: crate::statemachine::drivers::behavior::BehaviorKind::TakeCover,
+                    deadline,
+                });
             ctx.thread_mut().state = crate::scroni::vm::ExecState::Yielded;
             true
         }

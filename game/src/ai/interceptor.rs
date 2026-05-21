@@ -58,8 +58,7 @@ pub fn ai_interceptor_system(
                     if cand_health.current <= 0.0 {
                         continue;
                     }
-                    if factions.get_status(&self_faction.0, &cand_faction.0)
-                        != FactionStatus::Enemy
+                    if factions.get_status(&self_faction.0, &cand_faction.0) != FactionStatus::Enemy
                     {
                         continue;
                     }

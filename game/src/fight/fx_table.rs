@@ -268,10 +268,8 @@ pub const DEFAULT_IMPACT_STRIKE_NAME: &str = "_default_impact_strike";
 /// wires per-attack bundles, real cells can override this without touching
 /// the fallback path.
 pub fn register_default(registry: &mut AttackFxRegistry) {
-    let fx = registry.register_set(
-        FxSet::new("_default_impact")
-            .with_fx(DEFAULT_IMPACT_STRIKE_NAME),
-    );
+    let fx =
+        registry.register_set(FxSet::new("_default_impact").with_fx(DEFAULT_IMPACT_STRIKE_NAME));
     let mut table = AttackFxTable::new("default");
     table.fallback = Some(fx);
     registry.register_table(table);
@@ -289,15 +287,22 @@ mod tests {
     fn default_table_is_structurally_present_but_empty() {
         let mut reg = AttackFxRegistry::default();
         register_default(&mut reg);
-        // Table exists; every cell is None (no fallback configured).
+        // The table's specific cell is empty, but lookup falls back to the default impact.
+        let table = reg.tables.get("default").unwrap();
         assert!(
+            table.table[target_idx(AttackTarget::Body)][strength_idx(AttackStrength::Low)]
+                [class_idx(AttackClass::Punch)]
+            .is_none()
+        );
+        assert_eq!(
             reg.lookup(
                 "default",
                 AttackTarget::Body,
                 AttackStrength::Low,
                 AttackClass::Punch
             )
-            .is_none()
+            .map(|fx| fx.name.as_str()),
+            Some("_default_impact"),
         );
     }
 

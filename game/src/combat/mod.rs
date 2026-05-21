@@ -68,23 +68,6 @@ impl Plugin for CombatPlugin {
             .add_systems(
                 FixedUpdate,
                 (
-                    // Apply post-attack `end_rotation_notches` on the
-                    // SAME tick the anim crosses its last frame.  Must
-                    // run AFTER `update_oni2_animation` (which emits
-                    // `AnimEndedMessage` when the anim crosses its
-                    // last frame) and BEFORE the rest of the combat
-                    // chain (and before any FSM/animator system that
-                    // might switch to a new anim) so the rotation
-                    // lands before the new anim's first rendered
-                    // frame.  Without the explicit `.after`, the
-                    // scheduler could place this system before
-                    // `update_oni2_animation` in the same tick — the
-                    // `AnimEndedMessage` then waits one tick for the
-                    // reader cursor, leaving a one-frame visual where
-                    // the new anim already rendered at the old
-                    // (un-rotated) Transform.
-                    systems::apply_end_rotation_on_anim_end_system
-                        .after(crate::oni2_loader::animation::update_oni2_animation),
                     systems::ground_detection_system,
                     systems::hit_detection_system,
                     systems::process_strike_connections_system,
@@ -103,10 +86,27 @@ impl Plugin for CombatPlugin {
             )
             .add_systems(
                 Update,
-                systems::attack_sync_system
-                    .after(crate::statemachine::fsm_update_system)
-                    .after(crate::statemachine::animator_update_system)
-                    .after(crate::oni2_loader::animation::update_oni2_animation)
+                (
+                    // Post-attack `end_rotation_notches` apply.  Must run
+                    // AFTER `update_oni2_animation` (the producer of
+                    // `AnimEndedMessage`) so the rotation lands in the
+                    // same Update tick the anim ends — Bevy's per-system
+                    // event cursor would otherwise delay the read by one
+                    // tick.  Must run BEFORE `fsm_update_system` so the
+                    // FSM's `lib.play(next_anim)` sees the post-notch
+                    // facing, and BEFORE Bevy's render step so the
+                    // newly-rotated Transform is what gets sampled this
+                    // frame.  Lives in `Update` (not `FixedUpdate`)
+                    // because the producer does — cross-schedule
+                    // `.after` ordering is silently ignored by Bevy.
+                    systems::apply_end_rotation_on_anim_end_system
+                        .after(crate::oni2_loader::animation::update_oni2_animation)
+                        .before(crate::statemachine::fsm_update_system),
+                    systems::attack_sync_system
+                        .after(crate::statemachine::fsm_update_system)
+                        .after(crate::statemachine::animator_update_system)
+                        .after(crate::oni2_loader::animation::update_oni2_animation),
+                )
                     .run_if(in_state(AppState::InGame)),
             );
     }

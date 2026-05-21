@@ -38,8 +38,7 @@ pub fn tnua_basis_from_linvel(
 
         controller.basis = TnuaBuiltinWalk {
             desired_motion,
-            desired_forward: transform_opt
-                .and_then(|tf| Dir3::new(tf.forward().as_vec3()).ok()),
+            desired_forward: transform_opt.and_then(|tf| Dir3::new(tf.forward().as_vec3()).ok()),
         };
 
         // Hand off all velocity ownership to Tnua. The float spring + any

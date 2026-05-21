@@ -72,7 +72,7 @@ pub const ANIMREACT_NAMES: &[&str] = &[
     // compatibility to put this here").  Keeping it in the same table
     // means the death-anim lookup in the action dispatcher can index
     // either react aliases or the death fallback uniformly.
-    "ANIMDIE_GENERAL",               // 56
+    "ANIMDIE_GENERAL", // 56
 ];
 
 /// Index of `ANIMDIE_GENERAL` in `ANIMREACT_NAMES`.  Used as the death-anim

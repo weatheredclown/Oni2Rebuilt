@@ -154,10 +154,7 @@ impl Plugin for MoverPlugin {
     }
 }
 
-fn init_shared_mover_config(
-    mut commands: Commands,
-    mut configs: ResMut<Assets<Oni2SchemeConfig>>,
-) {
+fn init_shared_mover_config(mut commands: Commands, mut configs: ResMut<Assets<Oni2SchemeConfig>>) {
     let handle = configs.add(Oni2SchemeConfig::default());
     commands.insert_resource(SharedMoverConfig(handle));
 }

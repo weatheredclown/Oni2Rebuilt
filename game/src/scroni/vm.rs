@@ -214,10 +214,7 @@ pub fn resolve_behavior_wait(
     deadline: Option<f64>,
     now: f64,
     ended_behaviors: &std::collections::HashMap<
-        (
-            Entity,
-            crate::statemachine::drivers::behavior::BehaviorKind,
-        ),
+        (Entity, crate::statemachine::drivers::behavior::BehaviorKind),
         bool,
     >,
 ) -> Option<bool> {
@@ -585,11 +582,13 @@ pub struct ScrOniThread {
     /// Read by the `blockingcommandfailed` query in `eval_expr`, which
     /// scripts use in retry loops:
     ///
+    /// ```text
     ///     takecover
     ///     do while blockingcommandfailed begin
     ///         retreat for 0.5
     ///         takecover
     ///     end
+    /// ```
     ///
     /// Persists across non-blocking statements until the next blocking
     /// command resolves and overwrites it.
@@ -975,7 +974,9 @@ impl ScriptExec {
                         _ => None,
                     };
                     if let Some(nv) = new_val {
-                        thread.variables.insert(var_decl.name.clone(), Value::Float(nv));
+                        thread
+                            .variables
+                            .insert(var_decl.name.clone(), Value::Float(nv));
                     }
                 }
             }
@@ -1738,8 +1739,7 @@ impl ScriptExec {
                         if let Some(t) = target {
                             let ents = ctx.resolve_targets(&t);
                             for ent in ents {
-                                if ctx.actor_statuses.get(&ent).copied() != Some("dead")
-                                {
+                                if ctx.actor_statuses.get(&ent).copied() != Some("dead") {
                                     return Value::Int(1);
                                 }
                             }
@@ -1751,11 +1751,7 @@ impl ScriptExec {
                         if let Some(t) = target {
                             let ents = ctx.resolve_targets(&t);
                             if let Some(&ent) = ents.first() {
-                                let s = ctx
-                                    .actor_statuses
-                                    .get(&ent)
-                                    .copied()
-                                    .unwrap_or("dead");
+                                let s = ctx.actor_statuses.get(&ent).copied().unwrap_or("dead");
                                 return Value::String(s.to_string());
                             }
                         }
@@ -2128,11 +2124,7 @@ impl ScriptExec {
                         if let Some(val) = actor_val {
                             let ents = ctx.resolve_targets(&val);
                             if let Some(&ent) = ents.first() {
-                                let cur = ctx
-                                    .actor_statuses
-                                    .get(&ent)
-                                    .copied()
-                                    .unwrap_or("");
+                                let cur = ctx.actor_statuses.get(&ent).copied().unwrap_or("");
                                 let matches = if state.eq_ignore_ascii_case("alive") {
                                     !cur.is_empty() && cur != "dead"
                                 } else if state.eq_ignore_ascii_case("dead") {
@@ -2389,10 +2381,7 @@ pub fn scroni_tick_system(
     // `blockingcommandfailed` reads true after a TakeCover that couldn't
     // find cover (etc.).
     let ended_behaviors: std::collections::HashMap<
-        (
-            Entity,
-            crate::statemachine::drivers::behavior::BehaviorKind,
-        ),
+        (Entity, crate::statemachine::drivers::behavior::BehaviorKind),
         bool,
     > = end_behavior_reader
         .read()
@@ -2402,7 +2391,8 @@ pub fn scroni_tick_system(
     let player_ent = player_query.iter().next();
 
     let _build_status_span = bevy::log::info_span!("scroni::build_actor_statuses").entered();
-    let mut actor_statuses: std::collections::HashMap<Entity, &'static str> = std::collections::HashMap::new();
+    let mut actor_statuses: std::collections::HashMap<Entity, &'static str> =
+        std::collections::HashMap::new();
     for (ent, health, ai_opt) in health_query.iter() {
         let status = if health.current <= 0.0 {
             "dead"
@@ -2819,10 +2809,7 @@ pub fn scroni_tick_system(
                         });
                     }
                 }
-                SysRequest::TakeCover {
-                    actor,
-                    duration: _,
-                } => {
+                SysRequest::TakeCover { actor, duration: _ } => {
                     // Flip the actor's BehaviorRuntime into a TakeCover
                     // request — same handshake the goto/retreat scripts use
                     // (write pending_params, set request flag, FSM tick
@@ -3422,8 +3409,7 @@ mod tests {
         let ended = std::collections::HashMap::new();
         // Deadline elapsed without an EndBehaviorMessage — resolve as
         // a non-failing timeout (matches C++ DoBehaviorDoneOrTimeout).
-        let r =
-            resolve_behavior_wait(actor, BehaviorKind::TakeCover, Some(50.0), 100.0, &ended);
+        let r = resolve_behavior_wait(actor, BehaviorKind::TakeCover, Some(50.0), 100.0, &ended);
         assert_eq!(r, Some(false));
     }
 
@@ -3432,8 +3418,7 @@ mod tests {
         let actor = make_entity(1);
         let ended = std::collections::HashMap::new();
         // Deadline still in the future — keep waiting.
-        let r =
-            resolve_behavior_wait(actor, BehaviorKind::TakeCover, Some(150.0), 100.0, &ended);
+        let r = resolve_behavior_wait(actor, BehaviorKind::TakeCover, Some(150.0), 100.0, &ended);
         assert_eq!(r, None);
     }
 
@@ -3444,8 +3429,7 @@ mod tests {
         ended.insert((actor, BehaviorKind::TakeCover), true);
         // Behavior failed BEFORE the deadline elapses — the failure
         // path takes priority over the (not-yet-due) timeout.
-        let r =
-            resolve_behavior_wait(actor, BehaviorKind::TakeCover, Some(150.0), 100.0, &ended);
+        let r = resolve_behavior_wait(actor, BehaviorKind::TakeCover, Some(150.0), 100.0, &ended);
         assert_eq!(
             r,
             Some(true),

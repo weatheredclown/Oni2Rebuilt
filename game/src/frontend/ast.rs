@@ -121,7 +121,9 @@ pub enum ItemKind {
     Invisible,
     /// `ITEM_ACTOR` — an item that targets a named actor in the
     /// preloaded layout (used for PAGE_3D scripting hooks).
-    Actor { actor: Option<String> },
+    Actor {
+        actor: Option<String>,
+    },
     Rect2D(Rect2DProps),
     Rect2DText {
         rect: Rect2DProps,

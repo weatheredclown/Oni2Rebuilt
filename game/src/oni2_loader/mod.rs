@@ -11,6 +11,7 @@ pub mod animation;
 pub mod asleep;
 pub mod components;
 pub mod curve;
+pub mod drawable;
 pub mod environment;
 pub mod formation;
 pub mod headik;
@@ -68,6 +69,7 @@ impl Plugin for Oni2LoaderPlugin {
             .insert_resource(DebugSkeletonVisible(false))
             .init_resource::<DebugLightGridState>()
             .init_resource::<registries::EntityLibrary>()
+            .init_resource::<registries::DrawableLibrary>()
             .init_resource::<registries::AnimRegistry>()
             .init_resource::<registries::ProjLibrary>()
             .init_resource::<registries::FxLibrary>()
@@ -96,7 +98,30 @@ impl Plugin for Oni2LoaderPlugin {
                     head_ik_setup_system,
                     head_ik_system.after(update_oni2_animation),
                     resolve_pending_parents_system,
-                    creature_movement_anim_system,
+                    // Mirrors entity sub-meshes into `DrawableLibrary` on
+                    // every `EntityLibrary` change so the unified UV
+                    // animator picks them up alongside FX drawables.
+                    registries::sync_drawables_from_entities_system,
+                    // Order strictly after `update_oni2_animation` AND
+                    // `fsm_update_system`: otherwise on the tick a
+                    // non-looping attack crosses its last frame Bevy may
+                    // schedule this system BEFORE update_oni2_animation,
+                    // so `locked_movement` still returns true (current_time
+                    // < last_frame) and the gait dispatch is skipped.  The
+                    // rotation system runs anyway (it reads
+                    // `AnimEndedMessage` from this same tick), so the
+                    // parent Transform gets the new yaw while the joints
+                    // stay on the OLD attack's tail frame for one render —
+                    // a visible "old pose at new rotation" blink at every
+                    // combo boundary.  With this ordering, when the attack
+                    // ends, `update_oni2_animation` advances current_time
+                    // past last_frame this tick, then the FSM transitions,
+                    // then THIS system dispatches the next gait
+                    // (FIGHTSTANCE_FIGHT) — joints and parent rotation
+                    // both flip in the same logical frame.
+                    creature_movement_anim_system
+                        .after(update_oni2_animation)
+                        .after(crate::statemachine::fsm_update_system),
                     ground_snap_system,
                     apply_fog_to_camera.run_if(resource_exists::<FogEnabled>),
                     update_skyhat,
@@ -108,6 +133,32 @@ impl Plugin for Oni2LoaderPlugin {
                     light_glow::update_light_glow_billboards
                         .after(light_glow::resolve_pending_glow_system),
                 )
+                    .run_if(in_state(AppState::InGame)),
+            )
+            .add_systems(
+                PostUpdate,
+                // Refresh skinned-mesh joints for entities whose
+                // animation was just swapped this frame by an FSM
+                // dispatch in `Update` (e.g. a combo's next attack).
+                // Without this pass the joints sampled at render time
+                // still belong to the previous anim's final frame —
+                // visible as a 1-frame "old pose at new rotation"
+                // blink at combo boundaries where
+                // `end_rotation_notches` rotates the Transform but
+                // the joints haven't caught up.
+                //
+                // Critically ordered BEFORE `TransformSystem::TransformPropagate`:
+                // the propagate pass is what turns local `Transform` writes
+                // into the `GlobalTransform`s that the render extract reads.
+                // If our refresh runs AFTER propagate, the joint local
+                // Transforms are correct but the per-joint GlobalTransforms
+                // still reflect the previous anim's last frame — composed
+                // with the newly-rotated parent GlobalTransform, that
+                // produces exactly the "double-rotated for one render
+                // frame" visible glitch (the rotation is "in both places
+                // at once" before the bone resets propagate).
+                refresh_anim_joints_post_fsm_system
+                    .before(bevy::transform::TransformSystems::Propagate)
                     .run_if(in_state(AppState::InGame)),
             )
             .add_systems(
@@ -130,9 +181,7 @@ impl Plugin for Oni2LoaderPlugin {
                     // but its `do forever` loop never runs and the
                     // camera stays on the static CAMERA_INIT pose
                     // (which lands the projector in the upper-left).
-                    .run_if(
-                        in_state(AppState::InGame).or(in_state(AppState::FrontEnd)),
-                    ),
+                    .run_if(in_state(AppState::InGame).or(in_state(AppState::FrontEnd))),
             )
             .add_systems(
                 Update,

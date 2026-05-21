@@ -219,7 +219,9 @@ pub fn spawn_laser(
             ChildOf(trail_entity),
         ))
         .id();
-    commands.entity(trail_entity).insert(LaserLightRef(light_entity));
+    commands
+        .entity(trail_entity)
+        .insert(LaserLightRef(light_entity));
 
     trail_entity
 }
@@ -329,7 +331,13 @@ fn laser_trail_update(
 /// transform update on a moving projectile.
 fn laser_ribbon_rebuild(
     q: Query<(&LaserTrail, &Transform, &Mesh3d, &mut Visibility), With<LaserRibbon>>,
-    camera: Query<&GlobalTransform, (With<crate::camera::components::CameraController>, Without<LaserRibbon>)>,
+    camera: Query<
+        &GlobalTransform,
+        (
+            With<crate::camera::components::CameraController>,
+            Without<LaserRibbon>,
+        ),
+    >,
     mut meshes: ResMut<Assets<Mesh>>,
 ) {
     let Some(cam_tf) = camera.iter().next() else {
@@ -480,7 +488,13 @@ fn laser_ribbon_rebuild(
 fn laser_head_billboard(
     parent_q: Query<(&LaserTrail, &Children)>,
     mut head_q: Query<(&mut Transform, &mut Visibility), With<LaserHead>>,
-    camera: Query<&GlobalTransform, (With<crate::camera::components::CameraController>, Without<LaserHead>)>,
+    camera: Query<
+        &GlobalTransform,
+        (
+            With<crate::camera::components::CameraController>,
+            Without<LaserHead>,
+        ),
+    >,
 ) {
     let Some(cam_tf) = camera.iter().next() else {
         return;
@@ -512,7 +526,7 @@ fn laser_head_billboard(
             // --- Debug print requested by user ---
             let cam_euler = cam_rot.to_euler(EulerRot::YXZ);
             let head_euler = tf.rotation.to_euler(EulerRot::YXZ);
-            
+
             // Just use a simple static to rate limit or only print on change
             static mut LAST_PRINT: (f32, f32) = (0.0, 0.0);
             unsafe {

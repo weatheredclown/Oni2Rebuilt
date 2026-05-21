@@ -5,7 +5,7 @@
  * builds one Bevy Mesh per material with positions, normals, UVs, colors, and
  * skinning (joint indices + weights).  Returns (material_index, Mesh) pairs.
  */
-use super::types::{Oni2Model, Oni2Skeleton};
+use super::types::{Oni2Adjunct, Oni2Material, Oni2Model, Oni2Packet, Oni2Skeleton};
 use bevy::mesh::{Indices, PrimitiveTopology, VertexAttributeValues};
 use bevy::prelude::*;
 
@@ -469,4 +469,578 @@ pub fn build_point_clouds_by_material(model: &Oni2Model) -> Vec<(usize, Mesh)> {
         result.push((mat_idx, mesh));
     }
     result
+}
+
+// ---------------------------------------------------------------------------
+// parse_mesh — standalone `.mesh` text-format parser.
+// ---------------------------------------------------------------------------
+//
+// The `.mesh` text format is the AGE-engine standalone counterpart to `.mod`
+// (which packages a model + skeleton-bone hierarchy + materials).  `.mesh`
+// drops the bone hierarchy and the entity-shaped metadata, keeping just the
+// per-vertex attribute arrays and a tri-strip primitive list — exactly what a
+// standalone drawable needs.  FX assets (blast fire / residue / edge,
+// projectile trails, etc.) ship as `.mesh`; entity skins ship as `.mod`.
+//
+// Format (braced block; sections may appear in any order — we scan):
+//
+//   {
+//       Skinned 0            ; 0 = unskinned (only case in shipping FX)
+//       PosSkin 0            ; only meaningful when Skinned=1
+//       Pos  N { x y z … }   ; N positions (3 tab-separated floats per line)
+//       Nrm  N { x y z … }   ; N normals
+//       Cpv  N { r g b a … } ; N color-per-vertex (4 floats, premultiplied)
+//       Tex0 N { u v … }     ; N UV0
+//       Tex1 K               ; K UV1 (always 0 in current FX assets, no block)
+//       Adj  N { P i / N i / C0 i / T0 i … } ; N adjuncts, 4 lines each
+//       Mtl  M {             ; M materials
+//           { Name "…"  Priority p  Prim P { (Type TRISTRIP, Idx K { idx… }) } }
+//       }
+//       Offset 0             ; coordinate-system origin offset (ignored)
+//   }
+//
+// Mapping to `Oni2Model` matches `parse_mod`'s output so the same
+// `build_meshes_by_material` downstream handles it.  Vertices stay in raw
+// AGE space — `build_meshes_by_material` negates X/Z and flips V at the
+// bone-transform step, and a single identity "bone 0" is seeded so that
+// path runs cleanly (vs the world-space-verts branch, which would skip
+// the conversion).
+//
+// Returns `Some(Oni2Model)` on a recognisable top-level `{`; `None` if the
+// file doesn't start with one (caller decides whether to log/warn).
+
+pub fn parse_mesh(content: &str, _entity_dir: &str) -> Option<Oni2Model> {
+    let trimmed = content.trim_start();
+    if !trimmed.starts_with('{') {
+        return None;
+    }
+
+    let lines: Vec<&str> = content.lines().collect();
+    let mut i = 0;
+
+    let mut vertices: Vec<[f32; 3]> = Vec::new();
+    let mut normals: Vec<[f32; 3]> = Vec::new();
+    let mut colors: Vec<[f32; 4]> = Vec::new();
+    let mut tex_coords: Vec<[f32; 2]> = Vec::new();
+    let mut adjuncts_flat: Vec<Oni2Adjunct> = Vec::new();
+    let mut materials: Vec<Oni2Material> = Vec::new();
+    let mut packets: Vec<Oni2Packet> = Vec::new();
+
+    while i < lines.len() {
+        let line = lines[i].trim();
+
+        // Section dispatch.  Every section's header is `<Name> <count>`
+        // optionally followed by `{` on the same or next line.  We
+        // tokenise to get the section name and count.
+        let toks: Vec<&str> = line.split_whitespace().collect();
+        if toks.is_empty() || toks[0] == "{" || toks[0] == "}" {
+            i += 1;
+            continue;
+        }
+
+        let section = toks[0];
+        let count: usize = toks.get(1).and_then(|s| s.parse().ok()).unwrap_or(0);
+
+        match section {
+            "Pos" => {
+                let (next, rows) = read_n_floats(&lines, i + 1, count, 3);
+                i = next;
+                for row in rows {
+                    vertices.push([row[0], row[1], row[2]]);
+                }
+            }
+            "Nrm" => {
+                let (next, rows) = read_n_floats(&lines, i + 1, count, 3);
+                i = next;
+                for row in rows {
+                    normals.push([row[0], row[1], row[2]]);
+                }
+            }
+            "Cpv" => {
+                let (next, rows) = read_n_floats(&lines, i + 1, count, 4);
+                i = next;
+                for row in rows {
+                    colors.push([row[0], row[1], row[2], row[3]]);
+                }
+            }
+            "Tex0" => {
+                let (next, rows) = read_n_floats(&lines, i + 1, count, 2);
+                i = next;
+                for row in rows {
+                    tex_coords.push([row[0], row[1]]);
+                }
+            }
+            "Tex1" => {
+                // Always 0 in shipping FX; if non-zero we'd need a
+                // tex_coords_1 array, which `Oni2Model` doesn't carry.
+                // Skip the block (or the header-only "Tex1 0" line).
+                if count > 0 {
+                    let (next, _) = read_n_floats(&lines, i + 1, count, 2);
+                    i = next;
+                } else {
+                    i += 1;
+                }
+            }
+            "Adj" => {
+                // Each adjunct is 4 consecutive `<Letter> <index>` lines
+                // in the order P (position), N (normal), C0 (color0),
+                // T0 (tex0).  Unskinned mesh → bone_idx = 0.
+                let (next, adjs) = read_adjuncts(&lines, i + 1, count);
+                i = next;
+                adjuncts_flat = adjs;
+            }
+            "Mtl" => {
+                let (next, parsed_mats, parsed_packets) =
+                    read_materials(&lines, i + 1, count, &adjuncts_flat);
+                i = next;
+                materials = parsed_mats;
+                packets = parsed_packets;
+            }
+            // `Skinned`, `PosSkin`, `Offset` — single-line flags, ignored.
+            _ => {
+                i += 1;
+            }
+        }
+    }
+
+    Some(Oni2Model {
+        vertices,
+        normals,
+        colors,
+        tex_coords,
+        materials,
+        packets,
+        // Seed identity bone 0 so the build_meshes_by_material bone path
+        // becomes a no-op composition (rotate by IDENT, translate by 0).
+        // We keep `world_space_verts = false` so the X/Z negation that
+        // lives in the bone-transform branch runs.
+        bone_world_positions: vec![[0.0, 0.0, 0.0]],
+        bone_rotations: vec![[0.0, 0.0, 0.0, 1.0]],
+        world_space_verts: false,
+    })
+}
+
+/// Read `count` rows from `lines` starting at index `start`, each row
+/// containing `fields` floats (tab- or space-separated).  Skips the
+/// section's opening `{` and stops at the matching `}`.  Returns
+/// `(line_index_after_close_brace, rows)`.
+fn read_n_floats(
+    lines: &[&str],
+    start: usize,
+    count: usize,
+    fields: usize,
+) -> (usize, Vec<Vec<f32>>) {
+    let mut rows: Vec<Vec<f32>> = Vec::with_capacity(count);
+    let mut i = start;
+
+    // Skip a leading `{` if present (it may be on the header line or
+    // on its own line — both layouts appear in the wild).
+    while i < lines.len() && lines[i].trim().is_empty() {
+        i += 1;
+    }
+    // NOTE: section headers always carry an inline `{` in the
+    // observed `.mesh` format (e.g. `Pos 288 {`).  We do NOT consume a
+    // standalone `{` here — that would eat the per-material brace in
+    // `Mtl 1 { \n { ... } }` and skip the material body entirely.
+
+    while i < lines.len() && rows.len() < count {
+        let trimmed = lines[i].trim();
+        if trimmed == "}" {
+            i += 1;
+            return (i, rows);
+        }
+        let parts: Vec<&str> = trimmed.split_whitespace().collect();
+        if parts.len() >= fields {
+            let row: Vec<f32> = parts
+                .iter()
+                .take(fields)
+                .map(|s| s.parse().unwrap_or(0.0))
+                .collect();
+            rows.push(row);
+        }
+        i += 1;
+    }
+
+    // Drain trailing `}` if we hit count first.
+    while i < lines.len() {
+        let t = lines[i].trim();
+        i += 1;
+        if t == "}" {
+            break;
+        }
+    }
+    (i, rows)
+}
+
+/// Read `count` adjuncts.  Each adjunct is the next 4 lines in the form
+/// `P n` / `N n` / `C0 n` / `T0 n` (any order, but always 4 lines).
+fn read_adjuncts(lines: &[&str], start: usize, count: usize) -> (usize, Vec<Oni2Adjunct>) {
+    let mut adjs: Vec<Oni2Adjunct> = Vec::with_capacity(count);
+    let mut i = start;
+
+    while i < lines.len() && lines[i].trim().is_empty() {
+        i += 1;
+    }
+    // NOTE: section headers always carry an inline `{` in the
+    // observed `.mesh` format (e.g. `Pos 288 {`).  We do NOT consume a
+    // standalone `{` here — that would eat the per-material brace in
+    // `Mtl 1 { \n { ... } }` and skip the material body entirely.
+
+    while i < lines.len() && adjs.len() < count {
+        // Gather up to 4 attribute lines for one adjunct.
+        let mut p: u32 = 0;
+        let mut n: u32 = 0;
+        let mut c: u32 = 0;
+        let mut t: i32 = -1;
+        let mut filled = 0;
+        while i < lines.len() && filled < 4 {
+            let trimmed = lines[i].trim();
+            if trimmed == "}" || trimmed.is_empty() {
+                i += 1;
+                continue;
+            }
+            let parts: Vec<&str> = trimmed.split_whitespace().collect();
+            if parts.len() < 2 {
+                i += 1;
+                continue;
+            }
+            let v: i64 = parts[1].parse().unwrap_or(0);
+            match parts[0] {
+                "P" => p = v as u32,
+                "N" => n = v as u32,
+                "C0" => c = v as u32,
+                "T0" => t = v as i32,
+                _ => {}
+            }
+            filled += 1;
+            i += 1;
+        }
+        adjs.push(Oni2Adjunct {
+            vertex_idx: p,
+            normal_idx: n,
+            color_idx: c,
+            tex1_idx: t,
+            bone_idx: 0,
+        });
+    }
+
+    while i < lines.len() {
+        let t = lines[i].trim();
+        i += 1;
+        if t == "}" {
+            break;
+        }
+    }
+    (i, adjs)
+}
+
+/// Read `count` materials.  Each material is a brace-wrapped block with
+/// `Name "<n>"`, `Priority p`, and `Prim P { … }` containing P primitive
+/// sub-blocks (each with `Type TRISTRIP` and `Idx K { i0 i1 … }`).  Builds
+/// one packet PER material: tri-strip indices index into the shared
+/// adjunct array, and we mark `material_index = current material idx`.
+fn read_materials(
+    lines: &[&str],
+    start: usize,
+    count: usize,
+    adjuncts_flat: &[Oni2Adjunct],
+) -> (usize, Vec<Oni2Material>, Vec<Oni2Packet>) {
+    let mut materials: Vec<Oni2Material> = Vec::with_capacity(count);
+    let mut packets: Vec<Oni2Packet> = Vec::with_capacity(count);
+    let mut i = start;
+
+    while i < lines.len() && lines[i].trim().is_empty() {
+        i += 1;
+    }
+    // NOTE: section headers always carry an inline `{` in the
+    // observed `.mesh` format (e.g. `Pos 288 {`).  We do NOT consume a
+    // standalone `{` here — that would eat the per-material brace in
+    // `Mtl 1 { \n { ... } }` and skip the material body entirely.
+
+    while i < lines.len() && materials.len() < count {
+        let trimmed = lines[i].trim();
+        if trimmed == "}" {
+            i += 1;
+            break;
+        }
+        if trimmed == "{" {
+            i += 1;
+            let mat_idx = materials.len();
+            let (next, mat, strips, strip_types) = read_material_body(lines, i, mat_idx);
+            i = next;
+            materials.push(mat);
+            packets.push(Oni2Packet {
+                adjuncts: adjuncts_flat.to_vec(),
+                strips,
+                strip_types,
+                material_index: mat_idx,
+                bone_map: Vec::new(),
+            });
+            continue;
+        }
+        i += 1;
+    }
+
+    (i, materials, packets)
+}
+
+/// Body of one material block (after the opening `{`).  Returns
+/// `(line_after_close_brace, material, strips, strip_types)`.
+fn read_material_body(
+    lines: &[&str],
+    start: usize,
+    _mat_idx: usize,
+) -> (usize, Oni2Material, Vec<Vec<u32>>, Vec<u32>) {
+    let mut i = start;
+    let mut name = String::new();
+    let mut strips: Vec<Vec<u32>> = Vec::new();
+    let mut strip_types: Vec<u32> = Vec::new();
+    let mut prim_count: u32 = 0;
+    let mut depth = 0i32; // brace depth WITHIN the material body (excluding the outer `{`)
+
+    while i < lines.len() {
+        let trimmed = lines[i].trim();
+        let toks: Vec<&str> = trimmed.split_whitespace().collect();
+
+        // Close-brace handling: depth tracks nested blocks (Prim, individual
+        // primitives, Idx).  When depth returns to 0 and we see the next
+        // `}`, that's the material body's terminator.
+        if trimmed == "}" {
+            if depth == 0 {
+                i += 1;
+                break;
+            }
+            depth -= 1;
+            i += 1;
+            continue;
+        }
+        if trimmed == "{" {
+            depth += 1;
+            i += 1;
+            continue;
+        }
+
+        if toks.is_empty() {
+            i += 1;
+            continue;
+        }
+
+        match toks[0] {
+            "Name" => {
+                if let Some(raw) = toks.get(1) {
+                    name = raw.trim_matches('"').to_string();
+                }
+                i += 1;
+            }
+            "Priority" => {
+                // Material priority — ignored for now; render-order is
+                // driven by AlphaMode + depth_bias.
+                i += 1;
+            }
+            "Prim" => {
+                prim_count = toks.get(1).and_then(|s| s.parse().ok()).unwrap_or(0);
+                // Opening `{` is either trailing on this line or on the next.
+                if toks.last().copied() != Some("{") {
+                    // Look ahead for `{`.
+                    if let Some(next) = lines.get(i + 1)
+                        && next.trim() == "{"
+                    {
+                        i += 1;
+                    }
+                }
+                depth += 1; // entered Prim block
+                i += 1;
+            }
+            "Type" => {
+                // TRISTRIP / TRILIST / etc.  Only TRISTRIP appears in the
+                // FX meshes we've seen; defaulting strip_type to 1
+                // (normal winding) matches `parse_mod`'s convention.
+                i += 1;
+            }
+            "Idx" => {
+                // Format: `Idx K { i0 i1 i2 … }`.  The indices can be
+                // on the same line as the opening `{` (common case in
+                // .mesh) or split across lines.  We accept both.
+                let idx_count: usize = toks.get(1).and_then(|s| s.parse().ok()).unwrap_or(0);
+                let mut accumulated: Vec<u32> = Vec::with_capacity(idx_count);
+                // First, harvest any indices on this line after `{`.
+                let mut started = false;
+                for tok in toks.iter().skip(2) {
+                    if *tok == "{" {
+                        started = true;
+                        continue;
+                    }
+                    if *tok == "}" {
+                        break;
+                    }
+                    if started && let Ok(v) = tok.parse::<u32>() {
+                        accumulated.push(v);
+                    }
+                }
+                i += 1;
+                // Continue across follow-on lines if we didn't collect enough.
+                while i < lines.len() && accumulated.len() < idx_count {
+                    let line_trim = lines[i].trim();
+                    if line_trim == "}" {
+                        break;
+                    }
+                    for tok in line_trim.split_whitespace() {
+                        if tok == "{" || tok == "}" {
+                            continue;
+                        }
+                        if let Ok(v) = tok.parse::<u32>() {
+                            accumulated.push(v);
+                        }
+                    }
+                    i += 1;
+                }
+                // Consume the closing `}` of the Idx block if we stopped
+                // on it.
+                if i < lines.len() && lines[i].trim() == "}" {
+                    i += 1;
+                }
+                strips.push(accumulated);
+                strip_types.push(1); // TRISTRIP normal winding
+            }
+            _ => {
+                i += 1;
+            }
+        }
+    }
+
+    let mat = Oni2Material {
+        name,
+        diffuse: [1.0, 1.0, 1.0],
+        texture_name: None,
+        primitive_count: prim_count,
+        packet_count: 1,
+        passes: Vec::new(),
+    };
+    (i, mat, strips, strip_types)
+}
+
+#[cfg(test)]
+mod mesh_parse_tests {
+    use super::*;
+
+    /// Smallest plausible `.mesh`: one position, one normal, one color,
+    /// one uv, one adjunct, one material with one primitive (degenerate
+    /// 3-index strip).  Exercises the section dispatch + adjunct +
+    /// material reader without depending on filesystem assets.
+    #[test]
+    fn parses_minimal_mesh() {
+        let text = "{
+\tSkinned 0
+\tPosSkin 0
+\tPos 3 {
+\t\t0.0\t0.0\t0.0
+\t\t1.0\t0.0\t0.0
+\t\t0.0\t1.0\t0.0
+\t}
+\tNrm 3 {
+\t\t0.0\t1.0\t0.0
+\t\t0.0\t1.0\t0.0
+\t\t0.0\t1.0\t0.0
+\t}
+\tCpv 3 {
+\t\t1.0\t1.0\t1.0\t1.0
+\t\t1.0\t1.0\t1.0\t1.0
+\t\t1.0\t1.0\t1.0\t1.0
+\t}
+\tTex0 3 {
+\t\t0.0\t0.0
+\t\t1.0\t0.0
+\t\t0.0\t1.0
+\t}
+\tTex1 0
+\tAdj 3 {
+\t\tP 0
+\t\tN 0
+\t\tC0 0
+\t\tT0 0
+\t\tP 1
+\t\tN 1
+\t\tC0 1
+\t\tT0 1
+\t\tP 2
+\t\tN 2
+\t\tC0 2
+\t\tT0 2
+\t}
+\tMtl 1 {
+\t\t{
+\t\t\tName \"test_mat\"
+\t\t\tPriority 32
+\t\t\tPrim 1 {
+\t\t\t\t{
+\t\t\t\t\tType TRISTRIP
+\t\t\t\t\tPriority 32
+\t\t\t\t\tIdx 3 { 0 1 2 }
+\t\t\t\t}
+\t\t\t}
+\t\t}
+\t}
+\tOffset 0
+}
+";
+        let m = parse_mesh(text, "").expect("parse_mesh accepts the top-level brace");
+        assert_eq!(m.vertices.len(), 3);
+        assert_eq!(m.normals.len(), 3);
+        assert_eq!(m.colors.len(), 3);
+        assert_eq!(m.tex_coords.len(), 3);
+        assert_eq!(m.materials.len(), 1);
+        assert_eq!(m.materials[0].name, "test_mat");
+        assert_eq!(m.materials[0].primitive_count, 1);
+        assert_eq!(m.packets.len(), 1);
+        assert_eq!(m.packets[0].strips.len(), 1);
+        assert_eq!(m.packets[0].strips[0], vec![0, 1, 2]);
+        assert_eq!(m.packets[0].adjuncts.len(), 3);
+        // First adjunct's index pointers
+        let a = &m.packets[0].adjuncts[0];
+        assert_eq!(a.vertex_idx, 0);
+        assert_eq!(a.normal_idx, 0);
+        assert_eq!(a.color_idx, 0);
+        assert_eq!(a.tex1_idx, 0);
+        // Identity bone for unskinned FX mesh
+        assert_eq!(m.bone_world_positions, vec![[0.0, 0.0, 0.0]]);
+        assert_eq!(m.bone_rotations, vec![[0.0, 0.0, 0.0, 1.0]]);
+        assert!(!m.world_space_verts);
+    }
+
+    #[test]
+    fn rejects_non_mesh_files() {
+        // A `.mod` v1.10 header should not parse as a .mesh.
+        assert!(parse_mesh("version: 1.10\nverts: 3\n", "").is_none());
+    }
+
+    /// Real-asset probe: load the shipped `blast_fire.mesh` from the
+    /// adjacent `oni2/zips/assets` tree and verify the section counts
+    /// the file declares in its own headers.  Skipped silently if the
+    /// asset isn't reachable from the test's working directory (CI
+    /// without the asset tree, etc.).
+    #[test]
+    fn parses_real_blast_fire_mesh() {
+        let path = "../oni2/zips/assets/Entity/BlastFire/blast_fire.mesh";
+        let Ok(text) = std::fs::read_to_string(path) else {
+            eprintln!("skipping: {} not reachable from cwd", path);
+            return;
+        };
+        let m = parse_mesh(&text, "").expect("blast_fire.mesh has top-level `{`");
+        assert_eq!(m.vertices.len(), 288, "Pos count");
+        assert_eq!(m.normals.len(), 288, "Nrm count");
+        assert_eq!(m.colors.len(), 288, "Cpv count");
+        assert_eq!(m.tex_coords.len(), 288, "Tex0 count");
+        assert_eq!(m.materials.len(), 1, "Mtl count");
+        assert_eq!(m.materials[0].name, "blast_fire", "Mtl Name");
+        assert_eq!(m.materials[0].primitive_count, 23, "Prim count");
+        assert_eq!(m.packets.len(), 1, "one packet per material");
+        assert_eq!(m.packets[0].strips.len(), 23, "23 tri-strips");
+        // Every strip has 24 indices per the file.
+        for (idx, s) in m.packets[0].strips.iter().enumerate() {
+            assert_eq!(s.len(), 24, "strip #{} should have 24 indices", idx);
+        }
+        // Adjuncts: 288 entries, all `bone_idx = 0` (unskinned mesh).
+        assert_eq!(m.packets[0].adjuncts.len(), 288);
+        assert!(m.packets[0].adjuncts.iter().all(|a| a.bone_idx == 0));
+    }
 }

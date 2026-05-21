@@ -197,7 +197,7 @@ pub fn decode_non_intra_block(
         if k >= 64 {
             return Err(Error::invalid("non-intra block: AC run past end"));
         }
-        
+
         let nat = scan[k];
         let w = non_intra_quant[nat] as i32;
         let add = if level > 0 { 1 } else { -1 };

@@ -115,7 +115,7 @@ impl Behavior for TakeCoverBehavior {
                 .transform
                 .rotation
                 .slerp(rot_tf.rotation, (10.0 * dt).min(1.0));
-                
+
             // Update authoritative facing from slerped rotation
             ctx.fighter.facing = (ctx.transform.rotation * Vec3::Z).normalize_or_zero();
             if ctx.fighter.facing.length_squared() < 0.1 {

@@ -61,14 +61,17 @@ pub struct FxPlugin;
 impl Plugin for FxPlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins(HanabiPlugin)
+            .init_resource::<crate::blast_fx::BlastFxAssets>()
             .add_observer(handle_spawn_fx)
             .add_observer(handle_spawn_ptx)
             .add_observer(handle_fx_action)
             .add_observer(handle_play_sound)
+            .add_systems(Startup, crate::blast_fx::load_blast_fx_assets)
             .add_systems(Update, handle_actor_fx_attachments)
             .add_systems(Update, apply_fx_start_inactive)
             .add_systems(Update, sync_intended_fx_state)
-            .add_systems(Update, uv_animator_system);
+            .add_systems(Update, uv_animator_system)
+            .add_systems(Update, crate::blast_fx::update_blast_fire_system);
     }
 }
 
@@ -271,7 +274,7 @@ fn apply_fx_start_inactive(
 /// lightweight instance Uniforms directly to the GPU instead of mutating native float vertices on the CPU.
 pub fn uv_animator_system(
     time: Res<Time>,
-    entity_lib: Option<Res<crate::oni2_loader::registries::EntityLibrary>>,
+    drawables: Option<Res<crate::oni2_loader::registries::DrawableLibrary>>,
     mut meshes: ResMut<Assets<Mesh>>,
 ) {
     let dt = time.delta_secs();
@@ -279,81 +282,87 @@ pub fn uv_animator_system(
         return;
     }
 
-    let lib = if let Some(l) = entity_lib {
+    let lib = if let Some(l) = drawables {
         l
     } else {
         return;
     };
 
-    // Natively iterate the layout definitions rather than the instantiated entities so that
-    // we strictly perform mathematical mutations only once per pooled Handle<Mesh> memory allocation.
-    for ent_type in lib.entities.values() {
-        for (mat_idx, handle) in ent_type.sub_meshes.iter() {
-            let animators = ent_type.material_animators.get(*mat_idx);
-            if let Some(anims) = animators {
-                let mut u_speed = 0.0;
-                let mut v_speed = 0.0;
-                let mut r_speed = 0.0;
-                let mut s_speed = 0.0;
+    // Walk the unified drawable registry — entity sub-meshes are mirrored
+    // in by `sync_drawables_from_entities_system`, FX drawables register
+    // directly via `load_drawable`.  Mesh handles are shared across
+    // instances, so each UV mutation propagates to every entity rendering
+    // that mesh (acceptable for ambient steam/fire; per-instance variants
+    // would need a custom MaterialExtension shader with instance uniforms).
+    for entry in &lib.entries {
+        let anims = &entry.animators;
+        if anims.is_empty() {
+            continue;
+        }
+        let mut u_speed = 0.0;
+        let mut v_speed = 0.0;
+        let mut r_speed = 0.0;
+        let mut s_speed = 0.0;
 
-                for anim in anims {
-                    if anim.slides_speed != 0.0 {
-                        u_speed = anim.slides_speed;
+        for anim in anims {
+            if anim.slides_speed != 0.0 {
+                u_speed = anim.slides_speed;
+            }
+            if anim.slidet_speed != 0.0 {
+                v_speed = anim.slidet_speed;
+            }
+            if anim.rotate_speed != 0.0 {
+                r_speed = anim.rotate_speed;
+            }
+            if anim.scalet_speed != 0.0 {
+                s_speed = anim.scalet_speed;
+            }
+        }
+
+        if u_speed == 0.0 && v_speed == 0.0 && r_speed == 0.0 && s_speed == 0.0 {
+            continue;
+        }
+
+        {
+            let handle = &entry.mesh;
+            if let Some(mesh) = meshes.get_mut(handle)
+                && let Some(bevy::mesh::VertexAttributeValues::Float32x2(uvs)) =
+                    mesh.attribute_mut(Mesh::ATTRIBUTE_UV_0)
+            {
+                let du = u_speed * dt;
+                let dv = v_speed * dt;
+                let cos_r = (r_speed * dt).cos();
+                let sin_r = (r_speed * dt).sin();
+                let scale = if s_speed != 0.0 {
+                    1.0 + s_speed * dt
+                } else {
+                    1.0
+                };
+
+                for uv in uvs.iter_mut() {
+                    let mut u = uv[0];
+                    let mut v = uv[1];
+
+                    u -= du;
+                    v -= dv;
+
+                    // Rotation around 0.5 (texture center pivot point)
+                    if r_speed != 0.0 || s_speed != 0.0 {
+                        let cu = u - 0.5;
+                        let cv = v - 0.5;
+
+                        let rotated_u = cu * cos_r - cv * sin_r;
+                        let rotated_v = cu * sin_r + cv * cos_r;
+
+                        u = rotated_u * scale + 0.5;
+                        v = rotated_v * scale + 0.5;
                     }
-                    if anim.slidet_speed != 0.0 {
-                        v_speed = anim.slidet_speed;
-                    }
-                    if anim.rotate_speed != 0.0 {
-                        r_speed = anim.rotate_speed;
-                    }
-                    if anim.scalet_speed != 0.0 {
-                        s_speed = anim.scalet_speed;
-                    }
-                }
 
-                if u_speed == 0.0 && v_speed == 0.0 && r_speed == 0.0 && s_speed == 0.0 {
-                    continue;
-                }
-
-                if let Some(mesh) = meshes.get_mut(handle)
-                    && let Some(bevy::mesh::VertexAttributeValues::Float32x2(uvs)) =
-                        mesh.attribute_mut(Mesh::ATTRIBUTE_UV_0)
-                {
-                    let du = u_speed * dt;
-                    let dv = v_speed * dt;
-                    let cos_r = (r_speed * dt).cos();
-                    let sin_r = (r_speed * dt).sin();
-                    let scale = if s_speed != 0.0 {
-                        1.0 + s_speed * dt
-                    } else {
-                        1.0
-                    };
-
-                    for uv in uvs.iter_mut() {
-                        let mut u = uv[0];
-                        let mut v = uv[1];
-
-                        u -= du;
-                        v -= dv;
-
-                        // Rotation around 0.5 (texture center pivot point)
-                        if r_speed != 0.0 || s_speed != 0.0 {
-                            let cu = u - 0.5;
-                            let cv = v - 0.5;
-
-                            let rotated_u = cu * cos_r - cv * sin_r;
-                            let rotated_v = cu * sin_r + cv * cos_r;
-
-                            u = rotated_u * scale + 0.5;
-                            v = rotated_v * scale + 0.5;
-                        }
-
-                        // Float wrapping logic to prevent precision degradation
-                        // Only safely bounds if geometry does not natively span across multiple units smoothly.
-                        // Left unbounded purposely to preserve identical tiled tiling mappings.
-                        uv[0] = u;
-                        uv[1] = v;
-                    }
+                    // Float wrapping logic to prevent precision degradation
+                    // Only safely bounds if geometry does not natively span across multiple units smoothly.
+                    // Left unbounded purposely to preserve identical tiled tiling mappings.
+                    uv[0] = u;
+                    uv[1] = v;
                 }
             }
         }
@@ -384,7 +393,11 @@ fn get_or_create_ptx_asset(
     }
 
     let mut size_gradient = bevy_hanabi::Gradient::new();
-    let start_size = Vec3::new(ptx_def.radius_birth.x.max(0.1), ptx_def.radius_birth.y.max(0.1), 0.0);
+    let start_size = Vec3::new(
+        ptx_def.radius_birth.x.max(0.1),
+        ptx_def.radius_birth.y.max(0.1),
+        0.0,
+    );
     let end_size = start_size * ptx_def.radius_death_percent.max(0.01);
     size_gradient.add_key(0.0, start_size);
     size_gradient.add_key(1.0, end_size);
@@ -543,6 +556,7 @@ fn handle_spawn_fx(
     mut flash_tex_cache: ResMut<crate::fx_visuals::FxFlashTexture>,
     mut strike_mesh_cache: ResMut<crate::fx_visuals::FxStrikeMeshCache>,
     health_query: Query<&crate::combat::components::Health>,
+    blast_assets: Res<crate::blast_fx::BlastFxAssets>,
 ) {
     let ev = trigger.event();
     let lower_name = ev.name.to_lowercase();
@@ -556,6 +570,7 @@ fn handle_spawn_fx(
             crate::oni2_loader::parsers::effect::EffectDef::Laser(_) => "Laser",
             crate::oni2_loader::parsers::effect::EffectDef::Strike(_) => "Strike",
             crate::oni2_loader::parsers::effect::EffectDef::HealthIndicator(_) => "HealthIndicator",
+            crate::oni2_loader::parsers::effect::EffectDef::BlastFire(_) => "BlastFire",
             _ => "Other",
         };
         info!(
@@ -612,36 +627,42 @@ fn handle_spawn_fx(
             }
         } else if let crate::oni2_loader::parsers::effect::EffectDef::HealthIndicator(hd) = fx_def {
             // Get health percentage
-            let health_pct = ev.parent
+            let health_pct = ev
+                .parent
                 .and_then(|p| health_query.get(p).ok())
                 .map(|h| h.fraction() * 100.0)
                 .unwrap_or(100.0);
-            
+
             // Interpolate colors based on health
             let color = if health_pct >= hd.mid_percentage {
                 let t = (health_pct - hd.mid_percentage) / (100.0 - hd.mid_percentage).max(0.001);
                 Color::srgb(
-                    hd.mid_color.to_linear().red * (1.0 - t) + hd.undamaged_color.to_linear().red * t,
-                    hd.mid_color.to_linear().green * (1.0 - t) + hd.undamaged_color.to_linear().green * t,
-                    hd.mid_color.to_linear().blue * (1.0 - t) + hd.undamaged_color.to_linear().blue * t,
+                    hd.mid_color.to_linear().red * (1.0 - t)
+                        + hd.undamaged_color.to_linear().red * t,
+                    hd.mid_color.to_linear().green * (1.0 - t)
+                        + hd.undamaged_color.to_linear().green * t,
+                    hd.mid_color.to_linear().blue * (1.0 - t)
+                        + hd.undamaged_color.to_linear().blue * t,
                 )
             } else {
                 let t = health_pct / hd.mid_percentage.max(0.001);
                 Color::srgb(
                     hd.dead_color.to_linear().red * (1.0 - t) + hd.mid_color.to_linear().red * t,
-                    hd.dead_color.to_linear().green * (1.0 - t) + hd.mid_color.to_linear().green * t,
+                    hd.dead_color.to_linear().green * (1.0 - t)
+                        + hd.mid_color.to_linear().green * t,
                     hd.dead_color.to_linear().blue * (1.0 - t) + hd.mid_color.to_linear().blue * t,
                 )
             };
 
-            let texture_handle = if let Some(ptx) = ptx_lib.systems.get(&hd.system.system_name.to_lowercase()) {
-                ptx.texture.clone()
-            } else {
-                return;
-            };
+            let texture_handle =
+                if let Some(ptx) = ptx_lib.systems.get(&hd.system.system_name.to_lowercase()) {
+                    ptx.texture.clone()
+                } else {
+                    return;
+                };
 
             let world_pos = ev.at.unwrap_or(Vec3::ZERO);
-            
+
             let mock_sprite = crate::oni2_loader::parsers::effect::SpriteEffectDef {
                 name: hd.name.clone(),
                 texture: texture_handle,
@@ -744,6 +765,32 @@ fn handle_spawn_fx(
                 world_pos,
                 target_health,
             );
+        } else if let crate::oni2_loader::parsers::effect::EffectDef::BlastFire(bd) = fx_def {
+            // Hardcoded `fxBlastFireType` asset triple was preloaded at
+            // startup; spawn parents + per-pass renderable children at
+            // the requested position.  The path-traversal + light fade
+            // (`update_blast_fire_system`) will be wired in a follow-up
+            // pass — for now the geometry sits at the spawn point so
+            // the asset/material/UV-animation pipeline can be verified
+            // end-to-end through the `blast_test` layout's makefx call.
+            let world_pos = ev.at.unwrap_or(Vec3::ZERO);
+            if let Some(entity) = crate::blast_fx::spawn_blast_fire(
+                &mut commands,
+                bd,
+                world_pos,
+                ev.parent,
+                &blast_assets,
+            ) {
+                info!(
+                    "blast_fx: spawned BlastFire '{}' entity={:?} at={:?}",
+                    bd.name, entity, world_pos
+                );
+            } else {
+                warn!(
+                    "blast_fx: BlastFire '{}' requested but assets failed to load — skipping",
+                    bd.name
+                );
+            }
         }
     } else {
         warn!("SpawnFx: Effect '{}' not found in FxLibrary", ev.name);

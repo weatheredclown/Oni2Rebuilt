@@ -145,13 +145,7 @@ mod tests {
     #[test]
     fn forward_punch_hits_target_in_front() {
         let strike = forward_punch_strike();
-        let wedge = super::EvaluatedWedge::evaluate(
-            &strike,
-            Vec3::ZERO,
-            Vec3::NEG_Z,
-            0.5,
-            1.0,
-        );
+        let wedge = super::EvaluatedWedge::evaluate(&strike, Vec3::ZERO, Vec3::NEG_Z, 0.5, 1.0);
         assert!(wedge.is_active);
         // Target 1m in front — should be inside the 60° wedge.
         assert!(wedge.contains_target(Vec3::new(0.0, 1.0, -1.0), 0.5, 1.5));
@@ -160,26 +154,14 @@ mod tests {
     #[test]
     fn forward_punch_misses_target_behind() {
         let strike = forward_punch_strike();
-        let wedge = super::EvaluatedWedge::evaluate(
-            &strike,
-            Vec3::ZERO,
-            Vec3::NEG_Z,
-            0.5,
-            1.0,
-        );
+        let wedge = super::EvaluatedWedge::evaluate(&strike, Vec3::ZERO, Vec3::NEG_Z, 0.5, 1.0);
         assert!(!wedge.contains_target(Vec3::new(0.0, 1.0, 1.5), 0.5, 1.5));
     }
 
     #[test]
     fn forward_punch_misses_target_far_to_side() {
         let strike = forward_punch_strike();
-        let wedge = super::EvaluatedWedge::evaluate(
-            &strike,
-            Vec3::ZERO,
-            Vec3::NEG_Z,
-            0.5,
-            1.0,
-        );
+        let wedge = super::EvaluatedWedge::evaluate(&strike, Vec3::ZERO, Vec3::NEG_Z, 0.5, 1.0);
         // Target is within the 2m radius but at 90° to the side — outside
         // the ±30° angular bound.
         assert!(!wedge.contains_target(Vec3::new(1.5, 1.0, 0.0), 0.5, 1.5));
@@ -188,13 +170,7 @@ mod tests {
     #[test]
     fn forward_punch_misses_target_out_of_range() {
         let strike = forward_punch_strike();
-        let wedge = super::EvaluatedWedge::evaluate(
-            &strike,
-            Vec3::ZERO,
-            Vec3::NEG_Z,
-            0.5,
-            1.0,
-        );
+        let wedge = super::EvaluatedWedge::evaluate(&strike, Vec3::ZERO, Vec3::NEG_Z, 0.5, 1.0);
         // Target dead-ahead but at 5m, beyond the 2m reactdiskradius.
         assert!(!wedge.contains_target(Vec3::new(0.0, 1.0, -5.0), 0.5, 1.5));
     }
@@ -214,13 +190,7 @@ mod tests {
         // A target ~0.71m behind the attacker (slightly right) lands in the
         // wedge midpoint — exactly what a back kick should connect with.
         let strike = back_kick_strike_after_wrap();
-        let wedge = super::EvaluatedWedge::evaluate(
-            &strike,
-            Vec3::ZERO,
-            Vec3::NEG_Z,
-            0.5,
-            1.0,
-        );
+        let wedge = super::EvaluatedWedge::evaluate(&strike, Vec3::ZERO, Vec3::NEG_Z, 0.5, 1.0);
         assert!(wedge.is_active);
         assert!(
             wedge.contains_target(Vec3::new(0.10, 1.0, 0.71), 0.5, 1.5),
@@ -235,13 +205,7 @@ mod tests {
         // anything between the attacker and the pivot falls inside the
         // vp exclusion sphere.
         let strike = back_kick_strike_after_wrap();
-        let wedge = super::EvaluatedWedge::evaluate(
-            &strike,
-            Vec3::ZERO,
-            Vec3::NEG_Z,
-            0.5,
-            1.0,
-        );
+        let wedge = super::EvaluatedWedge::evaluate(&strike, Vec3::ZERO, Vec3::NEG_Z, 0.5, 1.0);
         assert!(!wedge.contains_target(Vec3::new(0.0, 1.0, -3.0), 0.5, 1.5));
     }
 
@@ -252,13 +216,7 @@ mod tests {
         // regressions that would collapse the wedge into "any target
         // behind the attacker hits".
         let strike = back_kick_strike_after_wrap();
-        let wedge = super::EvaluatedWedge::evaluate(
-            &strike,
-            Vec3::ZERO,
-            Vec3::NEG_Z,
-            0.5,
-            1.0,
-        );
+        let wedge = super::EvaluatedWedge::evaluate(&strike, Vec3::ZERO, Vec3::NEG_Z, 0.5, 1.0);
         assert!(!wedge.contains_target(Vec3::new(0.0, 1.0, 5.0), 0.5, 1.5));
     }
 
@@ -267,13 +225,7 @@ mod tests {
         // Perpendicular to the slice heading: angle from slice_heading
         // exceeds halfWidth (0.1 rad), so the angular bound rejects.
         let strike = back_kick_strike_after_wrap();
-        let wedge = super::EvaluatedWedge::evaluate(
-            &strike,
-            Vec3::ZERO,
-            Vec3::NEG_Z,
-            0.5,
-            1.0,
-        );
+        let wedge = super::EvaluatedWedge::evaluate(&strike, Vec3::ZERO, Vec3::NEG_Z, 0.5, 1.0);
         assert!(!wedge.contains_target(Vec3::new(3.0, 1.0, 0.0), 0.5, 1.5));
     }
 
@@ -298,13 +250,7 @@ mod tests {
         //   `-` sign: dist from pivot = 3.5m, in [3, 4] annulus, on axis → HIT.
         //   `+` sign: dist from pivot = 2.5m, INSIDE inner cut (3) → MISS.
         let strike = forward_punch_strike_with_vp();
-        let wedge = super::EvaluatedWedge::evaluate(
-            &strike,
-            Vec3::ZERO,
-            Vec3::NEG_Z,
-            0.5,
-            1.0,
-        );
+        let wedge = super::EvaluatedWedge::evaluate(&strike, Vec3::ZERO, Vec3::NEG_Z, 0.5, 1.0);
         assert!(wedge.is_active);
         assert!(
             wedge.contains_target(Vec3::new(0.0, 1.0, -0.5), 0.5, 1.5),
@@ -322,13 +268,7 @@ mod tests {
         //             annulus, on axis → HIT (incorrectly, since this far
         //             out is well past the punch's reach).
         let strike = forward_punch_strike_with_vp();
-        let wedge = super::EvaluatedWedge::evaluate(
-            &strike,
-            Vec3::ZERO,
-            Vec3::NEG_Z,
-            0.5,
-            1.0,
-        );
+        let wedge = super::EvaluatedWedge::evaluate(&strike, Vec3::ZERO, Vec3::NEG_Z, 0.5, 1.0);
         assert!(
             !wedge.contains_target(Vec3::new(0.0, 1.0, -6.5), 0.5, 1.5),
             "a target 6.5m in front of attacker is well outside a punch's \
@@ -337,7 +277,6 @@ mod tests {
              at +vp instead of -vp."
         );
     }
-
 
     #[test]
     fn parsed_back_kick_atdt_resolves_to_back_facing_wedge() {

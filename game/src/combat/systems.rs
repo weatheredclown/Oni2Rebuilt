@@ -11,8 +11,8 @@
  * telemetry_combat_system: forwards DamageMessage to the telemetry channel.
  */
 use avian3d::prelude::*;
-use bevy::prelude::*;
 use bevy::ecs::relationship::Relationship;
+use bevy::prelude::*;
 use rb_shared::events::CombatEvent;
 
 use crate::fight::components::{BlockLibrary, BlockStatus, FighterState};
@@ -24,7 +24,6 @@ use crate::telemetry::bridge::TelemetryChannel;
 
 use super::components::*;
 use super::events::*;
-
 
 /// Height of the physics capsule center above ground (capsule_half_height + snap_buffer).
 /// Must match the value used in spawn.rs / NeedsGroundSnap.
@@ -66,7 +65,6 @@ pub fn attack_sync_system(
         // gets to switch to the next anim.  This system's only
         // remaining job here is bookkeeping: clearing per-attack state
         // and seeding the new attack's data.
-
 
         if let Some(ref mut active) = attack_state.active_attack {
             // Reset per-attack state.  end_rotation_notches MAY still
@@ -112,24 +110,19 @@ pub fn attack_sync_system(
 /// attack animation crosses past its last frame — emitted by
 /// `update_oni2_animation` as `AnimEndedMessage`.
 ///
-/// Critical timing: runs in `FixedUpdate` immediately AFTER
-/// `update_oni2_animation` (so it sees this tick's edge events) and
-/// BEFORE any system that would react to the anim ending by switching
-/// to a new anim (FSM tick / action_player tick / etc.).  This places
-/// the Fighter / Transform rotation BEFORE the next-anim's first
-/// rendered frame, eliminating the one-frame "flash to old facing"
-/// glitch.  Mirrors the C++ `crStrike::End()` call site: the
-/// rotation is part of the outgoing strike's end, not the incoming
-/// anim's start.
-///
-/// The `.after(update_oni2_animation)` constraint in `combat/mod.rs`
-/// is load-bearing.  Bevy's per-system event cursors mean a consumer
-/// that runs BEFORE the producer in the same tick won't see this
-/// tick's emissions — they're picked up next tick.  Without the
-/// explicit `.after`, the scheduler is free to interleave us before
-/// `update_oni2_animation` and the rotation lands one tick late,
-/// reintroducing the visible "old pose at old rotation → new pose at
-/// new rotation" blink at combo boundaries.
+/// Critical timing: lives in `Update` (NOT `FixedUpdate`) because
+/// `update_oni2_animation` lives in `Update` — Bevy's `.before/.after`
+/// only orders systems within the same schedule, so a cross-schedule
+/// constraint is silently dropped and the consumer reads the producer's
+/// message one tick late.  Ordered AFTER `update_oni2_animation` (the
+/// producer of `AnimEndedMessage`) and BEFORE `fsm_update_system` so
+/// the FSM's `lib.play(next_anim)` sees the post-notch facing this
+/// same frame.  Paired with `refresh_anim_joints_post_fsm_system`
+/// in `PostUpdate` (which rebuilds joints for the just-swapped anim
+/// before render), this eliminates the one-frame "old pose at new
+/// rotation" blink that used to appear at combo boundaries.  Mirrors
+/// the C++ `crStrike::End()` call site: the rotation is part of the
+/// outgoing strike's end, not the incoming anim's start.
 ///
 /// We mutate Fighter.facing AND Transform.rotation (+ avian Rotation)
 /// inline using the same formula `fighter_rotation_sync_system` uses
@@ -277,8 +270,13 @@ pub fn hit_detection_system(
                     if let Some(weap_ent) = inv.current_weapon_entity() {
                         if let Ok(weap_tf) = query_global_transform.get(weap_ent) {
                             if let Ok(weap) = query_weapon.get(weap_ent) {
-                                if !weap.ty.op_modes.is_empty() && !weap.ty.op_modes[0].first_state.projectiles.is_empty() {
-                                    weapon_name_to_fire = weap.ty.op_modes[0].first_state.projectiles[0].projectile_name.clone();
+                                if !weap.ty.op_modes.is_empty()
+                                    && !weap.ty.op_modes[0].first_state.projectiles.is_empty()
+                                {
+                                    weapon_name_to_fire =
+                                        weap.ty.op_modes[0].first_state.projectiles[0]
+                                            .projectile_name
+                                            .clone();
 
                                     // Spawn at the weapon entity's world origin
                                     // (the grip point on the hand) — skipping the
@@ -312,8 +310,8 @@ pub fn hit_detection_system(
 
                 let legacy_spawn_pos = attacker_tf.translation + Vec3::Y * 1.5;
                 let actual_spawn_pos = muzzle_bevy_pos.unwrap_or(legacy_spawn_pos);
-                let actual_spawn_dir = muzzle_bevy_dir
-                    .unwrap_or_else(|| attacker_fighter.facing.normalize_or_zero());
+                let actual_spawn_dir =
+                    muzzle_bevy_dir.unwrap_or_else(|| attacker_fighter.facing.normalize_or_zero());
 
                 commands.trigger(SpawnProjectileEvent {
                     name: weapon_name_to_fire,
@@ -333,7 +331,11 @@ pub fn hit_detection_system(
             .get_or_insert_with(ActiveAttack::default);
 
         let attacker_feet_y = attacker_tf.translation.y - CAPSULE_CENTER_HEIGHT;
-        let attacker_base = Vec3::new(attacker_tf.translation.x, attacker_feet_y, attacker_tf.translation.z);
+        let attacker_base = Vec3::new(
+            attacker_tf.translation.x,
+            attacker_feet_y,
+            attacker_tf.translation.z,
+        );
 
         let wedge = crate::combat::hitbox::EvaluatedWedge::evaluate(
             strike,
@@ -360,7 +362,6 @@ pub fn hit_detection_system(
             if active_attack.hit_entities.contains(&target_entity) {
                 continue;
             }
-
 
             // Check FighterState phase-based invulnerability (crReactData.does_not_take_damage_after_phase)
             if let Some(fs) = target_fs_opt {
@@ -615,7 +616,6 @@ pub fn process_strike_connections_system(
 ) {
     for ev in events.read() {
         if let Ok(mut fs) = fs_query.get_mut(ev.attacker) {
-
             fs.strike_target = Some(ev.target);
             fs.clear_st_after_first_use = ev.headingnotlockedtotarget;
             // Dedup-add the hit target to this frame's pending list
@@ -690,8 +690,6 @@ pub fn injure_system(
             continue;
         };
 
-
-
         let is_env_hazard = msg.hit_type.eq_ignore_ascii_case("environmentalhazard");
 
         if is_env_hazard {
@@ -716,7 +714,7 @@ pub fn injure_system(
         let mut hit_from_behind = false;
 
         if let Some(ref mut fighter) = fighter_opt {
-            fighter.facing = fighter.facing; // Trigger mut access
+            fighter.set_changed(); // Trigger mut access
 
             if let Some(from_pos) = msg.from
                 && let Some(tf) = &transform_opt
@@ -988,9 +986,7 @@ pub fn hit_reaction_system(
                 // the legacy `ActionStartReact` setting `SubState1 =
                 // ACT_S1_REACT` for both queued anims.
                 if let Some(ref mut ap) = ap_opt {
-                    ap.record_new_substate_1(
-                        crate::animator::components::sub_state_1::REACT,
-                    );
+                    ap.record_new_substate_1(crate::animator::components::sub_state_1::REACT);
                 }
 
                 // Look up the getup directly from the ReactLibrary.
@@ -1005,23 +1001,33 @@ pub fn hit_reaction_system(
                     .and_then(|lib| lib.get(msg.react_enum))
                     .map(|rd| rd.get_up_anim.clone())
                     .filter(|s| !s.is_empty());
-                if let Some(getup) = pending_getup {
-                    use crate::animator::components::sub_state_1;
-                    use crate::animator::schedule::{AnimSchedule, AnimScheduleEntry};
 
-                    let entries = vec![
-                        AnimScheduleEntry::new(anim_name, sub_state_1::REACT),
-                        AnimScheduleEntry::new(getup, sub_state_1::REACT),
-                    ];
-                    let mut schedule = AnimSchedule::new(entries);
-                    // The react anim is already playing (we just called
-                    // `lib.play` above) — skip the schedule's first-play
-                    // step so it doesn't restart frame 0. The schedule's
-                    // auto-advance will fire the getup when the react
-                    // finishes its last frame.
-                    schedule.mark_first_played();
-                    commands.entity(msg.entity).insert(schedule);
+                // Install an AnimSchedule unconditionally — even for a
+                // single-anim react with no queued getup.  The schedule's
+                // drain hook (`anim_schedule_tick_system`) is what resets
+                // `sub_state_1` back to IDLE when the last entry ends,
+                // releasing the `is_reacting()` gate that blocks the
+                // player's FSM from dispatching attack/block anims.
+                // Without a schedule, a REGULAR react (no getup) leaves
+                // SubState1 stuck on REACT permanently and the player
+                // can never attack again from fight stance.  Mirrors the
+                // legacy AnimList: a single-entry list still drains and
+                // resets SubState1 on completion.
+                use crate::animator::components::sub_state_1;
+                use crate::animator::schedule::{AnimSchedule, AnimScheduleEntry};
+
+                let mut entries = vec![AnimScheduleEntry::new(anim_name, sub_state_1::REACT)];
+                if let Some(getup) = pending_getup {
+                    entries.push(AnimScheduleEntry::new(getup, sub_state_1::REACT));
                 }
+                let mut schedule = AnimSchedule::new(entries);
+                // The react anim is already playing (we just called
+                // `lib.play` above) — skip the schedule's first-play
+                // step so it doesn't restart frame 0. The schedule's
+                // auto-advance fires any queued getup, then the drain
+                // hook clears SubState1.
+                schedule.mark_first_played();
+                commands.entity(msg.entity).insert(schedule);
             } else {
                 warn!("hit_reaction: react anim '{}' not in library", anim_name);
             }
@@ -1218,7 +1224,9 @@ pub fn ground_detection_system(
                 anim_state.material_stood_on = None; // Avoid legacy material until physics hits
                 continue;
             } else {
-                commands.entity(entity).remove::<crate::oni2_loader::spawn::JustGroundSnapped>();
+                commands
+                    .entity(entity)
+                    .remove::<crate::oni2_loader::spawn::JustGroundSnapped>();
             }
         }
 
@@ -1265,7 +1273,7 @@ pub fn fighter_rotation_sync_system(
             let dir = fighter.facing.normalize();
             transform.look_to(dir, Vec3::Y);
             transform.rotate_y(std::f32::consts::PI);
-            
+
             if let Some(mut phys_rot) = rot_opt {
                 phys_rot.0 = transform.rotation;
             }

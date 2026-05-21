@@ -282,15 +282,20 @@ mod tests {
     #[test]
     fn tokenizer_sees_expected_keywords() {
         let lines = tokenize_lines(SAMPLE);
-        assert!(lines
-            .iter()
-            .any(|l| l.first().is_some_and(|s| s.eq_ignore_ascii_case("FX_LIST"))));
-        assert!(lines
-            .iter()
-            .any(|l| l.first().is_some_and(|s| s.eq_ignore_ascii_case("AudioPackage"))));
-        assert!(lines
-            .iter()
-            .any(|l| l.first().is_some_and(|s| s.eq_ignore_ascii_case("STRIKE"))));
+        assert!(
+            lines
+                .iter()
+                .any(|l| l.first().is_some_and(|s| s.eq_ignore_ascii_case("FX_LIST")))
+        );
+        assert!(lines.iter().any(|l| {
+            l.first()
+                .is_some_and(|s| s.eq_ignore_ascii_case("AudioPackage"))
+        }));
+        assert!(
+            lines
+                .iter()
+                .any(|l| l.first().is_some_and(|s| s.eq_ignore_ascii_case("STRIKE")))
+        );
     }
 
     /// Doesn't go through `parse_fxl_content` (that needs an `AssetServer`),
@@ -322,9 +327,8 @@ mod tests {
                             let typ = inner_type.take().unwrap();
                             if typ == "SFX" {
                                 if let Some(vals) = current_props.get("AudioPackage") {
-                                    sfx_payload = vals.first().map(|s| {
-                                        s.trim_matches('"').to_string()
-                                    });
+                                    sfx_payload =
+                                        vals.first().map(|s| s.trim_matches('"').to_string());
                                 }
                             } else if typ == "STRIKE" {
                                 strike_props = std::mem::take(&mut current_props);
@@ -352,11 +356,17 @@ mod tests {
 
         assert_eq!(sfx_payload.as_deref(), Some("PunchSound"));
         assert_eq!(
-            strike_props.get("Duration").and_then(|v| v.first()).map(|s| s.as_str()),
+            strike_props
+                .get("Duration")
+                .and_then(|v| v.first())
+                .map(|s| s.as_str()),
             Some("0.35")
         );
         assert_eq!(
-            strike_props.get("ScaleRate").and_then(|v| v.first()).map(|s| s.as_str()),
+            strike_props
+                .get("ScaleRate")
+                .and_then(|v| v.first())
+                .map(|s| s.as_str()),
             Some("0.6")
         );
     }

@@ -42,9 +42,8 @@ impl Plugin for FrontendPlugin {
                     // this a one-shot that arms itself again on
                     // OnExit (which clears current_page, see
                     // `teardown_frontend`).
-                    route_to_startup_page.run_if(
-                        |state: Res<FrontendState>| state.current_page.is_none(),
-                    ),
+                    route_to_startup_page
+                        .run_if(|state: Res<FrontendState>| state.current_page.is_none()),
                     super::render::rebuild_current_page.run_if(
                         state_changed::<AppState>
                             .or(frontend_current_page_changed)
@@ -52,10 +51,8 @@ impl Plugin for FrontendPlugin {
                             .or(resource_changed::<FrontendLevelList>),
                     ),
                     super::render::input_dispatch_system,
-                    super::render::handler_exec_system
-                        .after(super::render::input_dispatch_system),
-                    apply_requested_page_change
-                        .after(super::render::handler_exec_system),
+                    super::render::handler_exec_system.after(super::render::input_dispatch_system),
+                    apply_requested_page_change.after(super::render::handler_exec_system),
                     super::render::stub_autoadvance_system,
                     super::camera::frontend_menu_camera_apply_seq
                         .after(super::render::rebuild_current_page),

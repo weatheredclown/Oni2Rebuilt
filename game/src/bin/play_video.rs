@@ -12,9 +12,7 @@
 
 use bevy::prelude::*;
 use bevy::window::{ExitCondition, PrimaryWindow};
-use rb_game::mpeg2_video::{
-    Mpeg2VideoFinishedMessage, Mpeg2VideoPlugin, PlayMpeg2Video,
-};
+use rb_game::mpeg2_video::{Mpeg2VideoFinishedMessage, Mpeg2VideoPlugin, PlayMpeg2Video};
 use std::env;
 use std::path::PathBuf;
 
@@ -30,18 +28,15 @@ fn main() {
 
     App::new()
         .insert_resource(VideoPath(path))
-        .add_plugins(
-            DefaultPlugins
-                .set(WindowPlugin {
-                    primary_window: Some(Window {
-                        title,
-                        resolution: UVec2::new(512, 448).into(),
-                        ..default()
-                    }),
-                    exit_condition: ExitCondition::OnPrimaryClosed,
-                    ..default()
-                }),
-        )
+        .add_plugins(DefaultPlugins.set(WindowPlugin {
+            primary_window: Some(Window {
+                title,
+                resolution: UVec2::new(512, 448).into(),
+                ..default()
+            }),
+            exit_condition: ExitCondition::OnPrimaryClosed,
+            ..default()
+        }))
         .add_plugins(Mpeg2VideoPlugin)
         .add_systems(Startup, kick_off)
         .add_systems(Update, exit_on_finish)

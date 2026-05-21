@@ -88,27 +88,30 @@ pub fn parse_blk_content(content: &str, anim_index: i32) -> Option<BlockDef> {
     // peek-only behavior is important: if AnimMidPoint is absent the
     // following blocks (BlockableGuardTypes, ReactAnim*, …) need an
     // un-consumed parse position.
-    let (anim_mid_point, anim_mid_point_end, max_hold_button) =
-        if p.peek().map(|s| s.eq_ignore_ascii_case("AnimMidPoint")).unwrap_or(false) {
-            let mp = p.match_float("AnimMidPoint").ok()?;
-            // AnimMidPointEnd is optional inside the AnimMidPoint group;
-            // when absent it equals AnimMidPoint (instantaneous, no loop).
-            let mpe = if p
-                .peek()
-                .map(|s| s.eq_ignore_ascii_case("AnimMidPointEnd"))
-                .unwrap_or(false)
-            {
-                p.match_float("AnimMidPointEnd").ok()?
-            } else {
-                mp
-            };
-            // HoldButton is REQUIRED once we entered the AnimMidPoint group
-            // (C++ uses `MatchFloat` not `CheckToken`).
-            let hb = p.match_float("HoldButton").ok()?;
-            (mp, mpe, hb)
+    let (anim_mid_point, anim_mid_point_end, max_hold_button) = if p
+        .peek()
+        .map(|s| s.eq_ignore_ascii_case("AnimMidPoint"))
+        .unwrap_or(false)
+    {
+        let mp = p.match_float("AnimMidPoint").ok()?;
+        // AnimMidPointEnd is optional inside the AnimMidPoint group;
+        // when absent it equals AnimMidPoint (instantaneous, no loop).
+        let mpe = if p
+            .peek()
+            .map(|s| s.eq_ignore_ascii_case("AnimMidPointEnd"))
+            .unwrap_or(false)
+        {
+            p.match_float("AnimMidPointEnd").ok()?
         } else {
-            (0.5, 0.5, 0.0)
+            mp
         };
+        // HoldButton is REQUIRED once we entered the AnimMidPoint group
+        // (C++ uses `MatchFloat` not `CheckToken`).
+        let hb = p.match_float("HoldButton").ok()?;
+        (mp, mpe, hb)
+    } else {
+        (0.5, 0.5, 0.0)
+    };
 
     let blockable_hit_types = p
         .read_i32_opt("BlockableGuardTypes")
@@ -127,23 +130,34 @@ pub fn parse_blk_content(content: &str, anim_index: i32) -> Option<BlockDef> {
     // downstream code doesn't have to special-case the sentinel.
     let counter_atk = p.read_string_opt("CounterAtk").and_then(|s| {
         let trimmed = s.trim_matches('"');
-        if trimmed.is_empty() { None } else { Some(trimmed.to_string()) }
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed.to_string())
+        }
     });
 
     // AnimControlBlock — only present when the next token literally is
     // `AtkNoQueueThreshold`. The 8 floats inside are then required in
     // sequence (C++ uses MatchFloat for each). Peek-only first so we
     // don't consume the keyword before the inner `match_float` does.
-    let anim_control_block =
-        if p.peek().map(|s| s.eq_ignore_ascii_case("AtkNoQueueThreshold")).unwrap_or(false) {
-            Some(parse_anim_control_block(&mut p)?)
-        } else {
-            None
-        };
+    let anim_control_block = if p
+        .peek()
+        .map(|s| s.eq_ignore_ascii_case("AtkNoQueueThreshold"))
+        .unwrap_or(false)
+    {
+        Some(parse_anim_control_block(&mut p)?)
+    } else {
+        None
+    };
 
     let successful_block_anim = p.read_string_opt("SuccessfulBlockAnim").and_then(|s| {
         let trimmed = s.trim_matches('"');
-        if trimmed.is_empty() { None } else { Some(trimmed.to_string()) }
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed.to_string())
+        }
     });
 
     let combo_count_before_react = p.read_i32("ComboCountBeforeCausingReact", 0);
@@ -308,9 +322,19 @@ mod tests {
         assert!((def.max_hold_button - 0.319999).abs() < 1e-4);
         assert_eq!(def.blockable_hit_types, 2047);
         assert_eq!(def.failed_block_react_anims.len(), NUM_HIT_TYPES);
-        assert!(def.failed_block_react_anims.iter().all(|&v| v == ANIMREACT_INVALID));
-        assert!(def.counter_atk.is_none(), "empty CounterAtk should map to None");
-        assert_eq!(def.successful_block_anim.as_deref(), Some("ANIMBLOCK_SLOT_0"));
+        assert!(
+            def.failed_block_react_anims
+                .iter()
+                .all(|&v| v == ANIMREACT_INVALID)
+        );
+        assert!(
+            def.counter_atk.is_none(),
+            "empty CounterAtk should map to None"
+        );
+        assert_eq!(
+            def.successful_block_anim.as_deref(),
+            Some("ANIMBLOCK_SLOT_0")
+        );
         // AnimControlBlock — Opp2CritStart 0.6 lands in opp2_q_crit_start
         assert!((def.anim_control_block.opp2_q_crit_start - 0.599993).abs() < 1e-4);
         assert!((def.anim_control_block.opp2_do_end - 1.0).abs() < 1e-6);

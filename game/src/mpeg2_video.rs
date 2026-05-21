@@ -47,8 +47,8 @@ use bevy::sprite_render::{AlphaMode2d, Material2d, Material2dPlugin};
 use crossbeam_channel::{Receiver, TryRecvError, bounded};
 use mpeg2_player_v2::{FramePlanes, Mpeg2Player, VideoFrame};
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::thread;
 
 /// Number of decoded frames the worker may queue ahead of the display.
@@ -305,7 +305,11 @@ fn start_playback(
 fn advance_playback(
     time: Res<Time>,
     mut images: ResMut<Assets<Image>>,
-    mut query: Query<(Entity, &mut Mpeg2VideoPlayback, &MeshMaterial2d<Mpeg2VideoMaterial>)>,
+    mut query: Query<(
+        Entity,
+        &mut Mpeg2VideoPlayback,
+        &MeshMaterial2d<Mpeg2VideoMaterial>,
+    )>,
     mut materials: ResMut<Assets<Mpeg2VideoMaterial>>,
     mut finished: MessageWriter<Mpeg2VideoFinishedMessage>,
     mut commands: Commands,
@@ -329,9 +333,7 @@ fn advance_playback(
                 let n = playback.uploaded_count;
                 let decoded = playback.decoded_count.load(Ordering::Relaxed);
                 if n == 1 || n % 30 == 0 {
-                    info!(
-                        "mpeg2_video: main uploaded frame #{n} (decoded so far: {decoded})"
-                    );
+                    info!("mpeg2_video: main uploaded frame #{n} (decoded so far: {decoded})");
                 }
                 upload_frame(&mut images, &playback, frame, n);
                 let _ = materials.get_mut(&material_handle.0);
@@ -393,7 +395,10 @@ fn overwrite_plane(
                 info!(
                     "mpeg2_video: writing first {label} plane: {} bytes, prior data={}",
                     bytes.len(),
-                    img.data.as_ref().map(Vec::len).map_or("None".to_string(), |n| n.to_string())
+                    img.data
+                        .as_ref()
+                        .map(Vec::len)
+                        .map_or("None".to_string(), |n| n.to_string())
                 );
             }
             img.data = Some(bytes);

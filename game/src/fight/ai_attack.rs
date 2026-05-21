@@ -311,7 +311,10 @@ pub fn build_ai_attack_tables_system(
     query: Query<(Entity, &super::FighterType, &Oni2AnimLibrary, &Name), Without<AiAttackTable>>,
 ) {
     for (entity, fighter_type, lib, name) in &query {
-        let is_empty = cache.get_or_build(&fighter_type.name, lib).attacks.is_empty();
+        let is_empty = cache
+            .get_or_build(&fighter_type.name, lib)
+            .attacks
+            .is_empty();
         if is_empty {
             // Remove the empty entry so we legitimately retry next tick
             // when the animation library has actually hot-loaded.

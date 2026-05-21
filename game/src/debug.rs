@@ -43,8 +43,75 @@ impl Plugin for DebugPlugin {
                     cleanup_debug_names,
                     sync_debug_types,
                     cleanup_debug_types,
+                    frame_step_input_system,
                 ),
             );
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Frame-step debug
+// ---------------------------------------------------------------------------
+
+/// `P` toggles game-time pause, `]` steps exactly one FixedUpdate worth
+/// of time when paused. Render keeps running at full FPS while paused
+/// — the camera and HUD stay live, but FixedUpdate accumulation stops,
+/// so animation / physics / FSM / locomotion all freeze. Single-step
+/// is useful for pinning down one-frame visual glitches like the
+/// combo-end blink: pause right before the transition, then `]` through
+/// the boundary frame and compare what's rendered tick by tick.
+///
+/// Implementation note: we drive pause via `Time<Virtual>::relative_speed`
+/// rather than `pause()/unpause()` because Bevy's `RunFixedMainLoop`
+/// uses `Time<Virtual>::delta()` to decide how many fixed ticks to run,
+/// and `delta()` is always zero while truly paused — so a manual
+/// `advance_by(...)` doesn't actually drive FixedUpdate. Instead, we
+/// hold relative_speed at 0.0 to "pause" and bump it to one frame's
+/// worth of fixed-step / real-frame-delta on a step request. The next
+/// time_system pass then advances virtual time by exactly one fixed
+/// step, RunFixedMainLoop sees enough delta for exactly one fixed tick,
+/// and we set relative_speed back to 0.0 on the following frame.
+pub fn frame_step_input_system(
+    keys: Res<ButtonInput<KeyCode>>,
+    mut virtual_time: ResMut<Time<Virtual>>,
+    real_time: Res<Time<Real>>,
+    fixed_time: Res<Time<Fixed>>,
+    // Local state machine: 0 = running, 1 = paused, 2 = step-pending (one
+    // frame of resumed time in flight, must re-pause next frame).
+    mut state: Local<u8>,
+) {
+    // Re-pause one frame after a step request.
+    if *state == 2 {
+        virtual_time.set_relative_speed(0.0);
+        *state = 1;
+    }
+
+    if keys.just_pressed(KeyCode::KeyP) {
+        if *state == 0 {
+            virtual_time.set_relative_speed(0.0);
+            *state = 1;
+            info!("frame_step: paused (press ']' to step, 'P' to resume)");
+        } else {
+            virtual_time.set_relative_speed(1.0);
+            *state = 0;
+            info!("frame_step: resumed");
+        }
+    }
+
+    if keys.just_pressed(KeyCode::BracketRight) && *state == 1 {
+        // Bump relative_speed so this real frame advances virtual time
+        // by exactly one fixed step. Avoid divide-by-zero on the first
+        // frame; clamp to a sane minimum.
+        let real_dt = real_time.delta_secs().max(1e-4);
+        let fixed_dt = fixed_time.timestep().as_secs_f32();
+        let speed = fixed_dt / real_dt;
+        virtual_time.set_relative_speed(speed);
+        *state = 2;
+        info!(
+            "frame_step: stepping {:.1} ms (1 fixed tick, speed bumped to {:.2}× for one frame)",
+            fixed_dt * 1000.0,
+            speed,
+        );
     }
 }
 
@@ -211,11 +278,9 @@ fn toggle_fullscreen(
     }
     for mut window in &mut windows {
         window.mode = match window.mode {
-            bevy::window::WindowMode::Windowed => {
-                bevy::window::WindowMode::BorderlessFullscreen(
-                    bevy::window::MonitorSelection::Current,
-                )
-            }
+            bevy::window::WindowMode::Windowed => bevy::window::WindowMode::BorderlessFullscreen(
+                bevy::window::MonitorSelection::Current,
+            ),
             _ => bevy::window::WindowMode::Windowed,
         };
         info!("Window mode toggled: {:?}", window.mode);

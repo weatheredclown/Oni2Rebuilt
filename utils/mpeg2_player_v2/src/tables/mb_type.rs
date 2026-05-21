@@ -108,7 +108,11 @@ const B_ENTRIES: &[VlcEntry<MbTypeFlags>] = &[
         0b000010,
         MbTypeFlags::new(true, false, true, true, false),
     ),
-    VlcEntry::new(6, 0b000011, MbTypeFlags::new(true, true, false, true, false)),
+    VlcEntry::new(
+        6,
+        0b000011,
+        MbTypeFlags::new(true, true, false, true, false),
+    ),
 ];
 
 pub fn i_table() -> &'static VlcTable<MbTypeFlags> {

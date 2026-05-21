@@ -52,7 +52,10 @@ pub fn add_weapon_system(
     mut reader: MessageReader<AddWeaponByNameMessage>,
     mut out: MessageWriter<WeaponPickedUpMessage>,
     mut commands: Commands,
-    mut query: Query<(&mut Inventory, Option<&mut crate::animator::components::ActionPlayer>)>,
+    mut query: Query<(
+        &mut Inventory,
+        Option<&mut crate::animator::components::ActionPlayer>,
+    )>,
     inv_registry: Res<WeaponItemRegistry>,
     weap_registry: Res<WeaponRegistry>,
     ammo_registry: Res<AmmoRegistry>,
@@ -128,7 +131,7 @@ pub fn add_weapon_system(
             ) {
                 // Attach the spawned mesh correctly
                 commands.entity(weapon_entity).add_child(mesh_entity);
-                
+
                 // Strip colliders from the spawned weapon so it doesn't push the player around
                 commands.queue(move |world: &mut World| {
                     let mut queue = vec![mesh_entity];

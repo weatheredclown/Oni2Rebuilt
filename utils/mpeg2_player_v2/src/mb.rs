@@ -129,7 +129,6 @@ pub fn check_skipped_mb(picture_type: PictureType, incr: u32, first: bool) -> Re
     }
 }
 
-
 pub const DIR_FWD: usize = 0;
 pub const DIR_BWD: usize = 1;
 pub const AXIS_H: usize = 0;
@@ -139,7 +138,9 @@ pub const AXIS_V: usize = 1;
 pub enum DirPrediction {
     #[default]
     None,
-    Frame { mv: (i32, i32) },
+    Frame {
+        mv: (i32, i32),
+    },
     #[allow(dead_code)]
     Field {
         top_mv: (i32, i32),
@@ -190,7 +191,9 @@ pub fn parse_mpeg2_macroblock_modes(
             2 => modes.motion_type = Mpeg2MotionType::Frame,
             1 => modes.motion_type = Mpeg2MotionType::Field,
             3 => {
-                return Err(Error::unsupported("mpeg2video: dual-prime frame macroblocks not supported"));
+                return Err(Error::unsupported(
+                    "mpeg2video: dual-prime frame macroblocks not supported",
+                ));
             }
             _ => return Err(Error::invalid("mpeg2video: invalid frame_motion_type=0")),
         }
@@ -231,8 +234,18 @@ pub fn parse_direction_mvs(
             if state.last_field_mc[s] {
                 state.pmv[s][0].y = state.pmv[s][0].y * 2;
             }
-            let mx = crate::motion::decode_motion_component(br, f_code_h, full_pel, &mut state.pmv[s][0].x)?;
-            let my = crate::motion::decode_motion_component(br, f_code_v, full_pel, &mut state.pmv[s][0].y)?;
+            let mx = crate::motion::decode_motion_component(
+                br,
+                f_code_h,
+                full_pel,
+                &mut state.pmv[s][0].x,
+            )?;
+            let my = crate::motion::decode_motion_component(
+                br,
+                f_code_v,
+                full_pel,
+                &mut state.pmv[s][0].y,
+            )?;
             state.pmv[s][1] = state.pmv[s][0];
             state.last_field_mc[s] = false;
             Ok(DirPrediction::Frame { mv: (mx, my) })
@@ -243,11 +256,31 @@ pub fn parse_direction_mvs(
                 state.pmv[s][1].y >>= 1;
             }
             let top_field_select = br.read(1)? as u8;
-            let mx0 = crate::motion::decode_motion_component(br, f_code_h, full_pel, &mut state.pmv[s][0].x)?;
-            let my0 = crate::motion::decode_motion_component(br, f_code_v, full_pel, &mut state.pmv[s][0].y)?;
+            let mx0 = crate::motion::decode_motion_component(
+                br,
+                f_code_h,
+                full_pel,
+                &mut state.pmv[s][0].x,
+            )?;
+            let my0 = crate::motion::decode_motion_component(
+                br,
+                f_code_v,
+                full_pel,
+                &mut state.pmv[s][0].y,
+            )?;
             let bot_field_select = br.read(1)? as u8;
-            let mx1 = crate::motion::decode_motion_component(br, f_code_h, full_pel, &mut state.pmv[s][1].x)?;
-            let my1 = crate::motion::decode_motion_component(br, f_code_v, full_pel, &mut state.pmv[s][1].y)?;
+            let mx1 = crate::motion::decode_motion_component(
+                br,
+                f_code_h,
+                full_pel,
+                &mut state.pmv[s][1].x,
+            )?;
+            let my1 = crate::motion::decode_motion_component(
+                br,
+                f_code_v,
+                full_pel,
+                &mut state.pmv[s][1].y,
+            )?;
             state.last_field_mc[s] = true;
             Ok(DirPrediction::Field {
                 top_mv: (mx0, my0),
@@ -291,8 +324,15 @@ pub fn decode_inter_mb(
     let mut pred_cr = [0u8; 8 * 8];
 
     build_dir_prediction(
-        fwd_ref, bwd_ref, mb_x, mb_y, fwd_pred, bwd_pred,
-        &mut pred_y, &mut pred_cb, &mut pred_cr,
+        fwd_ref,
+        bwd_ref,
+        mb_x,
+        mb_y,
+        fwd_pred,
+        bwd_pred,
+        &mut pred_y,
+        &mut pred_cb,
+        &mut pred_cr,
     )?;
 
     for b in 0..6usize {
@@ -331,9 +371,18 @@ pub fn decode_inter_mb(
             _ => &mut pic.cr[..],
         };
         let sub = &mut buf[dst_y0 * stride_ptr + dst_x0..];
-        
+
         if coded {
-            crate::block::decode_non_intra_block(br, state.quant_code, non_intra_quantiser, params, pred_slice, pred_stride, sub, dst_stride)?;
+            crate::block::decode_non_intra_block(
+                br,
+                state.quant_code,
+                non_intra_quantiser,
+                params,
+                pred_slice,
+                pred_stride,
+                sub,
+                dst_stride,
+            )?;
         } else {
             crate::block::copy_prediction(pred_slice, pred_stride, 8, sub, dst_stride);
         }
@@ -377,14 +426,34 @@ fn build_one_direction_prediction(
             let ref_h = refp.display_height as i32;
 
             crate::motion::predict_field_half(
-                &refp.y, refp.y_stride, ref_w, ref_h,
-                mb_px, mb_py, top_mx, top_my, top_field_select,
-                16, 8, &mut out_y[0..], 32,
+                &refp.y,
+                refp.y_stride,
+                ref_w,
+                ref_h,
+                mb_px,
+                mb_py,
+                top_mx,
+                top_my,
+                top_field_select,
+                16,
+                8,
+                &mut out_y[0..],
+                32,
             );
             crate::motion::predict_field_half(
-                &refp.y, refp.y_stride, ref_w, ref_h,
-                mb_px, mb_py, bot_mx, bot_my, bot_field_select,
-                16, 8, &mut out_y[16..], 32,
+                &refp.y,
+                refp.y_stride,
+                ref_w,
+                ref_h,
+                mb_px,
+                mb_py,
+                bot_mx,
+                bot_my,
+                bot_field_select,
+                16,
+                8,
+                &mut out_y[16..],
+                32,
             );
 
             // Chroma: 4:2:0 → 8 wide × 4 tall per field half.  MV
@@ -400,24 +469,64 @@ fn build_one_direction_prediction(
             let bot_cy = crate::motion::scale_mv_to_chroma(bot_my);
 
             crate::motion::predict_field_half(
-                &refp.cb, refp.c_stride, c_w, c_h,
-                c_px, c_py, top_cx, top_cy, top_field_select,
-                8, 4, &mut out_cb[0..], 16,
+                &refp.cb,
+                refp.c_stride,
+                c_w,
+                c_h,
+                c_px,
+                c_py,
+                top_cx,
+                top_cy,
+                top_field_select,
+                8,
+                4,
+                &mut out_cb[0..],
+                16,
             );
             crate::motion::predict_field_half(
-                &refp.cb, refp.c_stride, c_w, c_h,
-                c_px, c_py, bot_cx, bot_cy, bot_field_select,
-                8, 4, &mut out_cb[8..], 16,
+                &refp.cb,
+                refp.c_stride,
+                c_w,
+                c_h,
+                c_px,
+                c_py,
+                bot_cx,
+                bot_cy,
+                bot_field_select,
+                8,
+                4,
+                &mut out_cb[8..],
+                16,
             );
             crate::motion::predict_field_half(
-                &refp.cr, refp.c_stride, c_w, c_h,
-                c_px, c_py, top_cx, top_cy, top_field_select,
-                8, 4, &mut out_cr[0..], 16,
+                &refp.cr,
+                refp.c_stride,
+                c_w,
+                c_h,
+                c_px,
+                c_py,
+                top_cx,
+                top_cy,
+                top_field_select,
+                8,
+                4,
+                &mut out_cr[0..],
+                16,
             );
             crate::motion::predict_field_half(
-                &refp.cr, refp.c_stride, c_w, c_h,
-                c_px, c_py, bot_cx, bot_cy, bot_field_select,
-                8, 4, &mut out_cr[8..], 16,
+                &refp.cr,
+                refp.c_stride,
+                c_w,
+                c_h,
+                c_px,
+                c_py,
+                bot_cx,
+                bot_cy,
+                bot_field_select,
+                8,
+                4,
+                &mut out_cr[8..],
+                16,
             );
             true
         }
@@ -453,7 +562,13 @@ pub fn build_dir_prediction(
             Error::invalid("forward prediction requested without forward reference")
         })?;
         build_one_direction_prediction(
-            fwd_pred, refp, mb_x, mb_y, &mut fwd_y, &mut fwd_cb, &mut fwd_cr,
+            fwd_pred,
+            refp,
+            mb_x,
+            mb_y,
+            &mut fwd_y,
+            &mut fwd_cb,
+            &mut fwd_cr,
         )
     };
     let have_bwd = if matches!(bwd_pred, DirPrediction::None) {
@@ -463,7 +578,13 @@ pub fn build_dir_prediction(
             Error::invalid("backward prediction requested without backward reference")
         })?;
         build_one_direction_prediction(
-            bwd_pred, refp, mb_x, mb_y, &mut bwd_y, &mut bwd_cb, &mut bwd_cr,
+            bwd_pred,
+            refp,
+            mb_x,
+            mb_y,
+            &mut bwd_y,
+            &mut bwd_cb,
+            &mut bwd_cr,
         )
     };
 
@@ -488,7 +609,9 @@ pub fn build_dir_prediction(
             }
         }
         (false, false) => {
-            return Err(Error::invalid("inter MB with neither fwd nor bwd prediction"));
+            return Err(Error::invalid(
+                "inter MB with neither fwd nor bwd prediction",
+            ));
         }
     }
     Ok(())
@@ -517,12 +640,31 @@ pub fn build_prediction(
 
     if let Some((mx, my)) = fwd_mv {
         let refp = fwd_ref.ok_or_else(|| Error::invalid("forward MV without forward reference"))?;
-        mc_mb(refp, mb_x, mb_y, mx, my, &mut fwd_y, &mut fwd_cb, &mut fwd_cr);
+        mc_mb(
+            refp,
+            mb_x,
+            mb_y,
+            mx,
+            my,
+            &mut fwd_y,
+            &mut fwd_cb,
+            &mut fwd_cr,
+        );
         have_fwd = true;
     }
     if let Some((mx, my)) = bwd_mv {
-        let refp = bwd_ref.ok_or_else(|| Error::invalid("backward MV without backward reference"))?;
-        mc_mb(refp, mb_x, mb_y, mx, my, &mut bwd_y, &mut bwd_cb, &mut bwd_cr);
+        let refp =
+            bwd_ref.ok_or_else(|| Error::invalid("backward MV without backward reference"))?;
+        mc_mb(
+            refp,
+            mb_x,
+            mb_y,
+            mx,
+            my,
+            &mut bwd_y,
+            &mut bwd_cb,
+            &mut bwd_cr,
+        );
         have_bwd = true;
     }
 
@@ -538,9 +680,15 @@ pub fn build_prediction(
             pred_cr.copy_from_slice(&bwd_cr);
         }
         (true, true) => {
-            for i in 0..16 * 16 { pred_y[i] = ((fwd_y[i] as u32 + bwd_y[i] as u32 + 1) >> 1) as u8; }
-            for i in 0..8 * 8 { pred_cb[i] = ((fwd_cb[i] as u32 + bwd_cb[i] as u32 + 1) >> 1) as u8; }
-            for i in 0..8 * 8 { pred_cr[i] = ((fwd_cr[i] as u32 + bwd_cr[i] as u32 + 1) >> 1) as u8; }
+            for i in 0..16 * 16 {
+                pred_y[i] = ((fwd_y[i] as u32 + bwd_y[i] as u32 + 1) >> 1) as u8;
+            }
+            for i in 0..8 * 8 {
+                pred_cb[i] = ((fwd_cb[i] as u32 + bwd_cb[i] as u32 + 1) >> 1) as u8;
+            }
+            for i in 0..8 * 8 {
+                pred_cr[i] = ((fwd_cr[i] as u32 + bwd_cr[i] as u32 + 1) >> 1) as u8;
+            }
         }
         (false, false) => return Err(Error::invalid("inter MB with neither fwd nor bwd MV")),
     }
@@ -560,32 +708,97 @@ pub fn mc_mb(
 ) {
     let mb_px = (mb_x * 16) as i32;
     let mb_py = (mb_y * 16) as i32;
-    crate::motion::predict_block(&refp.y, refp.y_stride, refp.display_width as i32, refp.display_height as i32, mb_px, mb_py, mv_x, mv_y, 16, dst_y, 16);
+    crate::motion::predict_block(
+        &refp.y,
+        refp.y_stride,
+        refp.display_width as i32,
+        refp.display_height as i32,
+        mb_px,
+        mb_py,
+        mv_x,
+        mv_y,
+        16,
+        dst_y,
+        16,
+    );
     let c_px = (mb_x * 8) as i32;
     let c_py = (mb_y * 8) as i32;
     let mv_cx = crate::motion::scale_mv_to_chroma(mv_x);
     let mv_cy = crate::motion::scale_mv_to_chroma(mv_y);
-    crate::motion::predict_block(&refp.cb, refp.c_stride, (refp.display_width / 2) as i32, (refp.display_height / 2) as i32, c_px, c_py, mv_cx, mv_cy, 8, dst_cb, 8);
-    crate::motion::predict_block(&refp.cr, refp.c_stride, (refp.display_width / 2) as i32, (refp.display_height / 2) as i32, c_px, c_py, mv_cx, mv_cy, 8, dst_cr, 8);
+    crate::motion::predict_block(
+        &refp.cb,
+        refp.c_stride,
+        (refp.display_width / 2) as i32,
+        (refp.display_height / 2) as i32,
+        c_px,
+        c_py,
+        mv_cx,
+        mv_cy,
+        8,
+        dst_cb,
+        8,
+    );
+    crate::motion::predict_block(
+        &refp.cr,
+        refp.c_stride,
+        (refp.display_width / 2) as i32,
+        (refp.display_height / 2) as i32,
+        c_px,
+        c_py,
+        mv_cx,
+        mv_cy,
+        8,
+        dst_cr,
+        8,
+    );
 }
 
-pub fn fill_forward_predict(pic: &mut PictureBuffer, fwd_ref: Option<&PictureBuffer>, mb_x: usize, mb_y: usize, mv_x: i32, mv_y: i32) -> Result<()> {
+pub fn fill_forward_predict(
+    pic: &mut PictureBuffer,
+    fwd_ref: Option<&PictureBuffer>,
+    mb_x: usize,
+    mb_y: usize,
+    mv_x: i32,
+    mv_y: i32,
+) -> Result<()> {
     let refp = fwd_ref.ok_or_else(|| Error::invalid("skip MB without forward ref"))?;
-    let mut y = [0u8; 16 * 16]; let mut cb = [0u8; 8 * 8]; let mut cr = [0u8; 8 * 8];
+    let mut y = [0u8; 16 * 16];
+    let mut cb = [0u8; 8 * 8];
+    let mut cr = [0u8; 8 * 8];
     mc_mb(refp, mb_x, mb_y, mv_x, mv_y, &mut y, &mut cb, &mut cr);
     write_mb(pic, mb_x, mb_y, &y, &cb, &cr);
     Ok(())
 }
 
-pub fn fill_bidir_predict(pic: &mut PictureBuffer, fwd_ref: Option<&PictureBuffer>, bwd_ref: Option<&PictureBuffer>, mb_x: usize, mb_y: usize, fwd_mv: Option<(i32, i32)>, bwd_mv: Option<(i32, i32)>) -> Result<()> {
-    let mut y = [0u8; 16 * 16]; let mut cb = [0u8; 8 * 8]; let mut cr = [0u8; 8 * 8];
-    build_prediction(fwd_ref, bwd_ref, mb_x, mb_y, fwd_mv, bwd_mv, &mut y, &mut cb, &mut cr)?;
+pub fn fill_bidir_predict(
+    pic: &mut PictureBuffer,
+    fwd_ref: Option<&PictureBuffer>,
+    bwd_ref: Option<&PictureBuffer>,
+    mb_x: usize,
+    mb_y: usize,
+    fwd_mv: Option<(i32, i32)>,
+    bwd_mv: Option<(i32, i32)>,
+) -> Result<()> {
+    let mut y = [0u8; 16 * 16];
+    let mut cb = [0u8; 8 * 8];
+    let mut cr = [0u8; 8 * 8];
+    build_prediction(
+        fwd_ref, bwd_ref, mb_x, mb_y, fwd_mv, bwd_mv, &mut y, &mut cb, &mut cr,
+    )?;
     write_mb(pic, mb_x, mb_y, &y, &cb, &cr);
     Ok(())
 }
 
-pub fn write_mb(pic: &mut PictureBuffer, mb_x: usize, mb_y: usize, y: &[u8; 16 * 16], cb: &[u8; 8 * 8], cr: &[u8; 8 * 8]) {
-    let ys = pic.y_stride; let cs = pic.c_stride;
+pub fn write_mb(
+    pic: &mut PictureBuffer,
+    mb_x: usize,
+    mb_y: usize,
+    y: &[u8; 16 * 16],
+    cb: &[u8; 8 * 8],
+    cr: &[u8; 8 * 8],
+) {
+    let ys = pic.y_stride;
+    let cs = pic.c_stride;
     for j in 0..16 {
         let off = (mb_y * 16 + j) * ys + mb_x * 16;
         pic.y[off..off + 16].copy_from_slice(&y[j * 16..j * 16 + 16]);

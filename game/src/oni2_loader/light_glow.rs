@@ -143,10 +143,7 @@ impl GlowFlags {
 pub struct LightGlowMesh(pub Option<Handle<Mesh>>);
 
 /// Build (or fetch) the shared unit-quad mesh.
-fn get_or_create_quad_mesh(
-    cached: &mut LightGlowMesh,
-    meshes: &mut Assets<Mesh>,
-) -> Handle<Mesh> {
+fn get_or_create_quad_mesh(cached: &mut LightGlowMesh, meshes: &mut Assets<Mesh>) -> Handle<Mesh> {
     if let Some(h) = &cached.0 {
         return h.clone();
     }
@@ -332,10 +329,7 @@ pub fn update_light_glow_billboards(
         let parent_legacy_intensity = parent_lights
             .get(child_of.parent())
             .ok()
-            .and_then(|(pt, sp)| {
-                pt.map(|p| p.intensity)
-                    .or_else(|| sp.map(|s| s.intensity))
-            })
+            .and_then(|(pt, sp)| pt.map(|p| p.intensity).or_else(|| sp.map(|s| s.intensity)))
             .map(|cd| cd / crate::oni2_loader::layout_loader::POINT_INTENSITY_TO_CANDELA)
             .unwrap_or(0.0);
         // Legacy `fxLight::DrawGlow` passes
@@ -351,21 +345,23 @@ pub fn update_light_glow_billboards(
         //    If anything blocks, ramp current_intensity DOWN; else UP.
         if glow.flags.occlude {
             let dir = to_cam / to_cam_dist;
-            let blocked = Dir3::new(dir).ok().and_then(|d| {
-                spatial.cast_ray(
-                    glow_pos,
-                    d,
-                    to_cam_dist,
-                    true,
-                    &avian3d::prelude::SpatialQueryFilter::default(),
-                )
-            }).is_some();
+            let blocked = Dir3::new(dir)
+                .ok()
+                .and_then(|d| {
+                    spatial.cast_ray(
+                        glow_pos,
+                        d,
+                        to_cam_dist,
+                        true,
+                        &avian3d::prelude::SpatialQueryFilter::default(),
+                    )
+                })
+                .is_some();
             let target = if blocked { 0.0 } else { max_intensity };
             let max_step = rate_per_sec * dt;
             if max_step > 0.0 {
                 let delta = (target - glow.current_intensity).clamp(-max_step, max_step);
-                glow.current_intensity = (glow.current_intensity + delta)
-                    .clamp(0.0, max_intensity);
+                glow.current_intensity = (glow.current_intensity + delta).clamp(0.0, max_intensity);
             } else {
                 // Rate-of-change of zero → snap (matches legacy when
                 // intensityRateChange == 0).

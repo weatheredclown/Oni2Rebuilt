@@ -1,6 +1,6 @@
-use bevy::prelude::*;
 use crate::menu::AppState;
 use crate::mpeg2_video::{Mpeg2VideoFinishedMessage, PlayMpeg2Video, VideoSource};
+use bevy::prelude::*;
 
 pub struct IntroVideoPlugin;
 
@@ -46,7 +46,6 @@ fn start_intro(
         videos,
     });
 }
-
 
 fn handle_video_finish(
     mut finished_events: MessageReader<Mpeg2VideoFinishedMessage>,

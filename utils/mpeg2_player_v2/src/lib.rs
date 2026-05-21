@@ -132,7 +132,7 @@ impl Mpeg2Player {
     }
 
     fn decode_picture(&mut self, picture_bytes: &[u8]) -> Result<VideoFrame> {
-        use bitstream::{start_code_payloads, EXTENSION_START, PICTURE_START};
+        use bitstream::{EXTENSION_START, PICTURE_START, start_code_payloads};
 
         let payloads = start_code_payloads(picture_bytes);
 
@@ -201,7 +201,10 @@ impl Mpeg2Player {
             }
         }
 
-        if matches!(params.header.picture_coding_type, PictureType::I | PictureType::P) {
+        if matches!(
+            params.header.picture_coding_type,
+            PictureType::I | PictureType::P
+        ) {
             self.fwd_ref = self.bwd_ref.take();
             self.bwd_ref = Some(pic.clone());
         }
@@ -243,7 +246,7 @@ impl Mpeg2Player {
 }
 
 fn parse_sequence_header_from_stream(es: &[u8]) -> Result<headers::SequenceHeader> {
-    use bitstream::{start_code_payloads, SEQUENCE_HEADER};
+    use bitstream::{SEQUENCE_HEADER, start_code_payloads};
     for (start, payload) in start_code_payloads(es) {
         if start.code == SEQUENCE_HEADER {
             return headers::parse_sequence_header(payload);

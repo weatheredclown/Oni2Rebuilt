@@ -177,10 +177,7 @@ pub enum ResourceOp {
     ReleasePosition,
     /// Push self onto target's cookie queue.  Mirrors
     /// `aiFighter::RequestCookie`.
-    RequestCookie {
-        target: Entity,
-        priority: i32,
-    },
+    RequestCookie { target: Entity, priority: i32 },
     /// Grab the cookie offered to us (validates against `resource_target`).
     GrabCookie,
     /// Release the cookie back to the owner.  Mirrors
@@ -199,23 +196,36 @@ pub enum ResourceOp {
 /// `xz[8]` table in `aiPrimaryDirections::GetLocation`.
 const SLOT_DIRECTIONS: [(f32, f32); NUM_POSITIONS] = [
     (1.0, 0.0),
-    (std::f32::consts::FRAC_1_SQRT_2, std::f32::consts::FRAC_1_SQRT_2),
+    (
+        std::f32::consts::FRAC_1_SQRT_2,
+        std::f32::consts::FRAC_1_SQRT_2,
+    ),
     (0.0, 1.0),
-    (-std::f32::consts::FRAC_1_SQRT_2, std::f32::consts::FRAC_1_SQRT_2),
+    (
+        -std::f32::consts::FRAC_1_SQRT_2,
+        std::f32::consts::FRAC_1_SQRT_2,
+    ),
     (-1.0, 0.0),
     (
         -std::f32::consts::FRAC_1_SQRT_2,
         -std::f32::consts::FRAC_1_SQRT_2,
     ),
     (0.0, -1.0),
-    (std::f32::consts::FRAC_1_SQRT_2, -std::f32::consts::FRAC_1_SQRT_2),
+    (
+        std::f32::consts::FRAC_1_SQRT_2,
+        -std::f32::consts::FRAC_1_SQRT_2,
+    ),
 ];
 
 /// World-space offset from `target_pos` for slot `slot_idx` at the
 /// given range.  Port of `aiPrimaryDirections::GetLocation`.
 pub fn slot_world_pos(target_pos: Vec3, slot_idx: usize, range: f32) -> Vec3 {
     let (dx, dz) = SLOT_DIRECTIONS[slot_idx % NUM_POSITIONS];
-    Vec3::new(target_pos.x + dx * range, target_pos.y, target_pos.z + dz * range)
+    Vec3::new(
+        target_pos.x + dx * range,
+        target_pos.y,
+        target_pos.z + dz * range,
+    )
 }
 
 /// Find the slot/direction closest to `attacker_pos` relative to

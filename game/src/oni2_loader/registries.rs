@@ -40,6 +40,87 @@ pub struct EntityLibrary {
     pub entities: HashMap<String, Oni2EntityType>,
 }
 
+/// One drawable: a mesh handle plus the UV-animation directives that
+/// `uv_animator_system` ticks every frame.  This is the unified registry
+/// the legacy AGE engine implements as `rmcDrawable` — the per-frame
+/// scrolling/scaling rotation work doesn't care whether the drawable
+/// came from an entity load (.mod via `.type`) or an FX load (.mesh via
+/// `.type`).  `name` is a debug label only; `key` is what dedupes
+/// repeated mirror passes from entities.
+#[derive(Debug, Clone)]
+pub struct DrawableEntry {
+    /// Stable unique key.  Conventions: `entity:<dir>#<mat_idx>` for
+    /// entity sub-meshes, `fx:<fx_name>#<pass_idx>` for FX drawables.
+    pub key: String,
+    /// Human-readable label (entity name / FX name / shader name).
+    pub name: String,
+    pub mesh: Handle<Mesh>,
+    pub animators: Vec<TextureUVAnimator>,
+}
+
+/// Unified per-drawable registry.  FX loaders push directly; entity
+/// loads are mirrored in by `sync_drawables_from_entities_system`.
+/// `uv_animator_system` walks this list (no longer the per-entity
+/// sub_meshes loop on `EntityLibrary`) so adding new non-entity
+/// drawables doesn't require teaching every animator system about them.
+#[derive(Resource, Default)]
+pub struct DrawableLibrary {
+    pub entries: Vec<DrawableEntry>,
+}
+
+impl DrawableLibrary {
+    /// Insert a drawable if its `key` isn't already in the registry.
+    /// Returns `true` if a new entry was added.
+    pub fn register(
+        &mut self,
+        key: String,
+        name: String,
+        mesh: Handle<Mesh>,
+        animators: Vec<TextureUVAnimator>,
+    ) -> bool {
+        if self.entries.iter().any(|e| e.key == key) {
+            return false;
+        }
+        self.entries.push(DrawableEntry {
+            key,
+            name,
+            mesh,
+            animators,
+        });
+        true
+    }
+}
+
+/// Mirrors entity sub-meshes into `DrawableLibrary` whenever
+/// `EntityLibrary` changes.  Uses `Local<HashSet<String>>` to dedupe
+/// across frames, so an entity loaded mid-game gets registered once
+/// and never re-walked.  Runs cheap when no entity load happened this
+/// tick (the `is_changed()` early-return).
+pub fn sync_drawables_from_entities_system(
+    entity_lib: Res<EntityLibrary>,
+    mut drawables: ResMut<DrawableLibrary>,
+    mut seen: bevy::ecs::system::Local<HashMap<String, ()>>,
+) {
+    if !entity_lib.is_changed() && !seen.is_empty() {
+        return;
+    }
+    for (entity_dir, ent_type) in &entity_lib.entities {
+        for (mat_idx, mesh) in &ent_type.sub_meshes {
+            let key = format!("entity:{}#{}", entity_dir, mat_idx);
+            if seen.contains_key(&key) {
+                continue;
+            }
+            let animators = ent_type
+                .material_animators
+                .get(*mat_idx)
+                .cloned()
+                .unwrap_or_default();
+            drawables.register(key.clone(), ent_type.name.clone(), mesh.clone(), animators);
+            seen.insert(key, ());
+        }
+    }
+}
+
 #[derive(Resource, Default)]
 pub struct AnimRegistry {
     pub libraries: HashMap<
@@ -133,7 +214,10 @@ pub fn load_global_registries(
                             entity_lib.entities.insert(entity_dir.clone(), e);
                             info!("Pre-loaded entity type for projectile: {}", m.model_name);
                         } else {
-                            warn!("Failed to load entity type for projectile: {}", m.model_name);
+                            warn!(
+                                "Failed to load entity type for projectile: {}",
+                                m.model_name
+                            );
                         }
                     }
                 }

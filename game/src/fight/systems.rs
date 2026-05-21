@@ -157,49 +157,6 @@ pub fn fighter_state_update_system(
 }
 
 // ---------------------------------------------------------------------------
-// strike_debug_facing_watcher
-// ---------------------------------------------------------------------------
-
-/// Diagnostic system: logs `fighter.facing` changes between ticks for
-/// every Fighter entity.  Intended for tracking down which system is
-/// rotating a fighter during an attack.  Only logs when facing changes
-/// by more than a tiny threshold so it doesn't spam unchanging frames.
-///
-/// Runs LAST in FixedUpdate so it captures the final post-tick value
-/// (after all other systems have had a chance to mutate facing).
-///
-/// Remove or gate on a feature flag once the bug is found.
-pub fn strike_debug_facing_watcher(
-    time: Res<Time>,
-    mut last_facing: Local<bevy::ecs::entity::EntityHashMap<Vec3>>,
-    query: Query<(Entity, &Fighter, Option<&Oni2AnimState>)>,
-) {
-    let t = time.elapsed_secs();
-    for (entity, fighter, anim_opt) in &query {
-        let prev = last_facing.get(&entity).copied().unwrap_or(fighter.facing);
-        let delta = fighter.facing.distance_squared(prev);
-        if delta > 1e-4 {
-            let anim_name = anim_opt
-                .and_then(|a| a.current_anim_id.as_ref())
-                .map(|id| id.to_string())
-                .unwrap_or_else(|| "<none>".to_string());
-            let anim_frame = anim_opt.map(|a| a.current_time).unwrap_or(0.0);
-            info!(
-                "STRIKE_DEBUG: facing-changed entity={:?} t={:.3} anim='{}' frame={:.2} prev=({:.3},{:.3}) cur=({:.3},{:.3}) delta_sq={:.6}",
-                entity,
-                t,
-                anim_name,
-                anim_frame,
-                prev.x, prev.z,
-                fighter.facing.x, fighter.facing.z,
-                delta,
-            );
-        }
-        last_facing.insert(entity, fighter.facing);
-    }
-}
-
-// ---------------------------------------------------------------------------
 // block_state_sync_system — connect Oni2AnimState transitions to FighterState
 //   block bookkeeping, apply BlockDef.rate to anim playback, run the
 //   hold-button mid-point loop. Mirrors the bits of crBlockData::StartBlock /
@@ -285,9 +242,7 @@ pub fn block_state_sync_system(
                 // `animList.SetRate(Rate)` at the end of `crBlockData::StartBlock`.
                 // Cheap idempotent assign — the threshold avoids triggering
                 // any change-detection waste.
-                if block.rate > 0.0
-                    && (anim_state.speed_multiplier - block.rate).abs() > 1e-4
-                {
+                if block.rate > 0.0 && (anim_state.speed_multiplier - block.rate).abs() > 1e-4 {
                     anim_state.speed_multiplier = block.rate;
                 }
 
@@ -297,8 +252,7 @@ pub fn block_state_sync_system(
                 // above and we clear state.
                 let still_held = input_opt.map(|i| i.blocking).unwrap_or(true);
                 let elapsed = (now - fs.block_start_time) as f32;
-                let timed_out =
-                    block.max_hold_button > 0.0 && elapsed >= block.max_hold_button;
+                let timed_out = block.max_hold_button > 0.0 && elapsed >= block.max_hold_button;
                 let held = still_held && !timed_out;
                 fs.block_held = held;
 
@@ -396,7 +350,9 @@ pub fn block_success_system(
             // Pull animator + library once so we can play the
             // successful-block anim and (optionally) the counter without
             // borrowing twice.
-            let Some(mut anim) = anim_state_opt else { continue };
+            let Some(mut anim) = anim_state_opt else {
+                continue;
+            };
             let Some(lib) = lib_opt else { continue };
 
             // Successful-block anim: the defender's clean-block reaction.
@@ -687,7 +643,6 @@ pub fn successive_attacks_system(
     }
 }
 
-
 // ---------------------------------------------------------------------------
 // react_end_rotation_system
 // ---------------------------------------------------------------------------
@@ -908,11 +863,15 @@ pub fn update_fighter_strike_facing_system(
         // `end_rotation_notches` had nothing to act on — the next
         // tick's strike_facing immediately reset facing back to the
         // locked angle.
-        if let Some(strike) = anim.anim.attack_data.as_ref().and_then(|d| d.strike.as_ref()) {
+        if let Some(strike) = anim
+            .anim
+            .attack_data
+            .as_ref()
+            .and_then(|d| d.strike.as_ref())
+        {
             if strike.stop_track_frame > 0.0 && anim.anim.num_frames > 1 {
                 let stop_track_phase = strike.stop_track_frame / anim.anim.num_frames as f32;
-                let cur_phase =
-                    anim.current_time / (anim.anim.num_frames as f32 - 1.0).max(1.0);
+                let cur_phase = anim.current_time / (anim.anim.num_frames as f32 - 1.0).max(1.0);
                 if cur_phase >= stop_track_phase {
                     fs.strike_target = None;
                     continue;
@@ -1143,7 +1102,12 @@ pub fn fight_stance_entry_system(
 /// happens in `fighter_state_update_system`; this one just fires the edge.
 pub fn fight_stance_exit_system(
     mut writer: MessageWriter<StartActionMessage>,
-    query: Query<(Entity, &FighterState, Option<&ActionPlayer>, Option<&Oni2AnimState>)>,
+    query: Query<(
+        Entity,
+        &FighterState,
+        Option<&ActionPlayer>,
+        Option<&Oni2AnimState>,
+    )>,
     mut was_ready: Local<bevy::ecs::entity::EntityHashMap<bool>>,
 ) {
     for (entity, fs, ap_opt, anim_opt) in &query {
@@ -1677,9 +1641,7 @@ pub fn face_after_run_system(
             .unwrap_or(false);
         let reacting = fs.react_anim >= 0;
         let grappling = fs.is_grappling() || fs.is_being_grappled();
-        let falling = vel_opt
-            .map(|v| v.y < -0.1 && v.y > -50.0)
-            .unwrap_or(false);
+        let falling = vel_opt.map(|v| v.y < -0.1 && v.y > -50.0).unwrap_or(false);
 
         // Full-throttle, nothing playing → accumulate timer
         // (legacy: `throttle==1.0f && !anythingplaying`).
@@ -1898,12 +1860,7 @@ mod strike_facing_tests {
             "right-side attack should leave fighter facing NEG_Z (forward); got {:?} (this fails if the earlier +slice_heading bug returns)",
             facing,
         );
-        assert_wedge_lands_on_target(
-            Vec3::ZERO,
-            Vec3::new(5.0, 0.0, 0.0),
-            -FRAC_PI_2,
-            "right",
-        );
+        assert_wedge_lands_on_target(Vec3::ZERO, Vec3::new(5.0, 0.0, 0.0), -FRAC_PI_2, "right");
     }
 
     #[test]
@@ -1922,12 +1879,7 @@ mod strike_facing_tests {
             "left-side attack should leave fighter facing NEG_Z (forward); got {:?}",
             facing,
         );
-        assert_wedge_lands_on_target(
-            Vec3::ZERO,
-            Vec3::new(-5.0, 0.0, 0.0),
-            FRAC_PI_2,
-            "left",
-        );
+        assert_wedge_lands_on_target(Vec3::ZERO, Vec3::new(-5.0, 0.0, 0.0), FRAC_PI_2, "left");
     }
 
     #[test]
@@ -1939,8 +1891,7 @@ mod strike_facing_tests {
         // so this off-axis attack lands on the right diagonal target.
         let slice_heading = -1.42_f32; // Bevy-space midpoint
         let target = Vec3::new(3.5, 0.0, -2.0);
-        let facing =
-            strike_facing_for_target(Vec3::ZERO, target, slice_heading).unwrap();
+        let facing = strike_facing_for_target(Vec3::ZERO, target, slice_heading).unwrap();
         assert_wedge_lands_on_target(Vec3::ZERO, target, slice_heading, "right-diagonal");
 
         // The fighter should NOT end up facing the target directly
@@ -2032,7 +1983,7 @@ mod strike_facing_tests {
             framenum: 10.0,
             frameduration: 4.0,
             slicestartradians: -0.1,
-            sliceendradians: 0.1, // midpoint 0
+            sliceendradians: 0.1,     // midpoint 0
             sliceheadingradiansb: PI, // sweep to behind
             sweepheading: 1,
             ..Default::default()
@@ -2040,7 +1991,10 @@ mod strike_facing_tests {
         let h_start = current_slice_heading(&strike, 10.0); // sweep_t = 0
         assert!((h_start - 0.0).abs() < 1e-4, "start of sweep is slice_a");
         let h_end = current_slice_heading(&strike, 14.0); // sweep_t = 1
-        assert!((h_end - PI).abs() < 1e-4, "end of sweep is sliceheadingradiansb");
+        assert!(
+            (h_end - PI).abs() < 1e-4,
+            "end of sweep is sliceheadingradiansb"
+        );
         let h_mid = current_slice_heading(&strike, 12.0); // sweep_t = 0.5
         assert!(
             (h_mid - PI * 0.5).abs() < 1e-4,

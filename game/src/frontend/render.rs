@@ -307,16 +307,17 @@ fn spawn_page_chrome(
             );
             let already_loading = pending_load.is_some();
             if !already_loaded && !already_loading {
-                if let Some(pending) =
-                    crate::oni2_loader::layout_loader::begin_frontend_layout_load(
-                        commands,
-                        &layout_dir,
-                        "Entity",
-                    )
-                {
+                if let Some(pending) = crate::oni2_loader::layout_loader::begin_frontend_layout_load(
+                    commands,
+                    &layout_dir,
+                    "Entity",
+                ) {
                     commands.insert_resource(pending);
                 } else {
-                    warn!("frontend: PAGE_3D layout '{}' failed to start loading", layout);
+                    warn!(
+                        "frontend: PAGE_3D layout '{}' failed to start loading",
+                        layout
+                    );
                 }
             }
             // Minimal scene lighting while the backdrop loads.  The
@@ -385,11 +386,9 @@ fn spawn_background(
     // hardcoded `assets/` root (our `game/assets/` which is empty by
     // design, BYO assets).
     let filename = format!("{}.tga", bg_name);
-    let Some((handle, _)) = crate::oni2_loader::parsers::texture::load_tga_file(
-        "texture",
-        &filename,
-        images,
-    ) else {
+    let Some((handle, _)) =
+        crate::oni2_loader::parsers::texture::load_tga_file("texture", &filename, images)
+    else {
         warn!("frontend: background texture/{} not found in VFS", filename);
         return;
     };
@@ -421,7 +420,11 @@ fn spawn_item(
 ) {
     let color_focus = Color::srgba(1.0, 0.85, 0.2, 1.0);
     let color_normal = Color::srgba(1.0, 1.0, 1.0, 0.75);
-    let text_color = if is_focused { color_focus } else { color_normal };
+    let text_color = if is_focused {
+        color_focus
+    } else {
+        color_normal
+    };
 
     // LevelList + LevelSavePointList: render the actual scrolled
     // list in-place, not a bare label.
@@ -432,21 +435,19 @@ fn spawn_item(
 
     // Figure out a label (item's string id, or name if no string).
     let label = match &item.kind {
-        ItemKind::Rect2DText { string, .. } | ItemKind::Rect3DText { string, .. } => {
-            match string {
-                StringSource::StringId(s) => s.clone(),
-                StringSource::LevelName => "<level>".to_string(),
-            }
-        }
+        ItemKind::Rect2DText { string, .. } | ItemKind::Rect3DText { string, .. } => match string {
+            StringSource::StringId(s) => s.clone(),
+            StringSource::LevelName => "<level>".to_string(),
+        },
         ItemKind::Slider2D { .. } => format!("{} (slider)", item.name),
         ItemKind::Rect2D(_) | ItemKind::Rect3D(_) | ItemKind::QuadList2D(_) => item.name.clone(),
         ItemKind::Invisible | ItemKind::Actor { .. } | ItemKind::Rect2DGrid { .. } => {
             // No visible representation in this pass.
             return;
         }
-        ItemKind::LevelList(_) | ItemKind::LevelSavePointList(_) => unreachable!(
-            "LevelList / LevelSavePointList handled by spawn_level_list above",
-        ),
+        ItemKind::LevelList(_) | ItemKind::LevelSavePointList(_) => {
+            unreachable!("LevelList / LevelSavePointList handled by spawn_level_list above",)
+        }
     };
 
     // 3D pages: the legacy `uiItemRect3DText::Draw` rendered each
@@ -887,8 +888,7 @@ pub fn input_dispatch_system(
     // — our load is async, so we anchor the grace period to "backdrop
     // ready" rather than "page entered" and require both.
     let is_3d_with_layout = matches!(page.kind, PageKind::Page3D { .. });
-    let backdrop_pending = is_3d_with_layout
-        && (pending_load.is_some() || layout_ready.is_none());
+    let backdrop_pending = is_3d_with_layout && (pending_load.is_some() || layout_ready.is_none());
     let events_armed = time_on_page >= page.time_to_disable_events && !backdrop_pending;
 
     // Fire ON_PAGE_START on the first tick of the new page, plus the
@@ -958,7 +958,8 @@ pub fn input_dispatch_system(
     let pressed_left = keys.just_pressed(KeyCode::ArrowLeft) || keys.just_pressed(KeyCode::KeyA);
     let pressed_right = keys.just_pressed(KeyCode::ArrowRight) || keys.just_pressed(KeyCode::KeyD);
     let pressed_ok = keys.just_pressed(KeyCode::Enter) || keys.just_pressed(KeyCode::Space);
-    let pressed_cancel = keys.just_pressed(KeyCode::Escape) || keys.just_pressed(KeyCode::Backspace);
+    let pressed_cancel =
+        keys.just_pressed(KeyCode::Escape) || keys.just_pressed(KeyCode::Backspace);
     let pressed_start = keys.just_pressed(KeyCode::Enter)
         || keys.just_pressed(KeyCode::Space)
         || keys.just_pressed(KeyCode::Escape);
@@ -1009,9 +1010,7 @@ pub fn input_dispatch_system(
         }
         // Don't fall through to directional cycling — the LevelList
         // owns Up/Down for this focus context.  Cancel still flows.
-        if pressed_cancel
-            && let Some(current_item) = page.items.get(state.focus_index)
-        {
+        if pressed_cancel && let Some(current_item) = page.items.get(state.focus_index) {
             fire_event_on_item(&mut fire, current_item, EventKind::InputCancel);
         }
     } else if let Some(current_item) = page.items.get(state.focus_index) {
@@ -1244,16 +1243,13 @@ pub fn handler_exec_system(
                 // authored.  The animator handles `animation_alias`
                 // by calling `lib.play(alias, &mut state)` so a single
                 // message both swaps and configures the playback.
-                let Some((entity, _)) = actor_q
-                    .iter()
-                    .find(|(_, n)| n.as_str() == actor.as_str())
+                let Some((entity, _)) = actor_q.iter().find(|(_, n)| n.as_str() == actor.as_str())
                 else {
                     warn!("frontend ANIMATION: actor '{}' not found", actor);
                     continue;
                 };
-                let mut control =
-                    crate::animator::events::control_anim_bits::RESTART
-                        | crate::animator::events::control_anim_bits::LOOP;
+                let mut control = crate::animator::events::control_anim_bits::RESTART
+                    | crate::animator::events::control_anim_bits::LOOP;
                 if *pause {
                     control |= crate::animator::events::control_anim_bits::PAUSE;
                 }
@@ -1318,10 +1314,8 @@ pub fn handler_exec_system(
                         // ScrOniScript insert never landed (entity
                         // exists but no component), or some other
                         // race.
-                        let actor_match_count = actor_q
-                            .iter()
-                            .filter(|(_, n)| n.as_str() == actor)
-                            .count();
+                        let actor_match_count =
+                            actor_q.iter().filter(|(_, n)| n.as_str() == actor).count();
                         let total_scripts = script_q.iter().count();
                         let names_with_script: Vec<String> = actor_q
                             .iter()
@@ -1331,11 +1325,7 @@ pub fn handler_exec_system(
                         warn!(
                             "frontend SCRIPT: gave up '{}' on '{}' after retry window. \
                              entities-by-name={} scripts-in-world={} named-with-scripts={:?}",
-                            script,
-                            actor,
-                            actor_match_count,
-                            total_scripts,
-                            names_with_script
+                            script, actor, actor_match_count, total_scripts, names_with_script
                         );
                     }
                 }

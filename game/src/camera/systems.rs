@@ -259,4 +259,3 @@ pub fn prototype_toggle_system(
         }
     }
 }
-

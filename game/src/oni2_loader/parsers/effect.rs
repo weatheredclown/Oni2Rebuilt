@@ -148,9 +148,12 @@ pub struct BlastFireDef {
     pub speed: f32,
     pub rotation: Vec3,
     pub scale: Vec3,
-    pub path0: Vec3,
-    pub path1: Vec3,
-    pub path2: Vec3,
+    /// Spline control points in declaration order.  Legacy `fxBlastFireType::Load`
+    /// reads `pathN` tokens iteratively starting at N=0 until the next index
+    /// is missing, so the length is unbounded.  Falls back to the three-point
+    /// `(0,0,-100) → (0,0,0) → (0,0,100)` default when no `pathN` appears at
+    /// all (legacy `// HACK: default to 3 points in path`).
+    pub path: Vec<Vec3>,
 }
 
 /// Mirrors legacy `fxLightGlow`.  A
@@ -255,7 +258,6 @@ pub struct StrikeFxDef {
     pub texture_name: String,
     pub texture_handle: Option<Handle<Image>>,
 }
-
 
 pub fn parse_particle_ref(block: &SettingsBlock) -> Option<ParticleSystemRef> {
     if let Some(sys_name) = block.get_string("ParticleSystem") {
@@ -383,25 +385,29 @@ pub fn parse_effect(
             let head_handle = if head_name.is_empty() || head_name.eq_ignore_ascii_case("none") {
                 None
             } else {
-                Some(crate::oni2_loader::parsers::texture::load_texture(
-                    "Entity/GunFx",
-                    &head_name,
-                    images,
+                Some(
+                    crate::oni2_loader::parsers::texture::load_texture(
+                        "Entity/GunFx",
+                        &head_name,
+                        images,
+                    )
+                    .map(|(h, _)| h)
+                    .unwrap_or_else(|| asset_server.load(format!("texture/{}.tga", head_name))),
                 )
-                .map(|(h, _)| h)
-                .unwrap_or_else(|| asset_server.load(format!("texture/{}.tga", head_name))))
             };
-            
+
             let tail_handle = if tail_name.is_empty() || tail_name.eq_ignore_ascii_case("none") {
                 None
             } else {
-                Some(crate::oni2_loader::parsers::texture::load_texture(
-                    "Entity/GunFx",
-                    &tail_name,
-                    images,
+                Some(
+                    crate::oni2_loader::parsers::texture::load_texture(
+                        "Entity/GunFx",
+                        &tail_name,
+                        images,
+                    )
+                    .map(|(h, _)| h)
+                    .unwrap_or_else(|| asset_server.load(format!("texture/{}.tga", tail_name))),
                 )
-                .map(|(h, _)| h)
-                .unwrap_or_else(|| asset_server.load(format!("texture/{}.tga", tail_name))))
             };
             Some(EffectDef::Laser(LaserFxDef {
                 name: name.to_string(),
@@ -416,15 +422,36 @@ pub fn parse_effect(
                 light_color: block.get_color("LightColor", Color::WHITE),
             }))
         }
-        "BLASTFIRE" => Some(EffectDef::BlastFire(BlastFireDef {
-            name: name.to_string(),
-            speed: block.get_f32("Speed", 1.0),
-            rotation: block.get_vec3("Rotation", Vec3::ZERO),
-            scale: block.get_vec3("Scale", Vec3::ONE),
-            path0: block.get_vec3("path0", Vec3::ZERO),
-            path1: block.get_vec3("path1", Vec3::ZERO),
-            path2: block.get_vec3("path2", Vec3::ZERO),
-        })),
+        "BLASTFIRE" => {
+            // Walk `pathN` from N=0 upward, stopping at the first gap.
+            // Mirrors the legacy `while (1) { sprintf("path%d", i) ... }`
+            // loop.  If no `pathN` appears, fall back to the legacy
+            // three-point default.
+            let mut path: Vec<Vec3> = Vec::new();
+            let mut idx = 0usize;
+            loop {
+                let key = format!("path{}", idx);
+                if !block.properties.contains_key(&key) {
+                    break;
+                }
+                path.push(block.get_vec3(&key, Vec3::ZERO));
+                idx += 1;
+            }
+            if path.is_empty() {
+                path = vec![
+                    Vec3::new(0.0, 0.0, -100.0),
+                    Vec3::ZERO,
+                    Vec3::new(0.0, 0.0, 100.0),
+                ];
+            }
+            Some(EffectDef::BlastFire(BlastFireDef {
+                name: name.to_string(),
+                speed: block.get_f32("Speed", 1.0),
+                rotation: block.get_vec3("Rotation", Vec3::ZERO),
+                scale: block.get_vec3("Scale", Vec3::ONE),
+                path,
+            }))
+        }
         "LIGHTGLOW" => {
             let glow_texture_name = block.get_string("GlowTextureName").unwrap_or_default();
             // Eagerly load the texture (mirrors SPRITEEFFECT path
@@ -477,17 +504,21 @@ pub fn parse_effect(
             color3: block.get_color("Color3", Color::WHITE),
         })),
         "STRIKE" => {
-            let tex_name = block.get_string("TextureName").unwrap_or_else(|| "bam".to_string());
+            let tex_name = block
+                .get_string("TextureName")
+                .unwrap_or_else(|| "bam".to_string());
             let tex_handle = if tex_name.is_empty() || tex_name.eq_ignore_ascii_case("none") {
                 None
             } else {
-                Some(crate::oni2_loader::parsers::texture::load_texture(
-                    "entity/strikefx",
-                    &tex_name,
-                    images,
+                Some(
+                    crate::oni2_loader::parsers::texture::load_texture(
+                        "entity/strikefx",
+                        &tex_name,
+                        images,
+                    )
+                    .map(|(h, _)| h)
+                    .unwrap_or_else(|| asset_server.load(format!("texture/{}.tga", tex_name))),
                 )
-                .map(|(h, _)| h)
-                .unwrap_or_else(|| asset_server.load(format!("texture/{}.tga", tex_name))))
             };
 
             Some(EffectDef::Strike(StrikeFxDef {

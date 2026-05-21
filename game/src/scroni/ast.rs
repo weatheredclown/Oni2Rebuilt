@@ -170,12 +170,16 @@ pub enum Stmt {
     /// same shape as `Stmt::AmbientSound`.  Downstream handler
     /// (`ops/combat.rs::Stmt::Shoot`) walks the list to pull out target,
     /// flags, and modifiers.
-    Shoot { args: Vec<Expr> },
+    Shoot {
+        args: Vec<Expr>,
+    },
     /// `look <listvar> status <state>, <state>, ...` — AI awareness scan.
     /// Parsed as a flat arg list (listvar + "status" literal + state
     /// identifiers); handler (not yet wired) fills the list variable
     /// with visible actors matching the state filter.
-    Look { args: Vec<Expr> },
+    Look {
+        args: Vec<Expr>,
+    },
     /// `hit <expr> <expr> for <expr>`
     Hit {
         hit_type: Expr,
@@ -200,7 +204,9 @@ pub enum Stmt {
     /// reports done or failed.  `duration` mirrors the legacy timeout knob;
     /// not yet surfaced to the runtime.  See behavior::impls::take_cover
     /// for the AI side.
-    TakeCover { duration: Option<Expr> },
+    TakeCover {
+        duration: Option<Expr>,
+    },
     /// `destroy <expr>`
     Destroy(Expr),
 
@@ -221,11 +227,17 @@ pub enum Stmt {
     /// `childdone [<var>]` — optional child-variable target (grunt2.oni
     /// uses forms like `childdone awareChild` / `childdone fightChild`).
     /// None = operate on the current script's default child slot.
-    ChildDone { var: Option<String> },
+    ChildDone {
+        var: Option<String>,
+    },
     /// `childhome [<var>]` — optional child-variable target.
-    ChildHome { var: Option<String> },
+    ChildHome {
+        var: Option<String>,
+    },
     /// `childstop [<var>]` — optional child-variable target.
-    ChildStop { var: Option<String> },
+    ChildStop {
+        var: Option<String>,
+    },
 
     /// `spawn <string> [assign to <var>] [at <expr>] [name <string>]`
     Spawn {

@@ -266,7 +266,9 @@ pub fn ammo_system(
 /// `animAnimatorComponent::TargetWithArm` at
 /// the legacy aim IK path:
 ///
+/// ```text
 ///     mv->ApplyWorldYRotation(extra);  // rotate body if arm can't cover
+/// ```
 ///
 /// Full arm / spine IK (the actual bone solver) still TODO — that
 /// requires per-skeleton bone IDs and tuning data from .animatortype
@@ -576,9 +578,9 @@ pub fn weapon_update_system(
                 proj.muzzle_eulers,
             );
 
-            // Since spine IK is not fully implemented yet, blending with the crosshair aim 
-            // direction causes bullets to shoot sideways out of the barrel if the player 
-            // aims up or down. Locking the firing direction to the muzzle's world orientation 
+            // Since spine IK is not fully implemented yet, blending with the crosshair aim
+            // direction causes bullets to shoot sideways out of the barrel if the player
+            // aims up or down. Locking the firing direction to the muzzle's world orientation
             // ensures bullets always visually fire straight out of the gun.
             let aim_blend = muzzle_dir_local;
 

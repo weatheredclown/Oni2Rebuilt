@@ -22,7 +22,11 @@ pub struct CompileError {
 impl std::fmt::Display for CompileError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         if let Some(ref s) = self.script_name {
-            write!(f, "[script '{}'] line {}:{}: {}", s, self.line, self.col, self.message)
+            write!(
+                f,
+                "[script '{}'] line {}:{}: {}",
+                s, self.line, self.col, self.message
+            )
         } else {
             write!(f, "line {}:{}: {}", self.line, self.col, self.message)
         }
@@ -964,7 +968,7 @@ impl Compiler {
             _ => {
                 // Unknown command — skip token and collect trailing exprs until next command
                 let cmd = self.peek().text.clone();
-                
+
                 // CRASH ON UNIMPLEMENTED/HANGING VALUES
                 self.error(format!("Hanging value or unrecognized command: '{}'. Fatal error enabled for debugging.", cmd));
 
@@ -1874,20 +1878,14 @@ impl Compiler {
                         let first_state = state_to_name(first);
                         let mut acc = Expr::Call {
                             name: "status_is".to_string(),
-                            args: vec![
-                                actor.clone(),
-                                Expr::StringLit(first_state),
-                            ],
+                            args: vec![actor.clone(), Expr::StringLit(first_state)],
                         };
                         while self.skip_if(TokenCode::Comma) {
                             let more = self.parse_additive();
                             let more_state = state_to_name(more);
                             let pred = Expr::Call {
                                 name: "status_is".to_string(),
-                                args: vec![
-                                    actor.clone(),
-                                    Expr::StringLit(more_state),
-                                ],
+                                args: vec![actor.clone(), Expr::StringLit(more_state)],
                             };
                             acc = Expr::BinOp {
                                 op: BinOp::And,

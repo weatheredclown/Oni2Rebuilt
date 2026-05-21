@@ -456,7 +456,9 @@ pub fn behavior_start_dispatch_system(
         // FSMs and Behaviors should never enter Fight without a target.
         // Fall back to the player if no target is present.
         if msg.kind == BehaviorKind::Fight && runtime.pending_params.target_entity.is_none() {
-            let has_target = ai_fighter_opt.as_ref().is_some_and(|af| af.target.is_some());
+            let has_target = ai_fighter_opt
+                .as_ref()
+                .is_some_and(|af| af.target.is_some());
             if !has_target {
                 runtime.pending_params.target_entity = player_query.single().ok();
             }

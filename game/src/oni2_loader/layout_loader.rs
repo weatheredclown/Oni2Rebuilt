@@ -865,7 +865,9 @@ pub fn spawn_layout_actor(
             .iter()
             .any(|t| t.eq_ignore_ascii_case(&actor.entity_type));
 
-    let is_trigger = actor.broadcast_radius.is_some() || actor.checkpoint_radius.is_some() || actor.fvt_radius.is_some();
+    let is_trigger = actor.broadcast_radius.is_some()
+        || actor.checkpoint_radius.is_some()
+        || actor.fvt_radius.is_some();
     if !is_basic && !is_trigger && !actor.is_creature {
         is_basic = true;
     }
@@ -889,7 +891,7 @@ pub fn spawn_layout_actor(
 
         let mut sha_content = None;
         let mut sha_exists = false;
-        
+
         for fname in &sha_filenames {
             if crate::vfs::exists(&entity_dir, fname) {
                 sha_exists = true;
@@ -901,7 +903,10 @@ pub fn spawn_layout_actor(
         }
 
         if sha_exists && sha_content.is_none() {
-            warn!("Failed to read sha file for: {} (file exists but could not be read)", actor.entity_type);
+            warn!(
+                "Failed to read sha file for: {} (file exists but could not be read)",
+                actor.entity_type
+            );
         }
 
         if let Some(sha_content) = sha_content {
@@ -1352,18 +1357,19 @@ pub fn spawn_layout_actor(
         // Attach FightVectorTrigger if present
         if let Some(radius) = actor.fvt_radius {
             let attack_alias = actor.fvt_attack.clone().unwrap_or_default();
-            assets.commands.entity(entity).insert(crate::fight_vector::FightVectorTrigger {
-                radius,
-                directional: actor.fvt_directional.unwrap_or(true),
-                offset: actor.fvt_offset.unwrap_or(Vec3::ZERO),
-                attack_alias: attack_alias.clone(),
-                enabled: true,
-            });
+            assets
+                .commands
+                .entity(entity)
+                .insert(crate::fight_vector::FightVectorTrigger {
+                    radius,
+                    directional: actor.fvt_directional.unwrap_or(true),
+                    offset: actor.fvt_offset.unwrap_or(Vec3::ZERO),
+                    attack_alias: attack_alias.clone(),
+                    enabled: true,
+                });
             info!(
                 "Attached FightVectorTrigger (radius {}, attack {}) to {}",
-                radius,
-                attack_alias,
-                actor.entity_type
+                radius, attack_alias, actor.entity_type
             );
         }
 
@@ -1404,14 +1410,14 @@ fn attach_pending_glow_if_requested(
         return;
     };
     let light_color = Color::srgb(light.color[0], light.color[1], light.color[2]);
-    commands.entity(light_entity).insert(
-        crate::oni2_loader::light_glow::PendingGlow {
+    commands
+        .entity(light_entity)
+        .insert(crate::oni2_loader::light_glow::PendingGlow {
             glow_type_name,
             glow_intensity_scale: light.glow_intensity_scale,
             light_dir: light.direction,
             light_color,
-        },
-    );
+        });
 }
 
 fn load_layout_lights(
@@ -1581,8 +1587,7 @@ fn load_layout_lights(
                 // later, and skipping here leaves the lookup-by-Name unable
                 // to find them. The trash-chute door light is the canonical
                 // example — starts dark, the open/close ramps drive it.
-                let range =
-                    (light.intensity * POINT_RANGE_FROM_INTENSITY).max(POINT_MIN_RANGE);
+                let range = (light.intensity * POINT_RANGE_FROM_INTENSITY).max(POINT_MIN_RANGE);
                 let lumens = light.intensity * POINT_INTENSITY_TO_CANDELA;
 
                 let mut ec = commands.spawn((
@@ -1608,15 +1613,17 @@ fn load_layout_lights(
                 point_count += 1;
             }
             "spot" => {
-                let range =
-                    (light.intensity * POINT_RANGE_FROM_INTENSITY).max(POINT_MIN_RANGE);
+                let range = (light.intensity * POINT_RANGE_FROM_INTENSITY).max(POINT_MIN_RANGE);
                 let lumens = light.intensity * SPOT_INTENSITY_TO_CANDELA;
                 // Legacy `SpotAngle` is the half-angle of the cone in
                 // degrees (lgtLight stores in degrees, ContributionTo
                 // computes against it).  Bevy's SpotLight wants the
                 // OUTER half-angle in radians; inner is the soft-edge
                 // start, choose 90% of outer for a slight feathering.
-                let outer = light.spot_angle.to_radians().clamp(0.0, std::f32::consts::PI);
+                let outer = light
+                    .spot_angle
+                    .to_radians()
+                    .clamp(0.0, std::f32::consts::PI);
                 let inner = outer * 0.9;
 
                 // Bevy's SpotLight points along its local -Z by default.
@@ -1663,8 +1670,7 @@ fn load_layout_lights(
                 } else {
                     Vec3::NEG_Y
                 };
-                let transform = Transform::from_translation(pos)
-                    .looking_to(dir, Vec3::Y);
+                let transform = Transform::from_translation(pos).looking_to(dir, Vec3::Y);
                 commands.spawn((
                     DirectionalLight {
                         color,

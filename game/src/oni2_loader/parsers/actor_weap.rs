@@ -48,8 +48,7 @@ pub fn parse_actor_weap(content: &str) -> ActorWeaponMounts {
                                             }
                                             "gripeulers" => {
                                                 let e = p.read_vec3(&a_key, Vec3::ZERO);
-                                                out_mount.rot =
-                                                    space::to_bevy_space_rot_rad(e);
+                                                out_mount.rot = space::to_bevy_space_rot_rad(e);
                                             }
                                             _ => {
                                                 p.next();
@@ -75,8 +74,7 @@ pub fn parse_actor_weap(content: &str) -> ActorWeaponMounts {
                                             }
                                             "gripeulers" => {
                                                 let e = p.read_vec3(&a_key, Vec3::ZERO);
-                                                away_mount.rot =
-                                                    space::to_bevy_space_rot_rad(e);
+                                                away_mount.rot = space::to_bevy_space_rot_rad(e);
                                             }
                                             _ => {
                                                 p.next();

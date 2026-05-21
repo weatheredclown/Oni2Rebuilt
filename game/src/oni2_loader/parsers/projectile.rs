@@ -274,9 +274,7 @@ impl SettingsExt for SettingsBlock {
 
     fn get_vec2(&self, key: &str, default: Vec2) -> Vec2 {
         match self.properties.get(key) {
-            Some(SettingsValue::FloatArray(arr)) if arr.len() >= 2 => {
-                Vec2::new(arr[0], arr[1])
-            }
+            Some(SettingsValue::FloatArray(arr)) if arr.len() >= 2 => Vec2::new(arr[0], arr[1]),
             _ => default,
         }
     }

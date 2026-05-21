@@ -420,11 +420,11 @@ mod tests {
 
     #[test]
     fn primitives_read_values() {
-        let src = r#"KEY 42 3.14 ( 1 2 3 )"#;
+        let src = r#"KEY 42 1.23 ( 1 2 3 )"#;
         let mut p = BlockParser::new(src);
         assert!(p.check_token("KEY"));
         assert_eq!(p.get_int().unwrap(), 42);
-        assert!((p.get_float().unwrap() - 3.14).abs() < 1e-4);
+        assert!((p.get_float().unwrap() - 1.23).abs() < 1e-4);
         p.get_delimiter("(").unwrap();
         let v = p.get_vec3().unwrap();
         assert_eq!(v, Vec3::new(1.0, 2.0, 3.0));

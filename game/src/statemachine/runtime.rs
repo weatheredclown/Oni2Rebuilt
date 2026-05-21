@@ -470,7 +470,7 @@ pub fn apply_timing_windows(
         let mut gated = input.clone();
         gated.attack = input.attack || runtime.ctx.queued_attack;
         gated.attack_two = input.attack_two || runtime.ctx.queued_attack_two;
-        
+
         let mut is_critical = false;
         if gated.attack {
             is_critical |= (input.attack && phase >= strike.opp2_do_crit_start)
@@ -550,6 +550,22 @@ pub fn fsm_update_system(
         let dt = time.delta_secs();
         runtime.sm.advance_clock(dt);
 
+        // Refresh the anim-state mirror BEFORE deriving anything that
+        // reads it.  The order used to be: set `timed_out` → … → refresh
+        // anim fields.  That meant the `timed_out` setter saw the
+        // PREVIOUS tick's anim_current_time, so on the tick a non-looping
+        // anim's current_time first crossed its last frame, `is_anim_done()`
+        // still returned false and `timed_out` stayed false until the
+        // next tick.  Downstream consumers (notably
+        // `creature_movement_anim_system`'s `!fsm.ctx.timed_out` skip)
+        // therefore lagged by one tick, holding off the next gait
+        // dispatch (FIGHTSTANCE_FIGHT) until tick N+1 while
+        // `apply_end_rotation_on_anim_end_system` ran in tick N — the
+        // one-frame "old pose at new rotation" combo-boundary blink.
+        runtime.ctx.anim_num_frames = anim_state.anim.num_frames;
+        runtime.ctx.anim_current_time = anim_state.current_time;
+        runtime.ctx.anim_looping = anim_state.looping;
+
         if !runtime.ctx.timed_out && runtime.ctx.is_anim_done() {
             runtime.ctx.timed_out = true;
         }
@@ -590,11 +606,9 @@ pub fn fsm_update_system(
                 }
             });
 
-        // Refresh the per-tick context fields, then tick.
+        // Anim-state mirror was already refreshed above; just set the
+        // per-tick packet/fight-vector fields here.
         runtime.ctx.packet = packet.clone();
-        runtime.ctx.anim_num_frames = anim_state.anim.num_frames;
-        runtime.ctx.anim_current_time = anim_state.current_time;
-        runtime.ctx.anim_looping = anim_state.looping;
         runtime.ctx.fight_vector_anim = fight_vector_anim;
 
         let runtime = runtime.into_inner();

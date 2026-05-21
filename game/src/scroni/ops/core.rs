@@ -28,7 +28,11 @@ fn resolve_child_tid(ctx: &OpsCtx, var: Option<&str>) -> Option<u32> {
     let tid = tid as u32;
     // Verify the thread actually exists — stale TIDs after a prior done
     // happen all the time when scripts clear-and-restack children.
-    ctx.exec.child_threads.iter().any(|t| t.thread_id == tid).then_some(tid)
+    ctx.exec
+        .child_threads
+        .iter()
+        .any(|t| t.thread_id == tid)
+        .then_some(tid)
 }
 
 pub fn exec(ctx: &mut OpsCtx, stmt: &Stmt) -> bool {
