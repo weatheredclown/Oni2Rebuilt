@@ -9,6 +9,7 @@
  * ONI2 layout (or a flat sandbox ground), attaches Player + combat components to
  * the Konoko entity, and spawns the camera rig.
  */
+mod actor_sound;
 mod ai;
 mod animator;
 mod behavior;
@@ -245,6 +246,7 @@ fn main() {
     .add_plugins(hud::HudPlugin)
     .add_plugins(mover::MoverPlugin)
     .add_plugins(fx_system::FxPlugin)
+    .add_plugins(actor_sound::ActorSoundPlugin)
     .add_plugins(fx_visuals::FxVisualsPlugin)
     .add_plugins(laser::LaserPlugin)
     .add_plugins(projectile_system::ProjectilePlugin)

@@ -1499,20 +1499,59 @@ impl Compiler {
     }
 
     fn parse_sound(&mut self) -> Stmt {
+        // Mirror C++ scrCompiler::ParseSound (SoundCommand.cpp):
+        //   sound <channel-expr> <action> [<arg-expr>]
+        // <action> is one of: play, pause, stop, pitch, volume,
+        // fadeIn, fadeOut.  `play` optionally takes a package-name
+        // string; pitch/volume/fadeIn/fadeOut each take one numeric
+        // expression.  We collect the channel + an action string
+        // literal + any trailing arg into `Stmt::Sound { args }`;
+        // the op handler unpacks them into a real verb.
         self.advance(); // skip 'sound'
         let mut args = Vec::new();
         while !self.at_end()
             && (is_expr_start(self.code())
-                || matches!(self.code(), TokenCode::Play | TokenCode::Stop))
+                || matches!(
+                    self.code(),
+                    TokenCode::Play
+                        | TokenCode::Stop
+                        | TokenCode::Pause
+                        | TokenCode::Pitch
+                        | TokenCode::Volume
+                        | TokenCode::FadeIn
+                        | TokenCode::FadeOut
+                ))
         {
-            if self.code() == TokenCode::Play {
-                self.advance();
-                args.push(Expr::StringLit("play".to_string()));
-            } else if self.code() == TokenCode::Stop {
-                self.advance();
-                args.push(Expr::StringLit("stop".to_string()));
-            } else {
-                args.push(self.parse_expr());
+            match self.code() {
+                TokenCode::Play => {
+                    self.advance();
+                    args.push(Expr::StringLit("play".to_string()));
+                }
+                TokenCode::Stop => {
+                    self.advance();
+                    args.push(Expr::StringLit("stop".to_string()));
+                }
+                TokenCode::Pause => {
+                    self.advance();
+                    args.push(Expr::StringLit("pause".to_string()));
+                }
+                TokenCode::Pitch => {
+                    self.advance();
+                    args.push(Expr::StringLit("pitch".to_string()));
+                }
+                TokenCode::Volume => {
+                    self.advance();
+                    args.push(Expr::StringLit("volume".to_string()));
+                }
+                TokenCode::FadeIn => {
+                    self.advance();
+                    args.push(Expr::StringLit("fadein".to_string()));
+                }
+                TokenCode::FadeOut => {
+                    self.advance();
+                    args.push(Expr::StringLit("fadeout".to_string()));
+                }
+                _ => args.push(self.parse_expr()),
             }
             self.skip_if(TokenCode::Comma);
         }

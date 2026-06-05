@@ -171,9 +171,32 @@ impl Default for InventoryTypeData {
 }
 
 /// Marks an entity to receive a specific initial weapon slot config.
-#[derive(Component, Debug, Clone)]
+/// `pending_inventory_system` consumes this, attaches an `Inventory`
+/// seeded from `InventoryTypeData::default()` with these per-actor
+/// overrides applied, and dispatches the seed-weapon add.
+#[derive(Component, Debug, Clone, Default)]
 pub struct PendingInventory {
     pub weapon_string: String,
+    /// Override for `InventoryTypeData::can_be_picked_up`.
+    pub can_be_picked_up: Option<bool>,
+    /// Override for `InventoryTypeData::pickup_range`.
+    pub pickup_range: Option<f32>,
+    /// Override for `InventoryTypeData::drop_items_on_death`.
+    pub drop_items_on_death: Option<bool>,
+    /// Override for `InventoryTypeData::drop_range`.
+    pub drop_range: Option<f32>,
+}
+
+/// Drives an auto-release of the trigger after a fixed wall-clock
+/// deadline.  Inserted by the ScrOni `shoot <target> for <duration>`
+/// drain handler so the held-trigger from the matching
+/// `InventoryFireMessage` doesn't latch indefinitely once the
+/// scripted burst ends.  `scheduled_stop_firing_system` watches the
+/// component and writes an `InventoryStopFiringMessage` (then removes
+/// itself) when `time.elapsed_secs_f64() >= end_time`.
+#[derive(Component, Debug, Clone)]
+pub struct ScheduledStopFiring {
+    pub end_time: f64,
 }
 
 /// Per-entity inventory.  Insert alongside a wielder (player or AI).

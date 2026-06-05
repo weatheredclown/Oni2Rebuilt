@@ -7,37 +7,67 @@
  */
 use super::OpsCtx;
 use crate::scroni::ast::Stmt;
-use crate::scroni::vm::{SysRequest, Value};
+use crate::scroni::vm::{ActorSoundVerb, SysRequest};
 use bevy::prelude::*;
 
 pub fn exec(ctx: &mut OpsCtx, stmt: &Stmt) -> bool {
     match stmt {
         Stmt::Sound { args } => {
-            if args.len() >= 3 {
-                // sound [actor] play [name]
-                let actor_val = ctx.eval(&args[0]);
-                let action = ctx.eval_string(&args[1]);
-                let name = ctx.eval_string(&args[2]);
-                if action.eq_ignore_ascii_case("play") {
-                    let actor_str = if let Value::Int(0) = actor_val {
-                        None
-                    } else {
-                        Some(actor_val.as_string())
-                    };
-                    ctx.sys_request(SysRequest::PlaySound(actor_str, name));
-                } else {
-                    info!("VM: Sound unsupported action {}", action);
-                }
-            } else if args.len() >= 2 {
-                // sound play [name]
-                let action = ctx.eval_string(&args[0]);
-                let name = ctx.eval_string(&args[1]);
-                if action.eq_ignore_ascii_case("play") {
-                    ctx.sys_request(SysRequest::PlaySound(None, name));
-                }
-            } else {
-                info!("VM: Sound {:?} (invalid args)", args);
+            // Mirror C++ DoSound (XSoundCommand.cpp): args lay out as
+            //   [channel-expr, action-string-lit, optional value-expr]
+            // Action determines what (if anything) the value is — a
+            // package-name string for `play`, a numeric for
+            // pitch/volume/fadeIn/fadeOut, nothing for pause/stop.
+            if args.len() < 2 {
+                warn!("VM: sound: expected `<channel> <action> [arg]`, got {:?}", args);
+                return true;
             }
+
+            let channel = ctx.eval_int(&args[0]);
+            let action = ctx.eval_string(&args[1]).to_ascii_lowercase();
+
+            let verb = match action.as_str() {
+                "play" => {
+                    if let Some(pkg_expr) = args.get(2) {
+                        let pkg = ctx.eval_string(pkg_expr);
+                        if pkg.is_empty() {
+                            ActorSoundVerb::Play
+                        } else {
+                            ActorSoundVerb::PlayNamed(pkg)
+                        }
+                    } else {
+                        ActorSoundVerb::Play
+                    }
+                }
+                "pause" => ActorSoundVerb::Pause,
+                "stop" => ActorSoundVerb::Stop,
+                "pitch" => {
+                    let v = args.get(2).map(|e| ctx.eval_float(e)).unwrap_or(1.0);
+                    ActorSoundVerb::Pitch(v)
+                }
+                "volume" => {
+                    let v = args.get(2).map(|e| ctx.eval_float(e)).unwrap_or(1.0);
+                    ActorSoundVerb::Volume(v)
+                }
+                "fadein" => {
+                    let v = args.get(2).map(|e| ctx.eval_float(e)).unwrap_or(0.0);
+                    ActorSoundVerb::FadeIn(v)
+                }
+                "fadeout" => {
+                    let v = args.get(2).map(|e| ctx.eval_float(e)).unwrap_or(0.0);
+                    ActorSoundVerb::FadeOut(v)
+                }
+                other => {
+                    warn!("VM: sound: unknown action `{}` (args={:?})", other, args);
+                    return true;
+                }
+            };
+
+            ctx.sys_request(SysRequest::ActorSoundCommand {
+                actor: ctx.exec.owner,
+                channel,
+                verb,
+            });
             true
         }
         Stmt::PlayAmbientSound {

@@ -373,7 +373,6 @@ pub enum SysRequest {
     AmbientSoundStopAll,
     AmbientSoundVolumeRamp(i32, f32, f32),
     AmbientSoundPitchRamp(i32, f32, f32),
-    PlaySound(Option<String>, String),
     Hit {
         target: Entity,
         hit_type: String,
@@ -385,11 +384,56 @@ pub enum SysRequest {
         at: [f32; 3],
     },
     Destroy(Entity),
+    /// `shoot <target> [for <duration>] [bullets <n>] [rate <r>] [miss]`.
+    /// Aims the actor's current weapon at `target` and pulls the trigger;
+    /// when `duration` elapses the system bridge writes a matching
+    /// `InventoryStopFiringMessage` so the actor releases the trigger.
+    /// `miss` flips the aim to legacy `AimToMiss`.
+    Shoot {
+        actor: Entity,
+        target: Entity,
+        miss: bool,
+        duration: Option<f32>,
+    },
+    /// ScrOni `sound <channel> <verb> [args]` — broadcast to the
+    /// script's parent actor in legacy C++ as `audMsgPlaySound`.
+    /// `verb` carries the action + optional package name / numeric
+    /// value; the drain handler mutates the actor's [`ActorSound`].
+    ActorSoundCommand {
+        actor: Entity,
+        channel: i32,
+        verb: ActorSoundVerb,
+    },
     PlayerTaskBegin {
         timeout: Option<f32>,
     },
     PlayerTaskSuccessful,
     PlayerTaskFailure,
+}
+
+/// Per-channel verb dispatched onto an [`ActorSound`] from
+/// ScrOni's `sound` op.  Mirrors `audMsgPlaySound::Verb` in C++
+/// (`rbaudio/messages.h`).
+#[derive(Debug, Clone)]
+pub enum ActorSoundVerb {
+    /// `play` with no package — resume / re-cue the current package.
+    Play,
+    /// `play "<package_name>"` — swap to the named package and play.
+    /// Maps to legacy `kPlayNamed`; the new package becomes the
+    /// component's active package permanently.
+    PlayNamed(String),
+    /// `pause` — suspend playback without resetting the cursor.
+    Pause,
+    /// `stop` — halt playback and clear any current child.
+    Stop,
+    /// `pitch <value>` — set playback speed multiplier.
+    Pitch(f32),
+    /// `volume <value>` — override `VolumeScalar` at runtime.
+    Volume(f32),
+    /// `fadeIn <seconds>` — placeholder; not yet implemented.
+    FadeIn(f32),
+    /// `fadeOut <seconds>` — placeholder; not yet implemented.
+    FadeOut(f32),
 }
 
 #[derive(Component)]
@@ -985,23 +1029,51 @@ impl ScriptExec {
 
     pub fn get_thread(&self, tid: u32) -> &ScrOniThread {
         if tid == 0 {
-            &self.main_thread
-        } else {
-            self.child_threads
-                .iter()
-                .find(|t| t.thread_id == tid)
-                .unwrap()
+            return &self.main_thread;
+        }
+        match self.child_threads.iter().find(|t| t.thread_id == tid) {
+            Some(t) => t,
+            None => {
+                // Stale tid — the child was already removed by the
+                // outer tick loop (state=Done at end of last tick) but
+                // *something* is still trying to read it. Falling back
+                // to the main thread instead of panicking keeps the
+                // engine alive; the warning names the missing tid so
+                // the bad caller is traceable. The legacy AGE engine
+                // returned NULL here and most call sites silently
+                // skipped — this matches that semantics conservatively
+                // (no-op via main-thread read; writes will land on
+                // main, which is wrong but bounded).
+                warn!(
+                    "[ScrOni] get_thread({}): tid not found — falling back to main thread",
+                    tid
+                );
+                &self.main_thread
+            }
         }
     }
 
     pub fn get_thread_mut(&mut self, tid: u32) -> &mut ScrOniThread {
         if tid == 0 {
-            &mut self.main_thread
-        } else {
-            self.child_threads
-                .iter_mut()
-                .find(|t| t.thread_id == tid)
-                .unwrap()
+            return &mut self.main_thread;
+        }
+        // Borrow-checker dance: we can't return `&mut self.main_thread`
+        // inside the `find` arm because the borrow of `child_threads`
+        // would still be live. Branch on `position` first to release
+        // the immutable borrow before we re-borrow mutably.
+        let pos = self
+            .child_threads
+            .iter()
+            .position(|t| t.thread_id == tid);
+        match pos {
+            Some(i) => &mut self.child_threads[i],
+            None => {
+                warn!(
+                    "[ScrOni] get_thread_mut({}): tid not found — falling back to main thread",
+                    tid
+                );
+                &mut self.main_thread
+            }
         }
     }
 
@@ -2334,6 +2406,19 @@ pub struct ScrOniScript {
     pub exec: ScriptExec,
 }
 
+/// Bundle of per-actor effect channels touched by ScrOni ops.
+/// Inventory writers feed `SysRequest::Shoot`; the ActorSound query
+/// feeds `SysRequest::ActorSoundCommand`.  Kept in one
+/// [`SystemParam`] so `scroni_tick_system` stays under Bevy's
+/// 16-arg system bound.
+#[derive(bevy::ecs::system::SystemParam)]
+pub struct ActorScriptEffects<'w, 's> {
+    pub fire: MessageWriter<'w, crate::inventory::events::InventoryFireMessage>,
+    pub aim: MessageWriter<'w, crate::inventory::events::InventoryAimMessage>,
+    pub stop: MessageWriter<'w, crate::inventory::events::InventoryStopFiringMessage>,
+    pub sound: Query<'w, 's, &'static mut crate::actor_sound::ActorSound>,
+}
+
 /// Bevy system: tick all ScrOni scripts each frame.
 pub fn scroni_tick_system(
     mut commands: Commands,
@@ -2356,6 +2441,7 @@ pub fn scroni_tick_system(
     )>,
     spatial_query: avian3d::prelude::SpatialQuery,
     mut injure_writer: MessageWriter<crate::combat::events::InjureMessage>,
+    mut actor_fx: ActorScriptEffects,
     mut behavior_runtime_query: Query<&mut crate::behavior::BehaviorRuntime>,
     mut end_behavior_reader: MessageReader<crate::behavior::EndBehaviorMessage>,
     faction_query: Query<(Entity, &crate::combat::faction::Faction)>,
@@ -2750,15 +2836,6 @@ pub fn scroni_tick_system(
                         at,
                     });
                 }
-                SysRequest::PlaySound(actor, name) => {
-                    // Script-initiated sound — route through the FX-layer
-                    // event so the audio dispatcher lives in one place.
-                    commands.trigger(crate::fx_system::PlaySound {
-                        script_entity: entity,
-                        actor,
-                        name,
-                    });
-                }
                 SysRequest::TextureMovie {
                     target_name,
                     action,
@@ -3013,6 +3090,64 @@ pub fn scroni_tick_system(
                 }
                 SysRequest::Destroy(ent) => {
                     commands.trigger(ScrOniSysEvent::Destroy(ent));
+                }
+                SysRequest::Shoot {
+                    actor,
+                    target,
+                    miss,
+                    duration,
+                } => {
+                    let aim_target = if miss {
+                        crate::weapons::AimTarget::Miss {
+                            target,
+                            dist_away: 1.5,
+                            target_velocity: Vec3::ZERO,
+                        }
+                    } else {
+                        crate::weapons::AimTarget::Actor {
+                            target,
+                            target_velocity: Vec3::ZERO,
+                            bone_offset: Vec3::ZERO,
+                        }
+                    };
+                    actor_fx.aim.write(crate::inventory::events::InventoryAimMessage {
+                        entity: actor,
+                        target: aim_target,
+                    });
+                    actor_fx
+                        .fire
+                        .write(crate::inventory::events::InventoryFireMessage {
+                            entity: actor,
+                            multi_dir: false,
+                        });
+                    if let Some(secs) = duration {
+                        commands.entity(actor).insert(
+                            crate::inventory::components::ScheduledStopFiring {
+                                end_time: now + secs as f64,
+                            },
+                        );
+                    } else {
+                        // No duration: release the trigger on the very
+                        // next tick so we don't latch the weapon on.
+                        actor_fx
+                            .stop
+                            .write(crate::inventory::events::InventoryStopFiringMessage {
+                                entity: actor,
+                            });
+                    }
+                }
+                SysRequest::ActorSoundCommand {
+                    actor,
+                    channel,
+                    verb,
+                } => {
+                    let Ok(mut sound) = actor_fx.sound.get_mut(actor) else {
+                        // C++ broadcasts to all components, so an actor
+                        // without a Sound component just silently no-ops
+                        // — match that.
+                        continue;
+                    };
+                    sound.apply_verb(channel, verb, &mut commands);
                 }
                 SysRequest::PlayerTaskBegin { timeout } => {
                     commands.trigger(ScrOniSysEvent::PlayerTaskBegin { timeout });

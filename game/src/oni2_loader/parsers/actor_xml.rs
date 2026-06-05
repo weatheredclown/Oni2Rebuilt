@@ -27,9 +27,60 @@ pub fn clear_xml_cache() {
 }
 
 use crate::oni2_loader::utils::parse::{
-    extract_root_xml_attr, extract_xml_attr, extract_xml_base_attr, extract_xml_block, parse_vec3,
+    extract_root_xml_attr, extract_xml_attr, extract_xml_attr_bool, extract_xml_base_attr,
+    extract_xml_block, parse_vec3, parse_xml_bool,
 };
 use crate::oni2_loader::utils::space;
+
+/// Per-nugget cueing mode for the `<Sound>` component.  Mirrors
+/// `rbAudioPlayMode` in the legacy engine.  `Looped` variants
+/// auto-restart playback when the underlying audio finishes; the
+/// non-looped variants play once per `Play()` invocation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SoundPlayMode {
+    /// Replay the same nugget on every Play() call.
+    CurrentOne,
+    /// Advance through the package's nuggets sequentially.
+    NextOne,
+    /// Pick a random nugget on each Play() call.
+    RandomOne,
+    /// Replay the same nugget continuously.
+    CurrentOneLooped,
+    /// Walk the package end-to-end, then restart from the top.
+    FullLoop,
+    /// Pick a random nugget, play it, then pick another.
+    RandomLoop,
+}
+
+impl SoundPlayMode {
+    pub fn is_looped(self) -> bool {
+        matches!(
+            self,
+            SoundPlayMode::CurrentOneLooped
+                | SoundPlayMode::FullLoop
+                | SoundPlayMode::RandomLoop
+        )
+    }
+}
+
+/// Per-actor sound block data extracted from `<Sound>`.  Maps to
+/// `rbAudioSoundComponentType` in the C++ engine.  Distances are in
+/// world units; `range_max_volume` is the radius at which the source
+/// is at its full `volume_scalar`, `range_zero_volume` is the radius
+/// at which it fades to silence.
+#[derive(Debug, Clone)]
+pub struct SoundComponentData {
+    pub audio_package: String,
+    pub play_mode: SoundPlayMode,
+    pub volume_scalar: f32,
+    pub range_max_volume: f32,
+    pub range_zero_volume: f32,
+    pub start_active: bool,
+    pub num_channels: i32,
+    pub cookie_mode: bool,
+    pub player_approach_package: Option<String>,
+    pub player_knockdown_package: Option<String>,
+}
 
 /// Parsed actor from a layout XML file.
 pub struct LayoutActor {
@@ -91,12 +142,36 @@ pub struct LayoutActor {
     /// Pre-loaded weapon name from the <Inventory><WeaponString> attribute
     /// (resolved through the template chain).  Feeds PendingInventory at spawn.
     pub weapon_string: Option<String>,
+    /// `<Inventory><CanBePickedUp/>` — when true, this actor's
+    /// dropped items survive in the world for the player to grab.
+    /// `None` = use the spawned `InventoryTypeData` default.
+    pub inventory_can_be_picked_up: Option<bool>,
+    /// `<Inventory><PickUpRange/>` — wielder-side radius in world
+    /// units for proximity auto-pickup.  `None` = default.
+    pub inventory_pickup_range: Option<f32>,
+    /// `<Inventory><DropItemsOnDeath/>` — gates the death→drop
+    /// pipeline.  `None` = default.
+    pub inventory_drop_items_on_death: Option<bool>,
+    /// `<Inventory><DropRange/>` — how far ahead of the corpse the
+    /// dropped pickup entity spawns.  `None` = default.
+    pub inventory_drop_range: Option<f32>,
     /// FSM filename from the `<Behavior>` component's `<Pad_FSM value="..."/>`
     /// attribute (e.g. "player", "enemy_combo").  Drives which input state
     /// machine gets attached at spawn, mirroring the legacy
     /// `SUB_ATTRIBUTE(Pad, FSM)` / `bhPadTuningData::FSM` pipeline.  `.fsm`
     /// extension is stripped at parse time.
     pub pad_fsm: Option<String>,
+    /// True if the actor declared a `<Target>` component.  Marks an
+    /// actor as a valid auto-aim / shootable lock-on candidate.  The
+    /// legacy `tarTarget` block carries `Group`/`Friendliness`
+    /// metadata; for now we only need the presence bit so projectiles
+    /// can damage non-creature shootables like the M4 statue.
+    pub has_target: bool,
+    /// Parsed `<Sound>` block.  `None` when the actor only inherits
+    /// the empty schema defaults from components.xml (no AudioPackage
+    /// to play).  `Some(...)` when AudioPackage is non-empty in some
+    /// template/leaf override.
+    pub sound: Option<SoundComponentData>,
     /// Fight vector trigger radius
     pub fvt_radius: Option<f32>,
     /// Fight vector trigger directional mode
@@ -198,6 +273,15 @@ pub fn parse_actor_xml(dir: &str, filename: &str, template_dir: &str) -> Option<
         has_components_xml = true;
     }
 
+    // Validate that every component declared in the chain is one we know how
+    // to consume.  Anything unrecognised — including components we know about
+    // but haven't wired up yet — fires a per-(file, tag) error so silent
+    // drops stop being possible.  Skips the prepended components.xml entry
+    // because that file's only job is to declare *every* component's schema
+    // for the editor; an actor isn't "asking for" a component just because
+    // the master schema mentioned it.
+    validate_xml_components(&chain, has_components_xml, &full_path);
+
     // Extract core actor properties from the raw content hierarchy
     let mut entity_type: Option<String> = None;
     let mut position = Vec3::ZERO;
@@ -221,7 +305,7 @@ pub fn parse_actor_xml(dir: &str, filename: &str, template_dir: &str) -> Option<
             updatestate = Some(v);
         }
         if let Some(v) = extract_root_xml_attr(content, "spawnlater") {
-            spawn_later = v == "1" || v.eq_ignore_ascii_case("true");
+            spawn_later = parse_xml_bool(&v);
         }
         if let Some(v) = extract_xml_attr(content, "Position").and_then(|s| parse_vec3(&s)) {
             position = v;
@@ -338,15 +422,33 @@ pub fn parse_actor_xml(dir: &str, filename: &str, template_dir: &str) -> Option<
         }
     }
 
-    // <Inventory><WeaponString value="PISTOL_STANDARD"/> — resolved through the
-    // template chain so derived actors (e.g. Konoko) inherit the parent's weapon.
+    // <Inventory> — resolved through the template chain so derived
+    // actors (e.g. Konoko) inherit the parent's weapon string and
+    // pickup/drop tuning.  WeaponString seeds the actor's starting
+    // weapon; the other four fields populate `InventoryTypeData` so
+    // the per-actor pickup_range / drop_range / opt-in flags drive
+    // the runtime pickup + drop pipelines instead of falling back to
+    // hardcoded defaults.
     let inventory_block = extract_component(&chain, has_components_xml, "Inventory");
     let mut weapon_string: Option<String> = None;
-    if let Some(block) = inventory_block
-        && let Some(w) = extract_xml_attr(&block, "WeaponString")
-        && !w.is_empty()
-    {
-        weapon_string = Some(w);
+    let mut inventory_can_be_picked_up: Option<bool> = None;
+    let mut inventory_pickup_range: Option<f32> = None;
+    let mut inventory_drop_items_on_death: Option<bool> = None;
+    let mut inventory_drop_range: Option<f32> = None;
+    if let Some(block) = inventory_block {
+        if let Some(w) = extract_xml_attr(&block, "WeaponString")
+            && !w.is_empty()
+        {
+            weapon_string = Some(w);
+        }
+        inventory_can_be_picked_up = extract_xml_attr_bool(&block, "CanBePickedUp");
+        if let Some(v) = extract_xml_attr(&block, "PickUpRange") {
+            inventory_pickup_range = v.parse().ok();
+        }
+        inventory_drop_items_on_death = extract_xml_attr_bool(&block, "DropItemsOnDeath");
+        if let Some(v) = extract_xml_attr(&block, "DropRange") {
+            inventory_drop_range = v.parse().ok();
+        }
     }
 
     // <Behavior> ... <Pad_FSM value="player"/> ... — which input FSM to load
@@ -439,6 +541,61 @@ pub fn parse_actor_xml(dir: &str, filename: &str, template_dir: &str) -> Option<
         attack_table = Some(v);
     }
 
+    let target_block = extract_component(&chain, has_components_xml, "Target");
+    let has_target = target_block.is_some();
+
+    // Even when AudioPackage is empty we still surface a SoundComponentData
+    // for any actor whose template declared `<Sound>`.  Mirrors C++
+    // rbAudioSoundComponent: the component is created with an empty package
+    // and stays dormant until a runtime swap (audMsgPlaySound::kPlayNamed
+    // from a script, or a future PlayerApproach/Knockdown trigger) hands
+    // it a real one.  Without this, NPCs that only inherit template_grunt's
+    // `<Sound NumChannels="3"/>` wouldn't have a Sound component for those
+    // messages to land on.
+    let sound = extract_component(&chain, has_components_xml, "Sound").map(|block| {
+        let audio_package = extract_xml_attr(&block, "AudioPackage").unwrap_or_default();
+        let play_mode = match extract_xml_attr(&block, "PlayMode").as_deref() {
+            Some("Play Current One") => SoundPlayMode::CurrentOne,
+            Some("Play Next One") => SoundPlayMode::NextOne,
+            Some("Play Current Loop") => SoundPlayMode::CurrentOneLooped,
+            Some("Play Loop") => SoundPlayMode::FullLoop,
+            Some("Play Randomized Loop") => SoundPlayMode::RandomLoop,
+            // "Play Random One" is the schema default and also the
+            // fallback for unknown / missing values.
+            _ => SoundPlayMode::RandomOne,
+        };
+        let volume_scalar = extract_xml_attr(&block, "VolumeScalar")
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(1.0);
+        let range_max_volume = extract_xml_attr(&block, "RangeMaxVolume")
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(5.0);
+        let range_zero_volume = extract_xml_attr(&block, "RangeZeroVolume")
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(35.0);
+        let start_active = extract_xml_attr_bool(&block, "StartActive").unwrap_or(false);
+        let num_channels = extract_xml_attr(&block, "NumChannels")
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(1);
+        let cookie_mode = extract_xml_attr_bool(&block, "CookieMode").unwrap_or(false);
+        let player_approach_package =
+            extract_xml_attr(&block, "PlayerApproachPackage").filter(|s| !s.is_empty());
+        let player_knockdown_package =
+            extract_xml_attr(&block, "PlayerKnockdownPackage").filter(|s| !s.is_empty());
+        SoundComponentData {
+            audio_package,
+            play_mode,
+            volume_scalar,
+            range_max_volume,
+            range_zero_volume,
+            start_active,
+            num_channels,
+            cookie_mode,
+            player_approach_package,
+            player_knockdown_package,
+        }
+    });
+
     let mut fvt_radius: Option<f32> = None;
     let mut fvt_directional: Option<bool> = None;
     let mut fvt_offset: Option<Vec3> = None;
@@ -447,8 +604,8 @@ pub fn parse_actor_xml(dir: &str, filename: &str, template_dir: &str) -> Option<
         if let Some(v) = extract_xml_attr(&block, "Radius") {
             fvt_radius = v.parse().ok();
         }
-        if let Some(v) = extract_xml_attr(&block, "Directional") {
-            fvt_directional = Some(v == "1" || v.eq_ignore_ascii_case("true"));
+        if let Some(b) = extract_xml_attr_bool(&block, "Directional") {
+            fvt_directional = Some(b);
         } else {
             fvt_directional = Some(true); // Default to directional
         }
@@ -494,10 +651,131 @@ pub fn parse_actor_xml(dir: &str, filename: &str, template_dir: &str) -> Option<
         parent_actor,
         parent_bone,
         weapon_string,
+        inventory_can_be_picked_up,
+        inventory_pickup_range,
+        inventory_drop_items_on_death,
+        inventory_drop_range,
         pad_fsm,
+        has_target,
+        sound,
         fvt_radius,
         fvt_directional,
         fvt_offset,
         fvt_attack,
     })
+}
+
+// ───────────────────────────────────────────────────────────────────────────
+// XML component-coverage validation
+// ───────────────────────────────────────────────────────────────────────────
+
+/// Every component tag this parser knows how to consume.  The
+/// validator below errors on anything in actor XML that isn't on
+/// this list.  When a new component gets wired up, add it here so
+/// the error stops firing.
+///
+/// "Implemented" here means: parsed AND surfaced onto the spawned
+/// entity in some form.  Markers like `Editable` (which legacy uses
+/// purely to gate level-editor visibility) are included because we
+/// intentionally consume them as no-ops; if you don't list a tag
+/// here you'll get an error.
+const KNOWN_IMPLEMENTED_COMPONENTS: &[&str] = &[
+    "Animator",
+    "Behavior",
+    "BroadcastTrigger",
+    "CheckpointTrigger",
+    "Creature",
+    "Curve",
+    "Editable",
+    "Entity",
+    "FX",
+    "FightAI",
+    "FightAi",
+    "FightVectorTrigger",
+    "Fighter",
+    "Health",
+    "Inventory",
+    "Prop",
+    "ScrOni",
+    "Sound",
+    "Target",
+];
+
+/// Walk the (already-merged) template chain for an actor and emit
+/// an error for every `<TagName name="...">` declaration that isn't
+/// in [`KNOWN_IMPLEMENTED_COMPONENTS`].  Deduped per (actor file,
+/// tag) so each gap fires exactly once across the whole boot.
+///
+/// When `has_components_xml` is set the first chain entry is the
+/// master `components.xml` schema; that file lists every component
+/// type the editor knows about but doesn't reflect anything the
+/// actor itself asked for.  We skip it for the same reason
+/// `extract_component` does — only declarations in templates or the
+/// leaf actor count as "this actor wants component X".
+fn validate_xml_components(chain: &[String], has_components_xml: bool, actor_path: &str) {
+    use std::collections::HashSet;
+    use std::sync::{Mutex, OnceLock};
+    static SEEN: OnceLock<Mutex<HashSet<(String, String)>>> = OnceLock::new();
+    let seen = SEEN.get_or_init(|| Mutex::new(HashSet::new()));
+
+    let mut local_seen: HashSet<String> = HashSet::new();
+    for (i, content) in chain.iter().enumerate() {
+        if has_components_xml && i == 0 {
+            continue;
+        }
+        for tag in find_component_tags(content) {
+            if KNOWN_IMPLEMENTED_COMPONENTS.contains(&tag.as_str()) {
+                continue;
+            }
+            if !local_seen.insert(tag.clone()) {
+                continue;
+            }
+            let mut guard = seen.lock().unwrap();
+            if guard.insert((actor_path.to_string(), tag.clone())) {
+                error!(
+                    "Unhandled XML component <{tag}> in {actor_path}: the parser drops it. \
+                     Add {tag:?} to KNOWN_IMPLEMENTED_COMPONENTS in parsers/actor_xml.rs once \
+                     it's parsed and attached to the spawned entity."
+                );
+            }
+        }
+    }
+}
+
+/// Find every `<TagName name="...">` opening tag in the given XML
+/// content.  Components in the actor XML format always carry a
+/// `name="..."` attribute on their open tag — inner data uses
+/// `value="..."` instead — so this filter cleanly separates component
+/// declarations from attribute payloads.
+fn find_component_tags(content: &str) -> Vec<String> {
+    let mut tags = Vec::new();
+    let mut rest = content;
+    while let Some(idx) = rest.find('<') {
+        let after = &rest[idx + 1..];
+        let Some(first) = after.chars().next() else {
+            break;
+        };
+        if !first.is_ascii_uppercase() {
+            rest = after;
+            continue;
+        }
+        let name_end = after
+            .find(|c: char| !c.is_ascii_alphanumeric() && c != '_')
+            .unwrap_or(after.len());
+        if name_end == 0 {
+            rest = after;
+            continue;
+        }
+        let tag_name = &after[..name_end];
+        let tail = &after[name_end..];
+        let Some(tag_close) = tail.find('>') else {
+            break;
+        };
+        let tag_def = &tail[..tag_close];
+        if tag_def.contains(" name=\"") {
+            tags.push(tag_name.to_string());
+        }
+        rest = &tail[tag_close + 1..];
+    }
+    tags
 }

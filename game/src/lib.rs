@@ -1,3 +1,4 @@
+pub mod actor_sound;
 pub mod ai;
 pub mod animator;
 pub mod behavior;

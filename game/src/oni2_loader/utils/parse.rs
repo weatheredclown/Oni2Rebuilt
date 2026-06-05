@@ -56,6 +56,24 @@ pub fn extract_xml_attr(content: &str, tag: &str) -> Option<String> {
     last_valid
 }
 
+/// Resolve a layout-XML boolean attribute value.  ONI XML writes
+/// booleans as either `"1"`/`"0"` or `"true"`/`"false"` (mixed case
+/// in shipped data).  Anything else is treated as false — matches
+/// the C++ XML loader's lenient parse.
+#[inline]
+pub fn parse_xml_bool(s: &str) -> bool {
+    s == "1" || s.eq_ignore_ascii_case("true")
+}
+
+/// Extract a boolean attribute from an XML tag.  Returns `None`
+/// when the tag is absent, `Some(true/false)` per
+/// [`parse_xml_bool`] otherwise.  Convenience wrapper over
+/// [`extract_xml_attr`] for the dozens of `<Foo value="1"/>` flags
+/// in actor / component XML.
+pub fn extract_xml_attr_bool(content: &str, tag: &str) -> Option<bool> {
+    extract_xml_attr(content, tag).map(|v| parse_xml_bool(&v))
+}
+
 /// Parse "x y z" string into Vec3.
 pub fn parse_vec3(s: &str) -> Option<Vec3> {
     let parts: Vec<f32> = s

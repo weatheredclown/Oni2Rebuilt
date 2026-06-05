@@ -44,14 +44,33 @@ pub fn attack_sync_system(
         &crate::oni2_loader::animation::Oni2AnimState,
         Option<&mut crate::animator::components::ActionPlayer>,
         Option<&Fighter>,
+        Option<&mut FighterState>,
     )>,
 ) {
     for msg in reader.read() {
-        let Ok((mut attack_state, anim_state, ap_opt, fighter_opt)) = query.get_mut(msg.entity)
+        let Ok((mut attack_state, anim_state, ap_opt, fighter_opt, fighter_state_opt)) =
+            query.get_mut(msg.entity)
         else {
             continue;
         };
         let mut has_fire = false;
+
+        // Track the chain position the way C++ crAttack::Start does:
+        // every time an attack animation begins, advance the fighter's
+        // `cur_combo_index`.  When the new anim isn't an attack (idle,
+        // walk, react, etc.), reset to 0 — that's the analog of
+        // `Fighter.cpp:1441 if (!anythingplaying) CurComboIndex = 0`,
+        // with `AnimStartedMessage` standing in for the per-tick
+        // playing-check (a non-attack transition implies nothing is
+        // playing in the attack queue).  The block_success_system uses
+        // this counter to gate the BlockReaction on the attacker.
+        if let Some(mut fs) = fighter_state_opt {
+            if anim_state.anim.attack_data.is_some() {
+                fs.cur_combo_index = fs.cur_combo_index.saturating_add(1);
+            } else if fs.cur_combo_index != 0 {
+                fs.cur_combo_index = 0;
+            }
+        }
 
         // New animation started — log entry and (re)seed ActiveAttack.
         //

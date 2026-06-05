@@ -92,6 +92,8 @@ impl Plugin for InventoryPlugin {
                         .before(systems::drop_weapon_system)
                         .before(systems::drop_item_system),
                     systems::use_item_system,
+                    systems::player_auto_pickup_system
+                        .before(systems::pickup_system),
                     systems::pickup_system
                         .before(systems::add_weapon_system)
                         .before(systems::add_item_system),
@@ -101,6 +103,8 @@ impl Plugin for InventoryPlugin {
                     systems::select_prev_item_system,
                     systems::set_active_weapon_system,
                     systems::inventory_forward_fire_system,
+                    systems::scheduled_stop_firing_system
+                        .before(systems::inventory_forward_fire_system),
                     systems::drop_on_death_system.before(systems::drop_all_system),
                 )
                     .run_if(in_state(AppState::InGame)),

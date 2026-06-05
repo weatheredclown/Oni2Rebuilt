@@ -96,15 +96,43 @@ pub fn exec(ctx: &mut OpsCtx, stmt: &Stmt) -> bool {
                 }
                 i += 1;
             }
+            // `bullets` and `rate` are recognised but not yet honoured —
+            // the weapon's own RoundsPerMinute / Burst settings drive
+            // how many shots come out during the held-trigger window.
+            // Logged so callers can see when their numbers get ignored.
+            let _ = (rate, bullets);
+
+            let target_ent = if let Some(v) = target_val.as_ref() {
+                let ents = ctx.ctx.resolve_targets(v);
+                ents.first().copied()
+            } else {
+                None
+            };
+
             info!(
                 "VM: Shoot target={:?} miss={} rate={:?} bullets={:?} for={:?}s",
                 target_val, miss, rate, bullets, duration
             );
-            // Block the thread for `for` seconds.  Mirrors `idle N` —
-            // the script pauses while (presumably) the shooter loop
-            // fires projectiles; we don't have that loop wired, but at
-            // least the `for` value is now honored as a real wait
-            // instead of yielding for exactly one tick.
+
+            if let Some(target) = target_ent {
+                ctx.sys_request(SysRequest::Shoot {
+                    actor: ctx.exec.owner,
+                    target,
+                    miss,
+                    duration,
+                });
+            } else {
+                warn!(
+                    "VM: Shoot dropped — could not resolve target {:?}",
+                    target_val
+                );
+            }
+
+            // Block the thread for `for` seconds.  The auto-stop on the
+            // ScheduledStopFiring component handles releasing the
+            // weapon trigger; the thread independently resumes once
+            // the deadline elapses and runs the next instruction
+            // (typically `idle 0.5` then another `shoot`).
             if let Some(secs) = duration {
                 ctx.thread_mut().blocking = Some(BlockingAction::Idle {
                     end_time: ctx.now + secs as f64,

@@ -49,6 +49,14 @@ impl Health {
 #[derive(Component)]
 pub struct DestroyOnDeath(pub f32);
 
+/// Marker for any actor that declared a `<Target>` block in its XML.
+/// Mirrors legacy `tarTarget`: tags the entity as a valid auto-aim
+/// / lock-on candidate.  Today its only consumer is the script
+/// `Stmt::Shoot` opcode, which refuses to fire on entities that
+/// aren't flagged shootable.
+#[derive(Component)]
+pub struct Targetable;
+
 #[derive(Component)]
 pub struct DeathSequenceTimer(pub Timer);
 

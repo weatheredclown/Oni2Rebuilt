@@ -167,7 +167,9 @@ pub fn add_weapon_system(
             }
         }
 
-        // Seed initial ammo.
+        // Seed ammo: use the message's override if supplied (pickup
+        // of a dropped weapon preserves its snapshotted ammo), else
+        // fall back to the weapon type's authored InitialAmmo.
         if !inv_ty.ammo_type_name.is_empty()
             && let Some(ammo_ty) = ammo_registry.get(&inv_ty.ammo_type_name).cloned()
         {
@@ -176,12 +178,12 @@ pub fn add_weapon_system(
                     w.set_ammo(0, ammo_ty, 0.0);
                 }
             });
-            let initial = inv_ty.initial_ammo;
+            let seed = msg.ammo_override.unwrap_or(inv_ty.initial_ammo);
             commands.queue(move |world: &mut World| {
                 if let Some(mut w) = world.get_mut::<Weapon>(weapon_entity)
                     && let Some(slot) = w.ammo_slots.get_mut(0)
                 {
-                    slot.amount = initial;
+                    slot.amount = seed;
                 }
             });
         }
@@ -554,6 +556,25 @@ pub fn use_item_system(
 // pickup_system
 // ---------------------------------------------------------------------------
 
+/// Continuously dispatches `PickUpItemsMessage` for every player
+/// entity that owns an Inventory.  Mirrors the legacy ONI auto-
+/// pickup feel — players collect items by walking over them within
+/// their `PickUpRange`, no key-press needed.  The downstream
+/// `pickup_system` does the actual radius filter + grant + despawn,
+/// so a fresh message every tick is cheap: if no pickup is in range
+/// the iteration completes with no side effects.
+pub fn player_auto_pickup_system(
+    players: Query<Entity, (With<crate::player::components::Player>, With<Inventory>)>,
+    mut pick_writer: MessageWriter<PickUpItemsMessage>,
+) {
+    for entity in &players {
+        pick_writer.write(PickUpItemsMessage {
+            entity,
+            specific_pickup: None,
+        });
+    }
+}
+
 pub fn pickup_system(
     mut reader: MessageReader<PickUpItemsMessage>,
     mut commands: Commands,
@@ -591,13 +612,16 @@ pub fn pickup_system(
                         quantity: *quantity,
                     });
                 }
-                Pickup::Weapon { ty, ammo: _ } => {
-                    // For now the add path seeds initial ammo; preserving the
-                    // dropped-weapon ammo exactly is a TODO (requires extending
-                    // AddWeaponByNameMessage with an override).
+                Pickup::Weapon { ty, ammo } => {
+                    // Preserve the snapshotted ammo so a half-empty
+                    // dropped weapon doesn't magically refill on
+                    // pickup.  C++ achieves this through the dropped
+                    // actor's full invInventoryComponent state; we
+                    // round-trip the value through the message.
                     add_weapon.write(AddWeaponByNameMessage {
                         entity: msg.entity,
                         weapon_name: ty.base.name.clone(),
+                        ammo_override: Some(*ammo),
                     });
                 }
             }
@@ -710,6 +734,35 @@ pub fn inventory_forward_fire_system(
 }
 
 // ---------------------------------------------------------------------------
+// scheduled_stop_firing_system — auto-release trigger when timer expires
+// ---------------------------------------------------------------------------
+
+/// Drains [`crate::inventory::components::ScheduledStopFiring`] markers
+/// each tick.  When the deadline elapses, emits an
+/// `InventoryStopFiringMessage` for the entity and removes the marker
+/// so the actor stops holding the trigger.  Drives the auto-release
+/// half of ScrOni's `shoot <target> for <duration>` op.
+pub fn scheduled_stop_firing_system(
+    mut commands: Commands,
+    time: Res<Time>,
+    mut stop_writer: MessageWriter<InventoryStopFiringMessage>,
+    query: Query<(
+        Entity,
+        &crate::inventory::components::ScheduledStopFiring,
+    )>,
+) {
+    let now = time.elapsed_secs_f64();
+    for (entity, sched) in &query {
+        if now >= sched.end_time {
+            stop_writer.write(InventoryStopFiringMessage { entity });
+            commands
+                .entity(entity)
+                .remove::<crate::inventory::components::ScheduledStopFiring>();
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // pending_inventory_system — process PendingInventory attachments and seed weapons
 // ---------------------------------------------------------------------------
 
@@ -724,16 +777,31 @@ pub fn pending_inventory_system(
             .entity(entity)
             .remove::<crate::inventory::components::PendingInventory>();
 
-        // Setup empty inventory with default capacity
-        commands.entity(entity).insert(Inventory::new(
-            crate::inventory::components::InventoryTypeData::default(),
-        ));
+        // Setup empty inventory.  Start from the engine defaults
+        // and let the per-actor `<Inventory>` block (carried through
+        // PendingInventory) override pickup/drop tuning.  Anything
+        // the actor XML didn't specify stays at the default.
+        let mut type_data = crate::inventory::components::InventoryTypeData::default();
+        if let Some(v) = pending.can_be_picked_up {
+            type_data.can_be_picked_up = v;
+        }
+        if let Some(v) = pending.pickup_range {
+            type_data.pickup_range = v;
+        }
+        if let Some(v) = pending.drop_items_on_death {
+            type_data.drop_items_on_death = v;
+        }
+        if let Some(v) = pending.drop_range {
+            type_data.drop_range = v;
+        }
+        commands.entity(entity).insert(Inventory::new(type_data));
 
         // If there's a weapon requested, issue the command to add it
         if !pending.weapon_string.is_empty() {
             add_weapon.write(AddWeaponByNameMessage {
                 entity,
                 weapon_name: pending.weapon_string.clone(),
+                ammo_override: None,
             });
             info!(
                 "Seed inventory weapon {} for entity {:?}",

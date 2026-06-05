@@ -62,6 +62,7 @@ impl Plugin for FxPlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins(HanabiPlugin)
             .init_resource::<crate::blast_fx::BlastFxAssets>()
+            .init_resource::<crate::blast_fx::BlastScreenFlash>()
             .add_observer(handle_spawn_fx)
             .add_observer(handle_spawn_ptx)
             .add_observer(handle_fx_action)
@@ -71,7 +72,14 @@ impl Plugin for FxPlugin {
             .add_systems(Update, apply_fx_start_inactive)
             .add_systems(Update, sync_intended_fx_state)
             .add_systems(Update, uv_animator_system)
-            .add_systems(Update, crate::blast_fx::update_blast_fire_system);
+            .add_systems(Update, crate::blast_fx::update_blast_fire_system)
+            .add_systems(Update, crate::blast_fx::trigger_blast_flash_on_spawn_system)
+            .add_systems(Update, crate::blast_fx::ensure_blast_flash_overlay_system)
+            .add_systems(Update, crate::blast_fx::update_blast_flash_system)
+            .add_systems(
+                OnExit(crate::menu::AppState::InGame),
+                crate::blast_fx::reset_blast_flash_on_exit,
+            );
     }
 }
 
@@ -780,6 +788,7 @@ fn handle_spawn_fx(
                 world_pos,
                 ev.parent,
                 &blast_assets,
+                &mut materials,
             ) {
                 info!(
                     "blast_fx: spawned BlastFire '{}' entity={:?} at={:?}",

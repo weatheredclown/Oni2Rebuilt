@@ -1103,12 +1103,22 @@ pub fn spawn_layout_actor(
                 assets.commands.entity(entity).insert(
                     crate::inventory::components::PendingInventory {
                         weapon_string: w.clone(),
+                        can_be_picked_up: actor.inventory_can_be_picked_up,
+                        pickup_range: actor.inventory_pickup_range,
+                        drop_items_on_death: actor.inventory_drop_items_on_death,
+                        drop_range: actor.inventory_drop_range,
                     },
                 );
                 info!(
                     "Attached PendingInventory ({}) to creature {}",
                     w, actor.entity_type
                 );
+            }
+            if let Some(sound_data) = actor.sound.as_ref() {
+                assets
+                    .commands
+                    .entity(entity)
+                    .insert(crate::actor_sound::ActorSound::new(sound_data.clone()));
             }
 
             Some(entity)
@@ -1154,6 +1164,45 @@ pub fn spawn_layout_actor(
     };
 
     if let Some(entity) = spawned_entity {
+        // Attach Health if the actor declared <Health><MaxHitPoints/></Health>.
+        // Without this, ScrOni's `health(guid("actor_Statue"))` returns 0 and
+        // scripts like FXCathedral_Scenario_2/Statue.oni instantly trip their
+        // `if health < 0.5` mission-failure branch.
+        if let Some(max_hp) = actor.max_hitpoints {
+            assets
+                .commands
+                .entity(entity)
+                .insert(crate::combat::components::Health::new(max_hp));
+            if let Some(destroy_time) = actor.destroy_time {
+                assets
+                    .commands
+                    .entity(entity)
+                    .insert(crate::combat::components::DestroyOnDeath(destroy_time));
+            }
+        }
+
+        // Mark shootable if the actor declared a <Target> block.  Lets
+        // `shoot <actor>` script ops resolve onto non-creature props
+        // (e.g. the FX-Cathedral statue) the same way creatures already
+        // resolve via their Fighter components.
+        if actor.has_target {
+            assets
+                .commands
+                .entity(entity)
+                .insert(crate::combat::components::Targetable);
+        }
+
+        // <Sound> with a non-empty AudioPackage: attach the per-actor
+        // sound driver.  drive_actor_sound_system picks it up,
+        // resolves the package nuggets through the TD/HD/BD chain,
+        // and spawns a child AudioPlayer with distance attenuation.
+        if let Some(sound_data) = actor.sound.as_ref() {
+            assets
+                .commands
+                .entity(entity)
+                .insert(crate::actor_sound::ActorSound::new(sound_data.clone()));
+        }
+
         // Attach CurveFollower if actor references a named curve
         if let Some(ref cname) = actor.curve_name {
             if let Some((_, pts)) = layout_paths

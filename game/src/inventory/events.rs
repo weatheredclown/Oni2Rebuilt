@@ -30,6 +30,13 @@ use crate::weapons::AimTarget;
 pub struct AddWeaponByNameMessage {
     pub entity: Entity,
     pub weapon_name: String,
+    /// Optional ammo override (None = seed with the weapon type's
+    /// `InitialAmmo` default).  Pickup of dropped weapons sets this
+    /// to the snapshotted ammo so a half-empty rifle stays half-
+    /// empty after being picked back up.  Mirrors the legacy ONI
+    /// behavior where the dropped pickup actor carries its full
+    /// `invInventoryComponent` state.
+    pub ammo_override: Option<f32>,
 }
 
 #[derive(Message, Clone)]
