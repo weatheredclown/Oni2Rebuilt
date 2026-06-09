@@ -7,7 +7,7 @@
  */
 use super::OpsCtx;
 use crate::scroni::ast::Stmt;
-use crate::scroni::vm::{BlockingAction, SysRequest, Value};
+use crate::scroni::vm::{BlockingAction, CranePhase, SysRequest, Value};
 use bevy::prelude::*;
 
 pub fn exec(ctx: &mut OpsCtx, stmt: &Stmt) -> bool {
@@ -73,15 +73,65 @@ pub fn exec(ctx: &mut OpsCtx, stmt: &Stmt) -> bool {
             true
         }
         Stmt::Pickup(expr) => {
-            let ent = ctx.eval(expr);
-            info!("VM: Pickup {:?} (unimplemented)", ent);
-            ctx.yield_thread();
+            // ScrOni `pickup <guid>` — the script's parent actor
+            // is the crane (this is the only way the legacy
+            // engine dispatches the pickup behavior); the
+            // argument is the actor to grab.  Drain handler
+            // resolves the hitch + drives the IK; we park on
+            // `WaitingForCrane { Pickup }` until the IK reports
+            // the chain landed (state == Attached).
+            let script_actor = ctx.exec.owner;
+            match ctx.eval(expr) {
+                Value::Actor(target) => {
+                    ctx.sys_request(SysRequest::CranePickup {
+                        actor: script_actor,
+                        target,
+                    });
+                    ctx.block(BlockingAction::WaitingForCrane {
+                        actor: script_actor,
+                        phase: CranePhase::Pickup,
+                    });
+                }
+                other => {
+                    warn!(
+                        "VM: pickup arg evaluated to non-actor {:?} (no-op)",
+                        other
+                    );
+                    ctx.yield_thread();
+                }
+            }
             true
         }
         Stmt::Dropoff { at } => {
-            let at_val = at.as_ref().map(|e| ctx.eval(e));
-            info!("VM: Dropoff at {:?} (unimplemented)", at_val);
-            ctx.yield_thread();
+            let script_actor = ctx.exec.owner;
+            let Some(at_expr) = at else {
+                warn!("VM: dropoff without `at <vec>` clause (no-op)");
+                ctx.yield_thread();
+                return true;
+            };
+            match ctx.eval(at_expr) {
+                Value::Vector(world_pos) => {
+                    // ScrOni vectors are in Oni left-handed
+                    // space; flip to Bevy at the parse boundary
+                    // (matches every other vec-consuming op).
+                    let bevy_pos = crate::oni2_loader::utils::space::to_bevy_space_pos(world_pos);
+                    ctx.sys_request(SysRequest::CraneDropoff {
+                        actor: script_actor,
+                        world_pos: bevy_pos,
+                    });
+                    ctx.block(BlockingAction::WaitingForCrane {
+                        actor: script_actor,
+                        phase: CranePhase::Dropoff,
+                    });
+                }
+                other => {
+                    warn!(
+                        "VM: dropoff target evaluated to non-vector {:?} (no-op)",
+                        other
+                    );
+                    ctx.yield_thread();
+                }
+            }
             true
         }
         _ => false,

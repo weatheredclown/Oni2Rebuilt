@@ -325,8 +325,12 @@ pub fn drop_weapon_system(
             .map(|s| s.amount)
             .unwrap_or(0.0);
 
-        let drop_pos =
-            wielder_tf.translation + wielder_tf.rotation * Vec3::new(0.0, 0.5, -inv.drop_range);
+        // Spawn from chest height (1.2m above the wielder's feet) so the
+        // arc reads as the weapon being kicked off the body, not extruded
+        // out the front of the corpse.  `drop_range` is left for use by
+        // the auto-pickup radius and as a guidance value to scripts; the
+        // actual scatter comes from `PickupBallistic::random_toss()`.
+        let drop_pos = wielder_tf.translation + Vec3::Y * 1.2;
         let pickup = commands
             .spawn((
                 Name::new(format!("Pickup:{}", slot.ty.base.name)),
@@ -336,6 +340,7 @@ pub fn drop_weapon_system(
                     ty: slot.ty.clone(),
                     ammo,
                 },
+                crate::inventory::pickup_fx::PickupBallistic::random_toss(),
             ))
             .id();
 
@@ -408,8 +413,7 @@ pub fn drop_item_system(
         let slot = inv.item_slots.remove(msg.slot_index);
         inv.item_weight = (inv.item_weight - slot.ty.base.weight * slot.quantity as f32).max(0.0);
 
-        let drop_pos =
-            wielder_tf.translation + wielder_tf.rotation * Vec3::new(0.0, 0.5, -inv.drop_range);
+        let drop_pos = wielder_tf.translation + Vec3::Y * 1.2;
         let pickup = commands
             .spawn((
                 Name::new(format!("Pickup:{}", slot.ty.base.name)),
@@ -419,6 +423,7 @@ pub fn drop_item_system(
                     ty: slot.ty.clone(),
                     quantity: slot.quantity,
                 },
+                crate::inventory::pickup_fx::PickupBallistic::random_toss(),
             ))
             .id();
 

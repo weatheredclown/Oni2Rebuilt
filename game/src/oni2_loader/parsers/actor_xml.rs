@@ -180,6 +180,35 @@ pub struct LayoutActor {
     pub fvt_offset: Option<Vec3>,
     /// Fight vector trigger attack alias
     pub fvt_attack: Option<String>,
+    /// Parsed `<ElbowCraneIK>` block — drives the
+    /// EricArm-skeleton-based crane's analytical 2-bone IK
+    /// solver.  `None` when the actor doesn't declare an
+    /// `<ElbowCraneIK>` component (i.e. isn't a crane).
+    pub crane_ik: Option<CraneIKComponentData>,
+    /// Parsed `<ElbowCraneHitch>` block — declares this actor
+    /// as a crane-pickup target.  `Center` is converted to Bevy
+    /// space at parse time.
+    pub crane_hitch: Option<CraneHitchComponentData>,
+}
+
+/// Tunable data extracted from `<ElbowCraneIK><attributes>`.
+/// Maps to `animElbowCraneIKComponentType` in the C++ engine.
+/// `Speed` is in degrees/sec; `ClampOffset` is in world units and
+/// is the additional reach from the wrist out to the claw centre.
+#[derive(Debug, Clone)]
+pub struct CraneIKComponentData {
+    pub speed_deg: f32,
+    pub clamp_offset: f32,
+}
+
+/// Tunable data extracted from `<ElbowCraneHitch><attributes>`.
+/// Maps to `animElbowCraneHitchComponentType` in the C++.
+/// `Center` is converted to Bevy space at parse time so
+/// downstream consumers see Bevy coords only.
+#[derive(Debug, Clone)]
+pub struct CraneHitchComponentData {
+    pub center: Vec3,
+    pub extent: f32,
 }
 
 /// Resolve the full template chain for an actor XML file.
@@ -596,6 +625,39 @@ pub fn parse_actor_xml(dir: &str, filename: &str, template_dir: &str) -> Option<
         }
     });
 
+    // `<ElbowCraneHitch>` block — declared on pickup-target
+    // actors (cnkcrane3/4/5's actor_CraneObject, actor_kno).
+    // `Center` is authored in Oni-space; flip to Bevy at parse
+    // time so the runtime never sees Oni coords.
+    let crane_hitch =
+        extract_component(&chain, has_components_xml, "ElbowCraneHitch").map(|block| {
+            let center = extract_xml_attr(&block, "Center")
+                .and_then(|s| parse_vec3(&s))
+                .map(space::to_bevy_space_pos)
+                .unwrap_or(Vec3::ZERO);
+            let extent = extract_xml_attr(&block, "Extent")
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(0.1);
+            CraneHitchComponentData { center, extent }
+        });
+
+    // `<ElbowCraneIK>` block — present on the four AAA `actor_Crane*.xml`
+    // and the harbor / rooftop crane families.  Only `Speed` and
+    // `ClampOffset` are authored attributes; everything else is
+    // derived from the EricArm skeleton at init time.
+    let crane_ik = extract_component(&chain, has_components_xml, "ElbowCraneIK").map(|block| {
+        let speed_deg = extract_xml_attr(&block, "Speed")
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(275.0);
+        let clamp_offset = extract_xml_attr(&block, "ClampOffset")
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(0.0);
+        CraneIKComponentData {
+            speed_deg,
+            clamp_offset,
+        }
+    });
+
     let mut fvt_radius: Option<f32> = None;
     let mut fvt_directional: Option<bool> = None;
     let mut fvt_offset: Option<Vec3> = None;
@@ -662,6 +724,8 @@ pub fn parse_actor_xml(dir: &str, filename: &str, template_dir: &str) -> Option<
         fvt_directional,
         fvt_offset,
         fvt_attack,
+        crane_ik,
+        crane_hitch,
     })
 }
 
@@ -687,6 +751,8 @@ const KNOWN_IMPLEMENTED_COMPONENTS: &[&str] = &[
     "Creature",
     "Curve",
     "Editable",
+    "ElbowCraneHitch",
+    "ElbowCraneIK",
     "Entity",
     "FX",
     "FightAI",

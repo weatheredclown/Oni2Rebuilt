@@ -1203,6 +1203,36 @@ pub fn spawn_layout_actor(
                 .insert(crate::actor_sound::ActorSound::new(sound_data.clone()));
         }
 
+        // <ElbowCraneIK>: analytical 2-bone IK driver for crane
+        // actors (EricArm skeleton).  Bone-index lookup is lazy
+        // inside `crane_ik_system` so attachment is unconditional
+        // on the parsed XML — if the actor's skeleton turns out
+        // not to be EricArm-shaped, the init returns false and
+        // the system leaves the pose alone.
+        if let Some(crane_data) = actor.crane_ik.as_ref() {
+            assets
+                .commands
+                .entity(entity)
+                .insert(crate::oni2_loader::crane_ik::ElbowCraneIK::new(
+                    crane_data.speed_deg,
+                    crane_data.clamp_offset,
+                ));
+        }
+
+        // <ElbowCraneHitch>: declares this actor as a
+        // crane-pickup target.  The crane's IK system reads
+        // `Center` and `Extent` when its ScrOni `pickup`
+        // op fires; `crane_carry_system` then drives this
+        // actor's Transform from the claw matrix each tick.
+        if let Some(hitch_data) = actor.crane_hitch.as_ref() {
+            assets.commands.entity(entity).insert(
+                crate::oni2_loader::crane_ik::ElbowCraneHitch::new(
+                    hitch_data.center,
+                    hitch_data.extent,
+                ),
+            );
+        }
+
         // Attach CurveFollower if actor references a named curve
         if let Some(ref cname) = actor.curve_name {
             if let Some((_, pts)) = layout_paths

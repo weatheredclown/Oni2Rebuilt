@@ -10,6 +10,7 @@
 pub mod animation;
 pub mod asleep;
 pub mod components;
+pub mod crane_ik;
 pub mod curve;
 pub mod drawable;
 pub mod environment;
@@ -97,6 +98,9 @@ impl Plugin for Oni2LoaderPlugin {
                     update_oni2_animation,
                     head_ik_setup_system,
                     head_ik_system.after(update_oni2_animation),
+                    crane_ik::crane_ik_system.after(update_oni2_animation),
+                    crane_ik::crane_carry_system.after(crane_ik::crane_ik_system),
+                    crane_ik::crane_hitch_backlink_system.after(crane_ik::crane_ik_system),
                     resolve_pending_parents_system,
                     // Mirrors entity sub-meshes into `DrawableLibrary` on
                     // every `EntityLibrary` change so the unified UV

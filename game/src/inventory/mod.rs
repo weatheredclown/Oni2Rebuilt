@@ -16,6 +16,7 @@
  */
 pub mod components;
 pub mod events;
+pub mod pickup_fx;
 pub mod systems;
 
 use bevy::prelude::*;
@@ -40,6 +41,7 @@ impl Plugin for InventoryPlugin {
             // --- Resources ---
             .init_resource::<WeaponItemRegistry>()
             .init_resource::<ItemRegistry>()
+            .init_resource::<pickup_fx::PickupIndicatorMesh>()
             // --- Messages (inbound) ---
             .add_message::<AddWeaponByNameMessage>()
             .add_message::<AddItemByNameMessage>()
@@ -106,6 +108,15 @@ impl Plugin for InventoryPlugin {
                     systems::scheduled_stop_firing_system
                         .before(systems::inventory_forward_fire_system),
                     systems::drop_on_death_system.before(systems::drop_all_system),
+                    pickup_fx::pickup_physics_system,
+                )
+                    .run_if(in_state(AppState::InGame)),
+            )
+            .add_systems(
+                Update,
+                (
+                    pickup_fx::attach_pickup_indicator_system,
+                    pickup_fx::animate_pickup_indicator_system,
                 )
                     .run_if(in_state(AppState::InGame)),
             );

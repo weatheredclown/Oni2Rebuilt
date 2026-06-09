@@ -261,6 +261,11 @@ pub fn parse_animator_event(
     Ok(match name {
         "PadCmd" => AnimatorEvent::PadCmd(args.trim_matches('"').to_string()),
         "PadPressed" => AnimatorEvent::PadPressed(args.trim_matches('"').to_string()),
+        // `JumpPressed` is shorthand for `PadPressed("jump")` used by
+        // the embedded #ZIPLINE block (line ~417) so the source reads
+        // naturally.  Routes through the same per-tick pressed-cmd
+        // set as the long form.
+        "JumpPressed" => AnimatorEvent::PadPressed("jump".to_string()),
         "JumpsAvailable" => AnimatorEvent::JumpsAvailable,
         "JumpInAir" => AnimatorEvent::JumpInAir,
         "CustomAnimRequested" => AnimatorEvent::CustomAnimRequested,

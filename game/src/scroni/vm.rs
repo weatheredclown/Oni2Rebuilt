@@ -30,7 +30,7 @@ pub struct ShaderLocals {
 pub struct ClonedShaderLocalMaterial;
 
 /// Runtime value on the VM stack / in variables.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Value {
     Int(i32),
     Float(f32),
@@ -189,6 +189,19 @@ pub enum BlockingAction {
     /// Internal: waiting for a non-looping animation to finish playing.
     WaitingForAnimation,
     WaitingForPath,
+    /// `pickup <target>` / `dropoff at <vec3>` — parks the
+    /// script thread until the crane's IK reports the matching
+    /// phase complete.  `actor` is the crane entity owning the
+    /// [`crate::oni2_loader::crane_ik::ElbowCraneIK`].  Resolved
+    /// in `scroni_tick_system`'s blocking-resolver section by
+    /// inspecting the crane's `state`; the script's
+    /// `blocking_failed` flag is latched to mirror
+    /// `PickupFailing()` / `DropoffFailing()` (true when the IK
+    /// dropped back to `Idle` without completing).
+    WaitingForCrane {
+        actor: Entity,
+        phase: CranePhase,
+    },
 }
 
 /// Resolution decision for a `WaitingForBehavior` thread.  Pulled out of
@@ -409,6 +422,30 @@ pub enum SysRequest {
     },
     PlayerTaskSuccessful,
     PlayerTaskFailure,
+    /// `pickup <target>` — script-side opcode that resolves to a
+    /// crane IK command.  Drained by `scroni_tick_system` which
+    /// looks up [`ElbowCraneIK`] on `actor` and
+    /// [`ElbowCraneHitch`] on `target` (the held object), then
+    /// calls `pickup_target_actor`.  The script thread parks on
+    /// `BlockingAction::WaitingForCrane { phase: Pickup }` until
+    /// the IK reports `state == Attached`.
+    CranePickup { actor: Entity, target: Entity },
+    /// `dropoff at <vec3>` — drives the crane through its
+    /// lift/translate/lower cycle to release the held object at
+    /// `world_pos`.  Parks on
+    /// `BlockingAction::WaitingForCrane { phase: Dropoff }`.
+    CraneDropoff { actor: Entity, world_pos: Vec3 },
+}
+
+/// Which crane phase a `WaitingForCrane` blocking action is
+/// waiting on.  Resolves when the IK reaches the matching
+/// terminal state (`Attached` for pickup, `Released` for dropoff)
+/// or the matching failure state (`Idle` for both, mirroring
+/// `PickupFailing()` / `DropoffFailing()` in the C++).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CranePhase {
+    Pickup,
+    Dropoff,
 }
 
 /// Per-channel verb dispatched onto an [`ActorSound`] from
@@ -707,6 +744,14 @@ pub fn init_variables(
     }
 }
 
+/// Hard ceiling on simultaneously-live child threads per script
+/// before we suspect a leak.  Hit-once warning at this threshold
+/// — well above any legitimate script's usage (the heaviest
+/// shipped script — `scavenger_mgr.oni` — peaks at ~4 children),
+/// low enough to catch a runaway `childstack` auto-spawn loop
+/// before it grows unbounded.
+const CHILD_THREAD_SANITY_LIMIT: usize = 32;
+
 /// Execution context for a script block. Holds the main thread and all concurrent child threads.
 pub struct ScriptExec {
     pub main_thread: ScrOniThread,
@@ -727,6 +772,16 @@ pub struct ScriptExec {
     pub active: bool,
     /// Number of frames this script has been alive. Used to delay first tick protecting hierarchy initialization natively.
     pub ticks_alive: u32,
+    /// Highest count of simultaneously-live child threads this
+    /// script has ever reached.  Sampled at the end of each
+    /// `tick()` after the Done-sweep.  Useful both as a
+    /// diagnostic (queryable via `script.exec.child_thread_high_water`)
+    /// and as the trigger for the leak warning below.
+    pub child_thread_high_water: usize,
+    /// Latch — set to `true` once we've warned about exceeding
+    /// [`CHILD_THREAD_SANITY_LIMIT`].  Prevents per-tick spam if
+    /// the count stays above the limit.
+    pub child_thread_warned: bool,
 }
 
 pub struct ScroniContext<'a, 'w_e, 's_e, 'w_t, 's_t> {
@@ -876,6 +931,8 @@ impl ScriptExec {
             current_light: None,
             active: true,
             ticks_alive: 0,
+            child_thread_high_water: 0,
+            child_thread_warned: false,
         }
     }
 
@@ -1192,6 +1249,29 @@ impl ScriptExec {
             } else {
                 i += 1;
             }
+        }
+
+        // Sanity instrumentation for the `childstack` auto-spawn
+        // path (see core.rs:Stmt::ChildStack).  Track the historic
+        // peak so it's queryable from a debug overlay or a unit
+        // test (`assert!(exec.child_thread_high_water < N)`), and
+        // emit a one-shot warning if the live count breaches
+        // [`CHILD_THREAD_SANITY_LIMIT`] — strong signal that a
+        // script is spawning children via the auto-spawn fallback
+        // without a matching `childdone` and will eventually leak.
+        let live = self.child_threads.len();
+        if live > self.child_thread_high_water {
+            self.child_thread_high_water = live;
+        }
+        if live >= CHILD_THREAD_SANITY_LIMIT && !self.child_thread_warned {
+            self.child_thread_warned = true;
+            warn!(
+                "[ScrOni][{}] child_threads grew to {} (sanity limit {}). \
+                 Likely cause: childstack auto-spawn loop without a matching \
+                 childdone.  See ops/core.rs Stmt::ChildStack for the \
+                 auto-spawn path that's leaking; this warning fires once.",
+                self.main_thread.script.name, live, CHILD_THREAD_SANITY_LIMIT,
+            );
         }
 
         self.main_thread.state
@@ -2417,6 +2497,15 @@ pub struct ActorScriptEffects<'w, 's> {
     pub aim: MessageWriter<'w, crate::inventory::events::InventoryAimMessage>,
     pub stop: MessageWriter<'w, crate::inventory::events::InventoryStopFiringMessage>,
     pub sound: Query<'w, 's, &'static mut crate::actor_sound::ActorSound>,
+    /// Cranes (write side) — `SysRequest::CranePickup` /
+    /// `CraneDropoff` drain handlers mutate this to start a
+    /// pickup/dropoff cycle.  Also queried (immutably, via
+    /// `iter`) by the blocking resolver to decide whether a
+    /// `WaitingForCrane` thread can resume.
+    pub crane_ik: Query<'w, 's, &'static mut crate::oni2_loader::crane_ik::ElbowCraneIK>,
+    /// Hitches (read side) — the pickup drain handler resolves
+    /// each target's `Center` + `Extent` here.
+    pub crane_hitch: Query<'w, 's, &'static crate::oni2_loader::crane_ik::ElbowCraneHitch>,
 }
 
 /// Bevy system: tick all ScrOni scripts each frame.
@@ -2633,6 +2722,7 @@ pub fn scroni_tick_system(
         let mut patrols_to_resolve = Vec::new();
         let mut waiting_for_path = Vec::new();
         let mut waiting_for_behavior = Vec::new();
+        let mut waiting_for_crane = Vec::new();
         let mut faces_to_resolve = Vec::new();
         for t in script.exec.all_threads_mut() {
             if let Some(BlockingAction::GotoPoint {
@@ -2651,8 +2741,45 @@ pub fn scroni_tick_system(
                 t.blocking.clone()
             {
                 waiting_for_behavior.push((t.thread_id, kind, deadline));
+            } else if let Some(BlockingAction::WaitingForCrane { actor, phase }) =
+                t.blocking.clone()
+            {
+                waiting_for_crane.push((t.thread_id, actor, phase));
             } else if let Some(BlockingAction::Face { target, seconds }) = t.blocking.clone() {
                 faces_to_resolve.push((t.thread_id, target, seconds));
+            }
+        }
+
+        // Resolve `WaitingForCrane` threads by inspecting the crane's
+        // IK state.  Mirrors the C++ `PickupDone()` / `PickupFailing()`
+        // and `DropoffDone()` / `DropoffFailing()` checks that
+        // `bhPickupBehavior::IsDone/IsFailing` made.
+        //
+        //  • Pickup waits resolve when `state == Attached` (done) or
+        //    when `state == Idle` (failed — IK gave up, target out of
+        //    reach).  Sets `blocking_failed = true` on the failure path
+        //    so the surrounding script can check `blockingcommandfailed`.
+        //  • Dropoff waits resolve when `state == Released` (done) or
+        //    when `state == Idle` (failed — same idle-fallback rule).
+        //  • If the crane entity isn't found (despawned mid-wait) the
+        //    thread is unblocked with `failed = true` so the script
+        //    can recover instead of hanging forever.
+        for (tid, actor, phase) in waiting_for_crane {
+            use crate::oni2_loader::crane_ik::CraneState;
+            let resolution = match actor_fx.crane_ik.get(actor) {
+                Ok(crane) => match (phase, crane.state) {
+                    (CranePhase::Pickup, CraneState::Attached) => Some(false),
+                    (CranePhase::Pickup, CraneState::Idle) => Some(true),
+                    (CranePhase::Dropoff, CraneState::Released) => Some(false),
+                    (CranePhase::Dropoff, CraneState::Idle) => Some(true),
+                    _ => None,
+                },
+                Err(_) => Some(true),
+            };
+            if let Some(failed) = resolution {
+                script.exec.get_thread_mut(tid).blocking_failed = failed;
+                script.exec.clear_blocking(tid);
+                script.exec.tick_thread(tid, now, &mut ctx);
             }
         }
 
@@ -3158,6 +3285,29 @@ pub fn scroni_tick_system(
                 SysRequest::PlayerTaskFailure => {
                     commands.trigger(ScrOniSysEvent::PlayerTaskFailure);
                 }
+                SysRequest::CranePickup { actor, target } => {
+                    if let Ok(mut crane) = actor_fx.crane_ik.get_mut(actor) {
+                        let target_pos = all_entities
+                            .get(target)
+                            .map(|(_, gtf, _)| gtf.translation())
+                            .unwrap_or(Vec3::ZERO);
+                        if let Ok(hitch) = actor_fx.crane_hitch.get(target) {
+                            crane.pickup_target_actor(
+                                target,
+                                target_pos,
+                                hitch.center,
+                                hitch.extent,
+                            );
+                        } else {
+                            crane.pickup_target(target_pos, 0.157);
+                        }
+                    }
+                }
+                SysRequest::CraneDropoff { actor, world_pos } => {
+                    if let Ok(mut crane) = actor_fx.crane_ik.get_mut(actor) {
+                        crane.dropoff_at(world_pos);
+                    }
+                }
             }
         }
 
@@ -3583,4 +3733,73 @@ mod tests {
         let r = resolve_behavior_wait(me, BehaviorKind::TakeCover, None, 100.0, &ended);
         assert_eq!(r, None);
     }
+
+    #[test]
+    fn test_childstack_spawns_thread_dynamically() {
+        let src = r#"
+Script ParentScript
+begin
+variable
+    child stacker
+sequence
+    childstack stacker "ChildScript"
+end
+
+Script ChildScript
+begin
+sequence
+    idle 1.0
+end
+"#;
+        let file = crate::scroni::compiler::Compiler::compile(src).expect("should compile");
+        let parent_def = file.scripts.iter().find(|s| s.name == "ParentScript").unwrap().clone();
+        let child_def = file.scripts.iter().find(|s| s.name == "ChildScript").unwrap().clone();
+
+        let mut world = bevy::prelude::World::new();
+        let actor = world.spawn((
+            bevy::prelude::GlobalTransform::default(),
+            bevy::prelude::Name::new("Actor"),
+        )).id();
+
+        let mut exec = ScriptExec::new(parent_def, actor);
+        exec.available_scripts.insert("ChildScript".to_string(), child_def);
+
+        let mut state: bevy::ecs::system::SystemState<(
+            Query<(Entity, &GlobalTransform, Option<&Name>)>,
+            Query<&BroadcastTrigger>,
+        )> = bevy::ecs::system::SystemState::new(&mut world);
+
+        let (all_entities, triggers) = state.get(&world);
+        let actor_statuses = std::collections::HashMap::new();
+        let mut ctx = ScroniContext {
+            all_entities: &all_entities,
+            triggers: &triggers,
+            player: None,
+            current_checkpoint: 0,
+            layout_dir: String::new(),
+            actor_statuses: &actor_statuses,
+            line_of_sight: None,
+            is_enemy: None,
+            get_perception_radius: None,
+            get_perception_fov: None,
+            get_actor_health: None,
+            get_ui_item_value: None,
+        };
+
+        // Initially we should have no child threads
+        assert_eq!(exec.child_threads.len(), 0);
+
+        // Tick the script
+        exec.tick(0.0, 0.016, &mut ctx);
+
+        // A new child thread should have been spawned dynamically for ChildScript!
+        assert_eq!(exec.child_threads.len(), 1);
+        let child_thread = &exec.child_threads[0];
+        assert_eq!(child_thread.script.name, "ChildScript");
+
+        // The parent's "stacker" variable should now hold the child's thread ID
+        let stacker_val = exec.get_var(0, "stacker");
+        assert_eq!(stacker_val, Value::Int(child_thread.thread_id as i32));
+    }
 }
+

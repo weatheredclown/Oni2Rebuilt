@@ -645,11 +645,46 @@ pub fn exec(ctx: &mut OpsCtx, stmt: &Stmt) -> bool {
                     );
                 }
             } else {
-                warn!(
-                    "[ScrOni][{}] ChildStack: no child thread resolved (var={:?})",
-                    ctx.thread().script.name,
-                    var
-                );
+                // LOAD-BEARING auto-spawn fallback.  When `<var>` doesn't
+                // point at a live child thread (uninitialised, never set, or
+                // already culled), `childstack` creates a fresh thread
+                // running `<script>` instead of erroring out.  This mirrors
+                // the legacy C++ `DoChildStack` in
+                // `rb/src/scroni/XSwitchStack.cpp:51-61` which checks
+                // `GetChildValue() == scrValue::kNoChildIndex` and calls
+                // `executor.ChildCreate()` exactly here.
+                //
+                // Real scripts depend on this — e.g.
+                // `assets/layout/M03_A01_Blast_Chambers/Scripts/scavenger_mgr.oni`
+                // declares `child tauntChild` (no initialiser) and then uses
+                // bare `childstack tauntChild "<name>"` on lines 70/75/80/85
+                // to kick the child off.  Without auto-spawn those lines
+                // silently no-op and the taunt sequence never plays.
+                //
+                // Behaviour parity with `ChildSwitch` (line 673 below):
+                // both spawn-on-missing.  Difference is the eventual
+                // childdone semantics, not the spawn path.
+                if let Some(new_script) = ctx.exec.resolve_script(&script_name, ctx.ctx) {
+                    let new_tid = ctx.exec.next_thread_id;
+                    ctx.exec.next_thread_id += 1;
+                    let new_thread = ScrOniThread::new(new_tid, Some(ctx.tid), new_script);
+                    ctx.exec.child_threads.push(new_thread);
+                    ctx.set_var(var.clone(), Value::Int(new_tid as i32));
+                    bevy::log::debug!(
+                        "[ScrOni][{}] ChildStack: no child thread resolved (var={:?}). Spawning new child thread tid={} for script '{}'",
+                        ctx.thread().script.name,
+                        var,
+                        new_tid,
+                        script_name
+                    );
+                } else {
+                    warn!(
+                        "[ScrOni][{}] ChildStack: no child thread resolved (var={:?}) and Target Script '{}' not found",
+                        ctx.thread().script.name,
+                        var,
+                        script_name
+                    );
+                }
             }
             true
         }
@@ -685,15 +720,9 @@ pub fn exec(ctx: &mut OpsCtx, stmt: &Stmt) -> bool {
             if let Some(tid) = target_tid {
                 let thread = ctx.exec.get_thread_mut(tid);
                 thread.state = ExecState::Done;
-                if let Some(v) = var {
-                    ctx.set_var(v.clone(), Value::Int(0));
-                }
-            } else {
-                warn!(
-                    "[ScrOni][{}] ChildDone: no child thread resolved (var={:?})",
-                    ctx.thread().script.name,
-                    var
-                );
+            }
+            if let Some(v) = var {
+                ctx.set_var(v.clone(), Value::Int(0));
             }
             true
         }
@@ -714,12 +743,6 @@ pub fn exec(ctx: &mut OpsCtx, stmt: &Stmt) -> bool {
                 thread.blocking = None;
                 thread.state = ExecState::Running;
                 bevy::log::debug!("ChildHome: reset child tid={} to seq_pc=0", tid);
-            } else {
-                warn!(
-                    "[ScrOni][{}] ChildHome: no child thread resolved (var={:?})",
-                    ctx.thread().script.name,
-                    var
-                );
             }
             true
         }
@@ -733,15 +756,9 @@ pub fn exec(ctx: &mut OpsCtx, stmt: &Stmt) -> bool {
             if let Some(tid) = target_tid {
                 let thread = ctx.exec.get_thread_mut(tid);
                 thread.state = ExecState::Done;
-                if let Some(v) = var {
-                    ctx.set_var(v.clone(), Value::Int(0));
-                }
-            } else {
-                warn!(
-                    "[ScrOni][{}] ChildStop: no child thread resolved (var={:?})",
-                    ctx.thread().script.name,
-                    var
-                );
+            }
+            if let Some(v) = var {
+                ctx.set_var(v.clone(), Value::Int(0));
             }
             true
         }
