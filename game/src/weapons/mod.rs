@@ -79,7 +79,11 @@ impl Plugin for WeaponPlugin {
             // longer read any GlobalTransforms.
             .add_systems(
                 Update,
-                systems::weapon_attachment_system.run_if(in_state(AppState::InGame)),
+                (
+                    systems::weapon_attachment_system,
+                    systems::resolve_target_bone_system,
+                )
+                    .run_if(in_state(AppState::InGame)),
             );
     }
 }

@@ -1192,6 +1192,77 @@ pub fn spawn_layout_actor(
                 .insert(crate::combat::components::Targetable);
         }
 
+        if let Some(target_data) = actor.target.as_ref() {
+            assets
+                .commands
+                .entity(entity)
+                .insert(crate::combat::components::TargetComponent {
+                    magnet_radius: target_data.magnet_radius,
+                    magnet_strength: target_data.magnet_strength,
+                    target_offset: target_data.target_offset,
+                    is_bump_targetable: target_data.is_bump_targetable,
+                    parent_bone: target_data.parent_bone.clone(),
+                    bone_index: None,
+                });
+        }
+
+        if let Some(reticle_data) = actor.reticle.as_ref() {
+            assets
+                .commands
+                .entity(entity)
+                .insert(crate::combat::components::ReticleComponent {
+                    bump_targeting_enabled: reticle_data.bump_targeting_enabled,
+                    manual_targeting_enabled: reticle_data.manual_targeting_enabled,
+                    max_lock_on_distance: reticle_data.max_lock_on_distance,
+                    movement_rate: reticle_data.movement_rate,
+                    reticle_size: reticle_data.reticle_size,
+                    bump_targeting_max_time: reticle_data.bump_targeting_max_time,
+                    bump_max_delta_angle: reticle_data.bump_max_delta_angle,
+                    bump_world_dist_factor: reticle_data.bump_world_dist_factor,
+                    bump_angle_delta_factor: reticle_data.bump_angle_delta_factor,
+                    bump_screen_dist_factor: reticle_data.bump_screen_dist_factor,
+                    min_angle_x: reticle_data.min_angle_x,
+                    max_angle_x: reticle_data.max_angle_x,
+                    max_angle_y: reticle_data.max_angle_y,
+                    max_angular_velocity: reticle_data.max_angular_velocity,
+                    reticle_neutralization_rate: reticle_data.reticle_neutralization_rate,
+                    bump_magnitude: reticle_data.bump_magnitude,
+                    idle_color: reticle_data.idle_color,
+                    ally_color: reticle_data.ally_color,
+                    neutral_color: reticle_data.neutral_color,
+                    enemy_color: reticle_data.enemy_color,
+                    invincible_color: reticle_data.invincible_color,
+                    idle_transparency: reticle_data.idle_transparency,
+                    starting_lock_on_transparency: reticle_data.starting_lock_on_transparency,
+                    ending_lock_on_transparency: reticle_data.ending_lock_on_transparency,
+                    lock_on_transparency_lerp_rate: reticle_data.lock_on_transparency_lerp_rate,
+                    starting_blur_transparency: reticle_data.starting_blur_transparency,
+                    ending_blur_transparency: reticle_data.ending_blur_transparency,
+                    blur_transparency_lerp_rate: reticle_data.blur_transparency_lerp_rate,
+                    blur_frame_extrapolation: reticle_data.blur_frame_extrapolation,
+                    reticle_a_starting_scale: reticle_data.reticle_a_starting_scale,
+                    reticle_a_ending_scale: reticle_data.reticle_a_ending_scale,
+                    reticle_a_starting_distance: reticle_data.reticle_a_starting_distance,
+                    reticle_a_ending_distance: reticle_data.reticle_a_ending_distance,
+                    reticle_a_starting_rotation_rate: reticle_data.reticle_a_starting_rotation_rate,
+                    reticle_a_ending_rotation_rate: reticle_data.reticle_a_ending_rotation_rate,
+                    reticle_a_lerp_rate_distance: reticle_data.reticle_a_lerp_rate_distance,
+                    reticle_a_lerp_rate_scale: reticle_data.reticle_a_lerp_rate_scale,
+                    reticle_a_lerp_rate_rotation: reticle_data.reticle_a_lerp_rate_rotation,
+                    reticle_b_starting_scale: reticle_data.reticle_b_starting_scale,
+                    reticle_b_ending_scale: reticle_data.reticle_b_ending_scale,
+                    reticle_b_starting_distance: reticle_data.reticle_b_starting_distance,
+                    reticle_b_ending_distance: reticle_data.reticle_b_ending_distance,
+                    reticle_b_starting_rotation_rate: reticle_data.reticle_b_starting_rotation_rate,
+                    reticle_b_ending_rotation_rate: reticle_data.reticle_b_ending_rotation_rate,
+                    reticle_b_lerp_rate_distance: reticle_data.reticle_b_lerp_rate_distance,
+                    reticle_b_lerp_rate_scale: reticle_data.reticle_b_lerp_rate_scale,
+                    reticle_b_lerp_rate_rotation: reticle_data.reticle_b_lerp_rate_rotation,
+                    reticle_a_entity: reticle_data.reticle_a_entity.clone(),
+                    reticle_b_entity: reticle_data.reticle_b_entity.clone(),
+                });
+        }
+
         // <Sound> with a non-empty AudioPackage: attach the per-actor
         // sound driver.  drive_actor_sound_system picks it up,
         // resolves the package nuggets through the TD/HD/BD chain,
@@ -1217,6 +1288,19 @@ pub fn spawn_layout_actor(
                     crane_data.speed_deg,
                     crane_data.clamp_offset,
                 ));
+        }
+
+        // `<Eye>`: perception cone (Range + FieldOfView) consumed
+        // by the ScrOni `look` op.  Attach to every actor that
+        // declares the block; downstream readers (look op, future
+        // perception systems) prefer the Eye over AiFighter defaults.
+        if let Some(eye_data) = actor.eye.as_ref() {
+            assets.commands.entity(entity).insert(
+                crate::oni2_loader::components::Eye {
+                    range: eye_data.range,
+                    field_of_view_deg: eye_data.field_of_view_deg,
+                },
+            );
         }
 
         // <ElbowCraneHitch>: declares this actor as a
@@ -1291,6 +1375,22 @@ pub fn spawn_layout_actor(
         }
 
         // Attach ScrOni script if actor has a <ScrOni> component
+        // Diagnostic for missing-script issues on crane / hitch actors:
+        // when an actor declares ElbowCraneIK or ElbowCraneHitch, log
+        // whether it also carries a parsed `<ScrOni><Filename>` so we
+        // can tell at load time whether the crane will get a script.
+        if actor.crane_ik.is_some() || actor.crane_hitch.is_some() {
+            info!(
+                "[crane] layout-load: actor '{}' (type='{}') crane_ik={} crane_hitch={} \
+                 script_filename={:?} script_main={:?}",
+                actor.entity_type,
+                actor.entity_type,
+                actor.crane_ik.is_some(),
+                actor.crane_hitch.is_some(),
+                actor.script_filename,
+                actor.script_main,
+            );
+        }
         if let Some(ref filename) = actor.script_filename {
             let default_main = std::path::Path::new(filename)
                 .file_stem()

@@ -805,6 +805,11 @@ pub struct ScroniContext<'a, 'w_e, 's_e, 'w_t, 's_t> {
     /// (`DoGetUIItemValue`).  `None` when the
     /// frontend isn't loaded (no-frontend builds, in-game scripts).
     pub get_ui_item_value: Option<&'a dyn Fn(&str, &str) -> f32>,
+    /// Entities that carry an `ElbowCraneHitch` component — i.e.
+    /// can be picked up by an elbow crane.  Powers the
+    /// `look ... status hashitch` filter (legacy `scrStatus::kHasHitch`,
+    /// which checked `animElbowCraneHitchComponent != NULL`).
+    pub hitched_entities: &'a std::collections::HashSet<Entity>,
 }
 
 impl<'a, 'w_e, 's_e, 'w_t, 's_t> ScroniContext<'a, 'w_e, 's_e, 'w_t, 's_t> {
@@ -2506,6 +2511,11 @@ pub struct ActorScriptEffects<'w, 's> {
     /// Hitches (read side) — the pickup drain handler resolves
     /// each target's `Center` + `Extent` here.
     pub crane_hitch: Query<'w, 's, &'static crate::oni2_loader::crane_ik::ElbowCraneHitch>,
+    /// `<Eye>` components (read side) — looked up per looker by
+    /// the perception closures (`get_perception_radius` /
+    /// `get_perception_fov`).  Bundled here rather than as a
+    /// top-level system param to stay under Bevy's 16-arg limit.
+    pub eye: Query<'w, 's, &'static crate::oni2_loader::components::Eye>,
 }
 
 /// Bevy system: tick all ScrOni scripts each frame.
@@ -2587,6 +2597,20 @@ pub fn scroni_tick_system(
         };
         actor_statuses.insert(ent, status);
     }
+    // Hitched-actor set powers `look ... status hashitch` — mirrors
+    // the legacy `scrStatus::kHasHitch` check that an actor has an
+    // `animElbowCraneHitchComponent` attached.  `crane_hitch` is a
+    // `Query<&ElbowCraneHitch>` without entity, so resolve by id
+    // via `all_entities`.
+    let hitched_entities: std::collections::HashSet<Entity> = {
+        let mut set = std::collections::HashSet::new();
+        for (ent, _, _) in all_entities.iter() {
+            if actor_fx.crane_hitch.get(ent).is_ok() {
+                set.insert(ent);
+            }
+        }
+        set
+    };
     drop(_build_status_span);
 
     let _scripts_span = bevy::log::info_span!("scroni::script_loop").entered();
@@ -2646,21 +2670,34 @@ pub fn scroni_tick_system(
         };
         let is_enemy_ref: &dyn Fn(Entity, Entity) -> bool = &is_enemy;
 
+        // Perception range / FOV resolution order:
+        //   1. `<Eye>` component on the looker — authored on the
+        //      actor XML, mirrors the legacy `aiEye`.  Cranes and
+        //      cinematic triggers rely on this so they're not
+        //      capped at the AI default 30 m / 90° cone.
+        //   2. `AiFighter` component — gives full creatures their
+        //      tuned perception when no explicit Eye block is
+        //      present.
+        //   3. Fallback constants (30 m / 90° total cone).
         let get_rad = |e: Entity| -> f32 {
-            if let Ok((_, _, Some(ai))) = health_query.get(e) {
-                ai.perception_radius()
-            } else {
-                30.0
+            if let Ok(eye) = actor_fx.eye.get(e) {
+                return eye.range;
             }
+            if let Ok((_, _, Some(ai))) = health_query.get(e) {
+                return ai.perception_radius();
+            }
+            30.0
         };
         let get_rad_ref: &dyn Fn(Entity) -> f32 = &get_rad;
 
         let get_fov = |e: Entity| -> f32 {
-            if let Ok((_, _, Some(ai))) = health_query.get(e) {
-                ai.perception_fov()
-            } else {
-                45.0_f32.to_radians()
+            if let Ok(eye) = actor_fx.eye.get(e) {
+                return eye.fov_half_rad();
             }
+            if let Ok((_, _, Some(ai))) = health_query.get(e) {
+                return ai.perception_fov();
+            }
+            45.0_f32.to_radians()
         };
         let get_fov_ref: &dyn Fn(Entity) -> f32 = &get_fov;
 
@@ -2713,6 +2750,7 @@ pub fn scroni_tick_system(
             get_perception_fov: Some(get_fov_ref),
             get_actor_health: Some(get_health_ref),
             get_ui_item_value: Some(get_ui_item_value_ref),
+            hitched_entities: &hitched_entities,
         };
         script.exec.tick(now, delta_time, &mut ctx);
 
@@ -2777,6 +2815,10 @@ pub fn scroni_tick_system(
                 Err(_) => Some(true),
             };
             if let Some(failed) = resolution {
+                info!(
+                    "[crane] WaitingForCrane resolved: crane={:?} phase={:?} failed={}",
+                    actor, phase, failed
+                );
                 script.exec.get_thread_mut(tid).blocking_failed = failed;
                 script.exec.clear_blocking(tid);
                 script.exec.tick_thread(tid, now, &mut ctx);
@@ -3292,6 +3334,11 @@ pub fn scroni_tick_system(
                             .map(|(_, gtf, _)| gtf.translation())
                             .unwrap_or(Vec3::ZERO);
                         if let Ok(hitch) = actor_fx.crane_hitch.get(target) {
+                            info!(
+                                "[crane] CranePickup drained: crane={:?} target={:?} target_pos={:?} \
+                                 hitch.center={:?} hitch.extent={}",
+                                actor, target, target_pos, hitch.center, hitch.extent
+                            );
                             crane.pickup_target_actor(
                                 target,
                                 target_pos,
@@ -3299,13 +3346,35 @@ pub fn scroni_tick_system(
                                 hitch.extent,
                             );
                         } else {
+                            warn!(
+                                "[crane] CranePickup drained but target {:?} has no \
+                                 ElbowCraneHitch — falling back to bare pickup_target \
+                                 (no struggle anim, default grab_radius)",
+                                target
+                            );
                             crane.pickup_target(target_pos, 0.157);
                         }
+                    } else {
+                        warn!(
+                            "[crane] CranePickup drained but actor {:?} has no \
+                             ElbowCraneIK component — pickup request dropped",
+                            actor
+                        );
                     }
                 }
                 SysRequest::CraneDropoff { actor, world_pos } => {
                     if let Ok(mut crane) = actor_fx.crane_ik.get_mut(actor) {
+                        info!(
+                            "[crane] CraneDropoff drained: crane={:?} world_pos={:?}",
+                            actor, world_pos
+                        );
                         crane.dropoff_at(world_pos);
+                    } else {
+                        warn!(
+                            "[crane] CraneDropoff drained but actor {:?} has no \
+                             ElbowCraneIK component — dropoff request dropped",
+                            actor
+                        );
                     }
                 }
             }
@@ -3771,6 +3840,7 @@ end
 
         let (all_entities, triggers) = state.get(&world);
         let actor_statuses = std::collections::HashMap::new();
+        let hitched_entities = std::collections::HashSet::new();
         let mut ctx = ScroniContext {
             all_entities: &all_entities,
             triggers: &triggers,
@@ -3784,6 +3854,7 @@ end
             get_perception_fov: None,
             get_actor_health: None,
             get_ui_item_value: None,
+            hitched_entities: &hitched_entities,
         };
 
         // Initially we should have no child threads

@@ -189,7 +189,87 @@ pub struct LayoutActor {
     /// as a crane-pickup target.  `Center` is converted to Bevy
     /// space at parse time.
     pub crane_hitch: Option<CraneHitchComponentData>,
+    /// Parsed `<Target>` block.
+    pub target: Option<TargetComponentData>,
+    /// Parsed `<Reticle>` block.
+    pub reticle: Option<ReticleComponentData>,
+    /// Parsed `<Eye>` block — perception cone (range + total FOV
+    /// in degrees).  Mapped to an [`Eye`](crate::oni2_loader::components::Eye)
+    /// component at spawn.  Powers the ScrOni `look` op's spatial
+    /// gauntlet for actors that aren't full AiFighters.
+    pub eye: Option<EyeComponentData>,
 }
+
+#[derive(Debug, Clone, Copy)]
+pub struct EyeComponentData {
+    /// `<Range>` — perception radius, world units.
+    pub range: f32,
+    /// `<FieldOfView>` — total cone width, degrees.
+    pub field_of_view_deg: f32,
+}
+
+#[derive(Debug, Clone)]
+pub struct TargetComponentData {
+    pub magnet_radius: f32,
+    pub magnet_strength: f32,
+    pub target_offset: Vec3,
+    pub is_bump_targetable: bool,
+    pub parent_bone: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct ReticleComponentData {
+    pub bump_targeting_enabled: bool,
+    pub manual_targeting_enabled: bool,
+    pub max_lock_on_distance: f32,
+    pub movement_rate: f32,
+    pub reticle_size: Vec2,
+    pub bump_targeting_max_time: f32,
+    pub bump_max_delta_angle: f32,
+    pub bump_world_dist_factor: f32,
+    pub bump_angle_delta_factor: f32,
+    pub bump_screen_dist_factor: f32,
+    pub min_angle_x: f32,
+    pub max_angle_x: f32,
+    pub max_angle_y: f32,
+    pub max_angular_velocity: f32,
+    pub reticle_neutralization_rate: f32,
+    pub bump_magnitude: f32,
+    pub idle_color: Vec3,
+    pub ally_color: Vec3,
+    pub neutral_color: Vec3,
+    pub enemy_color: Vec3,
+    pub invincible_color: Vec3,
+    pub idle_transparency: f32,
+    pub starting_lock_on_transparency: f32,
+    pub ending_lock_on_transparency: f32,
+    pub lock_on_transparency_lerp_rate: f32,
+    pub starting_blur_transparency: f32,
+    pub ending_blur_transparency: f32,
+    pub blur_transparency_lerp_rate: f32,
+    pub blur_frame_extrapolation: f32,
+    pub reticle_a_starting_scale: Vec3,
+    pub reticle_a_ending_scale: Vec3,
+    pub reticle_a_starting_distance: f32,
+    pub reticle_a_ending_distance: f32,
+    pub reticle_a_starting_rotation_rate: f32,
+    pub reticle_a_ending_rotation_rate: f32,
+    pub reticle_a_lerp_rate_distance: f32,
+    pub reticle_a_lerp_rate_scale: f32,
+    pub reticle_a_lerp_rate_rotation: f32,
+    pub reticle_b_starting_scale: Vec3,
+    pub reticle_b_ending_scale: Vec3,
+    pub reticle_b_starting_distance: f32,
+    pub reticle_b_ending_distance: f32,
+    pub reticle_b_starting_rotation_rate: f32,
+    pub reticle_b_ending_rotation_rate: f32,
+    pub reticle_b_lerp_rate_distance: f32,
+    pub reticle_b_lerp_rate_scale: f32,
+    pub reticle_b_lerp_rate_rotation: f32,
+    pub reticle_a_entity: Option<String>,
+    pub reticle_b_entity: Option<String>,
+}
+
 
 /// Tunable data extracted from `<ElbowCraneIK><attributes>`.
 /// Maps to `animElbowCraneIKComponentType` in the C++ engine.
@@ -571,7 +651,259 @@ pub fn parse_actor_xml(dir: &str, filename: &str, template_dir: &str) -> Option<
     }
 
     let target_block = extract_component(&chain, has_components_xml, "Target");
-    let has_target = target_block.is_some();
+    let target = target_block.map(|block| {
+        let magnet_radius = extract_xml_attr(&block, "MagnetRadius")
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(1.5);
+        let magnet_strength = extract_xml_attr(&block, "MagnetStrength")
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(0.2);
+        let mut target_offset = extract_xml_attr(&block, "TargetOffset")
+            .and_then(|s| parse_vec3(&s))
+            .unwrap_or(Vec3::ZERO);
+        target_offset = space::to_bevy_space_pos(target_offset);
+        let is_bump_targetable = extract_xml_attr_bool(&block, "IsBumpTargetable")
+            .unwrap_or(true);
+        let parent_bone = extract_xml_attr(&block, "ParentBone")
+            .filter(|s| !s.is_empty());
+        TargetComponentData {
+            magnet_radius,
+            magnet_strength,
+            target_offset,
+            is_bump_targetable,
+            parent_bone,
+        }
+    });
+    let has_target = target.is_some();
+
+    // `<Eye>` block — perception cone for `look` ops.  Defaults
+    // match the legacy aiEye constructor (30 m radius, 90° total
+    // cone width = 45° half-angle), which is what AI without an
+    // explicit Eye block has historically fallen back to.
+    let eye_block = extract_component(&chain, has_components_xml, "Eye");
+    let eye = eye_block.map(|block| {
+        let range = extract_xml_attr(&block, "Range")
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(30.0);
+        let field_of_view_deg = extract_xml_attr(&block, "FieldOfView")
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(90.0);
+        EyeComponentData {
+            range,
+            field_of_view_deg,
+        }
+    });
+
+    let reticle_block = extract_component(&chain, has_components_xml, "Reticle");
+    let reticle = reticle_block.map(|block| {
+        let bump_targeting_enabled = extract_xml_attr_bool(&block, "BumpTargetingEnabled")
+            .unwrap_or(true);
+        let manual_targeting_enabled = extract_xml_attr_bool(&block, "ManualTargetingEnabled")
+            .unwrap_or(true);
+        let max_lock_on_distance = extract_xml_attr(&block, "MaxLockOnDistance")
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(30.0);
+        let movement_rate = extract_xml_attr(&block, "MovementRate")
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(1800.0);
+
+        let reticle_size_x = extract_xml_attr(&block, "ReticleSize_x")
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(32.0);
+        let reticle_size_y = extract_xml_attr(&block, "ReticleSize_y")
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(32.0);
+        let reticle_size = Vec2::new(reticle_size_x, reticle_size_y);
+
+        let bump_targeting_max_time = extract_xml_attr(&block, "BumpTargetingMaxTime")
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(0.2);
+        let bump_max_delta_angle = extract_xml_attr(&block, "BumpMaxDeltaAngle")
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(1.57);
+        let bump_world_dist_factor = extract_xml_attr(&block, "BumpWorldDistFactor")
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(0.080);
+        let bump_angle_delta_factor = extract_xml_attr(&block, "BumpAngleDeltaFactor")
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(1.0);
+        let bump_screen_dist_factor = extract_xml_attr(&block, "BumpScreenDistFactor")
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(0.2);
+
+        let min_angle_x = extract_xml_attr(&block, "MinAngleX")
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(-0.5);
+        let max_angle_x = extract_xml_attr(&block, "MaxAngleX")
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(0.5);
+        let max_angle_y = extract_xml_attr(&block, "MaxAngleY")
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(3.15);
+        let max_angular_velocity = extract_xml_attr(&block, "MaxAngularVelocity")
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(4.0);
+        let reticle_neutralization_rate = extract_xml_attr(&block, "ReticleNeutralizationRate")
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(1.2);
+        let bump_magnitude = extract_xml_attr(&block, "m_BumpMagnitude")
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(0.98);
+
+        let idle_color = extract_xml_attr(&block, "m_IdleColor")
+            .and_then(|s| parse_vec3(&s))
+            .unwrap_or(Vec3::new(1.0, 1.0, 0.25));
+        let ally_color = extract_xml_attr(&block, "m_AllyColor")
+            .and_then(|s| parse_vec3(&s))
+            .unwrap_or(Vec3::new(0.25, 1.0, 0.25));
+        let enemy_color = extract_xml_attr(&block, "m_EnemyColor")
+            .and_then(|s| parse_vec3(&s))
+            .unwrap_or(Vec3::new(1.0, 0.25, 0.25));
+        let neutral_color = extract_xml_attr(&block, "m_NeutralColor")
+            .and_then(|s| parse_vec3(&s))
+            .unwrap_or(Vec3::new(0.25, 0.25, 1.0));
+        let invincible_color = extract_xml_attr(&block, "m_InvincibleColor")
+            .and_then(|s| parse_vec3(&s))
+            .unwrap_or(Vec3::new(1.0, 1.0, 0.25));
+
+        let idle_transparency = extract_xml_attr(&block, "m_IdleTransparency")
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(0.5);
+        let starting_lock_on_transparency = extract_xml_attr(&block, "m_StartingLockOnTransparency")
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(0.0);
+        let ending_lock_on_transparency = extract_xml_attr(&block, "m_EndingLockOnTransparency")
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(0.2);
+        let lock_on_transparency_lerp_rate = extract_xml_attr(&block, "m_LockOnTransparencyLerpRate")
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(0.4);
+        let starting_blur_transparency = extract_xml_attr(&block, "m_StartingBlurTransparency")
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(0.0);
+        let ending_blur_transparency = extract_xml_attr(&block, "m_EndingBlurTransparency")
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(0.4);
+        let blur_transparency_lerp_rate = extract_xml_attr(&block, "m_BlurTransparencyLerpRate")
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(4.0);
+        let blur_frame_extrapolation = extract_xml_attr(&block, "m_BlurFrameExtrapolation")
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(8.0);
+
+        let reticle_a_starting_scale = extract_xml_attr(&block, "m_ReticleAStartingScale")
+            .and_then(|s| parse_vec3(&s))
+            .unwrap_or(Vec3::new(3.0, 3.0, 3.0));
+        let reticle_a_ending_scale = extract_xml_attr(&block, "m_ReticleAEndingScale")
+            .and_then(|s| parse_vec3(&s))
+            .unwrap_or(Vec3::new(0.5, 0.5, 0.5));
+        let reticle_a_starting_distance = extract_xml_attr(&block, "m_ReticleAStartingDistance")
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(0.5);
+        let reticle_a_ending_distance = extract_xml_attr(&block, "m_ReticleAEndingDistance")
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(0.1);
+        let reticle_a_starting_rotation_rate = extract_xml_attr(&block, "m_ReticleAStartingRotationRate")
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(-10.0);
+        let reticle_a_ending_rotation_rate = extract_xml_attr(&block, "m_ReticleAEndingRotationRate")
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(-1.7);
+        let reticle_a_lerp_rate_distance = extract_xml_attr(&block, "m_ReticleALerpRateDistance")
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(2.0);
+        let reticle_a_lerp_rate_scale = extract_xml_attr(&block, "m_ReticleALerpRateScale")
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(2.0);
+        let reticle_a_lerp_rate_rotation = extract_xml_attr(&block, "m_ReticleALerpRateRotation")
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(2.0);
+
+        let reticle_b_starting_scale = extract_xml_attr(&block, "m_ReticleBStartingScale")
+            .and_then(|s| parse_vec3(&s))
+            .unwrap_or(Vec3::new(1.0, 1.0, 1.0));
+        let reticle_b_ending_scale = extract_xml_attr(&block, "m_ReticleBEndingScale")
+            .and_then(|s| parse_vec3(&s))
+            .unwrap_or(Vec3::new(0.5, 0.5, 0.5));
+        let reticle_b_starting_distance = extract_xml_attr(&block, "m_ReticleBStartingDistance")
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(0.1);
+        let reticle_b_ending_distance = extract_xml_attr(&block, "m_ReticleBEndingDistance")
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(0.1);
+        let reticle_b_starting_rotation_rate = extract_xml_attr(&block, "m_ReticleBStartingRotationRate")
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(3.0);
+        let reticle_b_ending_rotation_rate = extract_xml_attr(&block, "m_ReticleBEndingRotationRate")
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(1.7);
+        let reticle_b_lerp_rate_distance = extract_xml_attr(&block, "m_ReticleBLerpRateDistance")
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(2.0);
+        let reticle_b_lerp_rate_scale = extract_xml_attr(&block, "m_ReticleBLerpRateScale")
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(4.0);
+        let reticle_b_lerp_rate_rotation = extract_xml_attr(&block, "m_ReticleBLerpRateRotation")
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(2.0);
+
+        let reticle_a_entity = extract_xml_attr(&block, "m_ReticleAEntity")
+            .filter(|s| !s.is_empty());
+        let reticle_b_entity = extract_xml_attr(&block, "m_ReticleBEntity")
+            .filter(|s| !s.is_empty());
+
+        ReticleComponentData {
+            bump_targeting_enabled,
+            manual_targeting_enabled,
+            max_lock_on_distance,
+            movement_rate,
+            reticle_size,
+            bump_targeting_max_time,
+            bump_max_delta_angle,
+            bump_world_dist_factor,
+            bump_angle_delta_factor,
+            bump_screen_dist_factor,
+            min_angle_x,
+            max_angle_x,
+            max_angle_y,
+            max_angular_velocity,
+            reticle_neutralization_rate,
+            bump_magnitude,
+            idle_color,
+            ally_color,
+            neutral_color,
+            enemy_color,
+            invincible_color,
+            idle_transparency,
+            starting_lock_on_transparency,
+            ending_lock_on_transparency,
+            lock_on_transparency_lerp_rate,
+            starting_blur_transparency,
+            ending_blur_transparency,
+            blur_transparency_lerp_rate,
+            blur_frame_extrapolation,
+            reticle_a_starting_scale,
+            reticle_a_ending_scale,
+            reticle_a_starting_distance,
+            reticle_a_ending_distance,
+            reticle_a_starting_rotation_rate,
+            reticle_a_ending_rotation_rate,
+            reticle_a_lerp_rate_distance,
+            reticle_a_lerp_rate_scale,
+            reticle_a_lerp_rate_rotation,
+            reticle_b_starting_scale,
+            reticle_b_ending_scale,
+            reticle_b_starting_distance,
+            reticle_b_ending_distance,
+            reticle_b_starting_rotation_rate,
+            reticle_b_ending_rotation_rate,
+            reticle_b_lerp_rate_distance,
+            reticle_b_lerp_rate_scale,
+            reticle_b_lerp_rate_rotation,
+            reticle_a_entity,
+            reticle_b_entity,
+        }
+    });
 
     // Even when AudioPackage is empty we still surface a SoundComponentData
     // for any actor whose template declared `<Sound>`.  Mirrors C++
@@ -726,6 +1058,9 @@ pub fn parse_actor_xml(dir: &str, filename: &str, template_dir: &str) -> Option<
         fvt_attack,
         crane_ik,
         crane_hitch,
+        target,
+        reticle,
+        eye,
     })
 }
 
@@ -754,6 +1089,7 @@ const KNOWN_IMPLEMENTED_COMPONENTS: &[&str] = &[
     "ElbowCraneHitch",
     "ElbowCraneIK",
     "Entity",
+    "Eye",
     "FX",
     "FightAI",
     "FightAi",
@@ -762,6 +1098,7 @@ const KNOWN_IMPLEMENTED_COMPONENTS: &[&str] = &[
     "Health",
     "Inventory",
     "Prop",
+    "Reticle",
     "ScrOni",
     "Sound",
     "Target",

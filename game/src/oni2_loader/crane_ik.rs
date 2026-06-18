@@ -118,13 +118,10 @@ pub struct CraneBoneRest {
     pub right_claw_origin_oni: Vec3,
     /// Mirror of [`right_claw_origin_oni`] for the left clamp.
     pub left_claw_origin_oni: Vec3,
-    /// `arm_02` rotation X-channel min/max from the .skel — used
-    /// to clip the solved shoulder angle into the legal envelope.
-    pub shoulder_min: f32,
-    pub shoulder_max: f32,
-    /// `arm_03` rotation X-channel min/max from the .skel.
-    pub elbow_min: f32,
-    pub elbow_max: f32,
+    /// `arm_02` rotation X-channel min/max limit from the .skel, if present.
+    pub shoulder_limit: Option<[f32; 2]>,
+    /// `arm_03` rotation X-channel min/max limit from the .skel, if present.
+    pub elbow_limit: Option<[f32; 2]>,
 }
 
 /// Top-level state machine.  Mirrors `m_State` in the C++.
@@ -234,6 +231,45 @@ pub struct ElbowCraneIK {
     /// `crane_carry_system` to drag the held actor along.
     pub last_claw_world_pos: Vec3,
     pub last_claw_world_rot: Quat,
+    /// Previous tick's |claw - target|² in actor-local Oni space.
+    /// Compared with the current squared distance to detect a
+    /// stall — when the IK can't get any closer (target outside
+    /// reach), the AtTarget check trips after a few repeats and
+    /// the state machine advances anyway.  Mirrors `m_LastMag`.
+    pub last_mag2: f32,
+    /// Consecutive ticks the squared distance hasn't changed.
+    /// Resets when it changes; when it climbs past 4 during a
+    /// lift/lower sub-phase, the AtTarget check reports success
+    /// to unstick the state machine.  Mirrors `m_RepeatCount`.
+    pub repeat_count: u32,
+    /// Seconds spent in [`CraneMovingState::Releasing`] since the
+    /// actor was dropped.  When this reaches [`claw_time`] the
+    /// dropoff completes (`state == Released`).  Mirrors the
+    /// implicit `TIME.GetElapsedTime() - m_TimeStamp` check.
+    pub release_timer: f32,
+    /// How long the crane sits in `Releasing` after dropping
+    /// before advancing to `Released` — `m_ClawTime` in the C++
+    /// (default 1.0s).
+    pub claw_time: f32,
+    /// True while a pickup is in flight but the
+    /// `Acquisition→Attached` transition hasn't fired
+    /// `CRANESTRUGGLE` yet.  One-shot — mirrors the C++ pattern
+    /// where `HandlePickupMatrix` (start struggle) is sent
+    /// exactly once on arrival.
+    pub struggle_pending: bool,
+    /// True from pickup until `drop()`.  Triggers the
+    /// `EndActionMessage(CraneStruggle)` + `DropMessage` on the
+    /// transition out (end the carried-actor's struggle anim and
+    /// teleport-fixup).  Distinct from `carrying_object` because
+    /// the latter gates IK clamp-closure math.
+    pub struggle_active: bool,
+    /// One-shot gate: set to true after `try_init` has either
+    /// succeeded (logs the init line) OR failed (logs the
+    /// missing-bone warning).  Prevents per-tick log spam when a
+    /// non-EricArm-shaped actor accidentally gets an
+    /// `ElbowCraneIK` component — the warning fires once at
+    /// startup, never again.
+    pub init_logged: bool,
 }
 
 impl Default for ElbowCraneIK {
@@ -260,6 +296,13 @@ impl Default for ElbowCraneIK {
             held_hitch_center: Vec3::ZERO,
             last_claw_world_pos: Vec3::ZERO,
             last_claw_world_rot: Quat::IDENTITY,
+            last_mag2: f32::INFINITY,
+            repeat_count: 0,
+            release_timer: 0.0,
+            claw_time: 1.0,
+            struggle_pending: false,
+            struggle_active: false,
+            init_logged: false,
         }
     }
 }
@@ -289,6 +332,11 @@ impl ElbowCraneIK {
         self.state = CraneState::Idle;
         self.moving_state = CraneMovingState::Nothing;
         self.dropoff_world = Vec3::new(100.0, 100.0, 100.0);
+        self.last_mag2 = f32::INFINITY;
+        self.repeat_count = 0;
+        self.release_timer = 0.0;
+        self.struggle_pending = false;
+        self.struggle_active = false;
     }
 
     /// Drive the claw straight to `goal_world` without engaging the
@@ -313,6 +361,11 @@ impl ElbowCraneIK {
         self.moving_state = CraneMovingState::Nothing;
         self.held_entity = None;
         self.held_hitch_center = Vec3::ZERO;
+        self.last_mag2 = f32::INFINITY;
+        self.repeat_count = 0;
+        // No held_entity, so no struggle anim to drive.
+        self.struggle_pending = false;
+        self.struggle_active = false;
     }
 
     /// Equivalent of the C++ `PickupTarget(Target)` once the
@@ -342,6 +395,15 @@ impl ElbowCraneIK {
         self.moving_state = CraneMovingState::Nothing;
         self.held_entity = Some(target);
         self.held_hitch_center = hitch_center;
+        self.last_mag2 = f32::INFINITY;
+        self.repeat_count = 0;
+        self.struggle_pending = true;
+        self.struggle_active = true;
+        info!(
+            "[crane] pickup_target_actor: target={:?} target_pos={:?} hitch.center={:?} \
+             extent={} -> goal_world={:?} grab_radius={} state=Acquisition",
+            target, target_world_pos, hitch_center, extent, self.goal_world, self.grab_radius
+        );
     }
 
     /// Equivalent of `DropoffAt(loc)`.  Begins the lift →
@@ -353,6 +415,16 @@ impl ElbowCraneIK {
         self.state = CraneState::MovingToTarget;
         self.moving_state = CraneMovingState::Lift;
         self.dropoff_world = world_pos;
+        // Clear stall tracking so the new sub-phase has a clean
+        // slate (matches `m_RepeatCount = 0` resets in the C++
+        // AtTarget when transitioning between modes).
+        self.last_mag2 = f32::INFINITY;
+        self.repeat_count = 0;
+        info!(
+            "[crane] dropoff_at: dropoff_world={:?} (lift_world cached at {:?}) \
+             state=MovingToTarget moving_state=Lift",
+            self.dropoff_world, self.lift_world
+        );
     }
 
     /// Equivalent of `Drop()`.  Releases the carried object marker
@@ -364,6 +436,12 @@ impl ElbowCraneIK {
         self.moving_state = CraneMovingState::Nothing;
         self.held_entity = None;
         self.held_hitch_center = Vec3::ZERO;
+        // Struggle anim hooks are one-shot per pickup cycle.  The
+        // crane_ik_system observes these BEFORE calling drop() to
+        // emit the matching EndActionMessage; once drop() returns
+        // they're cleared so a follow-up pickup starts cleanly.
+        self.struggle_pending = false;
+        self.struggle_active = false;
     }
 }
 
@@ -431,21 +509,15 @@ fn try_init(ik: &mut ElbowCraneIK, anim_state: &Oni2AnimState) -> bool {
     let bicep_length = elbow_off.length();
     let forearm_length = forearm_off.length();
 
-    // .skel rotation channel limits aren't currently surfaced on
-    // Oni2BoneChannels, so default the envelope wide (matches the
-    // C++ ctor's `0..PI` placeholder before Init sampled the
-    // skel data).  When `BoneChannels` grows min/max fields,
-    // pull from `skel.channels[shoulder/elbow]` instead.
+    // Pull rotation limits from `skel.channels[shoulder/elbow]` if present
     let rest = CraneBoneRest {
         base_length,
         bicep_length,
         forearm_length,
         right_claw_origin_oni: right_claw_off,
         left_claw_origin_oni: left_claw_off,
-        shoulder_min: 0.0,
-        shoulder_max: PI,
-        elbow_min: 0.0,
-        elbow_max: PI,
+        shoulder_limit: skel.channels.get(shoulder).and_then(|c| c.rot_x_limit),
+        elbow_limit: skel.channels.get(elbow).and_then(|c| c.rot_x_limit),
     };
 
     ik.bones = Some(CraneBones {
@@ -458,9 +530,16 @@ fn try_init(ik: &mut ElbowCraneIK, anim_state: &Oni2AnimState) -> bool {
     });
     ik.rest = Some(rest);
     info!(
-        "ElbowCraneIK init: base={:.3} bicep={:.3} forearm={:.3} speed={}deg/s",
-        base_length, bicep_length, forearm_length, ik.speed_deg
+        "[crane] init OK: bones=arm_01..arm_04+clamp_{{r,l}} base={:.3} bicep={:.3} \
+         forearm={:.3} speed={}deg/s shoulder_lim={:?} elbow_lim={:?}",
+        base_length,
+        bicep_length,
+        forearm_length,
+        ik.speed_deg,
+        ik.rest.as_ref().unwrap().shoulder_limit,
+        ik.rest.as_ref().unwrap().elbow_limit,
     );
+    ik.init_logged = true;
     true
 }
 
@@ -651,14 +730,18 @@ fn apply_ik_pose(
         tf.rotation = arm04_rot;
     }
 
-    // Claw centre in actor-local space.  Matches the C++
-    // `m_ClawMtx.d` calculation in MoveTo: wrist position
-    // displaced by `ClampOffset` along the wrist's forward
-    // axis.  Oni-local `(clamp_offset, 0, 0)` corresponds to the
-    // wrist-frame X axis; in Bevy after conjugation that
-    // becomes `(-clamp_offset, 0, 0)`.
-    let clamp_offset_local = Vec3::new(-clamp_offset, 0.0, 0.0);
-    let claw_local = arm04_pos + arm04_rot * clamp_offset_local;
+    // Claw matrix = wrist global * RotateLocalX(π/2) *
+    // RotateLocalY(π); ClampOffset rides along the resulting Z
+    // axis.  Matches the `m_ClawMtx` construction in the C++
+    // MoveTo.  Under our 180°-Y conjugation, an Oni-space
+    // RotateX(θ) becomes a Bevy RotateX(-θ) and a Y rotation
+    // passes through unchanged, so the post-twist is
+    // `RotX(-π/2) * RotY(π)`.  The `(0, 0, ClampOffset)` offset
+    // in Oni becomes `(0, 0, -clamp_offset)` in Bevy.
+    let claw_twist = Quat::from_rotation_x(-PI / 2.0) * Quat::from_rotation_y(PI);
+    let claw_rot = arm04_rot * claw_twist;
+    let clamp_offset_local = Vec3::new(0.0, 0.0, -clamp_offset);
+    let claw_local = arm04_pos + claw_rot * clamp_offset_local;
 
     // Mirror the IK pose into `Oni2DebugSkeleton.positions` for
     // the six bones we control.  Without this, the F4 debug
@@ -682,7 +765,7 @@ fn apply_ik_pose(
         write(bones.left_clamp, left_pos);
     }
 
-    (claw_local, arm04_rot)
+    (claw_local, claw_rot)
 }
 
 /// Current claw centre in actor-local Oni-space, sampled from the
@@ -715,7 +798,12 @@ fn claw_pos_local_oni(
     let arm03_rot = arm02_rot * elbow_rot;
     let arm04_pos = arm03_pos + arm03_rot * Vec3::new(0.0, rest.forearm_length, 0.0);
     let arm04_rot = arm03_rot * wrist_rot;
-    arm04_pos + arm04_rot * Vec3::new(clamp_offset, 0.0, 0.0)
+    // Claw matrix = wrist * RotX(π/2) * RotY(π); ClampOffset
+    // along the resulting Z.  Pure-Oni math here so the
+    // convergence test compares apples-to-apples with
+    // `local_oni` (which is also in Oni-space).
+    let claw_rot = arm04_rot * Quat::from_rotation_x(PI / 2.0) * Quat::from_rotation_y(PI);
+    arm04_pos + claw_rot * Vec3::new(0.0, 0.0, clamp_offset)
 }
 
 /// Driver system.  Runs after `update_oni2_animation` so the IK
@@ -740,16 +828,35 @@ pub fn crane_ik_system(
         &GlobalTransform,
         Option<&crate::combat::components::Health>,
         Option<&mut crate::oni2_loader::animation::Oni2DebugSkeleton>,
+        Option<&crate::scroni::vm::ScrOniScript>,
+        Option<&crate::oni2_loader::components::ActorAsleep>,
     )>,
     mut joint_tf_query: Query<&mut Transform>,
     target_gtf_query: Query<&GlobalTransform, Without<ElbowCraneIK>>,
+    mut start_action_writer: bevy::prelude::MessageWriter<
+        crate::animator::events::StartActionMessage,
+    >,
+    mut end_action_writer: bevy::prelude::MessageWriter<
+        crate::animator::events::EndActionMessage,
+    >,
+    hitch_query: Query<(Entity, &ElbowCraneHitch, &GlobalTransform)>,
 ) {
     let dt = time.delta_secs();
     if dt <= 0.0 {
         return;
     }
 
-    for (_entity, mut ik, anim_state, actor_gtf, health_opt, mut debug_skel_opt) in &mut ik_query {
+    for (
+        entity,
+        mut ik,
+        anim_state,
+        actor_gtf,
+        health_opt,
+        mut debug_skel_opt,
+        scroni_opt,
+        asleep_opt,
+    ) in &mut ik_query
+    {
         // Death gate — a dead crane releases what it's holding and
         // freezes.  Mirrors `if (!health->IsAlive()) Drop(); return;`
         // in the C++ HandleUpdate.
@@ -757,13 +864,89 @@ pub fn crane_ik_system(
             && health.current <= 0.0
         {
             if ik.carrying_object {
+                info!(
+                    "[crane] crane died while carrying — dropping held={:?}",
+                    ik.held_entity
+                );
+                // End the carried actor's struggle anim and let it
+                // fall.  Matches the C++ Drop() path being followed
+                // by the Hitch's drop teleport when the crane dies.
+                if let Some(held) = ik.held_entity
+                    && ik.struggle_active
+                {
+                    end_action_writer.write(crate::animator::events::EndActionMessage {
+                        entity: held,
+                        action: crate::animator::components::MainAction::CraneStruggle,
+                        subaction: -1,
+                    });
+                }
                 ik.drop();
             }
             continue;
         }
 
+        let was_already_initd = ik.bones.is_some();
         if !try_init(&mut ik, anim_state) {
+            if !ik.init_logged {
+                warn!(
+                    "[crane] init FAILED: actor has ElbowCraneIK but skeleton \
+                     doesn't declare arm_01..arm_04 / clamp_01_{{r,l}} — IK will \
+                     stay idle.  Actor's bones: {:?}",
+                    anim_state.skeleton.names
+                );
+                ik.init_logged = true;
+            }
             continue;
+        }
+        // One-shot post-init diagnostic dump: catalogues everything
+        // that gates the crane's ability to be driven by a script.
+        // If we never see this line, init never ran (no actor with
+        // ElbowCraneIK + matching skeleton).  If we see it but never
+        // see `[crane] ScrOni pickup issued`, the script side never
+        // fires — the dump below tells you why (no script attached,
+        // actor asleep, no hitchable targets in the world, etc).
+        if !was_already_initd {
+            let hitchable: Vec<(Entity, Vec3, f32)> = hitch_query
+                .iter()
+                .map(|(e, _h, gtf)| {
+                    let p = gtf.translation();
+                    let d = p.distance(actor_gtf.translation());
+                    (e, p, d)
+                })
+                .collect();
+            info!(
+                "[crane] post-init context: actor={:?} pos={:?} \
+                 has_scroni={} scroni_owner={:?} asleep={} health_present={} \
+                 hitchable_actors_in_world={} (entries below)",
+                entity,
+                actor_gtf.translation(),
+                scroni_opt.is_some(),
+                scroni_opt.map(|s| s.exec.owner),
+                asleep_opt.is_some(),
+                health_opt.is_some(),
+                hitchable.len(),
+            );
+            for (e, pos, dist) in &hitchable {
+                info!(
+                    "[crane]   hitchable: {:?} pos={:?} dist_from_crane={:.2}",
+                    e, pos, dist
+                );
+            }
+            if scroni_opt.is_none() {
+                warn!(
+                    "[crane] actor {:?} has ElbowCraneIK but NO ScrOniScript — \
+                     no script can issue pickup/dropoff (legacy XML should declare \
+                     `<ScrOni><Filename .../></ScrOni>` on the crane actor)",
+                    entity
+                );
+            }
+            if asleep_opt.is_some() {
+                info!(
+                    "[crane] actor {:?} is currently ActorAsleep (informational; \
+                     layout_loader intentionally ignores updatestate=\"Asleep\")",
+                    entity
+                );
+            }
         }
         let bones = ik.bones.expect("init succeeded");
         let rest = ik.rest.clone().expect("init succeeded");
@@ -781,19 +964,51 @@ pub fn crane_ik_system(
             ik.goal_world = goal;
         }
 
+        // Releasing sub-state runs a one-shot timer with no IK
+        // motion — claws are open, actor has been dropped, we're
+        // just waiting `claw_time` seconds before reporting
+        // dropoff done.  Mirrors the
+        //   if ((TIME.GetElapsedTime() - m_TimeStamp) >= m_ClawTime)
+        // arm in the C++ HandleUpdate.
+        if matches!(ik.state, CraneState::MovingToTarget)
+            && matches!(ik.moving_state, CraneMovingState::Releasing)
+        {
+            ik.release_timer += dt;
+            if ik.release_timer >= ik.claw_time {
+                info!(
+                    "[crane] state MovingToTarget/Releasing -> Released (claw_time={}s elapsed)",
+                    ik.claw_time
+                );
+                ik.state = CraneState::Released;
+                ik.moving_state = CraneMovingState::Nothing;
+            }
+            continue;
+        }
+
         // Pick the active goal in WORLD space.  Returns `None`
         // when the state machine has no target this tick (idle or
         // between substates) — leave the pose alone.
+        //
+        // Translate / Lower include `held_hitch_center.y` so the
+        // claw lands at the actor's hitch-point height above the
+        // dropoff floor (matches `Target.y += m_TargetHitchOffset.y`
+        // in the C++ kTranslate/kLower branches).  Without this,
+        // the dropped actor's feet would clip into the floor by
+        // the hitch height.
         let world_goal = match (ik.state, ik.moving_state) {
             (CraneState::SeekDesiredLocation, _) => Some(ik.goal_world),
             (CraneState::Acquisition, _) => Some(ik.goal_world),
             (CraneState::MovingToTarget, CraneMovingState::Lift) => Some(ik.lift_world),
             (CraneState::MovingToTarget, CraneMovingState::Translate) => {
                 let mut t = ik.dropoff_world;
-                t.y += ik.lift_height;
+                t.y += ik.held_hitch_center.y + ik.lift_height;
                 Some(t)
             }
-            (CraneState::MovingToTarget, CraneMovingState::Lower) => Some(ik.dropoff_world),
+            (CraneState::MovingToTarget, CraneMovingState::Lower) => {
+                let mut t = ik.dropoff_world;
+                t.y += ik.held_hitch_center.y;
+                Some(t)
+            }
             _ => None,
         };
 
@@ -836,8 +1051,23 @@ pub fn crane_ik_system(
         );
 
         if let Some((az, sh, el)) = solved {
-            let sh = sh.clamp(rest.shoulder_min.min(rest.shoulder_max), rest.shoulder_max.max(rest.shoulder_min));
-            let el = el.clamp(rest.elbow_min.min(rest.elbow_max), rest.elbow_max.max(rest.elbow_min));
+            // The .skel limits are on the angle actually written
+            // to the bone (`MakeRotateX(-m_ShoulderAngle)` in the
+            // legacy), so they constrain `-angle`.  Negate the
+            // limit pair (and swap min/max since negation
+            // reverses order) so we clamp the solver output —
+            // which is always positive in practice — to the
+            // equivalent positive-angle range.
+            let sh = if let Some(lim) = rest.shoulder_limit {
+                sh.clamp(-lim[1], -lim[0])
+            } else {
+                sh
+            };
+            let el = if let Some(lim) = rest.elbow_limit {
+                el.clamp(-lim[1], -lim[0])
+            } else {
+                el
+            };
             ik.azimuth = az;
             ik.shoulder_angle = sh;
             ik.elbow_angle = el;
@@ -870,6 +1100,15 @@ pub fn crane_ik_system(
 
         // Convergence test — see if the solved claw is close
         // enough to the goal to advance the state machine.
+        //
+        // Also implements the C++ `m_LastMag` / `m_RepeatCount`
+        // stall-protection: when the squared distance to the
+        // target doesn't change across consecutive ticks (the
+        // arm has plateaued because the goal is outside the IK
+        // envelope), AtTarget reports success anyway after a few
+        // repeats so the state machine can advance instead of
+        // hanging forever.  The C++ only arms the stall counter
+        // during a carrying lift/lower; we mirror that.
         let claw_local = claw_pos_local_oni(
             &rest,
             ik.azimuth,
@@ -877,33 +1116,110 @@ pub fn crane_ik_system(
             ik.elbow_angle,
             ik.clamp_offset,
         );
-        let at_target = (claw_local - local_oni).length_squared() < 0.01;
+        let mag2 = (claw_local - local_oni).length_squared();
+        let mut at_target = mag2 < 0.1;
+        let stall_armed = ik.carrying_object
+            && matches!(
+                ik.moving_state,
+                CraneMovingState::Lift | CraneMovingState::Lower
+            );
+        if !stall_armed {
+            ik.repeat_count = 0;
+        }
+        if !at_target && stall_armed {
+            if (mag2 - ik.last_mag2).abs() < 1e-6 {
+                ik.repeat_count = ik.repeat_count.saturating_add(1);
+                if ik.repeat_count > 4 {
+                    warn!(
+                        "ElbowCraneIK: target outside reach, advancing state machine \
+                         (mag2={:.4}, state={:?}/{:?})",
+                        mag2, ik.state, ik.moving_state
+                    );
+                    at_target = true;
+                }
+            } else {
+                ik.repeat_count = 0;
+            }
+        }
+        ik.last_mag2 = mag2;
 
         if at_target {
             match (ik.state, ik.moving_state) {
                 (CraneState::Acquisition, _) => {
+                    info!(
+                        "[crane] state Acquisition -> Attached (claw reached target, \
+                         held={:?})",
+                        ik.held_entity
+                    );
                     ik.state = CraneState::Attached;
                     ik.lift_world = world_goal;
                     ik.lift_world.y += ik.lift_height;
+                    // Start the held actor's struggle anim on
+                    // arrival.  Mirrors the legacy `HandlePickupMatrix`
+                    // sending `StartAction(ACT_CRANESTRUGGLE)` to the
+                    // grabbed actor (see elbowcranehitch.cpp).
+                    if ik.struggle_pending
+                        && let Some(held) = ik.held_entity
+                    {
+                        info!(
+                            "[crane] emitting StartActionMessage(CraneStruggle) for held={:?}",
+                            held
+                        );
+                        start_action_writer.write(
+                            crate::animator::events::StartActionMessage {
+                                entity: held,
+                                action: crate::animator::components::MainAction::CraneStruggle,
+                                substate: -1,
+                            },
+                        );
+                    }
+                    ik.struggle_pending = false;
+                    // Stall tracking re-arms for the next phase.
+                    ik.last_mag2 = f32::INFINITY;
+                    ik.repeat_count = 0;
                 }
                 (CraneState::MovingToTarget, CraneMovingState::Lift) => {
+                    info!("[crane] moving_state Lift -> Translate");
                     ik.moving_state = CraneMovingState::Translate;
+                    ik.last_mag2 = f32::INFINITY;
+                    ik.repeat_count = 0;
                 }
                 (CraneState::MovingToTarget, CraneMovingState::Translate) => {
+                    info!("[crane] moving_state Translate -> Lower");
                     ik.moving_state = CraneMovingState::Lower;
+                    ik.last_mag2 = f32::INFINITY;
+                    ik.repeat_count = 0;
                 }
                 (CraneState::MovingToTarget, CraneMovingState::Lower) => {
+                    info!(
+                        "[crane] moving_state Lower -> Releasing (drop at {:?})",
+                        ik.dropoff_world
+                    );
                     let dropped_at = ik.dropoff_world;
                     let released = ik.held_entity;
+                    let was_struggling = ik.struggle_active;
                     ik.drop();
+                    // End the held actor's struggle anim and let
+                    // the drop-fixup teleport snap it back to
+                    // upright. `drop()` cleared `held_entity` so
+                    // grab the cached value.
+                    if let Some(held) = released
+                        && was_struggling
+                    {
+                        end_action_writer.write(crate::animator::events::EndActionMessage {
+                            entity: held,
+                            action: crate::animator::components::MainAction::CraneStruggle,
+                            subaction: -1,
+                        });
+                    }
+                    // Re-enter the dropoff state machine in the
+                    // `Releasing` sub-phase — the timer block at
+                    // the top of the loop will advance us to
+                    // `Released` after `claw_time` seconds.
                     ik.state = CraneState::MovingToTarget;
                     ik.moving_state = CraneMovingState::Releasing;
-                    // Stash the drop position on the IK so the
-                    // carry system can park the just-released
-                    // entity at its final resting spot exactly
-                    // once.  `released` is the now-untracked
-                    // entity (`drop()` zeroed `held_entity`).
-                    if let Some(_e) = released {
+                    ik.release_timer = 0.0;
+                    if released.is_some() {
                         ik.last_claw_world_pos = dropped_at;
                     }
                 }

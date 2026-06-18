@@ -105,7 +105,11 @@ pub struct Oni2BoneChannels {
     pub has_rot_x: bool,
     pub has_rot_y: bool,
     pub has_rot_z: bool,
+    pub rot_x_limit: Option<[f32; 2]>,
+    pub rot_y_limit: Option<[f32; 2]>,
+    pub rot_z_limit: Option<[f32; 2]>,
 }
+
 
 #[derive(Clone, Default, Debug)]
 pub struct Oni2Skeleton {

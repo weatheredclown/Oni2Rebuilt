@@ -45,6 +45,32 @@ pub struct ActorFxType {
 #[derive(Component, Debug, Clone)]
 pub struct ActorAsleep;
 
+/// Parsed `<Eye>` component — perception cone for any actor that
+/// can `look`.  Mirrors the legacy `aiEye` component the original
+/// game attached to cranes, creatures, and triggers.
+///
+/// `range` is in world units; `field_of_view_deg` is the *total*
+/// cone angle in degrees (as authored in the XML).  ScrOni's `look`
+/// op compares an actor-relative direction against `fov_half_rad()`
+/// — half the cone, in radians — because the angle it computes
+/// from `angle_between` is symmetric around forward.
+#[derive(Component, Debug, Clone, Copy)]
+pub struct Eye {
+    pub range: f32,
+    pub field_of_view_deg: f32,
+}
+
+impl Eye {
+    /// Half the cone width, in radians.  This is what
+    /// `look_op`'s `angle > looker_fov` check compares against
+    /// (the `angle` it computes is always 0..π).  A FOV of 360°
+    /// produces π rad here, so every direction passes — matching
+    /// the legacy "see all around" intent of EricArm-style cranes.
+    pub fn fov_half_rad(&self) -> f32 {
+        (self.field_of_view_deg * 0.5).to_radians()
+    }
+}
+
 /// Component indicating this entity operates as a game progression checkpoint.
 #[derive(Component, Debug, Clone)]
 pub struct CheckpointTrigger {

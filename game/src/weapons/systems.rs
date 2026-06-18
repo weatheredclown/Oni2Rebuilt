@@ -53,6 +53,59 @@ fn muzzle_world_transform(
     (world_pos, world_dir)
 }
 
+fn get_target_world_position(
+    target_entity: Entity,
+    global_transforms: &Query<&GlobalTransform>,
+    target_comps: &Query<&crate::combat::components::TargetComponent>,
+    anim_states: &Query<&crate::oni2_loader::animation::Oni2AnimState>,
+) -> Vec3 {
+    if let Ok(target_comp) = target_comps.get(target_entity) {
+        let offset = target_comp.target_offset;
+
+        if let Some(bone_idx) = target_comp.bone_index {
+            if let Ok(anim_state) = anim_states.get(target_entity) {
+                if let Some(&joint_entity) = anim_state.joint_entities.get(bone_idx) {
+                    if let Ok(joint_gt) = global_transforms.get(joint_entity) {
+                        return joint_gt.transform_point(offset);
+                    }
+                }
+            }
+        }
+
+        if let Ok(actor_gt) = global_transforms.get(target_entity) {
+            return actor_gt.transform_point(offset);
+        }
+    }
+
+    if let Ok(actor_gt) = global_transforms.get(target_entity) {
+        return actor_gt.translation();
+    }
+
+    Vec3::ZERO
+}
+
+pub fn resolve_target_bone_system(
+    mut target_q: Query<(
+        &mut crate::combat::components::TargetComponent,
+        &crate::oni2_loader::animation::Oni2AnimState,
+    )>,
+) {
+    for (mut target_comp, anim_state) in &mut target_q {
+        if target_comp.bone_index.is_none() {
+            if let Some(parent_bone_name) = &target_comp.parent_bone {
+                if let Some(idx) = anim_state
+                    .skeleton
+                    .names
+                    .iter()
+                    .position(|name| name == parent_bone_name)
+                {
+                    target_comp.bone_index = Some(idx);
+                }
+            }
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Aimers
 // ---------------------------------------------------------------------------
@@ -282,6 +335,8 @@ pub fn ammo_system(
 pub fn weapon_aim_body_turn_system(
     weapon_q: Query<&Weapon>,
     transforms: Query<&GlobalTransform>,
+    target_comps: Query<&crate::combat::components::TargetComponent>,
+    anim_states: Query<&crate::oni2_loader::animation::Oni2AnimState>,
     mut fighter_q: Query<&mut crate::fight::components::FighterState>,
 ) {
     for weapon in &weapon_q {
@@ -289,10 +344,12 @@ pub fn weapon_aim_body_turn_system(
             AimTarget::None => continue,
             AimTarget::Point(p) => *p,
             AimTarget::Actor { target, .. } | AimTarget::Miss { target, .. } => {
-                match transforms.get(*target) {
-                    Ok(gt) => gt.translation(),
-                    Err(_) => continue,
-                }
+                get_target_world_position(
+                    *target,
+                    &transforms,
+                    &target_comps,
+                    &anim_states,
+                )
             }
         };
         // Owner is the wielder — turn their body to face the aim point
@@ -444,8 +501,10 @@ pub fn weapon_attachment_system(
 ///   4. When the cycle completes, re-latch `chamber_time` (+ `auto_fire_delay`
 ///      if auto-firing) and decide whether to stop firing or loop.
 pub fn weapon_update_system(
-    mut query: Query<(Entity, &mut Weapon, &Transform)>,
-    target_transforms: Query<&Transform>,
+    mut query: Query<(Entity, &mut Weapon, &GlobalTransform)>,
+    global_transforms: Query<&GlobalTransform>,
+    target_comps: Query<&crate::combat::components::TargetComponent>,
+    anim_states: Query<&crate::oni2_loader::animation::Oni2AnimState>,
     time: Res<Time>,
     mut commands: Commands,
     mut fired_writer: MessageWriter<WeaponFiredMessage>,
@@ -459,28 +518,34 @@ pub fn weapon_update_system(
     for (_, w, _) in &query {
         match &w.aim {
             AimTarget::Actor { target, .. } | AimTarget::Miss { target, .. } => {
-                if let Ok(t) = target_transforms.get(*target) {
-                    target_positions.insert(*target, t.translation);
-                }
+                let pos = get_target_world_position(
+                    *target,
+                    &global_transforms,
+                    &target_comps,
+                    &anim_states,
+                );
+                target_positions.insert(*target, pos);
             }
             _ => {}
         }
     }
 
-    for (weapon_entity, mut weapon, weapon_tf) in &mut query {
+    for (weapon_entity, mut weapon, weapon_gt) in &mut query {
+        let (_, weapon_rot, weapon_pos) = weapon_gt.to_scale_rotation_translation();
+
         // --- 1. Aim resolution -------------------------------------------------
         let proj_speed = weapon
             .firing_mode()
             .and_then(|m| m.first_state.projectiles.first().map(|p| p.speed))
             .unwrap_or(20.0);
-        let fallback_fwd = (weapon_tf.rotation * Vec3::NEG_Z).normalize_or_zero();
+        let fallback_fwd = (weapon_rot * Vec3::NEG_Z).normalize_or_zero();
         let aimer = weapon
             .firing_mode()
             .map(|m| m.aimer)
             .unwrap_or(Aimer::Simple);
 
         weapon.firing_dir = resolve_aim(
-            weapon_tf.translation,
+            weapon_pos,
             fallback_fwd,
             &weapon.aim,
             aimer,
@@ -540,8 +605,6 @@ pub fn weapon_update_system(
 
         // Muzzle frame — attached to the weapon's transform.  Subclasses may
         // later override this via a grip/bone socket.
-        let weapon_pos = weapon_tf.translation;
-        let weapon_rot = weapon_tf.rotation;
 
         // --- 3a. Projectiles -------------------------------------------------
         for (pi_idx, proj) in state_ref_clone.projectiles.iter().enumerate() {

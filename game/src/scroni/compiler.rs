@@ -1641,10 +1641,24 @@ impl Compiler {
         let mut args = Vec::new();
         while !self.at_end() {
             let mut is_kw = true;
+            // ScrOni `look <list> status <state>, <state>, ...` accepts
+            // a fixed vocabulary of state keywords.  Each maps to the
+            // legacy `scrStatus::k*` enum and is matched against the
+            // candidate target in the look op's filter loop (see
+            // `ops/combat.rs`).  Keywords arrive as their own
+            // `TokenCode` variant (not generic identifiers), so each
+            // one we accept here must be explicitly listed — otherwise
+            // is_expr_start() returns false for them and the parser
+            // trips the "Hanging value" error.
             match self.code() {
                 TokenCode::Status => args.push(Expr::StringLit("status".to_string())),
                 TokenCode::Alive => args.push(Expr::StringLit("alive".to_string())),
                 TokenCode::Enemy => args.push(Expr::StringLit("enemy".to_string())),
+                TokenCode::Fighting => args.push(Expr::StringLit("fighting".to_string())),
+                TokenCode::Player => args.push(Expr::StringLit("player".to_string())),
+                TokenCode::Hanging => args.push(Expr::StringLit("hanging".to_string())),
+                TokenCode::Creature => args.push(Expr::StringLit("creature".to_string())),
+                TokenCode::HasHitch => args.push(Expr::StringLit("hashitch".to_string())),
                 _ => is_kw = false,
             }
             if is_kw {

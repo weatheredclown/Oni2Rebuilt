@@ -71,14 +71,37 @@ pub fn parse_skel(content: &str) -> Oni2Skeleton {
                 // Locked track, does not consume anim channels (typically)
                 continue;
             }
+            let has_limit = parts.len() >= 4 && parts[1] == "limit";
+            let limit = if has_limit {
+                let v1 = parts[2].parse::<f32>().unwrap_or(0.0);
+                let v2 = parts[3].parse::<f32>().unwrap_or(0.0);
+                Some([v1.min(v2), v1.max(v2)])
+            } else {
+                None
+            };
             if let Some(ch) = channels.last_mut() {
                 match parts[0] {
                     "transX" => ch.has_trans_x = true,
                     "transY" => ch.has_trans_y = true,
                     "transZ" => ch.has_trans_z = true,
-                    "rotX" => ch.has_rot_x = true,
-                    "rotY" => ch.has_rot_y = true,
-                    "rotZ" => ch.has_rot_z = true,
+                    "rotX" => {
+                        ch.has_rot_x = true;
+                        if has_limit {
+                            ch.rot_x_limit = limit;
+                        }
+                    }
+                    "rotY" => {
+                        ch.has_rot_y = true;
+                        if has_limit {
+                            ch.rot_y_limit = limit;
+                        }
+                    }
+                    "rotZ" => {
+                        ch.has_rot_z = true;
+                        if has_limit {
+                            ch.rot_z_limit = limit;
+                        }
+                    }
                     _ => {}
                 }
             }
@@ -98,3 +121,48 @@ pub fn parse_skel(content: &str) -> Oni2Skeleton {
     skel.build_channel_map();
     skel
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_skel_limits() {
+        let content = r#"
+Version: 101
+NumBones 2
+bone root {
+	offset 0.000000 0.000000 0.000000
+	transX 
+	transY 
+	transZ 
+	rotX 
+	rotY 
+	rotZ 
+	bone arm_01 {
+		offset 0.000000 0.214873 0.000000
+		rotX limit 0.244 -2.424
+		rotY 
+		rotZ limit 0.000 0.000
+	}
+}
+"#;
+        let skel = parse_skel(content);
+        assert_eq!(skel.names[1], "arm_01");
+
+        let ch0 = &skel.channels[0];
+        assert_eq!(ch0.rot_x_limit, None);
+        assert_eq!(ch0.rot_y_limit, None);
+        assert_eq!(ch0.rot_z_limit, None);
+
+        let ch1 = &skel.channels[1];
+        assert!(ch1.has_rot_x);
+        assert!(ch1.has_rot_y);
+        assert!(ch1.has_rot_z);
+        // Note: min/max sorted by parse_skel
+        assert_eq!(ch1.rot_x_limit, Some([-2.424, 0.244]));
+        assert_eq!(ch1.rot_y_limit, None);
+        assert_eq!(ch1.rot_z_limit, Some([0.0, 0.0]));
+    }
+}
+

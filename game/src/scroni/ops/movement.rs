@@ -81,8 +81,22 @@ pub fn exec(ctx: &mut OpsCtx, stmt: &Stmt) -> bool {
             // `WaitingForCrane { Pickup }` until the IK reports
             // the chain landed (state == Attached).
             let script_actor = ctx.exec.owner;
-            match ctx.eval(expr) {
+            let raw_arg = ctx.eval(expr);
+            // Log the reach regardless of arg type so it's
+            // discoverable when the sequence makes it here but the
+            // value isn't what the script author expected
+            // (e.g. `next` returned None because the actor list
+            // was already exhausted this frame).
+            info!(
+                "[crane] ScrOni pickup REACHED: crane={:?} arg_expr={:?} arg_value={:?}",
+                script_actor, expr, raw_arg
+            );
+            match raw_arg {
                 Value::Actor(target) => {
+                    info!(
+                        "[crane] ScrOni pickup issued: crane={:?} target={:?}",
+                        script_actor, target
+                    );
                     ctx.sys_request(SysRequest::CranePickup {
                         actor: script_actor,
                         target,
@@ -94,7 +108,7 @@ pub fn exec(ctx: &mut OpsCtx, stmt: &Stmt) -> bool {
                 }
                 other => {
                     warn!(
-                        "VM: pickup arg evaluated to non-actor {:?} (no-op)",
+                        "[crane] ScrOni pickup arg evaluated to non-actor {:?} (no-op)",
                         other
                     );
                     ctx.yield_thread();
@@ -105,7 +119,7 @@ pub fn exec(ctx: &mut OpsCtx, stmt: &Stmt) -> bool {
         Stmt::Dropoff { at } => {
             let script_actor = ctx.exec.owner;
             let Some(at_expr) = at else {
-                warn!("VM: dropoff without `at <vec>` clause (no-op)");
+                warn!("[crane] ScrOni dropoff without `at <vec>` clause (no-op)");
                 ctx.yield_thread();
                 return true;
             };
@@ -115,6 +129,10 @@ pub fn exec(ctx: &mut OpsCtx, stmt: &Stmt) -> bool {
                     // space; flip to Bevy at the parse boundary
                     // (matches every other vec-consuming op).
                     let bevy_pos = crate::oni2_loader::utils::space::to_bevy_space_pos(world_pos);
+                    info!(
+                        "[crane] ScrOni dropoff issued: crane={:?} oni={:?} bevy={:?}",
+                        script_actor, world_pos, bevy_pos
+                    );
                     ctx.sys_request(SysRequest::CraneDropoff {
                         actor: script_actor,
                         world_pos: bevy_pos,
@@ -126,7 +144,7 @@ pub fn exec(ctx: &mut OpsCtx, stmt: &Stmt) -> bool {
                 }
                 other => {
                     warn!(
-                        "VM: dropoff target evaluated to non-vector {:?} (no-op)",
+                        "[crane] ScrOni dropoff target evaluated to non-vector {:?} (no-op)",
                         other
                     );
                     ctx.yield_thread();

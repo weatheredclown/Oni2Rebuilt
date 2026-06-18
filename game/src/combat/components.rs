@@ -57,6 +57,73 @@ pub struct DestroyOnDeath(pub f32);
 #[derive(Component)]
 pub struct Targetable;
 
+/// Detailed target properties parsed from `<Target>` XML.
+/// Matches C++ `tgtTargetComponent` and `tgtTargetComponentType`.
+#[derive(Component, Debug, Clone)]
+pub struct TargetComponent {
+    pub magnet_radius: f32,
+    pub magnet_strength: f32,
+    pub target_offset: Vec3,
+    pub is_bump_targetable: bool,
+    pub parent_bone: Option<String>,
+    pub bone_index: Option<usize>,
+}
+
+/// Wielder-side reticle settings parsed from `<Reticle>` XML.
+/// Matches C++ `tgtReticleComponentType` and `tgtReticleComponent`.
+#[derive(Component, Debug, Clone)]
+pub struct ReticleComponent {
+    pub bump_targeting_enabled: bool,
+    pub manual_targeting_enabled: bool,
+    pub max_lock_on_distance: f32,
+    pub movement_rate: f32,
+    pub reticle_size: Vec2,
+    pub bump_targeting_max_time: f32,
+    pub bump_max_delta_angle: f32,
+    pub bump_world_dist_factor: f32,
+    pub bump_angle_delta_factor: f32,
+    pub bump_screen_dist_factor: f32,
+    pub min_angle_x: f32,
+    pub max_angle_x: f32,
+    pub max_angle_y: f32,
+    pub max_angular_velocity: f32,
+    pub reticle_neutralization_rate: f32,
+    pub bump_magnitude: f32,
+    pub idle_color: Vec3,
+    pub ally_color: Vec3,
+    pub neutral_color: Vec3,
+    pub enemy_color: Vec3,
+    pub invincible_color: Vec3,
+    pub idle_transparency: f32,
+    pub starting_lock_on_transparency: f32,
+    pub ending_lock_on_transparency: f32,
+    pub lock_on_transparency_lerp_rate: f32,
+    pub starting_blur_transparency: f32,
+    pub ending_blur_transparency: f32,
+    pub blur_transparency_lerp_rate: f32,
+    pub blur_frame_extrapolation: f32,
+    pub reticle_a_starting_scale: Vec3,
+    pub reticle_a_ending_scale: Vec3,
+    pub reticle_a_starting_distance: f32,
+    pub reticle_a_ending_distance: f32,
+    pub reticle_a_starting_rotation_rate: f32,
+    pub reticle_a_ending_rotation_rate: f32,
+    pub reticle_a_lerp_rate_distance: f32,
+    pub reticle_a_lerp_rate_scale: f32,
+    pub reticle_a_lerp_rate_rotation: f32,
+    pub reticle_b_starting_scale: Vec3,
+    pub reticle_b_ending_scale: Vec3,
+    pub reticle_b_starting_distance: f32,
+    pub reticle_b_ending_distance: f32,
+    pub reticle_b_starting_rotation_rate: f32,
+    pub reticle_b_ending_rotation_rate: f32,
+    pub reticle_b_lerp_rate_distance: f32,
+    pub reticle_b_lerp_rate_scale: f32,
+    pub reticle_b_lerp_rate_rotation: f32,
+    pub reticle_a_entity: Option<String>,
+    pub reticle_b_entity: Option<String>,
+}
+
 #[derive(Component)]
 pub struct DeathSequenceTimer(pub Timer);
 

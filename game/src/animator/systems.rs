@@ -577,7 +577,7 @@ fn try_start_action(
         MainAction::CraneStruggle => {
             ap.flags &= !action_flags::OVERRIDELIST_STRUGGLE;
             play_and_record(
-                "ANIMNORMAL_CRANESTRUGGLE",
+                "ANIMREACT_CRANESTRUGGLE",
                 sub_state_1::CRANE_STRUGGLE,
                 ap,
                 lib,

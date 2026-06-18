@@ -200,16 +200,6 @@ pub fn exec(ctx: &mut OpsCtx, stmt: &Stmt) -> bool {
                         let mut passes_filter = true;
 
                         let is_player = ctx.ctx.player == Some(ent);
-                        let dir_to_tgt =
-                            (tgt_tf.translation() - looker_pos).xz().normalize_or_zero();
-                        if is_player {
-                            info!(
-                                "  -> checking PLAYER entity {:?} (dist: {:.1}, angle: {:.1} deg)",
-                                ent,
-                                looker_pos.distance(tgt_tf.translation()),
-                                looker_forward.angle_between(dir_to_tgt).to_degrees()
-                            );
-                        }
 
                         for required_state in &states {
                             let matches = match required_state.as_str() {
@@ -233,15 +223,17 @@ pub fn exec(ctx: &mut OpsCtx, stmt: &Stmt) -> bool {
                                         .unwrap_or(ent != owner);
                                     !is_enemy
                                 }
-                                _ => false,
+                                "hashitch" => ctx.ctx.hitched_entities.contains(&ent),
+                                _ => {
+                                    trace!(
+                                        "[look] unknown status filter '{}' — \
+                                         treating as no-match",
+                                        required_state
+                                    );
+                                    false
+                                }
                             };
                             if !matches {
-                                if is_player {
-                                    info!(
-                                        "  -> PLAYER {:?} failed status: required {}, had {}",
-                                        ent, required_state, cur_status
-                                    );
-                                }
                                 passes_filter = false;
                                 break;
                             }
@@ -255,26 +247,12 @@ pub fn exec(ctx: &mut OpsCtx, stmt: &Stmt) -> bool {
                         let tgt_pos = tgt_tf.translation();
                         let dist = looker_pos.distance(tgt_pos);
                         if dist > looker_rad {
-                            if is_player {
-                                info!(
-                                    "  -> PLAYER {:?} failed dist: {:.1} > {:.1}",
-                                    ent, dist, looker_rad
-                                );
-                            }
                             continue;
                         }
 
                         let dir_to_tgt = (tgt_pos - looker_pos).xz().normalize_or_zero();
                         let angle = looker_forward.angle_between(dir_to_tgt).abs();
                         if angle > looker_fov {
-                            if is_player {
-                                info!(
-                                    "  -> PLAYER {:?} failed FOV: {:.1} > {:.1}",
-                                    ent,
-                                    angle.to_degrees(),
-                                    looker_fov.to_degrees()
-                                );
-                            }
                             continue;
                         }
 
@@ -303,20 +281,56 @@ pub fn exec(ctx: &mut OpsCtx, stmt: &Stmt) -> bool {
                     ctx.set_var(name.clone(), Value::ActorList(found_actors.clone(), 0));
                 }
 
-                let log_msg = format!(
-                    "VM: Look {} status {:?} (rad: {:.1}, fov: {:.1}) → found {} actors",
-                    name,
-                    states,
-                    looker_rad,
-                    looker_fov.to_degrees(),
-                    found_actors.len()
-                );
-                // ALWAYS print this for debugging
-                info!("{}", log_msg);
+                // Log at debug level by default — at typical
+                // whenever frequencies (~60-100/s) info-level here
+                // overwhelms the log and hides everything else.
+                // Promote to info only on transitions: when the
+                // returned actor count changes from the previous
+                // call against the same listvar, OR on the very
+                // first call.  Stash last-seen count in the thread's
+                // whenever_timers map (re-purposed as a tiny
+                // string->f64 stash) so we don't need a new field.
+                let key = format!("__look_last_count__{}", name);
+                let prev_count = ctx
+                    .thread()
+                    .whenever_timers
+                    .get(&key)
+                    .copied()
+                    .map(|v| v as usize);
+                let now_count = found_actors.len();
+                let changed = prev_count != Some(now_count);
+                ctx.thread_mut()
+                    .whenever_timers
+                    .insert(key, now_count as f64);
+                if changed {
+                    info!(
+                        "VM: Look {} status {:?} (rad: {:.1}, fov: {:.1}) → found {} actors [count changed: {:?} -> {}]",
+                        name,
+                        states,
+                        looker_rad,
+                        looker_fov.to_degrees(),
+                        found_actors.len(),
+                        prev_count,
+                        now_count
+                    );
+                }
             } else {
                 warn!("VM: Look had no listvar target (args={:?})", args);
             }
-            ctx.thread_mut().state = ExecState::Yielded;
+            // Only yield when running in the sequence — the legacy
+            // semantic is "look does one frame of work and gives up
+            // the rest of the frame".  When called from inside a
+            // `whenever` block, the whenever-loop interprets any
+            // Yielded state as an `exit` and breaks, which would
+            // skip every statement after this one (notably the
+            // common `set myTarget to next targetlist` pattern that
+            // every `look ... whenever` script relies on).
+            // Mirrors `aiScript::ExecLook` — predicate work runs
+            // inline inside whenever bodies, blocking yield only in
+            // sequence flow.
+            if !ctx.thread().in_whenever {
+                ctx.thread_mut().state = ExecState::Yielded;
+            }
             true
         }
         Stmt::Hit {
