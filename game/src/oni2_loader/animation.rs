@@ -1418,7 +1418,18 @@ pub fn update_oni2_animation(
         // lazily at playback instead.
         let strip_root = match anim_state.anim.gait_normalize {
             Some(mode) => mode.should_strip_root(),
-            None => render_offset.is_some() && anim_state.looping,
+            // One-shot attack swings bake a forward lunge into the root
+            // bone's XZ channels.  Strip it like a looping locomotion gait
+            // so the displacement is captured into `root_offset` and applied
+            // to the actor's `Transform` below — moving the character forward
+            // with the punch instead of letting the pose drift in place and
+            // snap back when the swing ends.  Attack anims are the ones that
+            // loaded a `.atdt` (only attack-class aliases do), so
+            // `attack_data` is the reliable "this is an attack" signal.
+            None => {
+                render_offset.is_some()
+                    && (anim_state.looping || anim_state.anim.attack_data.is_some())
+            }
         };
         let bone_result = crate::oni2_loader::utils::bone::compute_animated_bone_transforms(
             &anim_state.skeleton,
@@ -1573,7 +1584,18 @@ pub fn refresh_anim_joints_post_fsm_system(
         let frame = &anim_state.current_frame;
         let strip_root = match anim_state.anim.gait_normalize {
             Some(mode) => mode.should_strip_root(),
-            None => render_offset.is_some() && anim_state.looping,
+            // One-shot attack swings bake a forward lunge into the root
+            // bone's XZ channels.  Strip it like a looping locomotion gait
+            // so the displacement is captured into `root_offset` and applied
+            // to the actor's `Transform` below — moving the character forward
+            // with the punch instead of letting the pose drift in place and
+            // snap back when the swing ends.  Attack anims are the ones that
+            // loaded a `.atdt` (only attack-class aliases do), so
+            // `attack_data` is the reliable "this is an attack" signal.
+            None => {
+                render_offset.is_some()
+                    && (anim_state.looping || anim_state.anim.attack_data.is_some())
+            }
         };
         let bone_result = crate::oni2_loader::utils::bone::compute_animated_bone_transforms(
             &anim_state.skeleton,

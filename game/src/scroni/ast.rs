@@ -387,6 +387,13 @@ pub enum Stmt {
     MusicPlay(Expr),
     MusicStop,
 
+    /// Cutscene audio (rbAudioManager::PlayCutScene / EndCutScene).
+    /// `StartCutSceneAudio <name> [csVolume] [bgVolume]`.
+    StartCutSceneAudio {
+        args: Vec<Expr>,
+    },
+    EndCutSceneAudio,
+
     /// Fog commands
     SetFogType(Expr),
     SetFogRange {

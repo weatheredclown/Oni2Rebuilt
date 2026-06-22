@@ -156,10 +156,37 @@ pub fn exec(ctx: &mut OpsCtx, stmt: &Stmt) -> bool {
             }
             true
         }
-        Stmt::MusicPlay(_expr) => {
-            true // not natively wired locally
+        Stmt::MusicPlay(expr) => {
+            // `MusicPlay <name>` — resolve the track and hand it to the
+            // manager's two-channel crossfade.  ScrOni only supplies a
+            // name; volume defaults to full and the blend is instant
+            // (blend_time 0) unless future args extend this.
+            let name = ctx.eval_string(expr);
+            ctx.sys_request(SysRequest::MusicPlay(name, 1.0, 0.0));
+            true
         }
-        Stmt::MusicStop => true,
+        Stmt::MusicStop => {
+            ctx.sys_request(SysRequest::MusicStop);
+            true
+        }
+        Stmt::StartCutSceneAudio { args } => {
+            // `StartCutSceneAudio <name> [csVolume] [bgVolume]`.  Matches
+            // rbAudioManager::PlayCutScene defaults: csvolume<0 (None) keeps
+            // the source volume, bgvolume defaults to 0 (full ambient duck).
+            if args.is_empty() {
+                warn!("VM: StartCutSceneAudio: expected a name");
+                return true;
+            }
+            let name = ctx.eval_string(&args[0]);
+            let cs_volume = args.get(1).map(|e| ctx.eval_float(e)).filter(|v| *v >= 0.0);
+            let bg_volume = args.get(2).map(|e| ctx.eval_float(e)).unwrap_or(0.0);
+            ctx.sys_request(SysRequest::PlayCutScene(name, cs_volume, bg_volume));
+            true
+        }
+        Stmt::EndCutSceneAudio => {
+            ctx.sys_request(SysRequest::EndCutScene);
+            true
+        }
         _ => false,
     }
 }

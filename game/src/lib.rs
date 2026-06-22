@@ -22,6 +22,7 @@ pub mod fx_system;
 pub mod fx_visuals;
 pub mod hud;
 pub mod inventory;
+pub mod rbaudio;
 pub mod laser;
 pub mod menu;
 pub mod mover;

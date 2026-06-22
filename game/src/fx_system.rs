@@ -246,6 +246,9 @@ fn handle_play_sound(
             speed: final_pitch,
             ..Default::default()
         },
+        // Route through the Player volume group so global pause ducking
+        // reaches one-shot SFX via the master mixing pass.
+        crate::rbaudio::AudioGroup::new(crate::rbaudio::AudioGroupId::Player, final_volume),
         // Loop-mode audio doesn't auto-despawn, and even Despawn-
         // mode one-shots can outlive a layout if the layout exits
         // mid-playback.  Tagging both ensures cleanup_game catches

@@ -993,6 +993,19 @@ pub fn scroni_sys_event_observer(
             let Some(source_handle) = source_handle else {
                 return;
             };
+
+            // Channel cap (kMaxAmbients): refuse to exceed the manager's
+            // ambient channel budget, mirroring rbAudioManager::AmbientPlay's
+            // "Max Ambients playing" guard.
+            if ambient_sound_query.iter().count() >= crate::rbaudio::MAX_AMBIENTS {
+                warn!(
+                    "VM: AmbientPlay — max ambients playing ({}), dropping '{}'",
+                    crate::rbaudio::MAX_AMBIENTS,
+                    file_name
+                );
+                return;
+            }
+
             let mut settings = if should_loop {
                 bevy::audio::PlaybackSettings::LOOP
             } else {
@@ -1009,6 +1022,12 @@ pub fn scroni_sys_event_observer(
                 settings = settings.with_speed(start_pitch);
             }
 
+            // Base (pre-group) volume for the master mixing pass: the
+            // explicit volume, else the ramp start, else unity.
+            let ambient_base = volume
+                .or(volume_ramp.map(|(s, _, _)| s))
+                .unwrap_or(1.0);
+
             // Tag with InGameEntity so the `cleanup_game` system
             // (menu.rs) despawns them on AppState transitions — prevents
             // looping ambients from surviving a level unload.
@@ -1016,6 +1035,10 @@ pub fn scroni_sys_event_observer(
                 bevy::audio::AudioPlayer(source_handle),
                 settings,
                 ActiveAmbientSound { handle },
+                crate::rbaudio::AudioGroup::new(
+                    crate::rbaudio::AudioGroupId::Ambient,
+                    ambient_base,
+                ),
                 crate::menu::InGameEntity,
             ));
 
@@ -1110,5 +1133,13 @@ pub fn scroni_sys_event_observer(
         ScrOniSysEvent::PlayerTaskFailure => {
             info!("VM: PlayerTaskFailure");
         }
+        // Music / cutscene audio are owned by the rbaudio manager and
+        // handled by `crate::rbaudio::scroni_audio_observer` (a separate
+        // observer carrying the manager + audio asset resources), so they're
+        // intentional no-ops here.
+        ScrOniSysEvent::MusicPlay { .. }
+        | ScrOniSysEvent::MusicStop
+        | ScrOniSysEvent::PlayCutScene { .. }
+        | ScrOniSysEvent::EndCutScene => {}
     }
 }

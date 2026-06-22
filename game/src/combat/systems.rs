@@ -692,6 +692,8 @@ pub fn injure_system(
     mut reaction_writer: MessageWriter<HitReactionMessage>,
     mut commands: Commands,
     fx_registry: Res<crate::fight::AttackFxRegistry>,
+    players: Query<(), With<crate::player::components::Player>>,
+    mut sound_trigger: MessageWriter<crate::actor_sound::ActorSoundTrigger>,
 ) {
     let now = time.elapsed_secs_f64();
 
@@ -855,6 +857,20 @@ pub fn injure_system(
                 direction: knockback_dir,
                 react_enum,
             });
+
+            // Player-knockdown taunt: when the PLAYER is knocked down, the
+            // attacker's `<Sound>` component plays its PlayerKnockdownPackage.
+            // Mirrors `action.cpp`'s broadcast of `kPlayPlayerKnockdown` to the
+            // player's incoming-attack fighter.
+            if kind == ReactionKind::Knockdown
+                && players.get(msg.target).is_ok()
+                && let Some(attacker) = msg.attacker
+            {
+                sound_trigger.write(crate::actor_sound::ActorSoundTrigger {
+                    entity: attacker,
+                    verb: crate::scroni::vm::ActorSoundVerb::PlayPlayerKnockdown,
+                });
+            }
 
             // Queue scream sound! (routed through fx_system's audio dispatch).
             commands.trigger(crate::fx_system::PlaySound {

@@ -24,6 +24,11 @@ pub struct AudioNugget {
 #[derive(Debug, Clone)]
 pub struct AudioPackage {
     pub nuggets: Vec<AudioNugget>,
+    /// Probability gate (0..1) mirroring `rbAudioPackage::Probability`.
+    /// `rbAudioPackagePlayer::Play` rolls `RangeRand(0,1)` and skips
+    /// playback when the roll exceeds this value — i.e. the package only
+    /// plays `Probability*100`% of the time.  Defaults to 1.0 (always).
+    pub probability: f32,
 }
 
 pub type AudioPackagesDirectory = HashMap<String, AudioPackage>;
@@ -32,6 +37,7 @@ pub fn parse_audiopackages(content: &str) -> AudioPackagesDirectory {
     let mut dir = HashMap::new();
     let mut current_pkg_name = None;
     let mut current_pkg_nuggets = Vec::new();
+    let mut current_pkg_probability = 1.0_f32;
     let mut current_nugget: Option<AudioNugget> = None;
 
     for line_raw in content.lines() {
@@ -49,26 +55,36 @@ pub fn parse_audiopackages(content: &str) -> AudioPackagesDirectory {
                     name,
                     AudioPackage {
                         nuggets: std::mem::take(&mut current_pkg_nuggets),
+                        probability: current_pkg_probability,
                     },
                 );
             }
+            current_pkg_probability = 1.0;
             let name_str = line
                 .strip_prefix("PACKAGE")
                 .unwrap()
                 .trim()
                 .trim_matches('"');
             current_pkg_name = Some(name_str.to_string());
+        } else if current_nugget.is_none() && line.to_uppercase().starts_with("PROBABILITY") {
+            // Package-level token (mirrors `rbAudioPackage::Load`), appears
+            // before the first NUGGET.  Clamp to 0..1 like the C++ loader.
+            if let Some(v) = line.split_whitespace().nth(1).and_then(|s| s.parse::<f32>().ok()) {
+                current_pkg_probability = v.clamp(0.0, 1.0);
+            }
         } else if line == "NUGGET" {
             if let Some(n) = current_nugget.take() {
                 current_pkg_nuggets.push(n);
             }
+            // Defaults mirror `rbAudioNugget` ctor: Volume 0.5,
+            // RandomMin/MaxVolume 0.5, Pitch 1.0, Delay 0.0.
             current_nugget = Some(AudioNugget {
                 sound: String::new(),
-                volume: 1.0,
+                volume: 0.5,
                 pitch: 1.0,
                 delay: 0.0,
-                random_min_volume: 1.0,
-                random_max_volume: 1.0,
+                random_min_volume: 0.5,
+                random_max_volume: 0.5,
                 random_min_pitch: 1.0,
                 random_max_pitch: 1.0,
                 random_min_delay: 0.0,
@@ -147,6 +163,7 @@ pub fn parse_audiopackages(content: &str) -> AudioPackagesDirectory {
             name,
             AudioPackage {
                 nuggets: current_pkg_nuggets,
+                probability: current_pkg_probability,
             },
         );
     }

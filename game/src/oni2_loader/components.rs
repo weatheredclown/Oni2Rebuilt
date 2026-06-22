@@ -123,3 +123,31 @@ pub struct OneWayOctreeBound;
 /// normal orientation.
 #[derive(Component, Debug, Clone, Copy)]
 pub struct OctreeInteriorRef(pub Vec3);
+
+/// CameraTrigger component — switches the ActiveCameraPackage to the specified package name when the player enters the radius.
+#[derive(Component, Debug, Clone)]
+pub struct CameraTrigger {
+    pub radius: f32,
+    pub camera_package: String,
+}
+
+/// ForceVectorTrigger component — applies a force/acceleration to physical entities within the radius.
+#[derive(Component, Debug, Clone)]
+pub struct ForceVectorTrigger {
+    pub radius: f32,
+    pub force_vector: Vec3, // In Bevy space
+}
+
+/// SectionTrigger component — tracks checkpoint conditions and triggers actor spawning/destruction in target sections.
+#[derive(Component, Debug, Clone)]
+pub struct SectionTrigger {
+    pub radius: f32,
+    pub sections_to_spawn: String,
+    pub sections_to_destroy: String,
+    pub trigger_only_once: bool,
+    pub min_checkpoint_index: i32,
+    pub max_checkpoint_index: i32,
+    pub has_fired: bool, // Runtime state
+    pub player_was_inside: bool, // Track transition for non-once triggers
+}
+

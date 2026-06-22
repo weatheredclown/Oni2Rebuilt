@@ -705,6 +705,22 @@ impl Compiler {
                 self.advance();
                 Stmt::MusicStop
             }
+            TokenCode::StartCutSceneAudio => {
+                self.advance();
+                let mut args = Vec::new();
+                while !self.at_end() {
+                    if !is_expr_start(self.code()) {
+                        break;
+                    }
+                    args.push(self.parse_expr());
+                    self.skip_if(TokenCode::Comma);
+                }
+                Stmt::StartCutSceneAudio { args }
+            }
+            TokenCode::EndCutSceneAudio => {
+                self.advance();
+                Stmt::EndCutSceneAudio
+            }
 
             // Fog
             TokenCode::SetFogType => {

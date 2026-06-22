@@ -198,6 +198,9 @@ pub struct LayoutActor {
     /// component at spawn.  Powers the ScrOni `look` op's spatial
     /// gauntlet for actors that aren't full AiFighters.
     pub eye: Option<EyeComponentData>,
+    pub camera_trigger: Option<CameraTriggerData>,
+    pub force_trigger: Option<ForceTriggerData>,
+    pub section_trigger: Option<SectionTriggerData>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -206,6 +209,28 @@ pub struct EyeComponentData {
     pub range: f32,
     /// `<FieldOfView>` — total cone width, degrees.
     pub field_of_view_deg: f32,
+}
+
+#[derive(Debug, Clone)]
+pub struct CameraTriggerData {
+    pub radius: f32,
+    pub camera_package: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct ForceTriggerData {
+    pub radius: f32,
+    pub force_vector: Vec3,
+}
+
+#[derive(Debug, Clone)]
+pub struct SectionTriggerData {
+    pub radius: f32,
+    pub sections_to_spawn: String,
+    pub sections_to_destroy: String,
+    pub trigger_only_once: bool,
+    pub min_checkpoint_index: i32,
+    pub max_checkpoint_index: i32,
 }
 
 #[derive(Debug, Clone)]
@@ -445,6 +470,9 @@ pub fn parse_actor_xml(dir: &str, filename: &str, template_dir: &str) -> Option<
     let fight_vector_block = extract_component(&chain, has_components_xml, "FightVectorTrigger");
     let broadcast_trigger_block = extract_component(&chain, has_components_xml, "BroadcastTrigger");
     let fighter_block = extract_component(&chain, has_components_xml, "Fighter");
+    let camera_trigger_block = extract_component(&chain, has_components_xml, "CameraTrigger");
+    let force_trigger_block = extract_component(&chain, has_components_xml, "ForceVectorTrigger");
+    let section_trigger_block = extract_component(&chain, has_components_xml, "SectionTrigger");
 
     // Extract Animator props
     let mut animator_type: Option<String> = None;
@@ -1011,6 +1039,58 @@ pub fn parse_actor_xml(dir: &str, filename: &str, template_dir: &str) -> Option<
         }
     }
 
+    let mut camera_trigger: Option<CameraTriggerData> = None;
+    if let Some(block) = camera_trigger_block {
+        let radius = extract_xml_attr(&block, "Radius")
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(1.0);
+        if let Some(camera_package) = extract_xml_attr(&block, "CameraPackage") {
+            camera_trigger = Some(CameraTriggerData {
+                radius,
+                camera_package,
+            });
+        }
+    }
+
+    let mut force_trigger: Option<ForceTriggerData> = None;
+    if let Some(block) = force_trigger_block {
+        let radius = extract_xml_attr(&block, "Radius")
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(1.0);
+        if let Some(v_str) = extract_xml_attr(&block, "ForceVector")
+            && let Some(v) = parse_vec3(&v_str)
+        {
+            force_trigger = Some(ForceTriggerData {
+                radius,
+                force_vector: space::to_bevy_space_pos(v),
+            });
+        }
+    }
+
+    let mut section_trigger: Option<SectionTriggerData> = None;
+    if let Some(block) = section_trigger_block {
+        let radius = extract_xml_attr(&block, "Radius")
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(1.0);
+        let sections_to_spawn = extract_xml_attr(&block, "SectionsToSpawn").unwrap_or_default();
+        let sections_to_destroy = extract_xml_attr(&block, "SectionsToDestroy").unwrap_or_default();
+        let trigger_only_once = extract_xml_attr_bool(&block, "TriggerOnlyOnce").unwrap_or(false);
+        let min_checkpoint_index = extract_xml_attr(&block, "MinCheckPointIndex")
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(0);
+        let max_checkpoint_index = extract_xml_attr(&block, "MaxCheckPointIndex")
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(-1);
+        section_trigger = Some(SectionTriggerData {
+            radius,
+            sections_to_spawn,
+            sections_to_destroy,
+            trigger_only_once,
+            min_checkpoint_index,
+            max_checkpoint_index,
+        });
+    }
+
     Some(LayoutActor {
         entity_type,
         position,
@@ -1061,6 +1141,9 @@ pub fn parse_actor_xml(dir: &str, filename: &str, template_dir: &str) -> Option<
         target,
         reticle,
         eye,
+        camera_trigger,
+        force_trigger,
+        section_trigger,
     })
 }
 
@@ -1082,6 +1165,7 @@ const KNOWN_IMPLEMENTED_COMPONENTS: &[&str] = &[
     "Animator",
     "Behavior",
     "BroadcastTrigger",
+    "CameraTrigger",
     "CheckpointTrigger",
     "Creature",
     "Curve",
@@ -1095,11 +1179,13 @@ const KNOWN_IMPLEMENTED_COMPONENTS: &[&str] = &[
     "FightAi",
     "FightVectorTrigger",
     "Fighter",
+    "ForceVectorTrigger",
     "Health",
     "Inventory",
     "Prop",
     "Reticle",
     "ScrOni",
+    "SectionTrigger",
     "Sound",
     "Target",
 ];

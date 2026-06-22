@@ -23,6 +23,7 @@ pub mod physics;
 pub mod registries;
 pub mod spawn;
 pub mod testanim;
+pub mod triggers;
 pub mod utils;
 
 pub use animation::*;
@@ -34,6 +35,7 @@ pub use layout_loader::*;
 pub use registries::*;
 pub use spawn::*;
 pub use testanim::*;
+pub use triggers::*;
 
 use avian3d::prelude::*;
 use bevy::mesh::skinning::{SkinnedMesh, SkinnedMeshInverseBindposes};
@@ -170,6 +172,8 @@ impl Plugin for Oni2LoaderPlugin {
                 (
                     scroni::vm::update_broadcast_triggers.before(scroni::vm::scroni_tick_system),
                     scroni::vm::checkpoint_trigger_system.before(scroni::vm::scroni_tick_system),
+                    triggers::update_camera_triggers.before(scroni::vm::scroni_tick_system),
+                    triggers::update_section_triggers.before(scroni::vm::scroni_tick_system),
                     scroni::vm::scroni_tick_system,
                     scroni::vm::cleanup_scroni_text,
                     scroni::vm::update_screen_fade_system,
@@ -186,6 +190,13 @@ impl Plugin for Oni2LoaderPlugin {
                     // camera stays on the static CAMERA_INIT pose
                     // (which lands the projector in the upper-left).
                     .run_if(in_state(AppState::InGame).or(in_state(AppState::FrontEnd))),
+            )
+            .add_systems(
+                FixedUpdate,
+                triggers::apply_force_vector_triggers
+                    .after(crate::player::systems::player_movement_system)
+                    .after(crate::mover::bridge::tnua_basis_from_linvel)
+                    .run_if(in_state(AppState::InGame)),
             )
             .add_systems(
                 Update,

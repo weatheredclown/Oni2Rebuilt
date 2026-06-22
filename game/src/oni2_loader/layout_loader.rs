@@ -867,7 +867,10 @@ pub fn spawn_layout_actor(
 
     let is_trigger = actor.broadcast_radius.is_some()
         || actor.checkpoint_radius.is_some()
-        || actor.fvt_radius.is_some();
+        || actor.fvt_radius.is_some()
+        || actor.camera_trigger.is_some()
+        || actor.force_trigger.is_some()
+        || actor.section_trigger.is_some();
     if !is_basic && !is_trigger && !actor.is_creature {
         is_basic = true;
     }
@@ -1549,6 +1552,60 @@ pub fn spawn_layout_actor(
             info!(
                 "Attached FightVectorTrigger (radius {}, attack {}) to {}",
                 radius, attack_alias, actor.entity_type
+            );
+        }
+
+        // Attach CameraTrigger if present
+        if let Some(cam) = &actor.camera_trigger {
+            assets.commands.entity(entity).insert((
+                crate::oni2_loader::components::CameraTrigger {
+                    radius: cam.radius,
+                    camera_package: cam.camera_package.clone(),
+                },
+                avian3d::prelude::Collider::sphere(cam.radius),
+                avian3d::prelude::Sensor,
+            ));
+            info!(
+                "Attached CameraTrigger (radius {}, package {}) to {}",
+                cam.radius, cam.camera_package, actor.entity_type
+            );
+        }
+
+        // Attach ForceVectorTrigger if present
+        if let Some(force) = &actor.force_trigger {
+            assets.commands.entity(entity).insert((
+                crate::oni2_loader::components::ForceVectorTrigger {
+                    radius: force.radius,
+                    force_vector: force.force_vector,
+                },
+                avian3d::prelude::Collider::sphere(force.radius),
+                avian3d::prelude::Sensor,
+            ));
+            info!(
+                "Attached ForceVectorTrigger (radius {}, force {:?}) to {}",
+                force.radius, force.force_vector, actor.entity_type
+            );
+        }
+
+        // Attach SectionTrigger if present
+        if let Some(sect) = &actor.section_trigger {
+            assets.commands.entity(entity).insert((
+                crate::oni2_loader::components::SectionTrigger {
+                    radius: sect.radius,
+                    sections_to_spawn: sect.sections_to_spawn.clone(),
+                    sections_to_destroy: sect.sections_to_destroy.clone(),
+                    trigger_only_once: sect.trigger_only_once,
+                    min_checkpoint_index: sect.min_checkpoint_index,
+                    max_checkpoint_index: sect.max_checkpoint_index,
+                    has_fired: false,
+                    player_was_inside: false,
+                },
+                avian3d::prelude::Collider::sphere(sect.radius),
+                avian3d::prelude::Sensor,
+            ));
+            info!(
+                "Attached SectionTrigger (radius {}, spawn {}, destroy {}) to {}",
+                sect.radius, sect.sections_to_spawn, sect.sections_to_destroy, actor.entity_type
             );
         }
 

@@ -14,6 +14,28 @@ use bevy::prelude::*;
 use crate::oni2_loader::parsers::actor_xml::{SoundComponentData, SoundPlayMode};
 use crate::scroni::vm::ActorSoundVerb;
 
+#[derive(Debug, Clone, Default)]
+pub struct AudioChannelState {
+    /// Currently-spawned playback child.  `None` when idle or
+    /// between one-shot retriggers; `Some(child)` while audio is
+    /// live so the driver knows whether to start a fresh cue.
+    pub playing: Option<Entity>,
+    /// Cue currently waiting out its per-nugget `DELAY` before it
+    /// spawns: `(nugget_index, rolled_volume, rolled_pitch)`.  Mirrors
+    /// `rbAudioPackagePlayer`'s `MODE_DELAY` channel state — the nugget
+    /// is selected and its random volume/pitch rolled at cue time, then
+    /// playback is held off until `cue_delay` elapses.
+    pub pending_cue: Option<(usize, f32, f32)>,
+    /// Seconds remaining before the next cue may spawn.  Drives the
+    /// per-nugget `DELAY` countdown.
+    pub cue_delay: f32,
+    /// Random per-nugget volume scalar rolled at cue time for the currently
+    /// playing child, so the per-frame distance-attenuation update can fold
+    /// it back into the child's `AudioGroup.base_volume` (otherwise volume
+    /// would jump after the first frame).
+    pub current_package_volume: f32,
+}
+
 /// Per-actor component carrying the parsed `<Sound>` data plus
 /// runtime playback bookkeeping.  Attached by the layout loader when
 /// the actor's XML declared a non-empty AudioPackage.
@@ -25,10 +47,8 @@ pub struct ActorSound {
     /// `audMsgPlaySound`'s kPlay/kStop verbs.  Initialized from
     /// `data.start_active` and flipped via future activate hooks.
     pub active: bool,
-    /// Currently-spawned playback child.  `None` when idle or
-    /// between one-shot retriggers; `Some(child)` while audio is
-    /// live so the driver knows whether to start a fresh cue.
-    pub playing: Option<Entity>,
+    /// Concurrent playback channels, sized to `data.num_channels`.
+    pub channels: Vec<AudioChannelState>,
     /// Cursor for the `NextOne` / `CurrentOne(Looped)` play modes —
     /// indexes the package's nugget list.  Wraps on overflow.
     pub nugget_cursor: usize,
@@ -42,19 +62,41 @@ pub struct ActorSound {
     /// from active; we collapse them for now since the only way to
     /// resume in legacy is another `sound play` anyway.
     pub paused: bool,
+    /// Index of the most recently selected nugget, so random play modes
+    /// can avoid immediately repeating it (mirrors `CueNextSound`'s
+    /// re-roll-while-equal loop for packages with >2 nuggets).
+    pub last_nugget: Option<usize>,
+    /// Backlog of play triggers/requests queued for processing.
+    pub play_requests: u32,
+    /// Speech cookie held while playing under `CookieMode` (mirrors
+    /// `rbAudioSoundComponent::AudioCookie`).  `COOKIE_INVALID` when none
+    /// held.  Limits how many cookie-mode sources play at once.
+    pub audio_cookie: i32,
 }
+
+/// Back-off applied after a failed package `PROBABILITY` roll so the
+/// per-tick re-cue loop doesn't spin the gate every frame.  The C++
+/// gate is evaluated once per explicit `Play()` trigger; our driver
+/// re-cues idle one-shots each tick, so this throttles the retry rate.
+const PROBABILITY_RETRY_BACKOFF: f32 = 0.5;
 
 impl ActorSound {
     pub fn new(data: SoundComponentData) -> Self {
         let active = data.start_active;
+        let mut channels = Vec::new();
+        channels.resize(data.num_channels.max(1) as usize, AudioChannelState::default());
+        let play_requests = if active { 1 } else { 0 };
         Self {
             data,
             active,
-            playing: None,
+            channels,
             nugget_cursor: 0,
             volume_override: None,
             pitch_override: None,
             paused: false,
+            last_nugget: None,
+            play_requests,
+            audio_cookie: crate::rbaudio::COOKIE_INVALID,
         }
     }
 
@@ -76,22 +118,15 @@ impl ActorSound {
             ActorSoundVerb::Play => {
                 self.paused = false;
                 self.active = true;
-                // Drop any in-flight playback so the driver re-cues
-                // on its next tick, picking a fresh nugget per the
-                // PlayMode.  Without this, looped modes would keep
-                // their existing stream rather than restart.
-                if let Some(child) = self.playing.take() {
-                    commands.entity(child).despawn();
-                }
+                self.play_requests += 1;
             }
             ActorSoundVerb::PlayNamed(pkg) => {
                 self.paused = false;
                 self.active = true;
                 self.data.audio_package = pkg;
                 self.nugget_cursor = 0;
-                if let Some(child) = self.playing.take() {
-                    commands.entity(child).despawn();
-                }
+                self.last_nugget = None;
+                self.play_requests += 1;
             }
             ActorSoundVerb::Pause => {
                 self.paused = true;
@@ -99,8 +134,13 @@ impl ActorSound {
             ActorSoundVerb::Stop => {
                 self.active = false;
                 self.paused = false;
-                if let Some(child) = self.playing.take() {
-                    commands.entity(child).despawn();
+                self.play_requests = 0;
+                for channel in &mut self.channels {
+                    channel.pending_cue = None;
+                    channel.cue_delay = 0.0;
+                    if let Some(child) = channel.playing.take() {
+                        commands.entity(child).despawn();
+                    }
                 }
             }
             ActorSoundVerb::Pitch(v) => {
@@ -113,6 +153,29 @@ impl ActorSound {
                 // Placeholder.  Legacy fade is a per-channel volume
                 // ramp; would map onto AudioVolumeRamp once we
                 // generalise it off the AmbientSound path.
+            }
+            ActorSoundVerb::PlayPlayerApproach => {
+                // kPlayPlayerApproach: swap to the approach package and play,
+                // but only if one is configured (matches the C++ `if
+                // (GetType().PlayerApproachPackage)` guard).
+                if let Some(pkg) = self.data.player_approach_package.clone() {
+                    self.paused = false;
+                    self.active = true;
+                    self.data.audio_package = pkg;
+                    self.nugget_cursor = 0;
+                    self.last_nugget = None;
+                    self.play_requests += 1;
+                }
+            }
+            ActorSoundVerb::PlayPlayerKnockdown => {
+                if let Some(pkg) = self.data.player_knockdown_package.clone() {
+                    self.paused = false;
+                    self.active = true;
+                    self.data.audio_package = pkg;
+                    self.nugget_cursor = 0;
+                    self.last_nugget = None;
+                    self.play_requests += 1;
+                }
             }
         }
     }
@@ -130,11 +193,71 @@ pub struct ActorSoundPlayback {
     pub owner: Entity,
 }
 
+/// Engine-side trigger for the `<Sound>` component's special play verbs
+/// (player-approach / player-knockdown taunts).  Gameplay code writes this to
+/// fire the corresponding package on `entity` without going through ScrOni —
+/// mirroring how the C++ engine `Broadcast`s an `audMsgPlaySound` to the
+/// relevant actor.
+#[derive(Message)]
+pub struct ActorSoundTrigger {
+    pub entity: Entity,
+    pub verb: ActorSoundVerb,
+}
+
 pub struct ActorSoundPlugin;
 
 impl Plugin for ActorSoundPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Update, drive_actor_sound_system);
+        app.add_message::<ActorSoundTrigger>().add_systems(
+            Update,
+            (
+                player_approach_sound_system,
+                apply_actor_sound_triggers,
+                drive_actor_sound_system,
+            )
+                .chain(),
+        );
+    }
+}
+
+/// Fires the `PlayerApproach` taunt on the rising edge of an AI fighter
+/// acquiring the player as its target — the port's stand-in for
+/// `aiFightAIComponent::StartFight`, which broadcasts `kPlayPlayerApproach`
+/// to the fighter when it engages.
+pub fn player_approach_sound_system(
+    player: Query<Entity, With<crate::player::components::Player>>,
+    fighters: Query<(Entity, &crate::ai::components::AiFighter)>,
+    mut trigger: MessageWriter<ActorSoundTrigger>,
+    mut was_engaging: Local<bevy::ecs::entity::EntityHashMap<bool>>,
+) {
+    let Some(player) = player.iter().next() else {
+        return;
+    };
+    for (entity, af) in &fighters {
+        let engaging = af.target == Some(player);
+        let prev = was_engaging.get(&entity).copied().unwrap_or(false);
+        if engaging && !prev {
+            trigger.write(ActorSoundTrigger {
+                entity,
+                verb: ActorSoundVerb::PlayPlayerApproach,
+            });
+        }
+        was_engaging.insert(entity, engaging);
+    }
+}
+
+/// Applies queued [`ActorSoundTrigger`]s by invoking `apply_verb` on the
+/// target actor's [`ActorSound`].  Actors without a Sound component silently
+/// no-op, matching the C++ broadcast semantics.
+pub fn apply_actor_sound_triggers(
+    mut commands: Commands,
+    mut reader: MessageReader<ActorSoundTrigger>,
+    mut sounds: Query<&mut ActorSound>,
+) {
+    for msg in reader.read() {
+        if let Ok(mut sound) = sounds.get_mut(msg.entity) {
+            sound.apply_verb(0, msg.verb.clone(), &mut commands);
+        }
     }
 }
 
@@ -146,10 +269,13 @@ impl Plugin for ActorSoundPlugin {
 #[allow(clippy::too_many_arguments)]
 pub fn drive_actor_sound_system(
     mut commands: Commands,
+    time: Res<Time>,
     mut audio_sources: ResMut<Assets<bevy::audio::AudioSource>>,
     mut sounds: Query<(Entity, &mut ActorSound, &GlobalTransform)>,
     listener: Query<&GlobalTransform, With<crate::player::components::Player>>,
     mut sinks: Query<&mut bevy::audio::AudioSink>,
+    mut groups: Query<&mut crate::rbaudio::AudioGroup>,
+    mut rb_audio: ResMut<crate::rbaudio::RbAudioManager>,
     mut td_directory: Local<Option<crate::oni2_loader::parsers::td::SoundBankDirectory>>,
     mut audio_packages: Local<
         Option<crate::oni2_loader::parsers::audiopackages::AudioPackagesDirectory>,
@@ -184,10 +310,29 @@ pub fn drive_actor_sound_system(
         // Drop the playback handle if the child entity is gone.  Bevy
         // despawns PlaybackMode::Despawn AudioPlayers when their
         // source ends, which is how we detect one-shot completion.
-        if let Some(child) = sound.playing
-            && commands.get_entity(child).is_err()
+        let mut finished_channels = Vec::new();
+        for (c_idx, channel) in sound.channels.iter_mut().enumerate() {
+            if let Some(child) = channel.playing {
+                if commands.get_entity(child).is_err() {
+                    channel.playing = None;
+                    finished_channels.push(c_idx);
+                }
+            }
+        }
+
+        // Cookie release: once all channels of a cookie-mode source have stopped playing,
+        // hand its speech cookie back (mirrors the CookieMode branch of
+        // `rbAudioSoundComponent::HandleUpdate`).
+        let any_busy = sound
+            .channels
+            .iter()
+            .any(|c| c.playing.is_some() || c.pending_cue.is_some());
+        if sound.data.cookie_mode
+            && !any_busy
+            && sound.audio_cookie != crate::rbaudio::COOKIE_INVALID
         {
-            sound.playing = None;
+            rb_audio.release_cookie(sound.audio_cookie);
+            sound.audio_cookie = crate::rbaudio::COOKIE_INVALID;
         }
 
         // Distance attenuation: linear ramp between range_max_volume
@@ -218,16 +363,21 @@ pub fn drive_actor_sound_system(
             base_volume * attenuation
         };
 
-        // Drive the active sink's volume in real time so the listener
-        // hears the attenuation update as the player walks toward or
-        // away from the source.  Sinks live on the child playback
-        // entity; nothing to do if it hasn't materialized yet.
-        if let Some(child) = sound.playing
-            && let Ok(mut sink) = sinks.get_mut(child)
-        {
-            sink.set_volume(bevy::audio::Volume::Linear(target_volume));
-            if let Some(p) = sound.pitch_override {
-                sink.set_speed(p);
+        // Drive the active source's volume in real time so the listener
+        // hears the attenuation update as the player walks toward or away
+        // from the source.  Volume is written to the child's `AudioGroup`
+        // base (the master `apply_audio_groups_system` multiplies in the
+        // group gain); pitch still goes straight to the sink.
+        for channel in &sound.channels {
+            if let Some(child) = channel.playing {
+                if let Ok(mut group) = groups.get_mut(child) {
+                    group.base_volume = target_volume * channel.current_package_volume;
+                }
+                if let Some(p) = sound.pitch_override
+                    && let Ok(mut sink) = sinks.get_mut(child)
+                {
+                    sink.set_speed(p);
+                }
             }
         }
 
@@ -235,13 +385,10 @@ pub fn drive_actor_sound_system(
             continue;
         }
 
-        // Looped play modes hold the AudioPlayer indefinitely via
-        // PlaybackMode::Loop, so once `playing` is set we have
-        // nothing more to do until something deactivates us.  Non-
-        // looped modes re-fire from this branch every time the child
-        // finishes (we cleared `playing` above when it despawned).
-        if sound.playing.is_some() {
-            continue;
+        // If the play mode is looped and one of the nuggets has finished playing,
+        // we queue a play request to start the next nugget.
+        if sound.data.play_mode.is_looped() {
+            sound.play_requests += finished_channels.len() as u32;
         }
 
         // Empty package = dormant component waiting for a runtime
@@ -249,6 +396,7 @@ pub fn drive_actor_sound_system(
         // trigger).  No warning — this is the common case for every
         // NPC that just inherits template_grunt's `<Sound>` block.
         if sound.data.audio_package.is_empty() {
+            sound.play_requests = 0;
             continue;
         }
 
@@ -270,72 +418,189 @@ pub fn drive_actor_sound_system(
                 sound.data.audio_package, entity
             );
             sound.active = false;
+            sound.play_requests = 0;
             continue;
         };
         if pkg.nuggets.is_empty() {
             sound.active = false;
+            sound.play_requests = 0;
             continue;
         }
 
-        let nugget_idx = match sound.data.play_mode {
-            SoundPlayMode::CurrentOne | SoundPlayMode::CurrentOneLooped => {
-                sound.nugget_cursor % pkg.nuggets.len()
+        // 1. Process pending/delayed cues.
+        let dt = time.delta_secs();
+        let pitch_override = sound.pitch_override;
+        for channel in sound.channels.iter_mut() {
+            if let Some(cue) = channel.pending_cue {
+                if channel.cue_delay > 0.0 {
+                    channel.cue_delay -= dt;
+                } else {
+                    channel.pending_cue = None;
+                    let (nugget_idx, vol, pitch) = cue;
+                    let nugget = &pkg.nuggets[nugget_idx];
+                    if let Some(source) = resolve_sound_handle(&nugget.sound, dir, &mut audio_sources) {
+                        let settings = bevy::audio::PlaybackSettings::DESPAWN
+                            .with_volume(bevy::audio::Volume::Linear(target_volume * vol))
+                            .with_speed(pitch_override.unwrap_or(pitch));
+
+                        channel.current_package_volume = vol;
+                        let child = commands
+                            .spawn((
+                                bevy::audio::AudioPlayer(source),
+                                settings,
+                                crate::rbaudio::AudioGroup::new(
+                                    crate::rbaudio::AudioGroupId::Player,
+                                    target_volume * vol,
+                                ),
+                                ActorSoundPlayback { owner: entity },
+                                crate::menu::InGameEntity,
+                            ))
+                            .id();
+                        channel.playing = Some(child);
+                    } else {
+                        warn!(
+                            "ActorSound: nugget `{}` failed to resolve during delayed spawn (actor {:?})",
+                            nugget.sound, entity
+                        );
+                    }
+                }
             }
-            SoundPlayMode::NextOne | SoundPlayMode::FullLoop => {
-                let idx = sound.nugget_cursor % pkg.nuggets.len();
-                sound.nugget_cursor = (sound.nugget_cursor + 1) % pkg.nuggets.len();
-                idx
+        }
+
+        // 2. Process fresh play requests.
+        while sound.play_requests > 0 {
+            // Find an idle channel (neither playing nor pending a delay).
+            let free_channel_idx = sound
+                .channels
+                .iter()
+                .position(|c| c.playing.is_none() && c.pending_cue.is_none());
+
+            let Some(c_idx) = free_channel_idx else {
+                // No free channels available — stop processing play requests for this frame.
+                break;
+            };
+
+            sound.play_requests -= 1;
+
+            // Cookie gate (CookieMode): acquire a speech cookie before a
+            // cookie-mode source may start.  If none is free, skip this tick —
+            // mirrors `rbAudioSoundComponent::Play`'s early-out when
+            // `RequestCookie` returns `COOKIE_INVALID`.  Held until playback
+            // ends (released above).
+            if sound.data.cookie_mode && sound.audio_cookie == crate::rbaudio::COOKIE_INVALID {
+                let cookie = rb_audio.request_cookie();
+                if cookie == crate::rbaudio::COOKIE_INVALID {
+                    continue;
+                }
+                sound.audio_cookie = cookie;
             }
-            SoundPlayMode::RandomOne | SoundPlayMode::RandomLoop => {
+
+            // PROBABILITY gate (rbAudioPackagePlayer::Play): the package
+            // only plays probability*100% of the time.  On a failed roll,
+            // skip this play request.
+            if pkg.probability < 1.0 {
                 use rand::Rng;
-                rand::rng().random_range(0..pkg.nuggets.len())
+                if rand::rng().random::<f32>() > pkg.probability {
+                    continue;
+                }
             }
-        };
 
-        let nugget = &pkg.nuggets[nugget_idx];
-        let (package_volume, package_pitch) = {
-            use rand::Rng;
-            let mut rng = rand::rng();
-            let low_v = nugget.random_min_volume.min(nugget.random_max_volume);
-            let high_v = nugget.random_min_volume.max(nugget.random_max_volume);
-            let low_p = nugget.random_min_pitch.min(nugget.random_max_pitch);
-            let high_p = nugget.random_min_pitch.max(nugget.random_max_pitch);
-            let vol = nugget.volume * rng.random_range(low_v..=high_v.max(low_v));
-            let pitch = nugget.pitch * rng.random_range(low_p..=high_p.max(low_p));
-            (vol, pitch)
-        };
+            let idx = match sound.data.play_mode {
+                SoundPlayMode::CurrentOne | SoundPlayMode::CurrentOneLooped => {
+                    sound.nugget_cursor % pkg.nuggets.len()
+                }
+                SoundPlayMode::NextOne | SoundPlayMode::FullLoop => {
+                    let idx = sound.nugget_cursor % pkg.nuggets.len();
+                    sound.nugget_cursor = (sound.nugget_cursor + 1) % pkg.nuggets.len();
+                    idx
+                }
+                SoundPlayMode::RandomOne | SoundPlayMode::RandomLoop => {
+                    use rand::Rng;
+                    let mut rng = rand::rng();
+                    let n = pkg.nuggets.len();
+                    let mut idx = rng.random_range(0..n);
+                    // CueNextSound: avoid immediately repeating the previous
+                    // nugget when there are more than 2 to pick from.
+                    if n > 2 {
+                        while Some(idx) == sound.last_nugget {
+                            idx = rng.random_range(0..n);
+                        }
+                    }
+                    idx
+                }
+            };
 
-        let Some(source) = resolve_sound_handle(&nugget.sound, dir, &mut audio_sources) else {
-            // Treat unresolved nuggets as fatal for this actor — the
-            // package is misconfigured and retrying every tick won't
-            // help.  Drop activity so we stop logging.
-            warn!(
-                "ActorSound: nugget `{}` from package `{}` failed to resolve (bank/HD/BD missing)",
-                nugget.sound, sound.data.audio_package
+            let nugget = &pkg.nuggets[idx];
+            let is_random = matches!(
+                sound.data.play_mode,
+                SoundPlayMode::RandomOne | SoundPlayMode::RandomLoop
             );
-            sound.active = false;
-            continue;
-        };
+            let (vol, pitch, delay) = {
+                use rand::Rng;
+                let mut rng = rand::rng();
+                let low_v = nugget.random_min_volume.min(nugget.random_max_volume);
+                let high_v = nugget.random_min_volume.max(nugget.random_max_volume);
+                let low_p = nugget.random_min_pitch.min(nugget.random_max_pitch);
+                let high_p = nugget.random_min_pitch.max(nugget.random_max_pitch);
+                let low_d = nugget.random_min_delay.min(nugget.random_max_delay);
+                let high_d = nugget.random_min_delay.max(nugget.random_max_delay);
 
-        let mut settings = if sound.data.play_mode.is_looped() {
-            bevy::audio::PlaybackSettings::LOOP
-        } else {
-            bevy::audio::PlaybackSettings::DESPAWN
-        };
-        let initial_speed = sound.pitch_override.unwrap_or(package_pitch);
-        settings = settings
-            .with_volume(bevy::audio::Volume::Linear(target_volume * package_volume))
-            .with_speed(initial_speed);
+                let vol = if is_random {
+                    rng.random_range(low_v..=high_v.max(low_v))
+                } else {
+                    nugget.volume
+                };
+                let pitch = if is_random {
+                    rng.random_range(low_p..=high_p.max(low_p))
+                } else {
+                    nugget.pitch
+                };
+                // Per-nugget delay: use the random range when authored,
+                // otherwise the fixed DELAY field.
+                let delay = if is_random && (high_d - low_d).abs() > f32::EPSILON {
+                    rng.random_range(low_d..=high_d.max(low_d))
+                } else {
+                    nugget.delay
+                };
+                (vol, pitch, delay)
+            };
 
-        let child = commands
-            .spawn((
-                bevy::audio::AudioPlayer(source),
-                settings,
-                ActorSoundPlayback { owner: entity },
-                crate::menu::InGameEntity,
-            ))
-            .id();
-        sound.playing = Some(child);
+            sound.last_nugget = Some(idx);
+
+            // Hold the cue for `delay` seconds before it actually spawns.
+            if delay > 0.0 {
+                sound.channels[c_idx].pending_cue = Some((idx, vol, pitch));
+                sound.channels[c_idx].cue_delay = delay;
+                continue;
+            }
+
+            if let Some(source) = resolve_sound_handle(&nugget.sound, dir, &mut audio_sources) {
+                let settings = bevy::audio::PlaybackSettings::DESPAWN
+                    .with_volume(bevy::audio::Volume::Linear(target_volume * vol))
+                    .with_speed(sound.pitch_override.unwrap_or(pitch));
+
+                sound.channels[c_idx].current_package_volume = vol;
+
+                let child = commands
+                    .spawn((
+                        bevy::audio::AudioPlayer(source),
+                        settings,
+                        crate::rbaudio::AudioGroup::new(
+                            crate::rbaudio::AudioGroupId::Player,
+                            target_volume * vol,
+                        ),
+                        ActorSoundPlayback { owner: entity },
+                        crate::menu::InGameEntity,
+                    ))
+                    .id();
+                sound.channels[c_idx].playing = Some(child);
+            } else {
+                warn!(
+                    "ActorSound: nugget `{}` from package `{}` failed to resolve (bank/HD/BD missing)",
+                    nugget.sound, sound.data.audio_package
+                );
+            }
+        }
     }
 }
 

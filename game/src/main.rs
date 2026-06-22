@@ -33,6 +33,7 @@ mod fx_system;
 mod fx_visuals;
 mod hud;
 mod imf_audio;
+mod rbaudio;
 #[cfg(feature = "intro_videos")]
 mod intro_video;
 mod inventory;
@@ -246,6 +247,7 @@ fn main() {
     .add_plugins(hud::HudPlugin)
     .add_plugins(mover::MoverPlugin)
     .add_plugins(fx_system::FxPlugin)
+    .add_plugins(rbaudio::RbAudioPlugin)
     .add_plugins(actor_sound::ActorSoundPlugin)
     .add_plugins(fx_visuals::FxVisualsPlugin)
     .add_plugins(laser::LaserPlugin)

@@ -386,6 +386,13 @@ pub enum SysRequest {
     AmbientSoundStopAll,
     AmbientSoundVolumeRamp(i32, f32, f32),
     AmbientSoundPitchRamp(i32, f32, f32),
+    /// Music crossfade (rbAudioManager::MusicPlay): name, volume, blend time.
+    MusicPlay(String, f32, f32),
+    MusicStop,
+    /// Cutscene audio (rbAudioManager::PlayCutScene): name, optional
+    /// cutscene volume, background (ambient-duck) volume.
+    PlayCutScene(String, Option<f32>, f32),
+    EndCutScene,
     Hit {
         target: Entity,
         hit_type: String,
@@ -471,6 +478,13 @@ pub enum ActorSoundVerb {
     FadeIn(f32),
     /// `fadeOut <seconds>` — placeholder; not yet implemented.
     FadeOut(f32),
+    /// `kPlayPlayerApproach` — swap to the component's `PlayerApproachPackage`
+    /// and play.  Engine-triggered when an AI begins fighting the player.
+    PlayPlayerApproach,
+    /// `kPlayPlayerKnockdown` — swap to the component's
+    /// `PlayerKnockdownPackage` and play.  Engine-triggered (on the attacker)
+    /// when the player is knocked down.
+    PlayPlayerKnockdown,
 }
 
 #[derive(Component)]
@@ -621,6 +635,18 @@ pub enum ScrOniSysEvent {
         target_pitch: f32,
         duration: f32,
     },
+    MusicPlay {
+        name: String,
+        volume: f32,
+        blend_time: f32,
+    },
+    MusicStop,
+    PlayCutScene {
+        name: String,
+        cs_volume: Option<f32>,
+        bg_volume: f32,
+    },
+    EndCutScene,
     MakeExplosion {
         script_entity: Entity,
         name: String,
@@ -810,6 +836,9 @@ pub struct ScroniContext<'a, 'w_e, 's_e, 'w_t, 's_t> {
     /// `look ... status hashitch` filter (legacy `scrStatus::kHasHitch`,
     /// which checked `animElbowCraneHitchComponent != NULL`).
     pub hitched_entities: &'a std::collections::HashSet<Entity>,
+    /// Currently-playing ambient sound handles, for
+    /// `ambientsoundstatus(handle)` (kPlaying when present, else kStopped).
+    pub active_ambient_handles: &'a std::collections::HashSet<i32>,
 }
 
 impl<'a, 'w_e, 's_e, 'w_t, 's_t> ScroniContext<'a, 'w_e, 's_e, 'w_t, 's_t> {
@@ -1914,6 +1943,21 @@ impl ScriptExec {
                         }
                         Value::String("dead".to_string())
                     }
+                    "ambientsoundstatus" => {
+                        // rbAudioManager::AmbientGetStatus: kStopped=0,
+                        // kPaused=1, kPlaying=2.  We don't model an ambient
+                        // pause state, so a live handle reads kPlaying.
+                        let handle = args
+                            .first()
+                            .map(|e| self.eval_expr(tid, e, now, ctx).as_int())
+                            .unwrap_or(-1);
+                        let status = if ctx.active_ambient_handles.contains(&handle) {
+                            2
+                        } else {
+                            0
+                        };
+                        Value::Int(status)
+                    }
                     "alive" => Value::String("alive".to_string()),
                     "dead" => Value::String("dead".to_string()),
                     "health" => {
@@ -2516,6 +2560,9 @@ pub struct ActorScriptEffects<'w, 's> {
     /// `get_perception_fov`).  Bundled here rather than as a
     /// top-level system param to stay under Bevy's 16-arg limit.
     pub eye: Query<'w, 's, &'static crate::oni2_loader::components::Eye>,
+    /// Live ambient sounds (read side) — used to answer the
+    /// `ambientsoundstatus(handle)` query (rbAudioManager::AmbientGetStatus).
+    pub active_ambients: Query<'w, 's, &'static ActiveAmbientSound>,
 }
 
 /// Bevy system: tick all ScrOni scripts each frame.
@@ -2611,6 +2658,14 @@ pub fn scroni_tick_system(
         }
         set
     };
+    // Set of ambient handles currently playing — answers
+    // `ambientsoundstatus(handle)`.  We don't track an ambient "paused"
+    // state in the port, so present = kPlaying, absent = kStopped.
+    let active_ambient_handles: std::collections::HashSet<i32> = actor_fx
+        .active_ambients
+        .iter()
+        .map(|a| a.handle)
+        .collect();
     drop(_build_status_span);
 
     let _scripts_span = bevy::log::info_span!("scroni::script_loop").entered();
@@ -2751,6 +2806,7 @@ pub fn scroni_tick_system(
             get_actor_health: Some(get_health_ref),
             get_ui_item_value: Some(get_ui_item_value_ref),
             hitched_entities: &hitched_entities,
+            active_ambient_handles: &active_ambient_handles,
         };
         script.exec.tick(now, delta_time, &mut ctx);
 
@@ -3226,6 +3282,26 @@ pub fn scroni_tick_system(
                         duration,
                     });
                 }
+                SysRequest::MusicPlay(name, volume, blend_time) => {
+                    commands.trigger(ScrOniSysEvent::MusicPlay {
+                        name,
+                        volume,
+                        blend_time,
+                    });
+                }
+                SysRequest::MusicStop => {
+                    commands.trigger(ScrOniSysEvent::MusicStop);
+                }
+                SysRequest::PlayCutScene(name, cs_volume, bg_volume) => {
+                    commands.trigger(ScrOniSysEvent::PlayCutScene {
+                        name,
+                        cs_volume,
+                        bg_volume,
+                    });
+                }
+                SysRequest::EndCutScene => {
+                    commands.trigger(ScrOniSysEvent::EndCutScene);
+                }
                 SysRequest::Hit {
                     target,
                     hit_type,
@@ -3589,15 +3665,24 @@ pub fn audio_ramp_system(
         &mut bevy::audio::AudioSink,
         Option<&mut AudioVolumeRamp>,
         Option<&mut AudioPitchRamp>,
+        Option<&mut crate::rbaudio::AudioGroup>,
     )>,
 ) {
     let dt = time.delta_secs();
-    for (entity, mut sink, vol_ramp_opt, pitch_ramp_opt) in &mut audio_query {
+    for (entity, mut sink, vol_ramp_opt, pitch_ramp_opt, group_opt) in &mut audio_query {
         if let Some(mut vr) = vol_ramp_opt {
+            // Ramp the pre-group base volume when the sound is routed through
+            // a volume group (the master `apply_audio_groups_system` then
+            // multiplies in the group gain); otherwise ramp the sink directly.
+            let mut group: Option<Mut<crate::rbaudio::AudioGroup>> = group_opt;
             if vr.start_vol < 0.0 {
-                vr.start_vol = match sink.volume() {
-                    bevy::audio::Volume::Linear(v) => v,
-                    bevy::audio::Volume::Decibels(v) => 10.0_f32.powf(v / 20.0),
+                vr.start_vol = if let Some(g) = group.as_deref() {
+                    g.base_volume
+                } else {
+                    match sink.volume() {
+                        bevy::audio::Volume::Linear(v) => v,
+                        bevy::audio::Volume::Decibels(v) => 10.0_f32.powf(v / 20.0),
+                    }
                 };
             }
             vr.elapsed += dt;
@@ -3607,7 +3692,11 @@ pub fn audio_ramp_system(
                 1.0
             };
             let current = vr.start_vol + (vr.end_vol - vr.start_vol) * t;
-            sink.set_volume(bevy::audio::Volume::Linear(current));
+            if let Some(g) = group.as_deref_mut() {
+                g.base_volume = current;
+            } else {
+                sink.set_volume(bevy::audio::Volume::Linear(current));
+            }
             if t >= 1.0
                 && let Ok(mut e_cmd) = commands.get_entity(entity)
             {
@@ -3841,6 +3930,7 @@ end
         let (all_entities, triggers) = state.get(&world);
         let actor_statuses = std::collections::HashMap::new();
         let hitched_entities = std::collections::HashSet::new();
+        let active_ambient_handles = std::collections::HashSet::new();
         let mut ctx = ScroniContext {
             all_entities: &all_entities,
             triggers: &triggers,
@@ -3855,6 +3945,7 @@ end
             get_actor_health: None,
             get_ui_item_value: None,
             hitched_entities: &hitched_entities,
+            active_ambient_handles: &active_ambient_handles,
         };
 
         // Initially we should have no child threads
