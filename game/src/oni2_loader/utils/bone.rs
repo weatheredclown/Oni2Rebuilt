@@ -626,6 +626,7 @@ mod tests {
                     edges: vec![],
                     quads: vec![],
                     tris: vec![],
+                    conveyor_speed: None,
                 },
                 Oni2SubBound {
                     bound_type: None,
@@ -635,6 +636,7 @@ mod tests {
                     edges: vec![],
                     quads: vec![],
                     tris: vec![],
+                    conveyor_speed: None,
                 },
             ],
             centroid: [0.0, 2.25, 0.0],
@@ -728,6 +730,7 @@ mod tests {
                 edges: vec![],
                 quads: vec![],
                 tris: vec![],
+                conveyor_speed: None,
             }],
             centroid: [0.0, 1.70, 0.0],
         };

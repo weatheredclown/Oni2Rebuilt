@@ -34,6 +34,7 @@ pub mod scroni;
 pub mod shadow_lod;
 pub mod statemachine;
 pub mod telemetry;
+pub mod water;
 pub mod weapons;
 
 pub use filesystem::dave_vfs;

@@ -39,3 +39,5 @@ pub mod td;
 pub mod texture;
 pub mod types;
 pub mod weap;
+pub mod rooms;
+pub mod bsp;

@@ -151,3 +151,24 @@ pub struct SectionTrigger {
     pub player_was_inside: bool, // Track transition for non-once triggers
 }
 
+/// The conveyor velocity (Bevy world units/sec) added to this mover's
+/// `LinearVelocity` on the most recent physics tick.  Recorded by
+/// `apply_conveyor_system` and subtracted by `creature_movement_anim_system`
+/// so the locomotion gait is chosen from the character's motion *relative to
+/// the belt* — running upstream still plays the run anim, and standing still
+/// while carried plays the idle anim.  Zeroed each tick; absent = not on a
+/// conveyor.
+#[derive(Component, Debug, Clone, Copy, Default)]
+pub struct ConveyorPush(pub Vec3);
+
+/// Conveyor surface — an entity whose physics bound carries a `Conveyor: 1`
+/// material (e.g. `Entity/TestConveyor`).  A mover standing on this entity's
+/// collider is pushed along the entity's forward axis (`oni_forward`) at
+/// `speed` units/sec.  Mirrors `rbPhysMaterial::GetConveyor()` consumed by
+/// `crmover::Bound`'s `SetSlide(true, forward * ConveyorSpeed)`.
+#[derive(Component, Debug, Clone, Copy)]
+pub struct Conveyor {
+    /// `ConveyorSpeed` from the physics material (units/sec).
+    pub speed: f32,
+}
+

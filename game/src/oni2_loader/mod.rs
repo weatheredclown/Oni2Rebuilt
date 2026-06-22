@@ -25,6 +25,7 @@ pub mod spawn;
 pub mod testanim;
 pub mod triggers;
 pub mod utils;
+pub mod culling;
 
 pub use animation::*;
 pub use components::*;
@@ -36,6 +37,7 @@ pub use registries::*;
 pub use spawn::*;
 pub use testanim::*;
 pub use triggers::*;
+pub use culling::*;
 
 use avian3d::prelude::*;
 use bevy::mesh::skinning::{SkinnedMesh, SkinnedMeshInverseBindposes};
@@ -143,28 +145,11 @@ impl Plugin for Oni2LoaderPlugin {
             )
             .add_systems(
                 PostUpdate,
-                // Refresh skinned-mesh joints for entities whose
-                // animation was just swapped this frame by an FSM
-                // dispatch in `Update` (e.g. a combo's next attack).
-                // Without this pass the joints sampled at render time
-                // still belong to the previous anim's final frame —
-                // visible as a 1-frame "old pose at new rotation"
-                // blink at combo boundaries where
-                // `end_rotation_notches` rotates the Transform but
-                // the joints haven't caught up.
-                //
-                // Critically ordered BEFORE `TransformSystem::TransformPropagate`:
-                // the propagate pass is what turns local `Transform` writes
-                // into the `GlobalTransform`s that the render extract reads.
-                // If our refresh runs AFTER propagate, the joint local
-                // Transforms are correct but the per-joint GlobalTransforms
-                // still reflect the previous anim's last frame — composed
-                // with the newly-rotated parent GlobalTransform, that
-                // produces exactly the "double-rotated for one render
-                // frame" visible glitch (the rotation is "in both places
-                // at once" before the bone resets propagate).
-                refresh_anim_joints_post_fsm_system
-                    .before(bevy::transform::TransformSystems::Propagate)
+                (
+                    refresh_anim_joints_post_fsm_system
+                        .before(bevy::transform::TransformSystems::Propagate),
+                    culling_system,
+                )
                     .run_if(in_state(AppState::InGame)),
             )
             .add_systems(
@@ -196,6 +181,16 @@ impl Plugin for Oni2LoaderPlugin {
                 triggers::apply_force_vector_triggers
                     .after(crate::player::systems::player_movement_system)
                     .after(crate::mover::bridge::tnua_basis_from_linvel)
+                    .run_if(in_state(AppState::InGame)),
+            )
+            .add_systems(
+                FixedUpdate,
+                // Adds conveyor velocity to movers' LinearVelocity *before* the
+                // Tnua bridge folds it into the walk basis, so standing on the
+                // belt carries the character along.
+                triggers::apply_conveyor_system
+                    .after(crate::player::systems::player_movement_system)
+                    .before(crate::mover::bridge::tnua_basis_from_linvel)
                     .run_if(in_state(AppState::InGame)),
             )
             .add_systems(

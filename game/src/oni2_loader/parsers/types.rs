@@ -86,6 +86,12 @@ pub struct Oni2SubBound {
     pub edges: Vec<[u32; 2]>,
     pub quads: Vec<[u32; 4]>,
     pub tris: Vec<[u32; 3]>,
+    /// Conveyor speed (units/sec) if any polygon in this sub-bound uses a
+    /// physics material with `Conveyor: 1`.  `None` when the surface is not a
+    /// conveyor.  Mirrors `rbPhysMaterial::GetConveyor()`/`GetConveyorSpeed()`;
+    /// the push direction is the owning entity's forward axis, resolved at
+    /// runtime (see `crmover/bound.cpp`'s `SetSlide`).
+    pub conveyor_speed: Option<f32>,
 }
 
 /// Parsed .bnd file — a list of sub-bounds plus an overall composite centroid.

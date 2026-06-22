@@ -48,6 +48,7 @@ mod scroni;
 mod shadow_lod;
 mod statemachine;
 mod telemetry;
+mod water;
 mod weapons;
 pub use filesystem::dave_vfs;
 pub use filesystem::vfs;
@@ -262,6 +263,7 @@ fn main() {
     .add_plugins(frontend::FrontendPlugin)
     .add_plugins(crt_post::CrtPostPlugin)
     .add_plugins(env_reflect_material::EnvReflectMaterialPlugin)
+    .add_plugins(water::WaterPlugin)
     .add_plugins(shadow_lod::ShadowLodPlugin);
 
     #[cfg(feature = "intro_videos")]

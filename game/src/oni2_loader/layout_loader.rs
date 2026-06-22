@@ -12,6 +12,9 @@ use super::*;
 use crate::oni2_loader::parsers::texture::decode_tex;
 use crate::oni2_loader::parsers::texture::load_texture;
 use crate::oni2_loader::utils::space;
+use crate::oni2_loader::parsers::rooms::parse_rooms_file;
+use crate::oni2_loader::parsers::bsp::parse_bsp_file;
+use crate::oni2_loader::culling::{BspTree, RoomPortals, RoomGeometryMarker};
 
 // Light intensity / range scaling — used both at spawn time
 // (`load_layout`) and by the runtime ScrOni `setLightIntensity` binding
@@ -608,6 +611,7 @@ pub fn finalize_chunked_layout_load(
 
     // Lights, fog, skyhat.
     load_layout_lights(commands, meshes, materials, images, &state.layout_dir);
+    load_level_geometry(commands, meshes, materials, &state.layout_dir);
 
     state.post_done = true;
 }
@@ -827,6 +831,7 @@ pub fn load_layout(
 
     // Load lights, fog, skyhat
     load_layout_lights(commands, meshes, materials, images, layout_dir);
+    load_level_geometry(commands, meshes, materials, layout_dir);
 
     player_info
 }
@@ -1167,6 +1172,15 @@ pub fn spawn_layout_actor(
     };
 
     if let Some(entity) = spawned_entity {
+        // Water surfaces (e.g. harbor's `Hwater`): tag for conversion into an
+        // animated water plane + buoyancy volume by `water::setup_water_surfaces`.
+        if crate::water::is_water_entity_type(&actor.entity_type) {
+            assets
+                .commands
+                .entity(entity)
+                .insert(crate::water::WaterTag);
+        }
+
         // Attach Health if the actor declared <Health><MaxHitPoints/></Health>.
         // Without this, ScrOni's `health(guid("actor_Statue"))` returns 0 and
         // scripts like FXCathedral_Scenario_2/Statue.oni instantly trip their
@@ -1654,6 +1668,208 @@ fn attach_pending_glow_if_requested(
             light_dir: light.direction,
             light_color,
         });
+}
+
+fn load_level_geometry(
+    commands: &mut Commands,
+    meshes: &mut ResMut<Assets<Mesh>>,
+    materials: &mut ResMut<Assets<StandardMaterial>>,
+    layout_dir: &str,
+) {
+    let level_name = layout_dir.split('/').last().unwrap_or("");
+    if level_name.is_empty() {
+        return;
+    }
+
+    let mut rooms_file_dir = format!("Level/{}", level_name);
+    if !crate::vfs::exists(&rooms_file_dir, "rooms.room") {
+        rooms_file_dir = format!("level/{}", level_name);
+        if !crate::vfs::exists(&rooms_file_dir, "rooms.room") {
+            info!("No rooms.room found in Level/{} or level/{}", level_name, level_name);
+            return;
+        }
+    }
+
+    let rooms_content = match crate::vfs::read_to_string(&rooms_file_dir, "rooms.room") {
+        Ok(content) => content,
+        Err(e) => {
+            warn!("Failed to read rooms.room in {}: {}", rooms_file_dir, e);
+            return;
+        }
+    };
+
+    let Some(parsed_file) = parse_rooms_file(&rooms_content) else {
+        warn!("Failed to parse rooms.room in {}", rooms_file_dir);
+        return;
+    };
+
+    info!(
+        "Level geometry: found {} rooms in {}",
+        parsed_file.rooms.len(),
+        rooms_file_dir
+    );
+
+    // Load BSP tree if present
+    let mut bsp_file_dir = format!("Level/{}", level_name);
+    let mut bsp_path = format!("{}/rooms.bsp", bsp_file_dir);
+    if !crate::vfs::exists(&bsp_file_dir, "rooms.bsp") {
+        bsp_file_dir = format!("level/{}", level_name);
+        bsp_path = format!("{}/rooms.bsp", bsp_file_dir);
+    }
+    if crate::vfs::exists(&bsp_file_dir, "rooms.bsp") {
+        if let Ok(bsp_content) = crate::vfs::read_to_string(&bsp_file_dir, "rooms.bsp") {
+            if let Some(parsed_bsp) = parse_bsp_file(&bsp_content) {
+                info!("Loaded BSP tree from {} with {} nodes", bsp_path, parsed_bsp.nodes.len());
+                commands.insert_resource(BspTree(parsed_bsp));
+            } else {
+                warn!("Failed to parse BSP tree from {}", bsp_path);
+            }
+        } else {
+            warn!("Failed to read BSP tree from {}", bsp_path);
+        }
+    } else {
+        info!("No rooms.bsp found in level directory");
+    }
+
+    // Populate RoomPortals
+    let mut adjacencies = Vec::new();
+    let mut room_names = Vec::new();
+    for room in &parsed_file.rooms {
+        adjacencies.push(room.portals.clone());
+        room_names.push(room.name.clone());
+    }
+    commands.insert_resource(RoomPortals { adjacencies, room_names });
+
+    for (room_idx, room) in parsed_file.rooms.into_iter().enumerate() {
+        let mut mesh_filename = room.mesh_name.clone();
+        if !mesh_filename.to_lowercase().ends_with(".mesh") {
+            mesh_filename.push_str(".mesh");
+        }
+
+        if !crate::vfs::exists(&rooms_file_dir, &mesh_filename) {
+            // Also try uppercase or lowercase just in case
+            let mut found = false;
+            let mut resolved_filename = mesh_filename.clone();
+            if crate::vfs::exists(&rooms_file_dir, &mesh_filename.to_lowercase()) {
+                resolved_filename = mesh_filename.to_lowercase();
+                found = true;
+            } else if crate::vfs::exists(&rooms_file_dir, &mesh_filename.to_uppercase()) {
+                resolved_filename = mesh_filename.to_uppercase();
+                found = true;
+            }
+            if !found {
+                warn!("Room mesh file {} not found in {}", mesh_filename, rooms_file_dir);
+                continue;
+            }
+            mesh_filename = resolved_filename;
+        }
+
+        let mesh_bytes = match crate::vfs::read(&rooms_file_dir, &mesh_filename) {
+            Ok(bytes) => bytes,
+            Err(e) => {
+                warn!("Failed to read room mesh file {} in {}: {}", mesh_filename, rooms_file_dir, e);
+                continue;
+            }
+        };
+
+        let mesh_text = match std::str::from_utf8(&mesh_bytes) {
+            Ok(text) => text,
+            Err(e) => {
+                warn!("Room mesh file {} in {} is not valid UTF-8: {}", mesh_filename, rooms_file_dir, e);
+                continue;
+            }
+        };
+
+        let model = match crate::oni2_loader::parsers::mesh::parse_mesh(mesh_text, &rooms_file_dir) {
+            Some(m) => m,
+            None => {
+                warn!("Failed to parse room mesh {} in {}", mesh_filename, rooms_file_dir);
+                continue;
+            }
+        };
+
+        let sub_meshes = build_meshes_by_material(&model);
+        if sub_meshes.is_empty() {
+            continue;
+        }
+
+        info!(
+            "Spawning room '{}' (mesh: {}) with {} submeshes",
+            room.name,
+            mesh_filename,
+            sub_meshes.len()
+        );
+
+        // Spawn a parent room entity
+        let room_parent = commands
+            .spawn((
+                room.transform,
+                GlobalTransform::default(),
+                Visibility::Visible,
+                Name::new(room.name.clone()),
+                crate::menu::InGameEntity,
+                RoomGeometryMarker { index: room_idx },
+            ))
+            .id();
+
+        for (_mat_idx, sub_mesh) in sub_meshes {
+            // Build collider if possible
+            let collider = if let Some(vertices) = sub_mesh.attribute(Mesh::ATTRIBUTE_POSITION) {
+                if let Some(indices) = sub_mesh.indices() {
+                    let verts: Vec<Vec3> = match vertices {
+                        bevy::mesh::VertexAttributeValues::Float32x3(v) => {
+                            v.iter().map(|p| Vec3::new(p[0], p[1], p[2])).collect()
+                        }
+                        _ => Vec::new(),
+                    };
+                    let indices_vec: Vec<[u32; 3]> = match indices {
+                        bevy::mesh::Indices::U32(ind) => {
+                            ind.chunks_exact(3).map(|c| [c[0], c[1], c[2]]).collect()
+                        }
+                        bevy::mesh::Indices::U16(ind) => {
+                            ind.chunks_exact(3).map(|c| [c[0] as u32, c[1] as u32, c[2] as u32]).collect()
+                        }
+                    };
+
+                    if !verts.is_empty() && !indices_vec.is_empty() {
+                        avian3d::prelude::Collider::try_trimesh(verts, indices_vec).ok()
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
+
+            // Spawn the visual mesh child
+            let mat_handle = materials.add(StandardMaterial {
+                base_color: Color::WHITE,
+                cull_mode: None,
+                ..default()
+            });
+            let mesh_handle = meshes.add(sub_mesh);
+
+            let mut child = commands.spawn((
+                Mesh3d(mesh_handle),
+                MeshMaterial3d(mat_handle),
+                Transform::default(),
+                GlobalTransform::default(),
+                Visibility::Visible,
+            ));
+
+            if let Some(col) = collider {
+                child.insert((
+                    avian3d::prelude::RigidBody::Static,
+                    col,
+                ));
+            }
+
+            let child_id = child.id();
+            commands.entity(room_parent).add_child(child_id);
+        }
+    }
 }
 
 fn load_layout_lights(

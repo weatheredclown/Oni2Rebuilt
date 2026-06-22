@@ -429,6 +429,7 @@ pub fn creature_movement_anim_system(
         Option<&crate::combat::components::HitReaction>,
         Option<&crate::animator::AnimSchedule>,
         Option<&crate::animator::components::ActionPlayer>,
+        Option<&crate::oni2_loader::components::ConveyorPush>,
     )>,
 ) {
     const MAX_RUN_SPEED: f32 = 6.0;
@@ -444,6 +445,7 @@ pub fn creature_movement_anim_system(
         react_opt,
         schedule_opt,
         ap_opt,
+        conveyor_push_opt,
     ) in &mut creatures
     {
         // Block locomotion while an FSM-driven animation (attack, etc.) is playing.
@@ -1326,6 +1328,20 @@ pub fn spawn_oni2_entity_with_rotation(
 
     if has_any_collider && ent_type.skeleton.is_none() && ent_type.anim_library.is_none() {
         ec.insert(RigidBody::Static); // Truly static objects get static bodies
+    }
+
+    // Conveyor: if any sub-bound's physics material has `Conveyor: 1`, tag the
+    // parent entity so `apply_conveyor_system` pushes movers standing on it.
+    // The push direction is read from this entity's transform at runtime, so
+    // the component lives on the parent (which owns the rotation), not the
+    // child collider entities.
+    if let Some(speed) = ent_type
+        .bone_colliders
+        .iter()
+        .filter_map(|(_, sub)| sub.conveyor_speed)
+        .reduce(f32::max)
+    {
+        ec.insert(crate::oni2_loader::components::Conveyor { speed });
     }
 
     if let Some(ref ds) = ent_type.debug_skeleton {

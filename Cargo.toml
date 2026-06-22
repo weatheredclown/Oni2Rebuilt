@@ -11,6 +11,12 @@ edition = "2024"
 [profile.dev.package."*"]
 opt-level = 2
 
+# Full debuginfo is a large slice of every dev *link*.  Line tables keep
+# file:line backtraces (and breakpoints) while noticeably cutting link time.
+# Set back to `debug = true` if you need full local-variable inspection.
+[profile.dev]
+debug = "line-tables-only"
+
 [workspace.dependencies]
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

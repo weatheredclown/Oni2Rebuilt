@@ -34,3 +34,8 @@ mpeg2_player_v2 = { path = "../utils/mpeg2_player_v2" }
 trace = ["bevy/trace_chrome"]
 # Conditionally play Angel Studios and Rockstar Games intro videos before the main menu.
 intro_videos = []
+# Fast-iteration only: link Bevy as a shared library instead of statically
+# every rebuild — the single biggest dev-loop win.  Run with
+# `cargo run --features dynamic`.  NEVER enable for a shipped/release build
+# (the binary then needs the Bevy .dll/.so beside it).
+dynamic = ["bevy/dynamic_linking"]

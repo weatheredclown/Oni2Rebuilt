@@ -1,0 +1,8 @@
+# Use the LLVM linker (rust-lld) bundled with the Rust toolchain instead of
+# MSVC's link.exe.  Linking is the dominant cost of every Bevy dev rebuild;
+# lld is substantially faster and needs no separate install.
+#
+# If a future toolchain ever can't find rust-lld, delete this file to fall
+# back to the default linker.
+[target.x86_64-pc-windows-msvc]
+linker = "rust-lld.exe"

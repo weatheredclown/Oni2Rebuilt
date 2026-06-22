@@ -1,9 +1,13 @@
 /*
- * oni2_loader/triggers.rs — CameraTrigger, ForceVectorTrigger, and SectionTrigger systems.
+ * oni2_loader/triggers.rs — CameraTrigger, ForceVectorTrigger, SectionTrigger,
+ * and Conveyor surface systems.
  */
 use bevy::prelude::*;
-use avian3d::prelude::{LinearVelocity, Mass};
-use super::components::{CameraTrigger, ForceVectorTrigger, SectionTrigger, CurrentCheckpointIndex};
+use avian3d::prelude::{ContactGraph, LinearVelocity, Mass};
+use super::components::{
+    CameraTrigger, Conveyor, ConveyorPush, CurrentCheckpointIndex, ForceVectorTrigger,
+    SectionTrigger,
+};
 use crate::oni2_loader::environment::ActiveCameraPackage;
 
 /// System that switches the global `ActiveCameraPackage` resource when the player intersects a `CameraTrigger`.
@@ -95,6 +99,111 @@ pub fn update_section_triggers(
                     "SectionTrigger entered at checkpoint {}: sections to spawn: '{}', sections to destroy: '{}'",
                     current_checkpoint, trigger.sections_to_spawn, trigger.sections_to_destroy
                 );
+            }
+        }
+    }
+}
+
+/// Pushes movers standing on a [`Conveyor`] surface along the conveyor's
+/// forward axis at its `speed`.  Mirrors `crmover::Bound`'s conveyor branch:
+/// `v = GetMatrix().c; v.y = 0; v.Normalize(); v *= ConveyorSpeed;
+/// SetSlide(true, v)`.
+///
+/// Runs in FixedUpdate *before* `tnua_basis_from_linvel`, which folds
+/// `LinearVelocity` into Tnua's walk basis and then zeroes it.  Adding here
+/// means the conveyor velocity becomes part of the mover's desired motion
+/// (carrying them along even while idle); adding *after* the bridge would let
+/// Tnua's basis friction cancel it on the next tick.
+pub fn apply_conveyor_system(
+    mut commands: Commands,
+    contact_graph: Res<ContactGraph>,
+    conveyors: Query<(&Conveyor, &GlobalTransform)>,
+    parents: Query<&ChildOf>,
+    mut movers: Query<&mut LinearVelocity>,
+    mut pushes: Query<&mut ConveyorPush>,
+) {
+    // Clear last tick's recorded contribution; we re-accumulate below so the
+    // anim system can subtract the belt's push from the gait-driving velocity.
+    for mut p in &mut pushes {
+        p.0 = Vec3::ZERO;
+    }
+
+    for pair in contact_graph.iter_active_touching() {
+        let (Some(b1), Some(b2)) = (pair.body1, pair.body2) else {
+            continue;
+        };
+
+        // Walk up the hierarchy from a contact body to the entity carrying the
+        // `Conveyor` (the parent entity owns it; the colliders may be children).
+        let find_conveyor = |mut ent: Entity| -> Option<(Conveyor, GlobalTransform)> {
+            loop {
+                if let Ok((conv, gt)) = conveyors.get(ent) {
+                    return Some((*conv, *gt));
+                }
+                match parents.get(ent) {
+                    Ok(child_of) => ent = child_of.parent(),
+                    Err(_) => return None,
+                }
+            }
+        };
+        // A mover is any body with a `LinearVelocity` (player + AI creatures in
+        // both the Tnua and Dynamic backends; conveyors are Static so they're
+        // never matched here).
+        let find_mover = |mut ent: Entity| -> Option<Entity> {
+            loop {
+                if movers.contains(ent) {
+                    return Some(ent);
+                }
+                match parents.get(ent) {
+                    Ok(child_of) => ent = child_of.parent(),
+                    Err(_) => return None,
+                }
+            }
+        };
+
+        // Match (conveyor, mover) in either pair order.
+        let resolved = match (find_conveyor(b1), find_mover(b2)) {
+            (Some((conv, gt)), Some(mover)) => Some((conv, gt, mover)),
+            _ => match (find_conveyor(b2), find_mover(b1)) {
+                (Some((conv, gt)), Some(mover)) => Some((conv, gt, mover)),
+                _ => None,
+            },
+        };
+        let Some((conveyor, conv_gt, mover_ent)) = resolved else {
+            continue;
+        };
+
+        // Direction: the engine slides along the conveyor's local +Z
+        // (`GetMatrix().c`).  The Oni→Bevy conversion negates X and Z (a
+        // similarity transform R_bevy = M·R_oni·M), which maps that local +Z
+        // onto Bevy *local -Z* — i.e. `forward()`.  (`oni_forward()`/`back()`
+        // is the visual-facing helper and yields the reversed physical
+        // direction here — the "runs backwards" symptom.)  Flattened to the
+        // horizontal plane and normalized: `v.y = 0; v.Normalize()`.
+        //
+        // A flat belt you're in contact with means you're on it, so (unlike
+        // the octree floor test) we don't gate on the contact normal — that
+        // gate silently rejected valid trimesh contacts.
+        let mut dir = conv_gt.forward().as_vec3();
+        dir.y = 0.0;
+        let Some(dir) = dir.try_normalize() else {
+            continue;
+        };
+        let push = dir * conveyor.speed;
+
+        if let Ok(mut vel) = movers.get_mut(mover_ent) {
+            vel.x += push.x;
+            vel.z += push.z;
+        }
+
+        // Record the contribution so locomotion anims can treat motion
+        // relative to the belt as the "real" movement.  Lazily attach the
+        // component the first time a mover rides a conveyor (one-frame delay
+        // before the anim system sees it — negligible).
+        match pushes.get_mut(mover_ent) {
+            Ok(mut p) => p.0 += push,
+            Err(_) => {
+                commands.entity(mover_ent).insert(ConveyorPush(push));
             }
         }
     }
