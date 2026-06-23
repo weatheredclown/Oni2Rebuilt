@@ -84,7 +84,10 @@ impl ActorSound {
     pub fn new(data: SoundComponentData) -> Self {
         let active = data.start_active;
         let mut channels = Vec::new();
-        channels.resize(data.num_channels.max(1) as usize, AudioChannelState::default());
+        channels.resize(
+            data.num_channels.max(1) as usize,
+            AudioChannelState::default(),
+        );
         let play_requests = if active { 1 } else { 0 };
         Self {
             data,
@@ -108,12 +111,7 @@ impl ActorSound {
     /// override the per-nugget multipliers; `FadeIn`/`FadeOut`
     /// are TODO placeholders.  `channel` is accepted but not yet
     /// multiplexed — first cut runs one stream per actor.
-    pub fn apply_verb(
-        &mut self,
-        _channel: i32,
-        verb: ActorSoundVerb,
-        commands: &mut Commands,
-    ) {
+    pub fn apply_verb(&mut self, _channel: i32, verb: ActorSoundVerb, commands: &mut Commands) {
         match verb {
             ActorSoundVerb::Play => {
                 self.paused = false;
@@ -286,18 +284,16 @@ pub fn drive_actor_sound_system(
     }
     if audio_packages.is_none() {
         if let Ok(content) = crate::vfs::read_to_string("Audio", "rb.audiopackages") {
-            *audio_packages = Some(
-                crate::oni2_loader::parsers::audiopackages::parse_audiopackages(&content),
-            );
+            *audio_packages =
+                Some(crate::oni2_loader::parsers::audiopackages::parse_audiopackages(&content));
         } else {
             let assets_path = crate::get_assets_path();
             let pkgs_path = std::path::Path::new(assets_path)
                 .join("Audio")
                 .join("rb.audiopackages");
             if let Ok(content) = std::fs::read_to_string(&pkgs_path) {
-                *audio_packages = Some(
-                    crate::oni2_loader::parsers::audiopackages::parse_audiopackages(&content),
-                );
+                *audio_packages =
+                    Some(crate::oni2_loader::parsers::audiopackages::parse_audiopackages(&content));
             } else {
                 *audio_packages = Some(std::collections::HashMap::new());
             }
@@ -438,7 +434,9 @@ pub fn drive_actor_sound_system(
                     channel.pending_cue = None;
                     let (nugget_idx, vol, pitch) = cue;
                     let nugget = &pkg.nuggets[nugget_idx];
-                    if let Some(source) = resolve_sound_handle(&nugget.sound, dir, &mut audio_sources) {
+                    if let Some(source) =
+                        resolve_sound_handle(&nugget.sound, dir, &mut audio_sources)
+                    {
                         let settings = bevy::audio::PlaybackSettings::DESPAWN
                             .with_volume(bevy::audio::Volume::Linear(target_volume * vol))
                             .with_speed(pitch_override.unwrap_or(pitch));

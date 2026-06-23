@@ -28,7 +28,8 @@ impl AudioAssets {
             self.td = Some(crate::oni2_loader::parsers::td::load_all_tds());
         }
         if self.packages.is_none() {
-            let parsed = if let Ok(content) = crate::vfs::read_to_string("Audio", "rb.audiopackages")
+            let parsed = if let Ok(content) =
+                crate::vfs::read_to_string("Audio", "rb.audiopackages")
             {
                 crate::oni2_loader::parsers::audiopackages::parse_audiopackages(&content)
             } else {

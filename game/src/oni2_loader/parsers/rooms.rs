@@ -4,9 +4,10 @@
  * Parses rooms.room to extract individual room names, geometry meshes (Room*.mesh),
  * left-to-right handed transformed matrices, and skyhat parameters.
  */
+use crate::oni2_loader::utils::space;
 use bevy::math::{Mat3, Quat, Vec3};
 use bevy::prelude::Transform;
-use crate::oni2_loader::utils::space;#[derive(Debug, Clone)]
+#[derive(Debug, Clone)]
 pub struct ParsedRoom {
     pub name: String,
     pub mesh_name: String,
@@ -178,10 +179,7 @@ pub fn parse_rooms_file(content: &str) -> Option<ParsedRoomsFile> {
         }
     }
 
-    Some(ParsedRoomsFile {
-        version,
-        rooms,
-    })
+    Some(ParsedRoomsFile { version, rooms })
 }
 
 #[cfg(test)]
@@ -222,7 +220,7 @@ mod parser_rooms_tests {
         assert_eq!(room.mesh_name, "Start");
         assert_eq!(room.render_sky_hat, true);
         assert_eq!(room.portals, vec![2]);
-        
+
         // translation converted to Bevy space (-X, Y, -Z)
         assert_eq!(room.transform.translation, Vec3::new(-10.0, 20.0, -30.0));
     }

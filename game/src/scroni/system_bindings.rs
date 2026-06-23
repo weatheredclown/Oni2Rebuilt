@@ -1024,9 +1024,7 @@ pub fn scroni_sys_event_observer(
 
             // Base (pre-group) volume for the master mixing pass: the
             // explicit volume, else the ramp start, else unity.
-            let ambient_base = volume
-                .or(volume_ramp.map(|(s, _, _)| s))
-                .unwrap_or(1.0);
+            let ambient_base = volume.or(volume_ramp.map(|(s, _, _)| s)).unwrap_or(1.0);
 
             // Tag with InGameEntity so the `cleanup_game` system
             // (menu.rs) despawns them on AppState transitions — prevents

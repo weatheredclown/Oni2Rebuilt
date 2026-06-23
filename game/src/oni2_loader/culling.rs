@@ -4,9 +4,9 @@
  * Implements camera room lookup using the BSP tree and toggles room mesh visibility
  * based on the current room's portals.
  */
+use crate::oni2_loader::parsers::bsp::ParsedBspTree;
 use bevy::prelude::*;
 use std::collections::HashSet;
-use crate::oni2_loader::parsers::bsp::ParsedBspTree;
 
 /// Global resource containing the parsed BSP tree of the level.
 #[derive(Resource, Debug, Clone)]
@@ -64,14 +64,18 @@ pub fn culling_system(
     }
 
     // Find the current room index
-    let Some(current_idx) = portals.room_names.iter().position(|name| name.eq_ignore_ascii_case(room_name)) else {
+    let Some(current_idx) = portals
+        .room_names
+        .iter()
+        .position(|name| name.eq_ignore_ascii_case(room_name))
+    else {
         return;
     };
 
     // Build set of visible rooms: current room + adjacent rooms via portals
     let mut visible_rooms = HashSet::new();
     visible_rooms.insert(current_idx);
-    
+
     if let Some(adj) = portals.adjacencies.get(current_idx) {
         for &adj_idx in adj {
             visible_rooms.insert(adj_idx);

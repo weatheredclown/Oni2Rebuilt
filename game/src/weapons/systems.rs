@@ -344,12 +344,7 @@ pub fn weapon_aim_body_turn_system(
             AimTarget::None => continue,
             AimTarget::Point(p) => *p,
             AimTarget::Actor { target, .. } | AimTarget::Miss { target, .. } => {
-                get_target_world_position(
-                    *target,
-                    &transforms,
-                    &target_comps,
-                    &anim_states,
-                )
+                get_target_world_position(*target, &transforms, &target_comps, &anim_states)
             }
         };
         // Owner is the wielder — turn their body to face the aim point

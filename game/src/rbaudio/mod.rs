@@ -248,7 +248,12 @@ impl RbAudioManager {
 
     /// `rbAudioManager::MusicPlay` — queue a crossfade to `source` at
     /// `volume`, blending over `blend_time` seconds.
-    pub fn music_play(&mut self, source: Handle<bevy::audio::AudioSource>, volume: f32, blend_time: f32) {
+    pub fn music_play(
+        &mut self,
+        source: Handle<bevy::audio::AudioSource>,
+        volume: f32,
+        blend_time: f32,
+    ) {
         self.music_pending = Some((source, volume.clamp(MUSIC_BLEND_FLOOR, 1.0), blend_time));
     }
 
@@ -282,10 +287,7 @@ pub fn apply_audio_groups_system(
 /// `Time<Virtual>` (paused or frozen at zero speed — the debug frame-stepper
 /// and any future pause menu both flow through it).  `pause_on/pause_off` are
 /// idempotent, so calling every frame is fine.
-pub fn pause_duck_system(
-    virtual_time: Res<Time<Virtual>>,
-    mut manager: ResMut<RbAudioManager>,
-) {
+pub fn pause_duck_system(virtual_time: Res<Time<Virtual>>, mut manager: ResMut<RbAudioManager>) {
     let paused = virtual_time.is_paused() || virtual_time.relative_speed() <= f32::EPSILON;
     if paused {
         manager.pause_on();
@@ -344,10 +346,7 @@ pub fn preload_banks_system(mut assets: ResMut<resolve::AudioAssets>) {
     for bank in PRELOAD_BANKS {
         // Streams ship as `.stm` files rather than `.hd`/`.bd` banks.
         let candidates = [format!("{}.hd", bank), format!("{}.bd", bank)];
-        if candidates
-            .iter()
-            .any(|p| crate::vfs::read("", p).is_ok())
-        {
+        if candidates.iter().any(|p| crate::vfs::read("", p).is_ok()) {
             warmed += 1;
         }
     }
@@ -358,6 +357,6 @@ pub fn preload_banks_system(mut assets: ResMut<resolve::AudioAssets>) {
     );
 }
 
-pub mod music;
 pub mod cutscene;
+pub mod music;
 pub mod scroni_bridge;

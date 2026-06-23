@@ -94,9 +94,7 @@ pub fn cutscene_watch_system(
         .as_ref()
         .map(|s| commands.get_entity(s.entity).is_err())
         .unwrap_or(false);
-    if finished
-        && let Some(state) = manager.cutscene.take()
-    {
+    if finished && let Some(state) = manager.cutscene.take() {
         manager.set_group_volume(AudioGroupId::Ambient, state.saved_ambient_gain);
     }
 }

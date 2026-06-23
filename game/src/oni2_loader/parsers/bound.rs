@@ -57,9 +57,8 @@ pub fn parse_bound(content: &str) -> Oni2Bound {
         // (e.g. "Conveyor: 1") don't fall through to other arms.
         if in_mtl_block {
             if trimmed.starts_with('}') {
-                material_conveyor.push(
-                    (mtl_conveyor && mtl_conveyor_speed > 0.0).then_some(mtl_conveyor_speed),
-                );
+                material_conveyor
+                    .push((mtl_conveyor && mtl_conveyor_speed > 0.0).then_some(mtl_conveyor_speed));
                 in_mtl_block = false;
             } else if let Some(rest) = trimmed.strip_prefix("Conveyor:") {
                 mtl_conveyor = rest.trim().parse::<i32>().unwrap_or(0) != 0;

@@ -56,9 +56,7 @@ impl SoundPlayMode {
     pub fn is_looped(self) -> bool {
         matches!(
             self,
-            SoundPlayMode::CurrentOneLooped
-                | SoundPlayMode::FullLoop
-                | SoundPlayMode::RandomLoop
+            SoundPlayMode::CurrentOneLooped | SoundPlayMode::FullLoop | SoundPlayMode::RandomLoop
         )
     }
 }
@@ -294,7 +292,6 @@ pub struct ReticleComponentData {
     pub reticle_a_entity: Option<String>,
     pub reticle_b_entity: Option<String>,
 }
-
 
 /// Tunable data extracted from `<ElbowCraneIK><attributes>`.
 /// Maps to `animElbowCraneIKComponentType` in the C++ engine.
@@ -690,10 +687,8 @@ pub fn parse_actor_xml(dir: &str, filename: &str, template_dir: &str) -> Option<
             .and_then(|s| parse_vec3(&s))
             .unwrap_or(Vec3::ZERO);
         target_offset = space::to_bevy_space_pos(target_offset);
-        let is_bump_targetable = extract_xml_attr_bool(&block, "IsBumpTargetable")
-            .unwrap_or(true);
-        let parent_bone = extract_xml_attr(&block, "ParentBone")
-            .filter(|s| !s.is_empty());
+        let is_bump_targetable = extract_xml_attr_bool(&block, "IsBumpTargetable").unwrap_or(true);
+        let parent_bone = extract_xml_attr(&block, "ParentBone").filter(|s| !s.is_empty());
         TargetComponentData {
             magnet_radius,
             magnet_strength,
@@ -724,10 +719,10 @@ pub fn parse_actor_xml(dir: &str, filename: &str, template_dir: &str) -> Option<
 
     let reticle_block = extract_component(&chain, has_components_xml, "Reticle");
     let reticle = reticle_block.map(|block| {
-        let bump_targeting_enabled = extract_xml_attr_bool(&block, "BumpTargetingEnabled")
-            .unwrap_or(true);
-        let manual_targeting_enabled = extract_xml_attr_bool(&block, "ManualTargetingEnabled")
-            .unwrap_or(true);
+        let bump_targeting_enabled =
+            extract_xml_attr_bool(&block, "BumpTargetingEnabled").unwrap_or(true);
+        let manual_targeting_enabled =
+            extract_xml_attr_bool(&block, "ManualTargetingEnabled").unwrap_or(true);
         let max_lock_on_distance = extract_xml_attr(&block, "MaxLockOnDistance")
             .and_then(|v| v.parse().ok())
             .unwrap_or(30.0);
@@ -797,15 +792,17 @@ pub fn parse_actor_xml(dir: &str, filename: &str, template_dir: &str) -> Option<
         let idle_transparency = extract_xml_attr(&block, "m_IdleTransparency")
             .and_then(|v| v.parse().ok())
             .unwrap_or(0.5);
-        let starting_lock_on_transparency = extract_xml_attr(&block, "m_StartingLockOnTransparency")
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(0.0);
+        let starting_lock_on_transparency =
+            extract_xml_attr(&block, "m_StartingLockOnTransparency")
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(0.0);
         let ending_lock_on_transparency = extract_xml_attr(&block, "m_EndingLockOnTransparency")
             .and_then(|v| v.parse().ok())
             .unwrap_or(0.2);
-        let lock_on_transparency_lerp_rate = extract_xml_attr(&block, "m_LockOnTransparencyLerpRate")
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(0.4);
+        let lock_on_transparency_lerp_rate =
+            extract_xml_attr(&block, "m_LockOnTransparencyLerpRate")
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(0.4);
         let starting_blur_transparency = extract_xml_attr(&block, "m_StartingBlurTransparency")
             .and_then(|v| v.parse().ok())
             .unwrap_or(0.0);
@@ -831,12 +828,14 @@ pub fn parse_actor_xml(dir: &str, filename: &str, template_dir: &str) -> Option<
         let reticle_a_ending_distance = extract_xml_attr(&block, "m_ReticleAEndingDistance")
             .and_then(|v| v.parse().ok())
             .unwrap_or(0.1);
-        let reticle_a_starting_rotation_rate = extract_xml_attr(&block, "m_ReticleAStartingRotationRate")
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(-10.0);
-        let reticle_a_ending_rotation_rate = extract_xml_attr(&block, "m_ReticleAEndingRotationRate")
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(-1.7);
+        let reticle_a_starting_rotation_rate =
+            extract_xml_attr(&block, "m_ReticleAStartingRotationRate")
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(-10.0);
+        let reticle_a_ending_rotation_rate =
+            extract_xml_attr(&block, "m_ReticleAEndingRotationRate")
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(-1.7);
         let reticle_a_lerp_rate_distance = extract_xml_attr(&block, "m_ReticleALerpRateDistance")
             .and_then(|v| v.parse().ok())
             .unwrap_or(2.0);
@@ -859,12 +858,14 @@ pub fn parse_actor_xml(dir: &str, filename: &str, template_dir: &str) -> Option<
         let reticle_b_ending_distance = extract_xml_attr(&block, "m_ReticleBEndingDistance")
             .and_then(|v| v.parse().ok())
             .unwrap_or(0.1);
-        let reticle_b_starting_rotation_rate = extract_xml_attr(&block, "m_ReticleBStartingRotationRate")
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(3.0);
-        let reticle_b_ending_rotation_rate = extract_xml_attr(&block, "m_ReticleBEndingRotationRate")
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(1.7);
+        let reticle_b_starting_rotation_rate =
+            extract_xml_attr(&block, "m_ReticleBStartingRotationRate")
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(3.0);
+        let reticle_b_ending_rotation_rate =
+            extract_xml_attr(&block, "m_ReticleBEndingRotationRate")
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(1.7);
         let reticle_b_lerp_rate_distance = extract_xml_attr(&block, "m_ReticleBLerpRateDistance")
             .and_then(|v| v.parse().ok())
             .unwrap_or(2.0);
@@ -875,10 +876,10 @@ pub fn parse_actor_xml(dir: &str, filename: &str, template_dir: &str) -> Option<
             .and_then(|v| v.parse().ok())
             .unwrap_or(2.0);
 
-        let reticle_a_entity = extract_xml_attr(&block, "m_ReticleAEntity")
-            .filter(|s| !s.is_empty());
-        let reticle_b_entity = extract_xml_attr(&block, "m_ReticleBEntity")
-            .filter(|s| !s.is_empty());
+        let reticle_a_entity =
+            extract_xml_attr(&block, "m_ReticleAEntity").filter(|s| !s.is_empty());
+        let reticle_b_entity =
+            extract_xml_attr(&block, "m_ReticleBEntity").filter(|s| !s.is_empty());
 
         ReticleComponentData {
             bump_targeting_enabled,

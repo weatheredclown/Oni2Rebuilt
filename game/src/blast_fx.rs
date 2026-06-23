@@ -184,17 +184,17 @@ pub fn spawn_blast_fire(
     // their shader has no tint uniform; the cloned standard pass
     // beneath fades the visible diffuse and the additive env layer
     // contributes proportionally less as the base goes dark.
-    let mut collect_clones = |drawable: &LoadedDrawable,
-                              out: &mut Vec<(PassMaterial, Handle<StandardMaterial>)>| {
-        for pass in &drawable.passes {
-            if let PassMaterial::Standard(h) = &pass.material
-                && let Some(src) = materials.get(h)
-            {
-                let cloned = materials.add(src.clone());
-                out.push((PassMaterial::Standard(cloned.clone()), cloned));
+    let mut collect_clones =
+        |drawable: &LoadedDrawable, out: &mut Vec<(PassMaterial, Handle<StandardMaterial>)>| {
+            for pass in &drawable.passes {
+                if let PassMaterial::Standard(h) = &pass.material
+                    && let Some(src) = materials.get(h)
+                {
+                    let cloned = materials.add(src.clone());
+                    out.push((PassMaterial::Standard(cloned.clone()), cloned));
+                }
             }
-        }
-    };
+        };
     let mut cloned_per_pass: Vec<(PassMaterial, Handle<StandardMaterial>)> = Vec::new();
     collect_clones(fire, &mut cloned_per_pass);
     if let Some(residue) = &assets.residue {
@@ -203,10 +203,8 @@ pub fn spawn_blast_fire(
     if let Some(edge) = &assets.edge {
         collect_clones(edge, &mut cloned_per_pass);
     }
-    let instance_materials: Vec<Handle<StandardMaterial>> = cloned_per_pass
-        .iter()
-        .map(|(_, h)| h.clone())
-        .collect();
+    let instance_materials: Vec<Handle<StandardMaterial>> =
+        cloned_per_pass.iter().map(|(_, h)| h.clone()).collect();
 
     let parent_entity = commands
         .spawn((
@@ -549,8 +547,7 @@ pub fn update_blast_flash_system(
     mut overlay: Query<&mut BackgroundColor, With<BlastFlashOverlay>>,
 ) {
     if flash.intensity > 0.0 {
-        flash.intensity =
-            (flash.intensity - flash.fade_per_sec * time.delta_secs()).max(0.0);
+        flash.intensity = (flash.intensity - flash.fade_per_sec * time.delta_secs()).max(0.0);
     }
     for mut bg in &mut overlay {
         bg.0 = Color::srgba(1.0, 1.0, 1.0, flash.intensity);

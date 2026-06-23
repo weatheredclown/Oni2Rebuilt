@@ -147,7 +147,7 @@ pub struct SectionTrigger {
     pub trigger_only_once: bool,
     pub min_checkpoint_index: i32,
     pub max_checkpoint_index: i32,
-    pub has_fired: bool, // Runtime state
+    pub has_fired: bool,         // Runtime state
     pub player_was_inside: bool, // Track transition for non-once triggers
 }
 
@@ -171,4 +171,3 @@ pub struct Conveyor {
     /// `ConveyorSpeed` from the physics material (units/sec).
     pub speed: f32,
 }
-

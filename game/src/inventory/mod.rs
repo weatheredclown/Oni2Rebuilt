@@ -94,8 +94,7 @@ impl Plugin for InventoryPlugin {
                         .before(systems::drop_weapon_system)
                         .before(systems::drop_item_system),
                     systems::use_item_system,
-                    systems::player_auto_pickup_system
-                        .before(systems::pickup_system),
+                    systems::player_auto_pickup_system.before(systems::pickup_system),
                     systems::pickup_system
                         .before(systems::add_weapon_system)
                         .before(systems::add_item_system),

@@ -69,7 +69,11 @@ pub fn parse_audiopackages(content: &str) -> AudioPackagesDirectory {
         } else if current_nugget.is_none() && line.to_uppercase().starts_with("PROBABILITY") {
             // Package-level token (mirrors `rbAudioPackage::Load`), appears
             // before the first NUGGET.  Clamp to 0..1 like the C++ loader.
-            if let Some(v) = line.split_whitespace().nth(1).and_then(|s| s.parse::<f32>().ok()) {
+            if let Some(v) = line
+                .split_whitespace()
+                .nth(1)
+                .and_then(|s| s.parse::<f32>().ok())
+            {
                 current_pkg_probability = v.clamp(0.0, 1.0);
             }
         } else if line == "NUGGET" {

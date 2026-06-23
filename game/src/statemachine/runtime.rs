@@ -17,7 +17,7 @@ use super::types::{ctrl_flags, pad_flags};
 use crate::animator::events::EndActionMessage;
 use crate::combat::components::{Fighter, Health};
 use crate::combat::events::DamageMessage;
-use crate::control_map::PadMapper;
+use crate::control_map::{PadMapper, PadTuneSettings};
 use crate::fight_vector::{FightVectorTrigger, facing_within, find_fight_trigger_vector};
 use crate::oni2_loader::{Oni2AnimLibrary, Oni2AnimState};
 use crate::player::components::{InputState, Player};
@@ -154,6 +154,8 @@ impl FsmRuntime {
 pub fn build_fsm_packet(
     input: &InputState,
     is_grounded: bool,
+    running_timer: f32,
+    pad_settings: &PadTuneSettings,
     mapper: &PadMapper,
     fighter_state: Option<&crate::fight::components::FighterState>,
     inventory: Option<&crate::inventory::components::Inventory>,
@@ -166,7 +168,11 @@ pub fn build_fsm_packet(
     if is_grounded {
         let speed = input.movement.length();
         if speed > 0.6 {
-            ctrl |= ctrl_flags::RUNNING;
+            if running_timer >= pad_settings.time_to_run_before_executing_running_atk {
+                ctrl |= ctrl_flags::RUNNING;
+            } else {
+                ctrl |= ctrl_flags::WALKING;
+            }
         } else if speed > 0.05 {
             ctrl |= ctrl_flags::WALKING;
         } else {
@@ -501,6 +507,7 @@ pub fn apply_timing_windows(
 pub fn fsm_update_system(
     time: Res<Time>,
     pad_mapper: Res<PadMapper>,
+    pad_settings: Res<PadTuneSettings>,
     mut anim_start_reader: MessageReader<crate::animator::AnimStartedMessage>,
     mut query: Query<
         (
@@ -550,6 +557,13 @@ pub fn fsm_update_system(
         let dt = time.delta_secs();
         runtime.sm.advance_clock(dt);
 
+        // Update running timer
+        if anim_state.is_grounded && input.movement.length() > 0.6 {
+            runtime.ctx.running_timer += dt;
+        } else {
+            runtime.ctx.running_timer = 0.0;
+        }
+
         // Refresh the anim-state mirror BEFORE deriving anything that
         // reads it.  The order used to be: set `timed_out` → … → refresh
         // anim fields.  That meant the `timed_out` setter saw the
@@ -587,6 +601,8 @@ pub fn fsm_update_system(
         let mut packet = build_fsm_packet(
             &gated_input,
             anim_state.is_grounded,
+            runtime.ctx.running_timer,
+            &pad_settings,
             &pad_mapper,
             fighter_state_opt,
             inventory_opt,

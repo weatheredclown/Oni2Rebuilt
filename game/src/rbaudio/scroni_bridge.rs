@@ -5,8 +5,8 @@
  */
 use bevy::prelude::*;
 
-use super::resolve::{resolve_sound, AudioAssets};
 use super::RbAudioManager;
+use super::resolve::{AudioAssets, resolve_sound};
 use crate::scroni::vm::ScrOniSysEvent;
 
 /// Handles `MusicPlay` / `MusicStop` / `PlayCutScene` / `EndCutScene`; ignores
@@ -27,7 +27,10 @@ pub fn scroni_audio_observer(
             match resolve_sound(name, &assets, &mut audio_sources) {
                 Some((source, _loop)) => {
                     manager.music_play(source, *volume, *blend_time);
-                    info!("VM: MusicPlay '{}' (vol {}, blend {}s)", name, volume, blend_time);
+                    info!(
+                        "VM: MusicPlay '{}' (vol {}, blend {}s)",
+                        name, volume, blend_time
+                    );
                 }
                 None => warn!("VM: MusicPlay — could not resolve track '{}'", name),
             }

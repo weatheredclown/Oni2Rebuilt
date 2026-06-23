@@ -436,12 +436,18 @@ pub enum SysRequest {
     /// calls `pickup_target_actor`.  The script thread parks on
     /// `BlockingAction::WaitingForCrane { phase: Pickup }` until
     /// the IK reports `state == Attached`.
-    CranePickup { actor: Entity, target: Entity },
+    CranePickup {
+        actor: Entity,
+        target: Entity,
+    },
     /// `dropoff at <vec3>` — drives the crane through its
     /// lift/translate/lower cycle to release the held object at
     /// `world_pos`.  Parks on
     /// `BlockingAction::WaitingForCrane { phase: Dropoff }`.
-    CraneDropoff { actor: Entity, world_pos: Vec3 },
+    CraneDropoff {
+        actor: Entity,
+        world_pos: Vec3,
+    },
 }
 
 /// Which crane phase a `WaitingForCrane` blocking action is
@@ -1152,10 +1158,7 @@ impl ScriptExec {
         // inside the `find` arm because the borrow of `child_threads`
         // would still be live. Branch on `position` first to release
         // the immutable borrow before we re-borrow mutably.
-        let pos = self
-            .child_threads
-            .iter()
-            .position(|t| t.thread_id == tid);
+        let pos = self.child_threads.iter().position(|t| t.thread_id == tid);
         match pos {
             Some(i) => &mut self.child_threads[i],
             None => {
@@ -2661,11 +2664,8 @@ pub fn scroni_tick_system(
     // Set of ambient handles currently playing — answers
     // `ambientsoundstatus(handle)`.  We don't track an ambient "paused"
     // state in the port, so present = kPlaying, absent = kStopped.
-    let active_ambient_handles: std::collections::HashSet<i32> = actor_fx
-        .active_ambients
-        .iter()
-        .map(|a| a.handle)
-        .collect();
+    let active_ambient_handles: std::collections::HashSet<i32> =
+        actor_fx.active_ambients.iter().map(|a| a.handle).collect();
     drop(_build_status_span);
 
     let _scripts_span = bevy::log::info_span!("scroni::script_loop").entered();
@@ -3355,10 +3355,12 @@ pub fn scroni_tick_system(
                             bone_offset: Vec3::ZERO,
                         }
                     };
-                    actor_fx.aim.write(crate::inventory::events::InventoryAimMessage {
-                        entity: actor,
-                        target: aim_target,
-                    });
+                    actor_fx
+                        .aim
+                        .write(crate::inventory::events::InventoryAimMessage {
+                            entity: actor,
+                            target: aim_target,
+                        });
                     actor_fx
                         .fire
                         .write(crate::inventory::events::InventoryFireMessage {
@@ -3910,17 +3912,30 @@ sequence
 end
 "#;
         let file = crate::scroni::compiler::Compiler::compile(src).expect("should compile");
-        let parent_def = file.scripts.iter().find(|s| s.name == "ParentScript").unwrap().clone();
-        let child_def = file.scripts.iter().find(|s| s.name == "ChildScript").unwrap().clone();
+        let parent_def = file
+            .scripts
+            .iter()
+            .find(|s| s.name == "ParentScript")
+            .unwrap()
+            .clone();
+        let child_def = file
+            .scripts
+            .iter()
+            .find(|s| s.name == "ChildScript")
+            .unwrap()
+            .clone();
 
         let mut world = bevy::prelude::World::new();
-        let actor = world.spawn((
-            bevy::prelude::GlobalTransform::default(),
-            bevy::prelude::Name::new("Actor"),
-        )).id();
+        let actor = world
+            .spawn((
+                bevy::prelude::GlobalTransform::default(),
+                bevy::prelude::Name::new("Actor"),
+            ))
+            .id();
 
         let mut exec = ScriptExec::new(parent_def, actor);
-        exec.available_scripts.insert("ChildScript".to_string(), child_def);
+        exec.available_scripts
+            .insert("ChildScript".to_string(), child_def);
 
         let mut state: bevy::ecs::system::SystemState<(
             Query<(Entity, &GlobalTransform, Option<&Name>)>,
@@ -3964,4 +3979,3 @@ end
         assert_eq!(stacker_val, Value::Int(child_thread.thread_id as i32));
     }
 }
-

@@ -8,8 +8,8 @@
  */
 use bevy::prelude::*;
 
-use super::resolve::{resolve_sound, AudioAssets};
-use super::{AudioGroup, AudioGroupId, RbAudioManager, MUSIC_BLEND_FLOOR};
+use super::resolve::{AudioAssets, resolve_sound};
+use super::{AudioGroup, AudioGroupId, MUSIC_BLEND_FLOOR, RbAudioManager};
 
 /// Drives `music_pending` / `music_stop_requested` and the active crossfade.
 pub fn music_blend_system(
@@ -91,7 +91,11 @@ pub fn music_blend_system(
     if manager.music_blend_elapsed < blend_time {
         let ratio = manager.music_blend_elapsed / blend_time;
         if fade_out != index {
-            set_base(&mut groups, manager.music[fade_out].entity, (1.0 - ratio) * blend_volume_old);
+            set_base(
+                &mut groups,
+                manager.music[fade_out].entity,
+                (1.0 - ratio) * blend_volume_old,
+            );
         }
         set_base(
             &mut groups,

@@ -11,6 +11,7 @@ pub mod animation;
 pub mod asleep;
 pub mod components;
 pub mod crane_ik;
+pub mod culling;
 pub mod curve;
 pub mod drawable;
 pub mod environment;
@@ -25,10 +26,10 @@ pub mod spawn;
 pub mod testanim;
 pub mod triggers;
 pub mod utils;
-pub mod culling;
 
 pub use animation::*;
 pub use components::*;
+pub use culling::*;
 pub use environment::*;
 pub use formation::{free_camera_system, setup_formation_scene};
 pub use headik::{head_ik_setup_system, head_ik_system};
@@ -37,7 +38,6 @@ pub use registries::*;
 pub use spawn::*;
 pub use testanim::*;
 pub use triggers::*;
-pub use culling::*;
 
 use avian3d::prelude::*;
 use bevy::mesh::skinning::{SkinnedMesh, SkinnedMeshInverseBindposes};

@@ -19,8 +19,13 @@ use crate::statemachine::drivers::squad::{SQUAD_ACTION_PARSER, SQUAD_EVENT_PARSE
 
 pub mod components;
 pub mod position;
+pub mod squad_leader;
 
 pub use position::{FightResources, FightSlotState, ResourceOp};
+pub use squad_leader::{
+    leader_update_system, squad_leader_lifecycle_system, squad_member_sync_system,
+    squad_update_system,
+};
 
 // ---------------------------------------------------------------------------
 // Caches
@@ -229,13 +234,20 @@ impl Plugin for FightAiPlugin {
             .init_resource::<SquadFsmCache>()
             .add_systems(Startup, load_fight_squad_singletons)
             .add_systems(
+                Update,
+                (squad_leader_lifecycle_system, squad_member_sync_system)
+                    .run_if(in_state(crate::menu::AppState::InGame)),
+            )
+            .add_systems(
                 FixedUpdate,
                 (
+                    leader_update_system,
+                    squad_update_system.after(leader_update_system),
                     // Resources offer pass clears stale offers and
                     // distributes new ones.  Must run BEFORE the FSM
                     // tick so `E_POSITION_OFFERED` / `E_COOKIE_OFFERED`
                     // see fresh offers this frame.
-                    position::fight_resources_offer_system,
+                    position::fight_resources_offer_system.after(squad_update_system),
                     // Fight coordinator ticker reads FightSlotState
                     // (now populated by the offer pass above) into
                     // its FSM context, then collects requested
@@ -494,12 +506,13 @@ pub fn fight_runtime_update_system(
             Entity,
             &mut crate::fightai::components::FightRuntime,
             Option<&mut crate::fightai::components::AttackRuntime>,
-            Option<&crate::ai::components::AiFighter>,
+            Option<&mut crate::ai::components::AiFighter>,
             Option<&crate::animator::components::ActionPlayer>,
             Option<&crate::fight::components::FighterState>,
             Option<&crate::oni2_loader::animation::Oni2AnimState>,
             Option<&mut crate::behavior::BehaviorRuntime>,
             Option<&mut crate::fightai::position::FightSlotState>,
+            Option<&crate::fightai::components::FighterOrder>,
         ),
         Without<crate::oni2_loader::components::ActorAsleep>,
     >,
@@ -511,18 +524,19 @@ pub fn fight_runtime_update_system(
         entity,
         mut runtime,
         mut attack_rt_opt,
-        ai_opt,
+        mut ai_opt,
         action_player_opt,
         fs_opt,
         anim_opt,
         mut behavior_rt_opt,
         mut slot_state_opt,
+        order_opt,
     ) in &mut query
     {
         if !runtime.ctx.init_logged {
             bevy::log::info!(
                 "FightRuntime init[{:?}]: attack_rt={} slot_state={} behavior={} ai={} \
-                 anim={} action_player={} fighter_state={}",
+                 anim={} action_player={} fighter_state={} order={}",
                 entity,
                 attack_rt_opt.is_some(),
                 slot_state_opt.is_some(),
@@ -531,6 +545,7 @@ pub fn fight_runtime_update_system(
                 anim_opt.is_some(),
                 action_player_opt.is_some(),
                 fs_opt.is_some(),
+                order_opt.is_some(),
             );
             runtime.ctx.init_logged = true;
         }
@@ -560,7 +575,20 @@ pub fn fight_runtime_update_system(
         runtime.fsm.advance_clock(dt);
 
         // --- Populate context inputs ---
-        let ai_target: Option<Entity> = ai_opt.and_then(|a| a.target);
+        let mut ai_target: Option<Entity> = ai_opt.as_ref().and_then(|a| a.target);
+
+        // If order specifies a fight target and we don't have one, adopt it
+        if let Some(fo) = order_opt {
+            if fo.order == crate::statemachine::drivers::squad::SquadOrder::Fight {
+                if ai_target.is_none() && fo.object.is_some() {
+                    if let Some(ref mut ai) = ai_opt {
+                        ai.target = fo.object;
+                        ai_target = fo.object;
+                    }
+                }
+            }
+        }
+
         runtime.ctx.has_target = ai_target.is_some();
         runtime.ctx.is_reacting = action_player_opt.is_some_and(|ap| ap.is_reacting());
         runtime.ctx.target_killed = ai_target
@@ -622,33 +650,46 @@ pub fn fight_runtime_update_system(
         }
 
         // Set `ctx.mode` mirroring `aiFightStateMachine::Update`.
-        // Legacy recomputes mode EVERY tick from `ECanAttack` — i.e.
-        // `has_position && has_target` — so a positionless fighter
-        // gets routed through CHASE-mode states (S_STARTING_CHASE →
-        // S_REQUESTING_POSITION → ...) where `A_REQUEST_POSITION`
-        // actually fires.  Locking mode to "attack" when a target
-        // appears (the previous behavior) skipped the CHASE phase
-        // entirely and parked the FSM forever in S_STARTING_FIGHT
-        // emitting only `A_IDLE`.
-        //
-        // Scroni overrides for non-engagement modes (defend /
-        // join_formation) are still respected — those are explicit
-        // tactical intents the FSM shouldn't override.  Engagement
-        // intents (attack / fight / chase) are derived state and get
-        // recomputed.
-        let scroni_locked = runtime.ctx.mode.eq_ignore_ascii_case("defend")
-            || runtime.ctx.mode.eq_ignore_ascii_case("join_formation");
-        if !scroni_locked {
-            let new_mode = if !runtime.ctx.has_target {
-                "idle"
-            } else if runtime.ctx.has_position {
-                "attack"
-            } else {
-                "chase"
-            };
-            if runtime.ctx.mode != new_mode {
-                runtime.ctx.mode = new_mode.to_string();
+        // If order is present, it directly dictates the mode (e.g. Idle -> idle, Retreat -> retreat, Formation -> join_formation).
+        // If order is Fight, it uses the chase/attack logic.
+        let mut target_mode = "idle";
+        if let Some(fo) = order_opt {
+            match fo.order {
+                crate::statemachine::drivers::squad::SquadOrder::Idle => {
+                    target_mode = "idle";
+                }
+                crate::statemachine::drivers::squad::SquadOrder::Fight => {
+                    if runtime.ctx.has_position {
+                        target_mode = "attack";
+                    } else {
+                        target_mode = "chase";
+                    }
+                }
+                crate::statemachine::drivers::squad::SquadOrder::Retreat => {
+                    target_mode = "retreat";
+                }
+                crate::statemachine::drivers::squad::SquadOrder::Formation => {
+                    target_mode = "join_formation";
+                }
             }
+        } else {
+            let scroni_locked = runtime.ctx.mode.eq_ignore_ascii_case("defend")
+                || runtime.ctx.mode.eq_ignore_ascii_case("join_formation");
+            if !scroni_locked {
+                target_mode = if !runtime.ctx.has_target {
+                    "idle"
+                } else if runtime.ctx.has_position {
+                    "attack"
+                } else {
+                    "chase"
+                };
+            } else {
+                target_mode = &runtime.ctx.mode;
+            }
+        }
+
+        if runtime.ctx.mode != target_mode {
+            runtime.ctx.mode = target_mode.to_string();
         }
 
         // Stash the current behavior state name for dedup + the

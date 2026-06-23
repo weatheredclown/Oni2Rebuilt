@@ -16,9 +16,11 @@
 
 pub mod evaluator;
 pub mod parser;
+pub mod settings;
 pub mod types;
 
 pub use evaluator::{PadMapper, RawInputFrame};
+pub use settings::PadTuneSettings;
 
 use crate::filesystem::vfs;
 use bevy::prelude::*;
@@ -40,6 +42,14 @@ impl Plugin for ControlMapPlugin {
                 app.insert_resource(PadMapper::new(types::ControlMap::default()));
             }
         }
+
+        // Load and parse pad.tune; insert PadTuneSettings as a resource.
+        let pad_settings = settings::load_pad_settings();
+        info!(
+            "PadTune: loaded settings (threshold={:.4}, eatme_cull={:.4})",
+            pad_settings.threshold, pad_settings.enemy_auto_trac_cull_range
+        );
+        app.insert_resource(pad_settings);
     }
 }
 

@@ -116,7 +116,6 @@ pub struct Oni2BoneChannels {
     pub rot_z_limit: Option<[f32; 2]>,
 }
 
-
 #[derive(Clone, Default, Debug)]
 pub struct Oni2Skeleton {
     pub positions: Vec<[f32; 3]>, // Bind-pose positions in world space (pre-offsetting)

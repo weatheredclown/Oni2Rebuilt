@@ -751,10 +751,7 @@ pub fn scheduled_stop_firing_system(
     mut commands: Commands,
     time: Res<Time>,
     mut stop_writer: MessageWriter<InventoryStopFiringMessage>,
-    query: Query<(
-        Entity,
-        &crate::inventory::components::ScheduledStopFiring,
-    )>,
+    query: Query<(Entity, &crate::inventory::components::ScheduledStopFiring)>,
 ) {
     let now = time.elapsed_secs_f64();
     for (entity, sched) in &query {

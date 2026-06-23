@@ -280,7 +280,8 @@ fn build_water_plane(min: Vec2, max: Vec2, y: f32, subdivisions: u32) -> Mesh {
     let n = subdivisions.max(1);
     let verts_per_axis = n + 1;
     let size = max - min;
-    let mut positions: Vec<[f32; 3]> = Vec::with_capacity((verts_per_axis * verts_per_axis) as usize);
+    let mut positions: Vec<[f32; 3]> =
+        Vec::with_capacity((verts_per_axis * verts_per_axis) as usize);
     let mut normals: Vec<[f32; 3]> = Vec::with_capacity(positions.capacity());
     let mut uvs: Vec<[f32; 2]> = Vec::with_capacity(positions.capacity());
 

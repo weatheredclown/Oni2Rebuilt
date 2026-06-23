@@ -68,6 +68,9 @@ pub struct InputCtx {
     /// within 30°).  Consumed by `DoTriggerAtk`; absence makes that action
     /// fail-and-continue.
     pub fight_vector_anim: Option<String>,
+
+    /// Accumulates consecutive running time for running attacks.
+    pub running_timer: f32,
 }
 
 impl InputCtx {

@@ -91,10 +91,10 @@ impl ElbowCraneHitch {
 /// tick so subsequent ticks skip the by-name lookup.
 #[derive(Debug, Clone, Copy)]
 pub struct CraneBones {
-    pub azimuth: usize,    // arm_01
-    pub shoulder: usize,   // arm_02
-    pub elbow: usize,      // arm_03
-    pub forearm: usize,    // arm_04
+    pub azimuth: usize,  // arm_01
+    pub shoulder: usize, // arm_02
+    pub elbow: usize,    // arm_03
+    pub forearm: usize,  // arm_04
     pub right_clamp: usize,
     pub left_clamp: usize,
 }
@@ -594,7 +594,8 @@ fn pos_to_angles(
     let elbow = cos2.acos();
 
     let shoulder_a = ((forearm2 - (radius2 + bicep2)) / (-2.0 * radius * bicep_length)).acos();
-    let run = (shoulder_to_pos.x * shoulder_to_pos.x + shoulder_to_pos.z * shoulder_to_pos.z).sqrt();
+    let run =
+        (shoulder_to_pos.x * shoulder_to_pos.x + shoulder_to_pos.z * shoulder_to_pos.z).sqrt();
     let shoulder_b = shoulder_to_pos.y.atan2(run);
     let shoulder = (PI / 2.0 - shoulder_b) - shoulder_a;
 
@@ -836,9 +837,7 @@ pub fn crane_ik_system(
     mut start_action_writer: bevy::prelude::MessageWriter<
         crate::animator::events::StartActionMessage,
     >,
-    mut end_action_writer: bevy::prelude::MessageWriter<
-        crate::animator::events::EndActionMessage,
-    >,
+    mut end_action_writer: bevy::prelude::MessageWriter<crate::animator::events::EndActionMessage>,
     hitch_query: Query<(Entity, &ElbowCraneHitch, &GlobalTransform)>,
 ) {
     let dt = time.delta_secs();
@@ -1165,13 +1164,11 @@ pub fn crane_ik_system(
                             "[crane] emitting StartActionMessage(CraneStruggle) for held={:?}",
                             held
                         );
-                        start_action_writer.write(
-                            crate::animator::events::StartActionMessage {
-                                entity: held,
-                                action: crate::animator::components::MainAction::CraneStruggle,
-                                substate: -1,
-                            },
-                        );
+                        start_action_writer.write(crate::animator::events::StartActionMessage {
+                            entity: held,
+                            action: crate::animator::components::MainAction::CraneStruggle,
+                            substate: -1,
+                        });
                     }
                     ik.struggle_pending = false;
                     // Stall tracking re-arms for the next phase.

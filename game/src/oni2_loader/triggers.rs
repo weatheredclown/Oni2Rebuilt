@@ -2,13 +2,13 @@
  * oni2_loader/triggers.rs — CameraTrigger, ForceVectorTrigger, SectionTrigger,
  * and Conveyor surface systems.
  */
-use bevy::prelude::*;
-use avian3d::prelude::{ContactGraph, LinearVelocity, Mass};
 use super::components::{
     CameraTrigger, Conveyor, ConveyorPush, CurrentCheckpointIndex, ForceVectorTrigger,
     SectionTrigger,
 };
 use crate::oni2_loader::environment::ActiveCameraPackage;
+use avian3d::prelude::{ContactGraph, LinearVelocity, Mass};
+use bevy::prelude::*;
 
 /// System that switches the global `ActiveCameraPackage` resource when the player intersects a `CameraTrigger`.
 pub fn update_camera_triggers(
@@ -92,7 +92,8 @@ pub fn update_section_triggers(
         if player_is_inside && !player_was_inside {
             // Check checkpoint conditions
             if current_checkpoint >= trigger.min_checkpoint_index
-                && (trigger.max_checkpoint_index < 0 || current_checkpoint <= trigger.max_checkpoint_index)
+                && (trigger.max_checkpoint_index < 0
+                    || current_checkpoint <= trigger.max_checkpoint_index)
             {
                 trigger.has_fired = true;
                 info!(
@@ -222,10 +223,13 @@ mod tests {
         });
 
         // Spawn player at (0.0, 0.0, 0.0)
-        let _player_entity = app.world_mut().spawn((
-            Player,
-            GlobalTransform::from(Transform::from_xyz(0.0, 0.0, 0.0)),
-        )).id();
+        let _player_entity = app
+            .world_mut()
+            .spawn((
+                Player,
+                GlobalTransform::from(Transform::from_xyz(0.0, 0.0, 0.0)),
+            ))
+            .id();
 
         // Spawn camera trigger at (1.0, 0.0, 0.0) with radius 2.0
         app.world_mut().spawn((
@@ -254,11 +258,14 @@ mod tests {
         app.init_resource::<Time>();
 
         // Spawn entity with velocity at (0.0, 0.0, 0.0)
-        let entity = app.world_mut().spawn((
-            LinearVelocity(Vec3::ZERO),
-            GlobalTransform::from(Transform::from_xyz(0.0, 0.0, 0.0)),
-            Mass(60.0),
-        )).id();
+        let entity = app
+            .world_mut()
+            .spawn((
+                LinearVelocity(Vec3::ZERO),
+                GlobalTransform::from(Transform::from_xyz(0.0, 0.0, 0.0)),
+                Mass(60.0),
+            ))
+            .id();
 
         // Spawn force trigger at (1.0, 0.0, 0.0) with radius 2.0 and force vector (600.0, 0.0, 0.0)
         app.world_mut().spawn((
@@ -270,14 +277,22 @@ mod tests {
         ));
 
         // Advance time to mock time delta of 0.5s
-        app.world_mut().resource_mut::<Time>().advance_by(std::time::Duration::from_millis(500));
+        app.world_mut()
+            .resource_mut::<Time>()
+            .advance_by(std::time::Duration::from_millis(500));
 
         // Run the system once
-        app.world_mut().run_system_once(apply_force_vector_triggers).unwrap();
+        app.world_mut()
+            .run_system_once(apply_force_vector_triggers)
+            .unwrap();
 
         let velocity = app.world().entity(entity).get::<LinearVelocity>().unwrap();
         // dv = (ForceVector / mass) * dt = (600.0 / 60.0) * 0.5 = 5.0
-        assert!(velocity.x > 4.9 && velocity.x < 5.1, "velocity.x was {}", velocity.x);
+        assert!(
+            velocity.x > 4.9 && velocity.x < 5.1,
+            "velocity.x was {}",
+            velocity.x
+        );
     }
 
     #[test]
@@ -286,25 +301,31 @@ mod tests {
         app.insert_resource(CurrentCheckpointIndex(1));
 
         // Spawn player at (5.0, 0.0, 0.0) (outside trigger)
-        let player_entity = app.world_mut().spawn((
-            Player,
-            GlobalTransform::from(Transform::from_xyz(5.0, 0.0, 0.0)),
-        )).id();
+        let player_entity = app
+            .world_mut()
+            .spawn((
+                Player,
+                GlobalTransform::from(Transform::from_xyz(5.0, 0.0, 0.0)),
+            ))
+            .id();
 
         // Spawn section trigger at (0.0, 0.0, 0.0) with radius 2.0
-        let trigger_entity = app.world_mut().spawn((
-            SectionTrigger {
-                radius: 2.0,
-                sections_to_spawn: "SpawnSec".to_string(),
-                sections_to_destroy: "DestroySec".to_string(),
-                trigger_only_once: false,
-                min_checkpoint_index: 0,
-                max_checkpoint_index: 2,
-                has_fired: false,
-                player_was_inside: false,
-            },
-            GlobalTransform::from(Transform::from_xyz(0.0, 0.0, 0.0)),
-        )).id();
+        let trigger_entity = app
+            .world_mut()
+            .spawn((
+                SectionTrigger {
+                    radius: 2.0,
+                    sections_to_spawn: "SpawnSec".to_string(),
+                    sections_to_destroy: "DestroySec".to_string(),
+                    trigger_only_once: false,
+                    min_checkpoint_index: 0,
+                    max_checkpoint_index: 2,
+                    has_fired: false,
+                    player_was_inside: false,
+                },
+                GlobalTransform::from(Transform::from_xyz(0.0, 0.0, 0.0)),
+            ))
+            .id();
 
         let mut schedule = Schedule::new(Update);
         schedule.add_systems(update_section_triggers);
@@ -312,16 +333,26 @@ mod tests {
 
         // Run app - player is outside, nothing should fire
         app.update();
-        let trigger = app.world().entity(trigger_entity).get::<SectionTrigger>().unwrap();
+        let trigger = app
+            .world()
+            .entity(trigger_entity)
+            .get::<SectionTrigger>()
+            .unwrap();
         assert!(!trigger.has_fired);
         assert!(!trigger.player_was_inside);
 
         // Move player inside trigger
-        app.world_mut().entity_mut(player_entity).insert(GlobalTransform::from(Transform::from_xyz(1.0, 0.0, 0.0)));
+        app.world_mut()
+            .entity_mut(player_entity)
+            .insert(GlobalTransform::from(Transform::from_xyz(1.0, 0.0, 0.0)));
 
         // Run app - player enters, should fire!
         app.update();
-        let trigger = app.world().entity(trigger_entity).get::<SectionTrigger>().unwrap();
+        let trigger = app
+            .world()
+            .entity(trigger_entity)
+            .get::<SectionTrigger>()
+            .unwrap();
         assert!(trigger.has_fired);
         assert!(trigger.player_was_inside);
     }

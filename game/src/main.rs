@@ -33,7 +33,6 @@ mod fx_system;
 mod fx_visuals;
 mod hud;
 mod imf_audio;
-mod rbaudio;
 #[cfg(feature = "intro_videos")]
 mod intro_video;
 mod inventory;
@@ -44,6 +43,7 @@ mod mpeg2_video;
 mod oni2_loader;
 mod player;
 mod projectile_system;
+mod rbaudio;
 mod scroni;
 mod shadow_lod;
 mod statemachine;

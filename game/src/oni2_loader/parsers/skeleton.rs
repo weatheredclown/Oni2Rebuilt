@@ -165,4 +165,3 @@ bone root {
         assert_eq!(ch1.rot_z_limit, Some([0.0, 0.0]));
     }
 }
-

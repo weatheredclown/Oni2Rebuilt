@@ -9,12 +9,12 @@
  * projectile registries from the VFS.
  */
 use super::*;
+use crate::oni2_loader::culling::{BspTree, RoomGeometryMarker, RoomPortals};
+use crate::oni2_loader::parsers::bsp::parse_bsp_file;
+use crate::oni2_loader::parsers::rooms::parse_rooms_file;
 use crate::oni2_loader::parsers::texture::decode_tex;
 use crate::oni2_loader::parsers::texture::load_texture;
 use crate::oni2_loader::utils::space;
-use crate::oni2_loader::parsers::rooms::parse_rooms_file;
-use crate::oni2_loader::parsers::bsp::parse_bsp_file;
-use crate::oni2_loader::culling::{BspTree, RoomPortals, RoomGeometryMarker};
 
 // Light intensity / range scaling — used both at spawn time
 // (`load_layout`) and by the runtime ScrOni `setLightIntensity` binding
@@ -1312,12 +1312,13 @@ pub fn spawn_layout_actor(
         // declares the block; downstream readers (look op, future
         // perception systems) prefer the Eye over AiFighter defaults.
         if let Some(eye_data) = actor.eye.as_ref() {
-            assets.commands.entity(entity).insert(
-                crate::oni2_loader::components::Eye {
+            assets
+                .commands
+                .entity(entity)
+                .insert(crate::oni2_loader::components::Eye {
                     range: eye_data.range,
                     field_of_view_deg: eye_data.field_of_view_deg,
-                },
-            );
+                });
         }
 
         // <ElbowCraneHitch>: declares this actor as a
@@ -1685,7 +1686,10 @@ fn load_level_geometry(
     if !crate::vfs::exists(&rooms_file_dir, "rooms.room") {
         rooms_file_dir = format!("level/{}", level_name);
         if !crate::vfs::exists(&rooms_file_dir, "rooms.room") {
-            info!("No rooms.room found in Level/{} or level/{}", level_name, level_name);
+            info!(
+                "No rooms.room found in Level/{} or level/{}",
+                level_name, level_name
+            );
             return;
         }
     }
@@ -1719,7 +1723,11 @@ fn load_level_geometry(
     if crate::vfs::exists(&bsp_file_dir, "rooms.bsp") {
         if let Ok(bsp_content) = crate::vfs::read_to_string(&bsp_file_dir, "rooms.bsp") {
             if let Some(parsed_bsp) = parse_bsp_file(&bsp_content) {
-                info!("Loaded BSP tree from {} with {} nodes", bsp_path, parsed_bsp.nodes.len());
+                info!(
+                    "Loaded BSP tree from {} with {} nodes",
+                    bsp_path,
+                    parsed_bsp.nodes.len()
+                );
                 commands.insert_resource(BspTree(parsed_bsp));
             } else {
                 warn!("Failed to parse BSP tree from {}", bsp_path);
@@ -1738,7 +1746,10 @@ fn load_level_geometry(
         adjacencies.push(room.portals.clone());
         room_names.push(room.name.clone());
     }
-    commands.insert_resource(RoomPortals { adjacencies, room_names });
+    commands.insert_resource(RoomPortals {
+        adjacencies,
+        room_names,
+    });
 
     for (room_idx, room) in parsed_file.rooms.into_iter().enumerate() {
         let mut mesh_filename = room.mesh_name.clone();
@@ -1758,7 +1769,10 @@ fn load_level_geometry(
                 found = true;
             }
             if !found {
-                warn!("Room mesh file {} not found in {}", mesh_filename, rooms_file_dir);
+                warn!(
+                    "Room mesh file {} not found in {}",
+                    mesh_filename, rooms_file_dir
+                );
                 continue;
             }
             mesh_filename = resolved_filename;
@@ -1767,7 +1781,10 @@ fn load_level_geometry(
         let mesh_bytes = match crate::vfs::read(&rooms_file_dir, &mesh_filename) {
             Ok(bytes) => bytes,
             Err(e) => {
-                warn!("Failed to read room mesh file {} in {}: {}", mesh_filename, rooms_file_dir, e);
+                warn!(
+                    "Failed to read room mesh file {} in {}: {}",
+                    mesh_filename, rooms_file_dir, e
+                );
                 continue;
             }
         };
@@ -1775,15 +1792,22 @@ fn load_level_geometry(
         let mesh_text = match std::str::from_utf8(&mesh_bytes) {
             Ok(text) => text,
             Err(e) => {
-                warn!("Room mesh file {} in {} is not valid UTF-8: {}", mesh_filename, rooms_file_dir, e);
+                warn!(
+                    "Room mesh file {} in {} is not valid UTF-8: {}",
+                    mesh_filename, rooms_file_dir, e
+                );
                 continue;
             }
         };
 
-        let model = match crate::oni2_loader::parsers::mesh::parse_mesh(mesh_text, &rooms_file_dir) {
+        let model = match crate::oni2_loader::parsers::mesh::parse_mesh(mesh_text, &rooms_file_dir)
+        {
             Some(m) => m,
             None => {
-                warn!("Failed to parse room mesh {} in {}", mesh_filename, rooms_file_dir);
+                warn!(
+                    "Failed to parse room mesh {} in {}",
+                    mesh_filename, rooms_file_dir
+                );
                 continue;
             }
         };
@@ -1826,9 +1850,10 @@ fn load_level_geometry(
                         bevy::mesh::Indices::U32(ind) => {
                             ind.chunks_exact(3).map(|c| [c[0], c[1], c[2]]).collect()
                         }
-                        bevy::mesh::Indices::U16(ind) => {
-                            ind.chunks_exact(3).map(|c| [c[0] as u32, c[1] as u32, c[2] as u32]).collect()
-                        }
+                        bevy::mesh::Indices::U16(ind) => ind
+                            .chunks_exact(3)
+                            .map(|c| [c[0] as u32, c[1] as u32, c[2] as u32])
+                            .collect(),
                     };
 
                     if !verts.is_empty() && !indices_vec.is_empty() {
@@ -1860,10 +1885,7 @@ fn load_level_geometry(
             ));
 
             if let Some(col) = collider {
-                child.insert((
-                    avian3d::prelude::RigidBody::Static,
-                    col,
-                ));
+                child.insert((avian3d::prelude::RigidBody::Static, col));
             }
 
             let child_id = child.id();

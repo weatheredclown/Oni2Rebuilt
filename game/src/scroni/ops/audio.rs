@@ -19,7 +19,10 @@ pub fn exec(ctx: &mut OpsCtx, stmt: &Stmt) -> bool {
             // package-name string for `play`, a numeric for
             // pitch/volume/fadeIn/fadeOut, nothing for pause/stop.
             if args.len() < 2 {
-                warn!("VM: sound: expected `<channel> <action> [arg]`, got {:?}", args);
+                warn!(
+                    "VM: sound: expected `<channel> <action> [arg]`, got {:?}",
+                    args
+                );
                 return true;
             }
 
