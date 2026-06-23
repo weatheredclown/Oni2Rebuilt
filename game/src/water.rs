@@ -57,27 +57,37 @@ pub struct WaterWave {
 }
 
 /// `fzxWaterSurface::InitOcean()` — the three waves the engine seeds by
-/// default.  Amplitudes/frequencies/directions verbatim from watersurface.c.
+/// default (amplitudes/frequencies/directions from watersurface.c), tuned for
+/// the harbor's very large surface where the raw preset reads as tight little
+/// ripples.
+///
+/// `WAVELENGTH_SCALE` enlarges the swells (a smaller wave-number `k` →
+/// wavelength `2π/|k|` grows by the same factor); `SLOWNESS` divides the
+/// angular frequency so the surface bobs proportionally slower.  Both are 3×.
 pub fn ocean_waves() -> Vec<WaterWave> {
+    const WAVELENGTH_SCALE: f32 = 3.0;
+    const SLOWNESS: f32 = 3.0;
+    let k = 1.0 / WAVELENGTH_SCALE; // wave-number divisor (bigger swells)
+    let w = 1.0 / SLOWNESS; // angular-frequency divisor (slower motion)
     vec![
         WaterWave {
             amplitude: 0.6,
-            ang_frequency: 12.0,
-            wave_number: Vec2::new(-0.6, 0.45),
+            ang_frequency: 12.0 * w,
+            wave_number: Vec2::new(-0.6, 0.45) * k,
             origin: Vec2::ZERO,
             phase: 0.0,
         },
         WaterWave {
             amplitude: 0.4,
-            ang_frequency: 16.0,
-            wave_number: Vec2::new(-0.9, 0.1),
+            ang_frequency: 16.0 * w,
+            wave_number: Vec2::new(-0.9, 0.1) * k,
             origin: Vec2::ZERO,
             phase: 0.4,
         },
         WaterWave {
             amplitude: 0.4,
-            ang_frequency: 16.0,
-            wave_number: Vec2::new(-0.1, 0.9),
+            ang_frequency: 16.0 * w,
+            wave_number: Vec2::new(-0.1, 0.9) * k,
             origin: Vec2::ZERO,
             phase: 0.8,
         },

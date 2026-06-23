@@ -478,13 +478,20 @@ pub fn creature_movement_anim_system(
             continue;
         }
 
-        let _horiz_speed = Vec2::new(vel.x, vel.z).length();
+        // Subtract any conveyor-belt contribution so the gait is chosen from
+        // the character's motion *relative to the belt* — running upstream
+        // reads as running, and standing while carried reads as idle.
+        let conveyor = conveyor_push_opt.map(|c| c.0).unwrap_or(Vec3::ZERO);
+        let rel_vx = vel.x - conveyor.x;
+        let rel_vz = vel.z - conveyor.z;
+
+        let _horiz_speed = Vec2::new(rel_vx, rel_vz).length();
 
         // Get character forward and right directions
         let forward = transform.forward().xz().normalize_or_zero();
         let right = transform.right().xz().normalize_or_zero();
 
-        let vel_xz = Vec2::new(vel.x, vel.z);
+        let vel_xz = Vec2::new(rel_vx, rel_vz);
         let forward_speed = vel_xz.dot(forward);
         let right_speed = vel_xz.dot(-right);
 
