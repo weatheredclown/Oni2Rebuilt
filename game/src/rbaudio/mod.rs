@@ -317,6 +317,7 @@ impl Plugin for RbAudioPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<RbAudioManager>()
             .init_resource::<resolve::AudioAssets>()
+            .add_plugins(sound_test::SoundTestPlugin)
             .add_systems(Startup, preload_banks_system)
             .add_systems(
                 Update,
@@ -360,3 +361,4 @@ pub fn preload_banks_system(mut assets: ResMut<resolve::AudioAssets>) {
 pub mod cutscene;
 pub mod music;
 pub mod scroni_bridge;
+pub mod sound_test;

@@ -88,6 +88,16 @@ pub fn resolve_sound(
         .find(|(k, _)| k.eq_ignore_ascii_case(&resolved))?;
     let (bank_name, vag_index) = (&v.0, v.1);
 
+    decode_bank_sound(bank_name, vag_index, audio_sources)
+}
+
+/// Decodes a PSX-ADPCM bank sound by name and VAG index, returning the
+/// audio source handle and loop flag.
+pub fn decode_bank_sound(
+    bank_name: &str,
+    vag_index: usize,
+    audio_sources: &mut Assets<bevy::audio::AudioSource>,
+) -> Option<(Handle<bevy::audio::AudioSource>, bool)> {
     let hd_bytes = crate::vfs::read("", &format!("{}.hd", bank_name)).ok()?;
     let header = crate::oni2_loader::parsers::hd_bd::parse_hd(&hd_bytes).ok()?;
     let target_index = vag_index + 1;

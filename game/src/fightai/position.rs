@@ -82,6 +82,11 @@ pub struct PositionSlot {
     /// so the *target* can `DefendAgainst()` later without a separate
     /// queue lookup.
     pub grabbed_by_owner: bool,
+    /// Disabled because a grappler occupies an adjacent slot on this target
+    /// (`aiGrappler::UpdateGrapplePositions` → `target.InvalidatePosition`).
+    /// Re-derived each frame by `grapple_disable_positions_system`; the offer
+    /// pass skips disabled slots so peers attack from the grappler's front.
+    pub grapple_disabled: bool,
 }
 
 /// Defender-side resources component.  Mirrors `aiFightResources`.
@@ -264,6 +269,57 @@ pub fn closest_direction(attacker_pos: Vec3, target_pos: Vec3) -> i32 {
 // Update systems
 // ---------------------------------------------------------------------------
 
+/// How many slots on each side of the grappler's slot to disable
+/// (`disableWidthGrappled` in `aiGrappler::UpdateGrapplePositions`).
+const GRAPPLE_DISABLE_WIDTH: i32 = 2;
+
+/// Port of `aiGrappler::UpdateGrapplePositions`' position-disabling: while a
+/// fighter is grappling a target, the slots adjacent to the grappler's own
+/// slot (on the target's ring) are disabled so other attackers engage from the
+/// grappler's front instead of crowding the throw.  Re-derived each frame;
+/// runs before the offer pass so disabled slots aren't offered.
+pub fn grapple_disable_positions_system(
+    grapplers: Query<(&GlobalTransform, &crate::fight::components::FighterState)>,
+    transforms: Query<&GlobalTransform>,
+    mut resources_q: Query<&mut FightResources>,
+) {
+    // Clear last frame's grapple disables.
+    for mut res in &mut resources_q {
+        for slot in &mut res.positions {
+            slot.grapple_disabled = false;
+        }
+    }
+
+    // For each active grappler, disable the slots flanking its own slot on the
+    // target's resource ring.
+    for (grappler_tf, fs) in &grapplers {
+        let Some(target) = fs.grapple_target else {
+            continue;
+        };
+        let Ok(tgt_tf) = transforms.get(target) else {
+            continue;
+        };
+        let Ok(mut res) = resources_q.get_mut(target) else {
+            continue;
+        };
+        let grappler_slot = closest_direction(grappler_tf.translation(), tgt_tf.translation());
+        let n = NUM_POSITIONS as i32;
+        for p in 0..n {
+            // Shortest ring distance between slot p and the grappler's slot.
+            let mut delta = p - grappler_slot;
+            if delta < 0 {
+                delta += n;
+            }
+            if delta > n / 2 {
+                delta -= n;
+            }
+            if delta.abs() != 0 && delta.abs() <= GRAPPLE_DISABLE_WIDTH {
+                res.positions[p as usize].grapple_disabled = true;
+            }
+        }
+    }
+}
+
 /// Drains queues into one-frame offers.  Runs BEFORE the FSM tick so
 /// `E_POSITION_OFFERED` / `E_COOKIE_OFFERED` see fresh values.
 pub fn fight_resources_offer_system(
@@ -290,7 +346,11 @@ pub fn fight_resources_offer_system(
         for slot_idx in 0..NUM_POSITIONS {
             let slot = &mut res.positions[slot_idx];
             slot.offered_to = None;
-            if slot.holder.is_some() || slot.grabbed_by_owner || slot.queue.is_empty() {
+            if slot.holder.is_some()
+                || slot.grabbed_by_owner
+                || slot.grapple_disabled
+                || slot.queue.is_empty()
+            {
                 continue;
             }
             // Peek the highest-priority requester (sort asc, last is highest).

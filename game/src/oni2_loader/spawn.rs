@@ -553,16 +553,24 @@ pub fn creature_movement_anim_system(
             });
 
             let mut gait_to_play = best_gait.cloned();
-            if let Some(ap) = ap_opt {
-                if ap.is_in_fight_stance() {
-                    if let Some(g) = &mut gait_to_play {
-                        let id = g.anim.0;
-                        if id == crate::oni2_loader::animation::AnimId::new("ANIMNORMAL_IDLE").0
-                            || id == crate::oni2_loader::animation::AnimId::new("ANIMNAV_STAND").0
-                        {
-                            g.anim =
-                                crate::oni2_loader::animation::AnimId::new("ANIMFIGHTSTANCE_FIGHT");
-                        }
+            if let Some(ap) = ap_opt
+                && let Some(g) = &mut gait_to_play
+            {
+                let id = g.anim.0;
+                let is_rest = id == crate::oni2_loader::animation::AnimId::new("ANIMNORMAL_IDLE").0
+                    || id == crate::oni2_loader::animation::AnimId::new("ANIMNAV_STAND").0;
+                if is_rest {
+                    // Weapon drawn → hold the weapon-ready idle (pistol/rifle up)
+                    // instead of dropping to the unarmed stand (the legacy
+                    // ANIMSTACK_WEAPON overlay).  Takes precedence over fight
+                    // stance since a drawn gun dictates the pose.
+                    if ap.weapon_state == crate::animator::components::WeaponState::Drawn
+                        && let Some(stand) = ap.weapon_stand_anim
+                    {
+                        g.anim = stand;
+                    } else if ap.is_in_fight_stance() {
+                        g.anim =
+                            crate::oni2_loader::animation::AnimId::new("ANIMFIGHTSTANCE_FIGHT");
                     }
                 }
             }

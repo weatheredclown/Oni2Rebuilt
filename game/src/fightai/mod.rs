@@ -18,6 +18,10 @@ use crate::statemachine::drivers::parse_aifight_sm::parse_aifight_sm;
 use crate::statemachine::drivers::squad::{SQUAD_ACTION_PARSER, SQUAD_EVENT_PARSER, SquadDriver};
 
 pub mod components;
+pub mod formation;
+pub mod formation_data;
+pub mod pattern;
+pub mod poscheck;
 pub mod position;
 pub mod squad_leader;
 
@@ -232,10 +236,33 @@ impl Plugin for FightAiPlugin {
         app.init_resource::<FightFsmCache>()
             .init_resource::<AttackFsmCache>()
             .init_resource::<SquadFsmCache>()
-            .add_systems(Startup, load_fight_squad_singletons)
+            .init_resource::<squad_leader::SquadRegistry>()
+            .init_resource::<formation_data::FormationLibrary>()
+            .add_systems(
+                Startup,
+                (
+                    load_fight_squad_singletons,
+                    formation_data::load_formation_library_system,
+                ),
+            )
             .add_systems(
                 Update,
-                (squad_leader_lifecycle_system, squad_member_sync_system)
+                (
+                    squad_leader_lifecycle_system,
+                    // Group leaderless attackers by target into per-target
+                    // squads, then fold any such squad into a leader's grunt
+                    // squad when the leader engages that target.
+                    squad_leader::attacker_squad_membership_system
+                        .after(squad_leader_lifecycle_system),
+                    squad_leader::leader_merge_system
+                        .after(squad_leader::attacker_squad_membership_system),
+                    // Rebuild Squad.members from SquadMember last, after all
+                    // membership churn above has been applied.
+                    squad_member_sync_system.after(squad_leader::leader_merge_system),
+                    // Lay out each squad's circular formation (even slots +
+                    // SortFighters assignment) once members are synced.
+                    formation::formation_update_system.after(squad_member_sync_system),
+                )
                     .run_if(in_state(crate::menu::AppState::InGame)),
             )
             .add_systems(
@@ -243,11 +270,23 @@ impl Plugin for FightAiPlugin {
                 (
                     leader_update_system,
                     squad_update_system.after(leader_update_system),
+                    // Steer each leader toward its formation-tracking
+                    // destination (writes LinearVelocity) after the squad
+                    // state — circle_center is current by then.
+                    squad_leader::leader_locomotion_system.after(squad_update_system),
                     // Resources offer pass clears stale offers and
                     // distributes new ones.  Must run BEFORE the FSM
                     // tick so `E_POSITION_OFFERED` / `E_COOKIE_OFFERED`
                     // see fresh offers this frame.
-                    position::fight_resources_offer_system.after(squad_update_system),
+                    // Squad-level slot assignment (CalcMapping): distinct,
+                    // angular-order positions per member before requests/offers.
+                    pattern::squad_pattern_mapping_system.after(squad_update_system),
+                    // Disable slots flanking active grapplers before offers go
+                    // out (aiGrappler::UpdateGrapplePositions).
+                    position::grapple_disable_positions_system
+                        .after(pattern::squad_pattern_mapping_system),
+                    position::fight_resources_offer_system
+                        .after(position::grapple_disable_positions_system),
                     // Fight coordinator ticker reads FightSlotState
                     // (now populated by the offer pass above) into
                     // its FSM context, then collects requested
@@ -287,10 +326,14 @@ pub fn attack_runtime_update_system(
             Option<&crate::ai::components::AiFighter>,
             Option<&crate::animator::components::ActionPlayer>,
             Option<&GlobalTransform>,
+            Option<&crate::fight::components::FighterState>,
+            Option<&mut crate::fight::components::GrappleState>,
         ),
         Without<crate::oni2_loader::components::ActorAsleep>,
     >,
     transforms_q: Query<&GlobalTransform>,
+    mut attack_fsm_cache: ResMut<AttackFsmCache>,
+    mut start_events: MessageWriter<crate::fight::events::GrappleStartEvent>,
 ) {
     let dt = time.delta_secs();
     for (
@@ -302,6 +345,8 @@ pub fn attack_runtime_update_system(
         ai_fighter_opt,
         action_player_opt,
         self_tf_opt,
+        fighter_state_opt,
+        mut grapple_state_opt,
     ) in &mut query
     {
         // High-fidelity parity with aiFighter::UpdatePacketAttack:
@@ -332,6 +377,78 @@ pub fn attack_runtime_update_system(
                 Some((dx * dx + dz * dz).sqrt())
             });
 
+        let target = ai_fighter_opt.and_then(|ai| ai.target);
+        let mut target_dist = 0.0;
+        let mut target_facing_within_30 = false;
+        let mut target_cross_y = 0.0;
+
+        if let Some(tgt) = target {
+            if let Ok(tgt_tf) = transforms_q.get(tgt) {
+                if let Some(self_tf) = self_tf_opt {
+                    let self_pos = self_tf.translation();
+                    let tgt_pos = tgt_tf.translation();
+
+                    // Flat direction to target on the XZ plane
+                    let to_target_xz =
+                        Vec3::new(tgt_pos.x - self_pos.x, 0.0, tgt_pos.z - self_pos.z)
+                            .normalize_or_zero();
+                    use crate::oni2_loader::utils::space::OniTransformExt;
+                    let self_forward = *self_tf.oni_forward();
+                    let self_forward_xz =
+                        Vec3::new(self_forward.x, 0.0, self_forward.z).normalize_or_zero();
+
+                    let angle = self_forward_xz.angle_between(to_target_xz).abs();
+                    target_dist =
+                        Vec3::new(tgt_pos.x - self_pos.x, 0.0, tgt_pos.z - self_pos.z).length();
+                    target_facing_within_30 = angle <= 30.0_f32.to_radians();
+
+                    // Cross product around Y axis
+                    let cross = self_forward_xz.cross(to_target_xz);
+                    target_cross_y = cross.y;
+                }
+            }
+        }
+
+        let is_grappling = fighter_state_opt
+            .map(|fs| fs.is_grappling())
+            .unwrap_or(false);
+        let is_reacting = action_player_opt.is_some_and(|ap| ap.is_reacting());
+        let last_frame = (anim_state.anim.num_frames as f32 - 1.0).max(0.0);
+        let is_ready =
+            !is_reacting && (anim_state.looping || anim_state.current_time >= last_frame);
+
+        runtime.ctx.target = target;
+        runtime.ctx.target_distance = target_dist;
+        runtime.ctx.target_facing_within_30 = target_facing_within_30;
+        runtime.ctx.target_cross_y = target_cross_y;
+        runtime.ctx.is_grappling = is_grappling;
+        runtime.ctx.is_ready = is_ready;
+
+        // Restore original table when grapple ends
+        if let Some(orig_table) = runtime.original_table.take() {
+            if !is_grappling {
+                let asset_base = crate::get_assets_path();
+                if let Some(orig_data) = attack_fsm_cache.get_or_load(&orig_table, &asset_base) {
+                    runtime.table_name = orig_table;
+                    let mut fsm = crate::statemachine::core::SmRuntime::new(orig_data, 0);
+                    fsm.entity = Some(entity);
+                    runtime.fsm = fsm;
+                    bevy::log::info!(
+                        "attack_runtime_update_system: Grapple ended on {:?}, restoring attack table '{}'",
+                        entity,
+                        runtime.table_name
+                    );
+                } else {
+                    bevy::log::error!(
+                        "attack_runtime_update_system: Failed to restore original attack table '{}'",
+                        orig_table
+                    );
+                }
+            } else {
+                runtime.original_table = Some(orig_table);
+            }
+        }
+
         // Split the two mutable borrows — `runtime.fsm.tick(&mut runtime.ctx)`
         // would alias `runtime` to itself.  Go through `as_mut`.
         let rt_mut = runtime.as_mut();
@@ -357,6 +474,49 @@ pub fn attack_runtime_update_system(
         }
 
         let mut output = rt_mut.fsm.tick(&mut rt_mut.ctx);
+
+        // Handle grapple outputs
+        if let Some((anim, table)) = output.grapple_start.take() {
+            let asset_base = crate::get_assets_path();
+            if let Some(new_data) = attack_fsm_cache.get_or_load(&table, &asset_base) {
+                rt_mut.original_table = Some(rt_mut.table_name.clone());
+                rt_mut.table_name = table;
+
+                let mut fsm = crate::statemachine::core::SmRuntime::new(new_data, 0);
+                fsm.entity = Some(entity);
+                rt_mut.fsm = fsm;
+
+                let target_ent = ai_fighter_opt.and_then(|ai| ai.target);
+                if let Some(tgt) = target_ent {
+                    let target_pos = transforms_q
+                        .get(tgt)
+                        .ok()
+                        .map(|t| t.translation())
+                        .unwrap_or(Vec3::ZERO);
+                    start_events.write(crate::fight::events::GrappleStartEvent {
+                        attacker: entity,
+                        target: tgt,
+                        target_pos,
+                    });
+                    bevy::log::info!(
+                        "attack_runtime_update_system: Grapple start event on {:?} targeting {:?}",
+                        entity,
+                        tgt
+                    );
+                }
+            } else {
+                bevy::log::error!(
+                    "attack_runtime_update_system: Failed to load grapple table '{}'",
+                    table
+                );
+            }
+        }
+
+        if let Some(action) = output.grapple_action.take() {
+            if let Some(ref mut gs) = grapple_state_opt {
+                gs.pending_action = action;
+            }
+        }
 
         // Edge-trigger any output that came out of the .atk tick.  Lets us
         // see whether the AttackRuntime is actually producing a swing/block/
@@ -391,7 +551,6 @@ pub fn attack_runtime_update_system(
         // (`CanStartAttack` / `CanStartBlock` return false while
         // `IsReacting()`) and prevents the queued getup from being
         // clobbered the moment the react reaches its last frame.
-        let is_reacting = action_player_opt.is_some_and(|ap| ap.is_reacting());
         if !is_reacting {
             if let Some(anim_name) = &output.attack_anim {
                 bevy::log::info!("AttackRuntime: DoAttack → '{}' on {:?}", anim_name, entity);
@@ -518,6 +677,7 @@ pub fn fight_runtime_update_system(
     >,
     target_health: Query<&crate::combat::components::Health>,
     target_transforms: Query<&GlobalTransform>,
+    formation_slots: Query<&crate::fightai::formation::FormationSlot>,
 ) {
     let dt = time.delta_secs();
     for (
@@ -886,21 +1046,30 @@ pub fn fight_runtime_update_system(
                     let Ok(t_tf) = target_transforms.get(target_entity) else {
                         continue;
                     };
-                    // Walk to OUR held slot if we have one against this
-                    // target; otherwise just walk in (closest dir).
-                    let slot_idx = slot_state_opt
-                        .as_deref()
-                        .and_then(|s| {
-                            if s.current_position >= 0 && s.resource_target == Some(target_entity) {
-                                Some(s.current_position as usize)
-                            } else {
-                                None
-                            }
-                        })
-                        .unwrap_or(0);
+                    // Prefer the squad formation slot (even-spaced ring +
+                    // SortFighters assignment) when this fighter has one — it
+                    // supersedes the legacy 8-fixed-direction layout.  Fall
+                    // back to OUR held resource slot, else just walk in
+                    // (closest dir).
                     const ENGAGE_RADIUS: f32 = 2.0;
-                    let dest =
-                        position::slot_world_pos(t_tf.translation(), slot_idx, ENGAGE_RADIUS);
+                    let dest = match formation_slots.get(entity) {
+                        Ok(slot) if slot.valid => slot.center,
+                        _ => {
+                            let slot_idx = slot_state_opt
+                                .as_deref()
+                                .and_then(|s| {
+                                    if s.current_position >= 0
+                                        && s.resource_target == Some(target_entity)
+                                    {
+                                        Some(s.current_position as usize)
+                                    } else {
+                                        None
+                                    }
+                                })
+                                .unwrap_or(0);
+                            position::slot_world_pos(t_tf.translation(), slot_idx, ENGAGE_RADIUS)
+                        }
+                    };
                     if let Some(rt) = behavior_rt_opt.as_deref_mut() {
                         rt.pending_params.target_point = Some(dest);
                         rt.pending_params.target_entity = Some(target_entity);

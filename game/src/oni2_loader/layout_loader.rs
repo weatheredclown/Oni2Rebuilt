@@ -1033,6 +1033,8 @@ pub fn spawn_layout_actor(
                                 last_state_idx: usize::MAX,
                                 last_cookie: false,
                                 tick_count: 0,
+                                table_name: table.clone(),
+                                original_table: None,
                             },
                         );
                     }
@@ -1052,6 +1054,39 @@ pub fn spawn_layout_actor(
                         crate::fightai::position::FightResources::default(),
                         crate::fightai::position::FightSlotState::default(),
                     ));
+
+                    // Squad leader (`FightAILeader`): attach the `Leader` (which
+                    // `squad_leader_lifecycle_system` turns into a grunt squad)
+                    // and its custom formation.  `InitialFormation` is rarely in
+                    // XML — the formation is normally chosen by the ScrOni `form`
+                    // command — so default to "wedge" so a leader without a
+                    // script-set formation still forms up custom rather than
+                    // falling back to the circular layout.
+                    //
+                    // TODO(formation): the C++ resolves the default from the
+                    // `FightAILeader` component-type attribute default (an empty
+                    // aString → would assert without a value), not a hardcoded
+                    // "wedge".  Once the FightAILeader component-type defaults
+                    // are ported, source the default from there instead.
+                    if actor.is_leader {
+                        let formation = actor
+                            .leader_initial_formation
+                            .clone()
+                            .unwrap_or_else(|| "wedge".to_string());
+                        assets.commands.entity(entity).insert((
+                            crate::fightai::components::Leader {
+                                squad: None,
+                                // LEAD_GRUNTS_ATTACK (aiLeader::SubInit default).
+                                distribution_command: 1,
+                                last_distribution_command: -1,
+                                last_formation_pos: Vec3::ZERO,
+                                current_destination: Vec3::ZERO,
+                                has_destination: false,
+                                move_side: false,
+                            },
+                            crate::fightai::formation_data::LeaderFormation { name: formation },
+                        ));
+                    }
                 }
                 assets.commands.entity(entity).insert((
                     crate::combat::components::Enemy,
@@ -1277,6 +1312,7 @@ pub fn spawn_layout_actor(
                     reticle_b_lerp_rate_rotation: reticle_data.reticle_b_lerp_rate_rotation,
                     reticle_a_entity: reticle_data.reticle_a_entity.clone(),
                     reticle_b_entity: reticle_data.reticle_b_entity.clone(),
+                    ..Default::default()
                 });
         }
 

@@ -87,6 +87,10 @@ impl Plugin for FightPlugin {
                     // Grapple management runs each tick.
                     systems::grapple_tick_system,
                     systems::grapple_end_system,
+                    systems::grapple_attack_sync_system,
+                    systems::grapple_reposition_system,
+                    systems::grapple_attack_damage_system,
+                    systems::grapple_attack_disarm_system,
                     // Rotation notches are applied after all state mutations are done.
                     systems::rotation_notches_system,
                     // React-data-driven post-reaction housekeeping.

@@ -7,7 +7,9 @@
  * attack_sync_system and hit_detection_system.
  */
 use super::block_parser::BlockParser;
-use crate::oni2_loader::utils::space::{bevy_to_oni2_yaw_rads, oni2_to_bevy_yaw_rads};
+use crate::oni2_loader::utils::space::{
+    bevy_to_oni2_yaw_rads, oni2_to_bevy_yaw_rads, to_bevy_space_pos,
+};
 use bevy::prelude::*;
 
 /// `crStrikeReact::SetDistanceFromAttacker` mode values, ordered to match
@@ -139,6 +141,8 @@ impl Default for AtdtStrike {
 /// runtime when to drop the victim's currently-held weapon.
 #[derive(Debug, Clone, Reflect, Default)]
 pub struct AtdtGrab {
+    /// Target's initial offset from character (legacy `crGrabData::Offset`).
+    pub offset: Vec3,
     /// True when this grab attack should disarm the victim mid-anim
     /// (legacy `crGrabData::RemovesWeapon`).
     pub removes_weapon: bool,
@@ -153,6 +157,23 @@ pub struct AtdtGrab {
     pub react_anim: String,
     /// Damage application phase from the grab block.
     pub damage_phase: f32,
+    /// Target rotation around the y-axis (legacy `crGrabData::RotationOffsetDegrees`)
+    pub rotation_offset: f32,
+    /// True if the move plays through and doesn't leave the actors in idle state (legacy `crGrabData::OneOff`)
+    pub one_off: bool,
+}
+
+#[derive(Debug, Clone, Reflect, Default)]
+pub struct AtdtGrappleAttack {
+    pub speed: f32,
+    pub breaks_grapple: bool,
+    pub damage_phase: f32,
+    pub tgt_rotation_notches: i32,
+    pub react_gait: String,
+    pub to_grapple: String,
+    pub takes_weapon: bool,
+    pub take_weapon_phase: f32,
+    pub block_counter_atk: bool,
 }
 
 #[derive(Debug, Clone, Reflect, Default)]
@@ -162,6 +183,9 @@ pub struct AtdtData {
     /// a `Grab { ... }` section (grapples and disarms).  `None` for
     /// strike-only attacks.
     pub grab: Option<AtdtGrab>,
+    /// Grapple-attack block, populated for ATDTs whose `AttackData` carries
+    /// a `GrappleAttack { ... }` section.
+    pub grapple_attack: Option<AtdtGrappleAttack>,
     pub damage: f32,
     pub block_reaction: i32,
     /// `crAttackData::EnemyBlockAnim` (animBlockEnum) — the secondary block
@@ -545,6 +569,10 @@ pub fn parse_atdt_content(content: &str) -> AtdtData {
                         let inner_key = p.peek().unwrap_or("").to_lowercase();
                         let a_key = p.peek().unwrap_or("").to_string();
                         match inner_key.as_str() {
+                            "offset" => {
+                                let raw = p.read_vec3(&a_key, Vec3::ZERO);
+                                grab.offset = to_bevy_space_pos(raw);
+                            }
                             "removesweapon" => {
                                 grab.removes_weapon =
                                     p.read_i32(&a_key, if grab.removes_weapon { 1 } else { 0 }) != 0
@@ -559,12 +587,68 @@ pub fn parse_atdt_content(content: &str) -> AtdtData {
                             "damagephase" => {
                                 grab.damage_phase = p.read_float(&a_key, grab.damage_phase)
                             }
+                            "rotationoffset" => {
+                                grab.rotation_offset = p.read_float(&a_key, grab.rotation_offset)
+                            }
+                            "oneoff" => {
+                                grab.one_off =
+                                    p.read_i32(&a_key, if grab.one_off { 1 } else { 0 }) != 0
+                            }
                             _ => {
                                 p.next();
                             }
                         }
                     }
                     data.grab = Some(grab);
+                }
+            }
+            "grappleattack" => {
+                p.next(); // Consume "grappleattack"
+                if p.start_anonymous() {
+                    let mut ga = AtdtGrappleAttack::default();
+                    ga.speed = 1.0;
+                    ga.damage_phase = 0.5;
+                    ga.take_weapon_phase = 0.5;
+                    while !p.endblock() {
+                        let inner_key = p.peek().unwrap_or("").to_lowercase();
+                        let a_key = p.peek().unwrap_or("").to_string();
+                        match inner_key.as_str() {
+                            "speed" => ga.speed = p.read_float(&a_key, ga.speed),
+                            "breaksgrapple" => {
+                                ga.breaks_grapple =
+                                    p.read_i32(&a_key, if ga.breaks_grapple { 1 } else { 0 }) != 0
+                            }
+                            "damagephase" => {
+                                ga.damage_phase = p.read_float(&a_key, ga.damage_phase)
+                            }
+                            "tgtrotationnotches" => {
+                                ga.tgt_rotation_notches =
+                                    p.read_i32(&a_key, ga.tgt_rotation_notches)
+                            }
+                            "reactgait" => {
+                                ga.react_gait = p.read_string(&a_key, &ga.react_gait);
+                            }
+                            "tograpple" => {
+                                ga.to_grapple = p.read_string(&a_key, &ga.to_grapple);
+                            }
+                            "takesweapon" => {
+                                ga.takes_weapon =
+                                    p.read_i32(&a_key, if ga.takes_weapon { 1 } else { 0 }) != 0
+                            }
+                            "takeweaponphase" => {
+                                ga.take_weapon_phase = p.read_float(&a_key, ga.take_weapon_phase)
+                            }
+                            "blockcounteratk" => {
+                                ga.block_counter_atk = p
+                                    .read_i32(&a_key, if ga.block_counter_atk { 1 } else { 0 })
+                                    != 0
+                            }
+                            _ => {
+                                p.next();
+                            }
+                        }
+                    }
+                    data.grapple_attack = Some(ga);
                 }
             }
             "damage" => data.damage = p.read_float(&actual_key, data.damage),
@@ -773,5 +857,62 @@ strike {
             "SWEEP_RIGHT notches=+3 should leave a strong backward (POS_Z) component; got z={}",
             rotated.z,
         );
+    }
+
+    #[test]
+    fn test_parse_grapple_attack() {
+        let src = r#"
+type: a
+AttackData {
+  GrappleAttack {
+    speed 1.250000 
+    breaksgrapple 1 
+    damagephase 0.400000 
+    tgtrotationnotches 4 
+    reactgait ANIMGRAP_FRONT_BREAK_REACT 
+    tograpple ANIMGRAB_02_ACT 
+    takesweapon 1 
+    takeweaponphase 0.600000 
+    blockcounteratk 1 
+  }
+  damage 10.000000 
+}
+"#;
+        let data = parse_atdt_content(src);
+        assert_eq!(data.damage, 10.0);
+        let ga = data.grapple_attack.unwrap();
+        assert_eq!(ga.speed, 1.25);
+        assert!(ga.breaks_grapple);
+        assert_eq!(ga.damage_phase, 0.4);
+        assert_eq!(ga.tgt_rotation_notches, 4);
+        assert_eq!(ga.react_gait, "ANIMGRAP_FRONT_BREAK_REACT");
+        assert_eq!(ga.to_grapple, "ANIMGRAB_02_ACT");
+        assert!(ga.takes_weapon);
+        assert_eq!(ga.take_weapon_phase, 0.6);
+        assert!(ga.block_counter_atk);
+    }
+
+    #[test]
+    fn test_parse_grab_offset() {
+        let src = r#"
+type: a
+AttackData {
+  Grab {
+    offset -0.019996 0.000000 -1.387996
+    rotationoffset 180.000000
+    oneoff 1
+  }
+}
+"#;
+        let data = parse_atdt_content(src);
+        let grab = data.grab.unwrap();
+        // Since to_bevy_space_pos negates X and Z:
+        // -(-0.019996) = 0.019996
+        // -(-1.387996) = 1.387996
+        assert!((grab.offset.x - 0.019996).abs() < 1e-5);
+        assert_eq!(grab.offset.y, 0.0);
+        assert!((grab.offset.z - 1.387996).abs() < 1e-5);
+        assert_eq!(grab.rotation_offset, 180.0);
+        assert!(grab.one_off);
     }
 }

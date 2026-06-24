@@ -31,6 +31,7 @@ impl Plugin for PlayerPlugin {
                     systems::gamepad_input_system,
                     // 2. Raw hardware → RawInputFrame → PadMapper (FSM / attack path)
                     systems::pad_mapper_update_system,
+                    systems::player_weapon_toggle_system,
                     // 3. Mouse look uses InputState
                     systems::player_mouse_look_system,
                     // 4. Animator FSM reads PadMapper

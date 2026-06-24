@@ -17,16 +17,19 @@
  */
 use bevy::prelude::*;
 
+use crate::animator::events::{ControlAnimMessage, control_anim_bits};
 use crate::combat::components::{
     ComboTracker, Fighter, Health, HitReaction, ReactLibrary, ReactionKind,
 };
+use crate::animator::components::{ActionPlayer, MainAction, sub_state_1};
+use crate::animator::schedule::{AnimSchedule, AnimScheduleEntry};
 use crate::combat::events::{AboutToBeHitMessage, HitReactionMessage};
 use crate::oni2_loader::animation::{AnimId, Oni2AnimLibrary, Oni2AnimState};
 use crate::oni2_loader::parsers::rct::ANIMREACT_NAMES;
 
 use super::components::{
-    BlockLibrary, BlockStatus, FighterState, FighterType, GrabAction, GrappleState, fighter_flags,
-    grapple_flags,
+    BlockLibrary, BlockStatus, FighterState, FighterType, GrabAction, GrappleRepositionData,
+    GrappleState, fighter_flags, grapple_flags,
 };
 use super::events::{
     ApplyRotationNotchesEvent, BlockFailedEvent, BlockSuccessEvent, GrappleEndEvent,
@@ -420,43 +423,110 @@ pub fn block_failed_system(
 pub fn grapple_tick_system(
     mut start_events: MessageReader<GrappleStartEvent>,
     time: Res<Time>,
-    mut holders: Query<(
-        Entity,
-        &mut GrappleState,
-        &mut FighterState,
-        &Health,
-        Option<&mut Oni2AnimState>,
-        Option<&Oni2AnimLibrary>,
-    )>,
-    mut targets: Query<&mut FighterState, Without<GrappleState>>,
+    mut commands: Commands,
+    mut non_holders: Query<(&mut FighterState, &Health, &Oni2AnimState), Without<GrappleState>>,
+    mut holders: Query<(Entity, &mut GrappleState, &FighterState, &Health)>,
+    mut transforms: Query<&mut Transform>,
     fighter_types: Query<&FighterType>,
     mut end_writer: MessageWriter<GrappleEndEvent>,
     mut rotation_writer: MessageWriter<ApplyRotationNotchesEvent>,
+    mut control_writer: MessageWriter<ControlAnimMessage>,
 ) {
     let now = time.elapsed_secs_f64();
     let dt = time.delta_secs();
 
     // --- Handle GrappleStartEvent ---
     for ev in start_events.read() {
-        // Insert GrappleState on holder
-        if let Ok((_, mut gs, mut holder_fs, health, _, _)) = holders.get_mut(ev.attacker) {
-            gs.set_flag(grapple_flags::STARTED);
-            gs.grab_start_health = health.current;
-            gs.grab_start_time = now;
-            gs.shake_amt = 0.0;
-            gs.full_shake_timer = 0.0;
-            holder_fs.grapple_target = Some(ev.target);
+        let mut rotation_offset = 0.0;
+        let mut one_off = false;
+        let mut react_anim = String::new();
+        let mut start_health = 0.0;
+        let mut success = false;
+        let mut grab_offset = Vec3::ZERO;
+
+        {
+            if let Ok((mut attacker_fs, health, anim_state)) = non_holders.get_mut(ev.attacker) {
+                start_health = health.current;
+                if let Some(attack_data) = anim_state.anim.attack_data.as_ref() {
+                    if let Some(grab) = attack_data.grab.as_ref() {
+                        rotation_offset = grab.rotation_offset;
+                        one_off = grab.one_off;
+                        react_anim = grab.react_anim.clone();
+                        grab_offset = grab.offset;
+                    }
+                }
+                attacker_fs.grapple_target = Some(ev.target);
+                success = true;
+            }
         }
-        // Mark target as being grappled
-        if let Ok(mut target_fs) = targets.get_mut(ev.target) {
-            target_fs.grapple_attacker = Some(ev.attacker);
+
+        if success {
+            commands.entity(ev.attacker).insert(GrappleState {
+                flags: grapple_flags::STARTED,
+                grab_start_health: start_health,
+                grab_start_time: now,
+                shake_amt: 0.0,
+                full_shake_timer: 0.0,
+                rotation_offset,
+                one_off,
+                ..default()
+            });
+
+            // Perform initial target teleport/reposition (matching C++ crGrab::PutTargetInPlace)
+            let mut got_attacker_tf = false;
+            let mut attacker_translation = Vec3::ZERO;
+            let mut attacker_rotation = Quat::IDENTITY;
+            if let Ok(attacker_tf) = transforms.get(ev.attacker) {
+                attacker_translation = attacker_tf.translation;
+                attacker_rotation = attacker_tf.rotation;
+                got_attacker_tf = true;
+            }
+
+            if got_attacker_tf {
+                if let Ok(mut target_tf) = transforms.get_mut(ev.target) {
+                    target_tf.translation = attacker_translation + attacker_rotation * grab_offset;
+                    target_tf.rotation = attacker_rotation;
+                    bevy::log::info!(
+                        "grapple_tick_system: Teleported target {:?} to attacker {:?} offset {:?} (world pos: {:?})",
+                        ev.target,
+                        ev.attacker,
+                        grab_offset,
+                        target_tf.translation
+                    );
+                }
+            }
+
+            if let Ok((mut target_fs, _, _)) = non_holders.get_mut(ev.target) {
+                target_fs.grapple_attacker = Some(ev.attacker);
+
+                if !react_anim.is_empty() {
+                    control_writer.write(ControlAnimMessage {
+                        entity: ev.target,
+                        animation_alias: Some(react_anim.clone()),
+                        control: control_anim_bits::RESTART | control_anim_bits::HOLD,
+                        rate: 1.0,
+                        loop_anim: false,
+                        hold: true,
+                        pause: false,
+                    });
+
+                    let anim_id = AnimId::new(&react_anim);
+                    let notches = (rotation_offset / 45.0).round() as i32;
+                    target_fs.grapple_reposition = Some(GrappleRepositionData {
+                        anim_id,
+                        rotation_offset_notches: notches,
+                        one_off,
+                        attacker_entity: ev.attacker,
+                    });
+                }
+            }
         }
     }
 
     // --- Per-frame grapple tick ---
     let mut to_end: Vec<(Entity, Option<Entity>, GrappleEndReason)> = Vec::new();
 
-    for (holder_entity, mut gs, holder_fs, health, _anim_opt, _lib_opt) in &mut holders {
+    for (holder_entity, mut gs, holder_fs, health) in &mut holders {
         if gs.is_broken() {
             continue;
         }
@@ -1026,7 +1096,7 @@ pub fn fight_stance_timer_system(
 //      (which queries `fs.in_fight_mode()`) sees the real state without
 //      having to couple to the animator component directly.
 
-use crate::animator::components::{ActionPlayer, action_flags as ap_flags, sub_state_0};
+use crate::animator::components::{action_flags as ap_flags, sub_state_0};
 use crate::animator::events::StartActionMessage;
 use crate::combat::events::DamageMessage;
 use crate::control_map::PadMapper;
@@ -1751,6 +1821,379 @@ pub fn react_data_apply_system(
 }
 
 // ---------------------------------------------------------------------------
+// Grapple Attacks & Target Repositioning
+// ---------------------------------------------------------------------------
+
+fn extract_root_translation(
+    skel: &crate::oni2_loader::parsers::types::Oni2Skeleton,
+    frame_channels: &[f32],
+) -> Vec3 {
+    let has_flags = !skel.channel_is_rot.is_empty();
+    if !has_flags {
+        let ch_dx = *frame_channels.first().unwrap_or(&0.0);
+        let ch_dy = *frame_channels.get(1).unwrap_or(&0.0);
+        let ch_dz = *frame_channels.get(2).unwrap_or(&0.0);
+        Vec3::new(ch_dx, ch_dy, ch_dz)
+    } else {
+        if skel.channels.is_empty() {
+            return Vec3::ZERO;
+        }
+        let ch = &skel.channels[0];
+        let mut ch_idx = 0;
+        let tx = if ch.has_trans_x {
+            let v = *frame_channels.get(ch_idx).unwrap_or(&0.0);
+            ch_idx += 1;
+            v
+        } else {
+            0.0
+        };
+        let ty = if ch.has_trans_y {
+            let v = *frame_channels.get(ch_idx).unwrap_or(&0.0);
+            ch_idx += 1;
+            v
+        } else {
+            0.0
+        };
+        let tz = if ch.has_trans_z {
+            let v = *frame_channels.get(ch_idx).unwrap_or(&0.0);
+            ch_idx += 1;
+            v
+        } else {
+            0.0
+        };
+        Vec3::new(tx, ty, tz)
+    }
+}
+
+/// Synchronizes grapple attack animations, playbacks, and speeds between attacker and victim.
+pub fn grapple_attack_sync_system(
+    mut anim_start_reader: MessageReader<crate::animator::AnimStartedMessage>,
+    mut query: Query<(Entity, &FighterState, &mut Oni2AnimState, &mut GrappleState)>,
+    mut victim_query: Query<(&mut FighterState, &mut Oni2AnimState), Without<GrappleState>>,
+    mut control_writer: MessageWriter<ControlAnimMessage>,
+) {
+    for msg in anim_start_reader.read() {
+        let Ok((attacker, fs, mut attacker_anim, mut gs)) = query.get_mut(msg.entity) else {
+            continue;
+        };
+
+        let Some(victim) = fs.grapple_target else {
+            continue;
+        };
+
+        // Extract required fields in a separate block to release the borrow of attacker_anim
+        let (react_gait, speed, breaks_grapple, tgt_rotation_notches) = {
+            let Some(attack_data) = attacker_anim.anim.attack_data.as_ref() else {
+                continue;
+            };
+            let Some(grap_atk) = attack_data.grapple_attack.as_ref() else {
+                continue;
+            };
+            (
+                grap_atk.react_gait.clone(),
+                grap_atk.speed,
+                grap_atk.breaks_grapple,
+                grap_atk.tgt_rotation_notches,
+            )
+        };
+
+        if let Ok((mut victim_fs, _victim_anim)) = victim_query.get_mut(victim) {
+            // Force victim to play react_gait
+            if !react_gait.is_empty() {
+                control_writer.write(ControlAnimMessage {
+                    entity: victim,
+                    animation_alias: Some(react_gait.clone()),
+                    control: control_anim_bits::RESTART
+                        | control_anim_bits::HOLD
+                        | control_anim_bits::SET_RATE,
+                    rate: speed,
+                    loop_anim: false,
+                    hold: true,
+                    pause: false,
+                });
+
+                // Populate grapple reposition on victim
+                let react_anim_id = AnimId::new(&react_gait);
+                victim_fs.grapple_reposition = Some(GrappleRepositionData {
+                    anim_id: react_anim_id,
+                    rotation_offset_notches: tgt_rotation_notches,
+                    one_off: true,
+                    attacker_entity: attacker,
+                });
+            }
+
+            // Sync attacker speed multiplier to grap_atk.speed
+            attacker_anim.speed_multiplier = speed;
+
+            // Set BREAKING flag on GrappleState if breaks_grapple is true
+            if breaks_grapple {
+                gs.set_flag(grapple_flags::BREAKING);
+            }
+        }
+    }
+}
+
+/// Performs target relative teleports using root motion deltas at the end of reaction animations.
+pub fn grapple_reposition_system(
+    mut commands: Commands,
+    mut ended_events: MessageReader<crate::animator::AnimEndedMessage>,
+    mut query: Query<(
+        Entity,
+        &mut Transform,
+        &mut FighterState,
+        &Oni2AnimState,
+        Option<&Oni2AnimLibrary>,
+        Option<&ReactLibrary>,
+        Option<&mut ActionPlayer>,
+    )>,
+    mut rotation_writer: MessageWriter<ApplyRotationNotchesEvent>,
+    mut end_writer: MessageWriter<GrappleEndEvent>,
+) {
+    // 1. Process natural animation ends
+    for msg in ended_events.read() {
+        let Ok((
+            entity,
+            mut tf,
+            mut fs,
+            anim_state,
+            anim_library_opt,
+            react_library_opt,
+            mut action_player_opt,
+        )) = query.get_mut(msg.entity)
+        else {
+            continue;
+        };
+
+        if let Some(repo) = fs.grapple_reposition.clone() {
+            if Some(repo.anim_id) == msg.anim_id {
+                let frames = &anim_state.anim.frames;
+                if !frames.is_empty() {
+                    let first_frame = &frames[0];
+                    let last_frame = frames.last().unwrap();
+
+                    let first_pos = extract_root_translation(&anim_state.skeleton, first_frame);
+                    let last_pos = extract_root_translation(&anim_state.skeleton, last_frame);
+                    let delta = last_pos - first_pos;
+
+                    if delta != Vec3::ZERO {
+                        let bevy_delta = crate::oni2_loader::utils::space::to_bevy_space_pos(delta);
+                        let world_delta = tf.rotation * bevy_delta;
+                        tf.translation += world_delta;
+                        bevy::log::info!(
+                            "grapple_reposition: Teleported entity {:?} by {:?}",
+                            entity,
+                            world_delta
+                        );
+                    }
+                }
+
+                if repo.rotation_offset_notches != 0 {
+                    rotation_writer.write(ApplyRotationNotchesEvent {
+                        entity,
+                        notches: repo.rotation_offset_notches,
+                    });
+                }
+
+                if repo.one_off {
+                    end_writer.write(GrappleEndEvent {
+                        attacker: repo.attacker_entity,
+                        target: Some(entity),
+                        reason: GrappleEndReason::Throw,
+                    });
+                }
+
+                // If it is a throw, trigger a getup animation if configured in the react library.
+                if repo.one_off {
+                    if let Some(anim_library) = anim_library_opt
+                        && let Some(react_library) = react_library_opt
+                    {
+                        if let Some(anim_name) = anim_library.debug_names.get(&repo.anim_id) {
+                            if let Some(react_enum) = ANIMREACT_NAMES.iter().position(|&name| name == anim_name) {
+                                if let Some(react_data) = react_library.get(react_enum as i32) {
+                                    let getup = &react_data.get_up_anim;
+                                    if !getup.is_empty() {
+                                        bevy::log::info!(
+                                            "grapple_reposition: Queueing getup animation '{}' for entity {:?}",
+                                            getup,
+                                            entity
+                                        );
+
+                                        let schedule = AnimSchedule::new(vec![
+                                            AnimScheduleEntry::new(getup, sub_state_1::REACT)
+                                        ]);
+                                        commands.entity(entity).insert(schedule);
+
+                                        // Set action player state to REACT to lock locomotion
+                                        if let Some(ref mut ap) = action_player_opt {
+                                            ap.last_action = MainAction::React;
+                                            ap.record_new_substate_1(sub_state_1::REACT);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                fs.grapple_reposition = None;
+            }
+        }
+    }
+
+    // 2. Clear repositioning if interrupted
+    for (entity, _, mut fs, anim_state, _, _, _) in &mut query {
+        if let Some(repo) = &fs.grapple_reposition {
+            if anim_state.current_anim_id != Some(repo.anim_id) {
+                // Interrupted! Clear the reposition data.
+                fs.grapple_reposition = None;
+            }
+        }
+    }
+}
+
+/// Deals damage during the configured phase of a grapple attack animation.
+pub fn grapple_attack_damage_system(
+    mut attackers: Query<(
+        Entity,
+        &Oni2AnimState,
+        &mut crate::combat::components::AttackState,
+        &FighterState,
+        &Transform,
+    )>,
+    mut injure_writer: MessageWriter<crate::combat::events::InjureMessage>,
+    mut damage_writer: MessageWriter<crate::combat::events::DamageMessage>,
+) {
+    for (attacker, anim, mut attack_state, fs, attacker_tf) in &mut attackers {
+        let Some(active) = attack_state.active_attack.as_mut() else {
+            continue;
+        };
+        if active.has_damaged {
+            continue;
+        }
+
+        let Some(attack_data) = anim.anim.attack_data.as_ref() else {
+            continue;
+        };
+        let Some(grap_atk) = attack_data.grapple_attack.as_ref() else {
+            continue;
+        };
+
+        if anim.anim.num_frames <= 1 {
+            continue;
+        }
+        let phase = anim.current_time / (anim.anim.num_frames as f32 - 1.0).max(1.0);
+        if phase < grap_atk.damage_phase {
+            continue;
+        }
+
+        let Some(victim) = fs.grapple_target else {
+            continue;
+        };
+
+        let damage = attack_data.damage;
+
+        injure_writer.write(crate::combat::events::InjureMessage {
+            target: victim,
+            attacker: Some(attacker),
+            damage,
+            hit_type: "grappleattack".to_string(),
+            from: Some(attacker_tf.translation),
+            play_react: false,
+            disable_creature_detect: true,
+            attack_class: None,
+            attack_strength: None,
+            attack_target: None,
+            strike_react_enum: None,
+            react_distance: None,
+            face_with_react: false,
+            teleport_to: None,
+        });
+
+        damage_writer.write(crate::combat::events::DamageMessage {
+            attacker,
+            target: victim,
+            damage,
+            was_blocked: false,
+            attack_class: crate::combat::components::AttackClass::Punch,
+            attack_strength: crate::combat::components::AttackStrength::High,
+        });
+
+        active.has_damaged = true;
+        bevy::log::info!(
+            "grapple_attack_damage: attacker={:?} victim={:?} dealt damage={} at phase={:.2}",
+            attacker,
+            victim,
+            damage,
+            phase
+        );
+    }
+}
+
+/// Drop the victim's weapon during a grapple attack when it crosses the takes_weapon phase.
+pub fn grapple_attack_disarm_system(
+    mut attackers: Query<(
+        Entity,
+        &Oni2AnimState,
+        &mut crate::combat::components::AttackState,
+        &FighterState,
+    )>,
+    inventories: Query<&crate::inventory::components::Inventory>,
+    mut drop_writer: MessageWriter<crate::inventory::events::DropWeaponMessage>,
+) {
+    for (_attacker, anim, mut attack_state, fs) in &mut attackers {
+        let Some(active) = attack_state.active_attack.as_mut() else {
+            continue;
+        };
+        if active.has_disarmed {
+            continue;
+        }
+
+        let Some(attack_data) = anim.anim.attack_data.as_ref() else {
+            continue;
+        };
+        let Some(grap_atk) = attack_data.grapple_attack.as_ref() else {
+            continue;
+        };
+        if !grap_atk.takes_weapon {
+            continue;
+        }
+
+        if anim.anim.num_frames <= 1 {
+            continue;
+        }
+        let phase = anim.current_time / (anim.anim.num_frames as f32 - 1.0).max(1.0);
+        if phase < grap_atk.take_weapon_phase {
+            continue;
+        }
+
+        let Some(victim) = fs.grapple_target else {
+            continue;
+        };
+
+        let Ok(inv) = inventories.get(victim) else {
+            active.has_disarmed = true;
+            continue;
+        };
+        let Some(slot_index) = inv.current_weapon else {
+            active.has_disarmed = true;
+            continue;
+        };
+
+        drop_writer.write(crate::inventory::events::DropWeaponMessage {
+            entity: victim,
+            slot_index,
+        });
+        active.has_disarmed = true;
+        bevy::log::info!(
+            "grapple_attack_disarm: victim={:?} dropped weapon slot {} at phase={:.2}",
+            victim,
+            slot_index,
+            phase
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Strike-facing math tests
 // ---------------------------------------------------------------------------
 //
@@ -2001,5 +2444,354 @@ mod strike_facing_tests {
             "midpoint of sweep is halfway, got {}",
             h_mid
         );
+    }
+
+    #[test]
+    fn test_grapple_reposition_system() {
+        use crate::oni2_loader::animation::AnimId;
+        use crate::oni2_loader::parsers::types::{Oni2Animation, Oni2Skeleton};
+        use bevy::prelude::{MessageReader, Messages};
+
+        let mut app = App::new();
+
+        // Register messages/events
+        app.add_message::<crate::animator::events::AnimEndedMessage>();
+        app.add_message::<ApplyRotationNotchesEvent>();
+        app.add_message::<GrappleEndEvent>();
+
+        app.add_systems(Update, grapple_reposition_system);
+
+        let attacker = app.world_mut().spawn_empty().id();
+
+        let mut skel = Oni2Skeleton::default();
+        skel.positions = vec![[0.0, 0.0, 0.0]];
+        skel.parent_indices = vec![None];
+        skel.names = vec!["root".to_string()];
+        skel.local_offsets = vec![[0.0, 0.0, 0.0]];
+        skel.channels = vec![crate::oni2_loader::parsers::types::Oni2BoneChannels {
+            has_trans_x: true,
+            has_trans_y: true,
+            has_trans_z: true,
+            ..Default::default()
+        }];
+        skel.build_channel_map();
+
+        let anim_id = AnimId::new("ANIMGRAP_TEST_REACT");
+
+        let mut anim = Oni2Animation::default();
+        anim.num_frames = 2;
+        anim.num_channels = 3;
+        anim.frames = vec![vec![0.0, 0.0, 0.0], vec![0.0, 0.0, 2.0]];
+
+        let anim_state = Oni2AnimState {
+            anim,
+            skeleton: skel,
+            current_time: 1.0,
+            fps: 30.0,
+            paused: false,
+            looping: false,
+            speed_multiplier: 1.0,
+            pending_step: 0,
+            last_rendered_time: 1.0,
+            joint_entities: vec![],
+            base_rotation: Quat::IDENTITY,
+            current_frame: vec![0.0, 0.0, 2.0],
+            current_anim_id: Some(anim_id),
+            previous_anim_id: None,
+            anim_just_started: false,
+            root_motion_just_started: false,
+            is_grounded: true,
+            material_stood_on: None,
+            root_offset_this_frame: Vec3::ZERO,
+            root_offset_prev_frame: Vec3::ZERO,
+        };
+
+        let mut fs = FighterState::default();
+        fs.grapple_reposition = Some(GrappleRepositionData {
+            anim_id,
+            rotation_offset_notches: 2,
+            one_off: true,
+            attacker_entity: attacker,
+        });
+
+        let victim = app
+            .world_mut()
+            .spawn((Transform::from_xyz(0.0, 0.0, 0.0), fs, anim_state))
+            .id();
+
+        let mut writer = app
+            .world_mut()
+            .resource_mut::<Messages<crate::animator::events::AnimEndedMessage>>();
+        writer.write(crate::animator::events::AnimEndedMessage {
+            entity: victim,
+            anim_id: Some(anim_id),
+        });
+
+        app.update();
+
+        let tf = app.world().get::<Transform>(victim).unwrap();
+        // Delta in animation is Z=2. Space utility maps this to Bevy's coordinate system (negated Z)
+        assert!((tf.translation.z - -2.0).abs() < 1e-4);
+
+        let fs_updated = app.world().get::<FighterState>(victim).unwrap();
+        assert!(fs_updated.grapple_reposition.is_none());
+
+        use bevy::ecs::system::SystemState;
+
+        let mut notches_state =
+            SystemState::<MessageReader<ApplyRotationNotchesEvent>>::new(app.world_mut());
+        let mut reader = notches_state.get_mut(app.world_mut());
+        let ev = reader.read().next().unwrap();
+        assert_eq!(ev.entity, victim);
+        assert_eq!(ev.notches, 2);
+
+        let mut end_state = SystemState::<MessageReader<GrappleEndEvent>>::new(app.world_mut());
+        let mut reader_end = end_state.get_mut(app.world_mut());
+        let ev_end = reader_end.read().next().unwrap();
+        assert_eq!(ev_end.attacker, attacker);
+        assert_eq!(ev_end.target, Some(victim));
+    }
+
+    #[test]
+    fn test_grapple_initial_teleport() {
+        use crate::oni2_loader::parsers::atdt::AtdtGrab;
+        let mut app = App::new();
+
+        app.add_message::<GrappleStartEvent>();
+        app.add_message::<ApplyRotationNotchesEvent>();
+        app.add_message::<ControlAnimMessage>();
+        app.add_message::<GrappleEndEvent>();
+
+        app.insert_resource(Time::<()>::default());
+
+        app.add_systems(Update, grapple_tick_system);
+
+        let mut grab = AtdtGrab::default();
+        grab.offset = Vec3::new(0.5, 0.0, 1.5);
+        grab.react_anim = "ANIMGRAP_TEST_REACT".to_string();
+
+        let mut anim = crate::oni2_loader::parsers::types::Oni2Animation::default();
+        anim.attack_data = Some(crate::oni2_loader::parsers::atdt::AtdtData {
+            grab: Some(grab),
+            ..Default::default()
+        });
+
+        let attacker_anim = Oni2AnimState {
+            anim,
+            skeleton: crate::oni2_loader::parsers::types::Oni2Skeleton::default(),
+            current_time: 0.0,
+            fps: 30.0,
+            paused: false,
+            looping: false,
+            speed_multiplier: 1.0,
+            pending_step: 0,
+            last_rendered_time: 0.0,
+            joint_entities: vec![],
+            base_rotation: Quat::IDENTITY,
+            current_frame: vec![],
+            current_anim_id: None,
+            previous_anim_id: None,
+            anim_just_started: false,
+            root_motion_just_started: false,
+            is_grounded: true,
+            material_stood_on: None,
+            root_offset_this_frame: Vec3::ZERO,
+            root_offset_prev_frame: Vec3::ZERO,
+        };
+
+        let attacker = app
+            .world_mut()
+            .spawn((
+                Transform::from_xyz(10.0, 2.0, -5.0),
+                FighterState::default(),
+                Health {
+                    current: 100.0,
+                    max: 100.0,
+                },
+                attacker_anim,
+            ))
+            .id();
+
+        let victim_anim = Oni2AnimState {
+            anim: crate::oni2_loader::parsers::types::Oni2Animation::default(),
+            skeleton: crate::oni2_loader::parsers::types::Oni2Skeleton::default(),
+            current_time: 0.0,
+            fps: 30.0,
+            paused: false,
+            looping: false,
+            speed_multiplier: 1.0,
+            pending_step: 0,
+            last_rendered_time: 0.0,
+            joint_entities: vec![],
+            base_rotation: Quat::IDENTITY,
+            current_frame: vec![],
+            current_anim_id: None,
+            previous_anim_id: None,
+            anim_just_started: false,
+            root_motion_just_started: false,
+            is_grounded: true,
+            material_stood_on: None,
+            root_offset_this_frame: Vec3::ZERO,
+            root_offset_prev_frame: Vec3::ZERO,
+        };
+
+        let victim = app
+            .world_mut()
+            .spawn((
+                Transform::from_xyz(0.0, 0.0, 0.0),
+                FighterState::default(),
+                Health {
+                    current: 100.0,
+                    max: 100.0,
+                },
+                victim_anim,
+            ))
+            .id();
+
+        // Write GrappleStartEvent
+        let mut writer = app
+            .world_mut()
+            .resource_mut::<Messages<GrappleStartEvent>>();
+        writer.write(GrappleStartEvent {
+            attacker,
+            target: victim,
+            target_pos: Vec3::ZERO,
+        });
+
+        app.update();
+
+        // Verify victim has been teleported to attacker + attacker_rotation * grab_offset
+        let victim_tf = app.world().get::<Transform>(victim).unwrap();
+        assert!((victim_tf.translation.x - 10.5).abs() < 1e-4);
+        assert!((victim_tf.translation.y - 2.0).abs() < 1e-4);
+        assert!((victim_tf.translation.z - -3.5).abs() < 1e-4);
+        assert_eq!(victim_tf.rotation, Quat::IDENTITY);
+
+        // Verify attacker now has GrappleState component
+        assert!(app.world().get::<GrappleState>(attacker).is_some());
+    }
+
+    #[test]
+    fn test_grapple_reposition_getup_queueing() {
+        use crate::oni2_loader::animation::AnimId;
+        use crate::oni2_loader::parsers::types::{Oni2Animation, Oni2Skeleton};
+        use crate::oni2_loader::parsers::rct::ReactData;
+        use crate::animator::components::ActionPlayer;
+        use crate::animator::schedule::AnimSchedule;
+        use bevy::prelude::{MessageReader, Messages};
+
+        let mut app = App::new();
+
+        // Register messages/events
+        app.add_message::<crate::animator::events::AnimEndedMessage>();
+        app.add_message::<ApplyRotationNotchesEvent>();
+        app.add_message::<GrappleEndEvent>();
+
+        app.add_systems(Update, grapple_reposition_system);
+
+        let attacker = app.world_mut().spawn_empty().id();
+
+        // Set up the react library with ANIMREACT_KNOCKDOWN (index 4)
+        // having a get_up_anim = "ANIMREACT_KNOCKDOWN_GETUP"
+        let mut react_lib = ReactLibrary::default();
+        react_lib.entries = vec![None; ANIMREACT_NAMES.len()];
+        react_lib.entries[4] = Some(ReactData {
+            get_up_anim: "ANIMREACT_KNOCKDOWN_GETUP".to_string(),
+            ..Default::default()
+        });
+
+        // Set up the animation library that contains the debug name for "ANIMREACT_KNOCKDOWN"
+        let anim_id = AnimId::new("ANIMREACT_KNOCKDOWN");
+        let mut anim_lib = Oni2AnimLibrary {
+            anims: std::collections::HashMap::new(),
+            debug_names: std::collections::HashMap::new(),
+        };
+        anim_lib.debug_names.insert(anim_id, "ANIMREACT_KNOCKDOWN".to_string());
+
+        let mut skel = Oni2Skeleton::default();
+        skel.positions = vec![[0.0, 0.0, 0.0]];
+        skel.parent_indices = vec![None];
+        skel.names = vec!["root".to_string()];
+        skel.local_offsets = vec![[0.0, 0.0, 0.0]];
+        skel.channels = vec![crate::oni2_loader::parsers::types::Oni2BoneChannels {
+            has_trans_x: true,
+            has_trans_y: true,
+            has_trans_z: true,
+            ..Default::default()
+        }];
+        skel.build_channel_map();
+
+        let mut anim = Oni2Animation::default();
+        anim.num_frames = 2;
+        anim.num_channels = 3;
+        anim.frames = vec![vec![0.0, 0.0, 0.0], vec![0.0, 0.0, 2.0]];
+
+        let anim_state = Oni2AnimState {
+            anim,
+            skeleton: skel,
+            current_time: 1.0,
+            fps: 30.0,
+            paused: false,
+            looping: false,
+            speed_multiplier: 1.0,
+            pending_step: 0,
+            last_rendered_time: 1.0,
+            joint_entities: vec![],
+            base_rotation: Quat::IDENTITY,
+            current_frame: vec![0.0, 0.0, 2.0],
+            current_anim_id: Some(anim_id),
+            previous_anim_id: None,
+            anim_just_started: false,
+            root_motion_just_started: false,
+            is_grounded: true,
+            material_stood_on: None,
+            root_offset_this_frame: Vec3::ZERO,
+            root_offset_prev_frame: Vec3::ZERO,
+        };
+
+        let mut fs = FighterState::default();
+        fs.grapple_reposition = Some(GrappleRepositionData {
+            anim_id,
+            rotation_offset_notches: 2,
+            one_off: true,
+            attacker_entity: attacker,
+        });
+
+        let action_player = ActionPlayer::default();
+
+        let victim = app
+            .world_mut()
+            .spawn((
+                Transform::from_xyz(0.0, 0.0, 0.0),
+                fs,
+                anim_state,
+                anim_lib,
+                react_lib,
+                action_player,
+            ))
+            .id();
+
+        let mut writer = app
+            .world_mut()
+            .resource_mut::<Messages<crate::animator::events::AnimEndedMessage>>();
+        writer.write(crate::animator::events::AnimEndedMessage {
+            entity: victim,
+            anim_id: Some(anim_id),
+        });
+
+        app.update();
+
+        // Check that the schedule was inserted on the victim and matches the get_up_anim
+        let schedule = app.world().get::<AnimSchedule>(victim).unwrap();
+        assert_eq!(schedule.entries.len(), 1);
+        assert_eq!(schedule.entries[0].alias, "ANIMREACT_KNOCKDOWN_GETUP");
+
+        // Check ActionPlayer states
+        let ap = app.world().get::<ActionPlayer>(victim).unwrap();
+        assert_eq!(ap.last_action, MainAction::React);
+        assert_eq!(ap.sub_state_1, sub_state_1::REACT);
+
+        let fs_updated = app.world().get::<FighterState>(victim).unwrap();
+        assert!(fs_updated.grapple_reposition.is_none());
     }
 }

@@ -30,6 +30,8 @@ pub struct AttackRuntime {
     /// the entity at all (i.e. whether the strict component requirements on
     /// the query are satisfied).
     pub tick_count: u64,
+    pub table_name: String,
+    pub original_table: Option<String>,
 }
 
 #[derive(Component)]

@@ -34,6 +34,13 @@ pub struct InputState {
     /// Camera yaw delta this frame (radians).  Positive = rotate right.
     pub yaw_delta: f32,
 
+    /// True when the player has the lock-on button (R1) engaged, requesting reticle targeting.
+    pub targeting_modifier: bool,
+    /// Analog look/aim inputs from the right stick or mouse deltas.
+    pub reticle_input: Vec2,
+    /// True if reticle_input is an absolute stick position (-1..1), false if relative frame delta.
+    pub reticle_input_is_absolute: bool,
+
     // ── just-triggered actions (true for exactly one frame) ──
     /// Primary attack (Space or left mouse or gamepad face button).
     pub attack: bool,

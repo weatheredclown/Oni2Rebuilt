@@ -425,6 +425,7 @@ fn build_pad_table() -> HashMap<&'static str, u64> {
     m.insert("PADCMD_END_GRAPPLE", pad_flags::PADCMD_END_GRAPPLE);
     m.insert("PADCMD_LARIAT", pad_flags::PADCMD_LARIAT);
     m.insert("PADCMD_WEAPON_LOCKON", pad_flags::PADCMD_WEAPON_LOCKON);
+    m.insert("PADCMD_WEAPON_DRAW", pad_flags::PADCMD_WEAPON_DRAW);
     m.insert(
         "PADCMD_WEAPON_FIRE_FORWARD",
         pad_flags::PADCMD_WEAPON_FIRE_FORWARD,

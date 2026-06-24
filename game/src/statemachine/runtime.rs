@@ -245,6 +245,9 @@ pub fn build_fsm_packet(
     if mapper.get("PADCMD_WEAPON_LOCKON") > 0.0 {
         pad |= pad_flags::PADCMD_WEAPON_LOCKON;
     }
+    if mapper.get("PADCMD_WEAPON_DRAW") > 0.0 {
+        pad |= pad_flags::PADCMD_WEAPON_DRAW;
+    }
 
     if mapper.get("PADCMD_CHR_FWD") > 0.0 {
         pad |= pad_flags::PADCMD_CHR_FWD;

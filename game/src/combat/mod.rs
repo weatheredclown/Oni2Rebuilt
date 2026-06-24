@@ -13,6 +13,7 @@ pub mod faction;
 pub mod hitbox;
 pub mod locks;
 pub mod systems;
+pub mod targeting;
 
 pub use locks::locked_movement;
 
@@ -87,6 +88,8 @@ impl Plugin for CombatPlugin {
             .add_systems(
                 Update,
                 (
+                    targeting::camera_gameplay_mode_system,
+                    targeting::reticle_update_system,
                     // Post-attack `end_rotation_notches` apply.  Must run
                     // AFTER `update_oni2_animation` (the producer of
                     // `AnimEndedMessage`) so the rotation lands in the

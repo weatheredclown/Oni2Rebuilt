@@ -359,7 +359,9 @@ if PadPressed("PADCMD_JUMP")  { Broadcast StartJumpCompress;  goto JUMP }
 if PadPressed("PADCMD_EVADE") { Broadcast StartEvade;         goto EVADE }
 if PadPressed("PADCMD_SLIDE") { Broadcast StartSlide;         goto SLIDE }
 if PadPressed("PADCMD_CROUCH"){ Broadcast StartCrouch;        goto CROUCH }
+; TODO: this is going to have to detect a ledge grab button press as well as it being available
 if WallGrabAvailable          { Broadcast StartLedgeGrab;     goto LEDGE_HANG }
+; TODO: this is going to have to detect a zipline button press as well as it being available
 if ZiplineAvailable           { Broadcast StartZiplineGrab;   goto ZIPLINE }
 if PadPressed("PADCMD_PICKUP"){ Broadcast StartPickup;        goto PICKUP }
 if CustomAnimRequested        { Broadcast StartCustomAnim;    goto CUSTOM_ANIM }

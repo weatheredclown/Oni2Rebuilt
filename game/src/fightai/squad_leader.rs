@@ -1,3 +1,5 @@
+use avian3d::prelude::LinearVelocity;
+use bevy::platform::collections::{HashMap, HashSet};
 use bevy::prelude::*;
 use std::sync::Arc;
 
@@ -6,8 +8,191 @@ use crate::fightai::SquadFsmCache;
 use crate::fightai::components::{
     DesiredFightGroup, FighterFightGroup, FighterOrder, Leader, Squad, SquadMember,
 };
-use crate::statemachine::core::SmRuntime;
-use crate::statemachine::drivers::squad::{SquadAction, SquadCtx, SquadOrder};
+use crate::statemachine::core::{SmData, SmRuntime};
+use crate::statemachine::drivers::squad::{SquadAction, SquadCtx, SquadDriver, SquadOrder};
+
+// ---------------------------------------------------------------------------
+// Leader locomotion (port of aiLeader::MoveToDistance / TrackTarget)
+// ---------------------------------------------------------------------------
+//
+// NOTE: in the shipped engine these were gated behind `#if 0` — the released
+// leader joined formation like a grunt.  They are the intended leader-tracking
+// algorithm, so we port them faithfully and drive the leader with
+// `track_target`: orbit the squad circle center within a distance band while
+// side-stepping to keep the target tracked.
+
+/// Y component of the cross product of two flat (XZ) vectors — `Vector3::CrossY`.
+#[inline]
+fn cross_y(a: Vec3, b: Vec3) -> f32 {
+    a.z * b.x - a.x * b.z
+}
+
+/// `aiLeader::MoveToDistance` — if the leader is outside `[min_dist, max_dist]`
+/// from `tgt`, return a destination at the mid distance along the line; else
+/// `None` (stay put).
+pub fn move_to_distance(pos: Vec3, tgt: Vec3, min_dist: f32, max_dist: f32) -> Option<Vec3> {
+    let mut tgt2pos = pos - tgt;
+    tgt2pos.y = 0.0;
+    let dist2 = tgt2pos.x * tgt2pos.x + tgt2pos.z * tgt2pos.z;
+    if dist2 <= 0.0 {
+        return None;
+    }
+    if dist2 > min_dist * min_dist && dist2 < max_dist * max_dist {
+        return None;
+    }
+    let mid_dist = 0.5 * (min_dist + max_dist);
+    let t = mid_dist / dist2.sqrt();
+    // dest = lerp(t, tgt, pos) = tgt + t*(pos - tgt)
+    Some(tgt + (pos - tgt) * t)
+}
+
+/// `aiLeader::TrackTarget` — keep the leader orbiting `center` within
+/// `[min_dist, max_dist]`, side-stepping to track `tgt`'s angular position.
+/// Returns `Some(destination)` when the leader should move, `None` to stay.
+/// `move_side` carries the side-stepping hysteresis flag (FLAG_LEADER_MOVE_SIDE).
+#[allow(clippy::too_many_arguments)]
+pub fn track_target(
+    pos: Vec3,
+    center: Vec3,
+    tgt: Vec3,
+    min_dist: f32,
+    max_dist: f32,
+    dist_threshold: f32,
+    angular_threshold: f32,
+    move_side: &mut bool,
+) -> Option<Vec3> {
+    const SIDE_TGT_DIST: f32 = 1.0;
+    const MIN_T_DIST: f32 = 0.1;
+
+    let mut c2pos = pos - center;
+    c2pos.y = 0.0;
+    let dist2 = c2pos.x * c2pos.x + c2pos.z * c2pos.z;
+    if dist2 <= 0.0 {
+        return None;
+    }
+
+    let mut c2tgt = tgt - center;
+    c2tgt.y = 0.0;
+    let t_dist2 = c2tgt.x * c2tgt.x + c2tgt.z * c2tgt.z;
+
+    let mut move_now = dist2 < min_dist * min_dist || dist2 > max_dist * max_dist;
+
+    let mut dest = Vec3::ZERO;
+    let mut side = false;
+    if move_now
+        && (t_dist2 > dist_threshold * dist_threshold
+            || (t_dist2 > MIN_T_DIST * MIN_T_DIST && *move_side))
+    {
+        side = true;
+    }
+
+    let mut r = -1.0_f32;
+    if !move_now || side {
+        let cross2 = cross_y(c2pos, c2tgt);
+        let sig = cross2;
+        if !side && t_dist2 > dist_threshold * dist_threshold {
+            let cross2n = cross2 * cross2 / (dist2 * t_dist2);
+            if cross2n > angular_threshold * angular_threshold || c2tgt.dot(c2pos) <= 0.0 {
+                move_now = true;
+                side = true;
+            }
+        }
+        if side && move_now {
+            let orth = Vec3::new(c2pos.z, 0.0, -c2pos.x);
+            r = 1.0 / dist2.sqrt();
+            dest = orth
+                * (if sig < 0.0 {
+                    -r * SIDE_TGT_DIST
+                } else {
+                    r * SIDE_TGT_DIST
+                });
+        }
+    }
+
+    if !move_now {
+        *move_side = false;
+        return None;
+    }
+    *move_side = side;
+
+    if r < 0.0 {
+        r = 1.0 / dist2.sqrt();
+    }
+    let mid_dist = 0.5 * (min_dist + max_dist);
+    let t = mid_dist * r;
+    dest += c2pos * t;
+    dest += center;
+    Some(dest)
+}
+
+/// Speed (units/sec) the leader steers toward its tracking destination.
+const LEADER_MOVE_SPEED: f32 = 4.0;
+
+/// Drives each leader toward the `track_target` destination by writing
+/// `LinearVelocity` (the same channel player/AI movement uses).  Runs with the
+/// AI movement systems; the leader's formation-tracking takes precedence over
+/// its generic fight movement.
+pub fn leader_locomotion_system(
+    time: Res<Time>,
+    mut leaders: Query<(
+        &mut Leader,
+        &AiFighter,
+        &GlobalTransform,
+        &mut LinearVelocity,
+    )>,
+    squads: Query<&Squad>,
+    transforms: Query<&GlobalTransform>,
+) {
+    let dt = time.delta_secs();
+    if dt <= 0.0 {
+        return;
+    }
+    for (mut leader, ai, gt, mut vel) in &mut leaders {
+        let (Some(squad_ent), Some(target_ent)) = (leader.squad, ai.target) else {
+            leader.has_destination = false;
+            continue;
+        };
+        let (Ok(squad), Ok(tgt_tf)) = (squads.get(squad_ent), transforms.get(target_ent)) else {
+            leader.has_destination = false;
+            continue;
+        };
+        let pos = gt.translation();
+        let center = squad.circle_center;
+        let tgt = tgt_tf.translation();
+
+        // Distance band ~ the formation radius; thresholds match the legacy
+        // experimental call: TrackTarget(center, tgt, 2.5, 3.5, 1.0, sin(12°)).
+        let mut move_side = leader.move_side;
+        let dest = track_target(
+            pos,
+            center,
+            tgt,
+            2.5,
+            3.5,
+            1.0,
+            (12.0_f32).to_radians().sin(),
+            &mut move_side,
+        );
+        leader.move_side = move_side;
+
+        match dest {
+            Some(d) => {
+                leader.current_destination = d;
+                leader.has_destination = true;
+                let mut dir = d - pos;
+                dir.y = 0.0;
+                if let Some(dir) = dir.try_normalize() {
+                    let step = dir * LEADER_MOVE_SPEED;
+                    vel.x = step.x;
+                    vel.z = step.z;
+                }
+            }
+            None => {
+                leader.has_destination = false;
+            }
+        }
+    }
+}
 
 /// System to spawn a Squad entity for each newly added Leader.
 /// A leader is also added as a member of their own squad.
@@ -56,6 +241,224 @@ pub fn squad_leader_lifecycle_system(
         });
 
         bevy::log::info!("Squad created: {:?} for Leader {:?}", squad_ent, leader_ent);
+    }
+}
+
+/// Spawn a fresh `Squad` entity (shared FSM-data ctor used by both the
+/// leader lifecycle and the per-target attacker-squad grouping).
+fn spawn_squad(
+    commands: &mut Commands,
+    cache: &Arc<SmData<SquadDriver>>,
+    target: Option<Entity>,
+    leader: Option<Entity>,
+) -> Entity {
+    let initial_state = cache.index_of_or_zero("S_IDLING");
+    let fsm = SmRuntime::new(Arc::clone(cache), initial_state);
+    commands
+        .spawn(Squad {
+            members: Vec::new(),
+            leader,
+            order: if target.is_some() {
+                SquadOrder::Fight
+            } else {
+                SquadOrder::Idle
+            },
+            target,
+            circle_center: Vec3::ZERO,
+            distance_between_fighters: 4.0,
+            circle_threshold: 70.0,
+            max_num_inner: 3,
+            max_in_formation: 8,
+            members_changed: true,
+            regroup_when_possible: false,
+            fighter_lost_position: false,
+            fighter_reacting: false,
+            fsm,
+            ctx: SquadCtx::default(),
+            last_state_idx: initial_state,
+        })
+        .id()
+}
+
+/// Maps a fight target → the leaderless "attacker squad" of everyone currently
+/// attacking it (`aiFighter::AttackerSquad`).  Leader grunt-squads are NOT in
+/// here; they're owned by the leader.  `pending_empty` gives a one-frame grace
+/// so a freshly-spawned squad isn't despawned before its members attach.
+#[derive(Resource, Default)]
+pub struct SquadRegistry {
+    pub attacker_squads: HashMap<Entity, Entity>,
+    pending_empty: HashSet<Entity>,
+}
+
+/// Groups leaderless AI fighters that share a target into a per-target attacker
+/// squad (`aiFighter::AddToSquad` onto `target.AttackerSquad`), creating squads
+/// on demand and reaping ones that stay empty.  Fighters already owned by a
+/// leader (their `SquadMember.leader` is set) are left alone.
+pub fn attacker_squad_membership_system(
+    mut commands: Commands,
+    squad_cache: Res<SquadFsmCache>,
+    mut registry: ResMut<SquadRegistry>,
+    fighters: Query<(Entity, &AiFighter, Option<&SquadMember>), Without<Leader>>,
+    mut squads: Query<(Entity, &mut Squad)>,
+) {
+    let Some(cache) = &squad_cache.data else {
+        return;
+    };
+
+    for (fighter, ai, member_opt) in &fighters {
+        // Don't poach a leader's grunts.
+        if member_opt.map(|m| m.leader.is_some()).unwrap_or(false) {
+            continue;
+        }
+        match ai.target {
+            Some(target) => {
+                let squad_ent = match registry.attacker_squads.get(&target).copied() {
+                    Some(s) if squads.contains(s) => s,
+                    _ => {
+                        let s = spawn_squad(&mut commands, cache, Some(target), None);
+                        registry.attacker_squads.insert(target, s);
+                        s
+                    }
+                };
+                let in_right = member_opt.map(|m| m.squad == squad_ent).unwrap_or(false);
+                if !in_right {
+                    commands.entity(fighter).insert(SquadMember {
+                        squad: squad_ent,
+                        leader: None,
+                    });
+                }
+            }
+            None => {
+                // Left combat — drop a leaderless attacker membership.
+                if member_opt.is_some() {
+                    commands.entity(fighter).remove::<SquadMember>();
+                }
+            }
+        }
+    }
+
+    // Keep each attacker squad's order/target live, and reap squads that have
+    // stayed empty for a full frame (the grace avoids the create→attach race).
+    let mut still_empty = HashSet::default();
+    for (squad_ent, mut squad) in &mut squads {
+        if squad.leader.is_some() {
+            continue; // leader grunt-squads are managed elsewhere
+        }
+        // Only touch registered attacker squads.
+        if !registry.attacker_squads.values().any(|&s| s == squad_ent) {
+            continue;
+        }
+        squad.order = if squad.target.is_some() {
+            SquadOrder::Fight
+        } else {
+            SquadOrder::Idle
+        };
+        if squad.members.is_empty() {
+            if registry.pending_empty.contains(&squad_ent) {
+                commands.entity(squad_ent).despawn();
+                if let Some(t) = squad.target {
+                    registry.attacker_squads.remove(&t);
+                }
+            } else {
+                still_empty.insert(squad_ent);
+            }
+        }
+    }
+    registry.pending_empty = still_empty;
+}
+
+// ---------------------------------------------------------------------------
+// Squad merge / transfer (port of aiSquad::Empty / TransferEverybody /
+// TransferNonFollowers, driven by leader EnterFight / LeaveFight)
+// ---------------------------------------------------------------------------
+
+/// `aiSquad::Empty` — remove every fighter from a squad.
+pub fn empty_squad(commands: &mut Commands, members: &[Entity]) {
+    for &m in members {
+        commands.entity(m).remove::<SquadMember>();
+    }
+}
+
+/// `aiSquad::TransferEverybody` — move every fighter into `to_squad`, marking
+/// them as following `to_leader`.
+pub fn transfer_everybody(
+    commands: &mut Commands,
+    members: &[Entity],
+    to_squad: Entity,
+    to_leader: Option<Entity>,
+) {
+    for &m in members {
+        commands.entity(m).insert(SquadMember {
+            squad: to_squad,
+            leader: to_leader,
+        });
+    }
+}
+
+/// `aiSquad::TransferNonFollowers` — move fighters that are NOT following
+/// `leader` out into `to_squad` (leaderless); the leader's own grunts stay.
+pub fn transfer_non_followers(
+    commands: &mut Commands,
+    members: &[(Entity, Option<Entity>)],
+    to_squad: Entity,
+    leader: Entity,
+) {
+    for &(m, ldr) in members {
+        if ldr != Some(leader) {
+            commands.entity(m).insert(SquadMember {
+                squad: to_squad,
+                leader: None,
+            });
+        }
+    }
+}
+
+/// Leader EnterFight/LeaveFight: when a leader engages a target that already
+/// has a leaderless attacker squad, fold those attackers into the leader's
+/// grunt squad and retire the attacker squad (`EnterFight` →
+/// `TransferEverybody`).  When the leader disengages, the non-follower grunts
+/// it absorbed are released back so `attacker_squad_membership_system`
+/// re-groups them (`LeaveFight` → `TransferNonFollowers`).
+pub fn leader_merge_system(
+    mut commands: Commands,
+    mut registry: ResMut<SquadRegistry>,
+    leaders: Query<(Entity, &Leader, &AiFighter)>,
+    members_q: Query<(Entity, &SquadMember)>,
+) {
+    for (leader_ent, leader, ai) in &leaders {
+        let Some(grunt_squad) = leader.squad else {
+            continue;
+        };
+        match ai.target {
+            Some(target) => {
+                if let Some(&attacker_squad) = registry.attacker_squads.get(&target)
+                    && attacker_squad != grunt_squad
+                {
+                    let to_move: Vec<Entity> = members_q
+                        .iter()
+                        .filter(|(_, m)| m.squad == attacker_squad)
+                        .map(|(e, _)| e)
+                        .collect();
+                    transfer_everybody(&mut commands, &to_move, grunt_squad, Some(leader_ent));
+                    registry.attacker_squads.remove(&target);
+                    commands.entity(attacker_squad).despawn();
+                }
+            }
+            None => {
+                // Disengaged: release the absorbed non-followers (those whose
+                // recorded leader isn't this one) so they regroup on their own.
+                let non_followers: Vec<(Entity, Option<Entity>)> = members_q
+                    .iter()
+                    .filter(|(_, m)| m.squad == grunt_squad)
+                    .map(|(e, m)| (e, m.leader))
+                    .collect();
+                for (e, ldr) in non_followers {
+                    if ldr != Some(leader_ent) {
+                        commands.entity(e).remove::<SquadMember>();
+                    }
+                }
+            }
+        }
     }
 }
 

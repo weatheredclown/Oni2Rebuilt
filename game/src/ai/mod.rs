@@ -9,6 +9,7 @@
  */
 pub mod components;
 pub mod cover;
+pub mod fightandshoot;
 pub mod fsm;
 pub mod interceptor;
 pub mod navigation;
@@ -27,6 +28,8 @@ impl Plugin for AiPlugin {
             (
                 fsm::ai_attach_fsm_system,
                 interceptor::ai_interceptor_system,
+                // Decide shoot vs. melee before the shooter reads the mode.
+                fightandshoot::ai_fight_and_shoot_system,
                 shooter::ai_shooter_system,
                 fsm::ai_fsm_update_system,
                 navigation::path_following_system,

@@ -1,0 +1,355 @@
+    Blocking waiting for file lock on build directory
+warning: unused import: `crate::vlc`
+  --> utils\mpeg2_player_v2\src\mb.rs:15:5
+   |
+15 | use crate::vlc;
+   |     ^^^^^^^^^^
+   |
+   = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `fwd_mv`
+   --> utils\mpeg2_player_v2\src\slice.rs:176:13
+    |
+176 |         let fwd_mv = fwd_pred.frame_mv();
+    |             ^^^^^^ help: if this is intentional, prefix it with an underscore: `_fwd_mv`
+    |
+    = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `bwd_mv`
+   --> utils\mpeg2_player_v2\src\slice.rs:177:13
+    |
+177 |         let bwd_mv = bwd_pred.frame_mv();
+    |             ^^^^^^ help: if this is intentional, prefix it with an underscore: `_bwd_mv`
+
+warning: `mpeg2_player_v2` (lib) generated 3 warnings (run `cargo fix --lib -p mpeg2_player_v2` to apply 3 suggestions)
+    Checking rb-game v0.1.0 (C:\Users\timla\repos\rustexperiment\Oni2Rebuilt\game)
+error[E0252]: the name `ActionPlayer` is defined multiple times
+    --> game\src\fight\systems.rs:1099:35
+     |
+  24 | use crate::animator::components::{ActionPlayer, MainAction, sub_state_1};
+     |                                   ------------ previous import of the type `ActionPlayer` here
+...
+1099 | use crate::animator::components::{ActionPlayer, action_flags as ap_flags, sub_state_0};
+     |                                   ^^^^^^^^^^^^--
+     |                                   |
+     |                                   `ActionPlayer` reimported here
+     |                                   help: remove unnecessary import
+     |
+     = note: `ActionPlayer` must be defined only once in the type namespace of this module
+
+warning: unused import: `std::f32::consts::PI`
+  --> game\src\ai\navigation.rs:11:5
+   |
+11 | use std::f32::consts::PI;
+   |     ^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused imports: `Oni2AnimLibrary` and `Oni2AnimState`
+  --> game\src\animator\actions\draw_weapon.rs:19:45
+   |
+19 | use crate::oni2_loader::animation::{AnimId, Oni2AnimLibrary, Oni2AnimState};
+   |                                             ^^^^^^^^^^^^^^^  ^^^^^^^^^^^^^
+
+warning: unused import: `bevy::render::view::ColorGrading`
+  --> game\src\camera\systems.rs:13:5
+   |
+13 | use bevy::render::view::ColorGrading;
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: use of deprecated macro `weak_handle`: Use uuid_handle! instead
+  --> game\src\crt_post.rs:48:43
+   |
+48 | const CRT_SHADER_HANDLE: Handle<Shader> = weak_handle!("a4b6c8de-1f23-4567-89ab-cdef01234567");
+   |                                           ^^^^^^^^^^^
+   |
+   = note: `#[warn(deprecated)]` on by default
+
+warning: unused import: `ActionPlayer`
+    --> game\src\fight\systems.rs:1099:35
+     |
+1099 | use crate::animator::components::{ActionPlayer, action_flags as ap_flags, sub_state_0};
+     |                                   ^^^^^^^^^^^^
+
+warning: use of deprecated macro `weak_handle`: Use uuid_handle! instead
+  --> game\src\mpeg2_video.rs:60:45
+   |
+60 | const VIDEO_SHADER_HANDLE: Handle<Shader> = weak_handle!("bb84a701-9d2f-4c46-a4a2-9b54f29c1fce");
+   |                                             ^^^^^^^^^^^
+
+warning: unused import: `resolve_sound`
+  --> game\src\rbaudio\music.rs:11:35
+   |
+11 | use super::resolve::{AudioAssets, resolve_sound};
+   |                                   ^^^^^^^^^^^^^
+
+warning: use of deprecated type alias `avian3d::schedule::PhysicsSet`: Renamed to `PhysicsSystems`
+  --> game\src\ai\mod.rs:46:42
+   |
+46 |                 .after(avian3d::prelude::PhysicsSet::StepSimulation)
+   |                                          ^^^^^^^^^^
+
+warning: use of deprecated macro `bevy::bevy_asset::weak_handle`: Use uuid_handle! instead
+  --> game\src\crt_post.rs:20:18
+   |
+20 | use bevy::asset::weak_handle;
+   |                  ^^^^^^^^^^^
+
+warning: use of deprecated macro `bevy::bevy_asset::weak_handle`: Use uuid_handle! instead
+  --> game\src\mpeg2_video.rs:42:38
+   |
+42 | use bevy::asset::{RenderAssetUsages, weak_handle};
+   |                                      ^^^^^^^^^^^
+
+warning: use of deprecated method `bevy::prelude::Vec2::angle_between`: Use angle_to() instead, the semantics of angle_between will change in the future.
+   --> game\src\scroni\ops\combat.rs:260:52
+    |
+260 |                         let angle = looker_forward.angle_between(dir_to_tgt).abs();
+    |                                                    ^^^^^^^^^^^^^
+
+warning: unused import: `bevy::ecs::relationship::Relationship`
+  --> game\src\combat\systems.rs:14:5
+   |
+14 | use bevy::ecs::relationship::Relationship;
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: variable does not need to be mutable
+   --> game\src\actor_sound.rs:373:31
+    |
+373 |                     && let Ok(mut sink) = sinks.get_mut(child)
+    |                               ----^^^^
+    |                               |
+    |                               help: remove this `mut`
+    |
+    = note: `#[warn(unused_mut)]` (part of `#[warn(unused)]`) on by default
+
+warning: variable does not need to be mutable
+   --> game\src\ai\navigation.rs:294:62
+    |
+294 |     for (entity, mut follower, mut tf, mut vel, mut fighter, mut driven_opt) in &mut query {
+    |                                                              ----^^^^^^^^^^
+    |                                                              |
+    |                                                              help: remove this `mut`
+
+warning: variable does not need to be mutable
+   --> game\src\ai\navigation.rs:358:50
+    |
+358 |     for (follower, mut tf, mut vel, mut fighter, mut driven_opt, anim_state_opt) in &mut query {
+    |                                                  ----^^^^^^^^^^
+    |                                                  |
+    |                                                  help: remove this `mut`
+
+warning: unused variable: `dt`
+  --> game\src\ai\shooter.rs:26:9
+   |
+26 |     let dt = time.delta_secs();
+   |         ^^ help: if this is intentional, prefix it with an underscore: `_dt`
+   |
+   = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `entity`
+  --> game\src\ai\shooter.rs:28:10
+   |
+28 |     for (entity, mut cmds, mut shooter, fighter, inv_opt, mut behavior_rt_opt, self_tf, fas_opt) in
+   |          ^^^^^^ help: if this is intentional, prefix it with an underscore: `_entity`
+
+warning: variable does not need to be mutable
+   --> game\src\animator\systems.rs:789:5
+    |
+789 |     mut commands: Commands,
+    |     ----^^^^^^^^
+    |     |
+    |     help: remove this `mut`
+
+warning: unused variable: `commands`
+   --> game\src\animator\systems.rs:789:5
+    |
+789 |     mut commands: Commands,
+    |     ^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_commands`
+
+warning: variable does not need to be mutable
+   --> game\src\behavior\mod.rs:434:13
+    |
+434 |             mut driven_opt,
+    |             ----^^^^^^^^^^
+    |             |
+    |             help: remove this `mut`
+
+warning: variable does not need to be mutable
+   --> game\src\behavior\mod.rs:628:9
+    |
+628 |         mut driven_opt,
+    |         ----^^^^^^^^^^
+    |         |
+    |         help: remove this `mut`
+
+warning: unused variable: `fighter_opt`
+  --> game\src\combat\systems.rs:51:55
+   |
+51 |         let Ok((mut attack_state, anim_state, ap_opt, fighter_opt, fighter_state_opt)) =
+   |                                                       ^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_fighter_opt`
+
+warning: unused variable: `now`
+   --> game\src\combat\systems.rs:245:9
+    |
+245 |     let now = time.elapsed_secs_f64();
+    |         ^^^ help: if this is intentional, prefix it with an underscore: `_now`
+
+warning: unused variable: `health`
+   --> game\src\combat\systems.rs:370:13
+    |
+370 |             health,
+    |             ^^^^^^ help: if this is intentional, prefix it with an underscore: `_health`
+
+warning: unused variable: `now`
+   --> game\src\combat\systems.rs:698:9
+    |
+698 |     let now = time.elapsed_secs_f64();
+    |         ^^^ help: if this is intentional, prefix it with an underscore: `_now`
+
+warning: variable does not need to be mutable
+    --> game\src\combat\systems.rs:1254:40
+     |
+1254 |     for (entity, mut anim_state, hits, mut snap_opt, needs_snap_opt) in &mut query {
+     |                                        ----^^^^^^^^
+     |                                        |
+     |                                        help: remove this `mut`
+
+warning: unused variable: `entity`
+   --> game\src\fight\systems.rs:813:10
+    |
+813 |     for (entity, mut fighter, mut fs) in &mut query {
+    |          ^^^^^^ help: if this is intentional, prefix it with an underscore: `_entity`
+
+warning: value assigned to `ch_idx` is never read
+    --> game\src\fight\systems.rs:1859:13
+     |
+1859 |             ch_idx += 1;
+     |             ^^^^^^^^^^^
+     |
+     = help: maybe it is overwritten before being read?
+     = note: `#[warn(unused_assignments)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `entity`
+    --> game\src\fight\systems.rs:2044:10
+     |
+2044 |     for (entity, _, mut fs, anim_state, _, _, _) in &mut query {
+     |          ^^^^^^ help: if this is intentional, prefix it with an underscore: `_entity`
+
+warning: unused variable: `anim`
+   --> game\src\fightai\mod.rs:475:22
+    |
+475 |         if let Some((anim, table)) = output.grapple_start.take() {
+    |                      ^^^^ help: if this is intentional, prefix it with an underscore: `_anim`
+
+warning: value assigned to `target_mode` is never read
+   --> game\src\fightai\mod.rs:811:31
+    |
+811 |         let mut target_mode = "idle";
+    |                               ^^^^^^
+    |
+    = help: maybe it is overwritten before being read?
+
+warning: unused variable: `cam_pos`
+   --> game\src\laser.rs:502:9
+    |
+502 |     let cam_pos = cam_tf.translation();
+    |         ^^^^^^^ help: if this is intentional, prefix it with an underscore: `_cam_pos`
+
+warning: unused variable: `entity`
+    --> game\src\oni2_loader\animation.rs:1550:10
+     |
+1550 |     for (entity, mut anim_state, render_offset, asleep_opt) in &mut anim_query {
+     |          ^^^^^^ help: if this is intentional, prefix it with an underscore: `_entity`
+
+warning: unused variable: `broadcast_trigger_block`
+   --> game\src\oni2_loader\parsers\actor_xml.rs:477:9
+    |
+477 |     let broadcast_trigger_block = extract_component(&chain, has_components_xml, "BroadcastTrigger");
+    |         ^^^^^^^^^^^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_broadcast_trigger_block`
+
+warning: variable does not need to be mutable
+   --> game\src\oni2_loader\spawn.rs:162:43
+    |
+162 |     for (entity, mut transform, mut snap, mut animator_opt, mut anim_state_opt, is_player) in
+    |                                           ----^^^^^^^^^^^^
+    |                                           |
+    |                                           help: remove this `mut`
+
+warning: variable does not need to be mutable
+   --> game\src\oni2_loader\spawn.rs:162:61
+    |
+162 |     for (entity, mut transform, mut snap, mut animator_opt, mut anim_state_opt, is_player) in
+    |                                                             ----^^^^^^^^^^^^^^
+    |                                                             |
+    |                                                             help: remove this `mut`
+
+warning: variable does not need to be mutable
+  --> game\src\rbaudio\cutscene.rs:40:5
+   |
+40 |     mut audio_sources: ResMut<Assets<bevy::audio::AudioSource>>,
+   |     ----^^^^^^^^^^^^^
+   |     |
+   |     help: remove this `mut`
+
+warning: unused variable: `audio_sources`
+  --> game\src\rbaudio\cutscene.rs:40:5
+   |
+40 |     mut audio_sources: ResMut<Assets<bevy::audio::AudioSource>>,
+   |     ^^^^^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_audio_sources`
+
+warning: variable does not need to be mutable
+  --> game\src\rbaudio\music.rs:19:5
+   |
+19 |     mut assets: ResMut<AudioAssets>,
+   |     ----^^^^^^
+   |     |
+   |     help: remove this `mut`
+
+warning: variable does not need to be mutable
+  --> game\src\rbaudio\music.rs:20:5
+   |
+20 |     mut audio_sources: ResMut<Assets<bevy::audio::AudioSource>>,
+   |     ----^^^^^^^^^^^^^
+   |     |
+   |     help: remove this `mut`
+
+warning: unused variable: `assets`
+  --> game\src\rbaudio\music.rs:19:5
+   |
+19 |     mut assets: ResMut<AudioAssets>,
+   |     ^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_assets`
+
+warning: unused variable: `audio_sources`
+  --> game\src\rbaudio\music.rs:20:5
+   |
+20 |     mut audio_sources: ResMut<Assets<bevy::audio::AudioSource>>,
+   |     ^^^^^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_audio_sources`
+
+warning: variable does not need to be mutable
+    --> game\src\scroni\vm.rs:3482:31
+     |
+3482 |                     if let Ok(mut e) = world.get_entity_mut(entity) {
+     |                               ----^
+     |                               |
+     |                               help: remove this `mut`
+
+warning: variable does not need to be mutable
+   --> game\src\statemachine\drivers\parse_aifight_sm.rs:221:13
+    |
+221 |         let mut flush_action = |act_str: &mut String, actions: &mut Vec<_>| {
+    |             ----^^^^^^^^^^^^
+    |             |
+    |             help: remove this `mut`
+
+warning: variable does not need to be mutable
+   --> game\src\statemachine\drivers\parse_input_fsm.rs:199:13
+    |
+199 |         let mut flush_action = |act_str: &mut String, actions: &mut Vec<_>| {
+    |             ----^^^^^^^^^^^^
+    |             |
+    |             help: remove this `mut`
+
+For more information about this error, try `rustc --explain E0252`.
+warning: `rb-game` (lib) generated 45 warnings
+error: could not compile `rb-game` (lib) due to 1 previous error; 45 warnings emitted

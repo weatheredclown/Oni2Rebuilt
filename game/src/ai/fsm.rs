@@ -106,6 +106,7 @@ pub fn ai_attach_fsm_system(
             crate::ai::components::AiDrivenVelocityThisTick::default(),
             crate::ai::components::AiShooter::default(),
             crate::ai::components::AiInterceptor::default(),
+            crate::ai::fightandshoot::FightAndShoot::default(),
         ));
     }
 }

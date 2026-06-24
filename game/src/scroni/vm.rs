@@ -389,6 +389,8 @@ pub enum SysRequest {
     /// Music crossfade (rbAudioManager::MusicPlay): name, volume, blend time.
     MusicPlay(String, f32, f32),
     MusicStop,
+    /// `form <name>` — set the script actor's squad-leader formation.
+    SetFormation(String),
     /// Cutscene audio (rbAudioManager::PlayCutScene): name, optional
     /// cutscene volume, background (ambient-duck) volume.
     PlayCutScene(String, Option<f32>, f32),
@@ -647,6 +649,11 @@ pub enum ScrOniSysEvent {
         blend_time: f32,
     },
     MusicStop,
+    /// `form <name>` — set the script actor's squad-leader formation.
+    SetFormation {
+        script_entity: Entity,
+        name: String,
+    },
     PlayCutScene {
         name: String,
         cs_volume: Option<f32>,
@@ -3291,6 +3298,12 @@ pub fn scroni_tick_system(
                 }
                 SysRequest::MusicStop => {
                     commands.trigger(ScrOniSysEvent::MusicStop);
+                }
+                SysRequest::SetFormation(name) => {
+                    commands.trigger(ScrOniSysEvent::SetFormation {
+                        script_entity: entity,
+                        name,
+                    });
                 }
                 SysRequest::PlayCutScene(name, cs_volume, bg_volume) => {
                     commands.trigger(ScrOniSysEvent::PlayCutScene {

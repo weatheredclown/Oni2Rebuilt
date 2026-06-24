@@ -284,6 +284,9 @@ pub struct FighterState {
     /// damage / FX pipeline on the next tick.  Capped at 10
     /// (MAX_FIGHTTARGET_CREATURES).
     pub targets_pending: Vec<Entity>,
+
+    // --- Target repositioning ---
+    pub grapple_reposition: Option<GrappleRepositionData>,
 }
 
 /// Cap on `FighterState::targets_pending` — mirrors
@@ -341,8 +344,19 @@ impl Default for FighterState {
             pending_end_rotation_notches: 0,
             attack_hit_classes: Vec::new(),
             targets_pending: Vec::new(),
+            grapple_reposition: None,
         }
     }
+}
+
+/// Target repositioning details stashed on the victim to be applied
+/// when their reaction animation finishes.
+#[derive(Debug, Clone)]
+pub struct GrappleRepositionData {
+    pub anim_id: crate::oni2_loader::animation::AnimId,
+    pub rotation_offset_notches: i32,
+    pub one_off: bool,
+    pub attacker_entity: Entity,
 }
 
 impl FighterState {
@@ -704,6 +718,10 @@ pub struct GrappleState {
     pub shake_loose_time: f32,
     /// Pending action dispatched this frame by the FSM CtrlGrapple output.
     pub pending_action: GrabAction,
+    /// Target rotation offset (derived from AtdtGrab or AtdtGrappleAttack).
+    pub rotation_offset: f32,
+    /// True if the move plays through and doesn't leave the actors in idle state.
+    pub one_off: bool,
 }
 
 impl GrappleState {

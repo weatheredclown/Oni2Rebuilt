@@ -59,16 +59,125 @@ impl Default for ShadowLodSettings {
 #[derive(Resource, Default)]
 struct ShadowLodFrameCounter(u32);
 
+/// Global resource for tracking the state of realtime shadows.
+#[derive(Resource, Clone, Copy, Debug, PartialEq, Eq)]
+pub struct RealtimeShadowsState {
+    pub enabled: bool,
+}
+
+impl Default for RealtimeShadowsState {
+    fn default() -> Self {
+        Self { enabled: true }
+    }
+}
+
+/// Marker component to remember if a light originally cast shadows.
+#[derive(Component)]
+pub struct OriginalShadowCaster;
+
+/// Reads keyboard input to toggle shadows.
+fn toggle_shadows_input_system(
+    keyboard: Res<ButtonInput<KeyCode>>,
+    mut state: ResMut<RealtimeShadowsState>,
+) {
+    if keyboard.just_pressed(KeyCode::Digit1) {
+        state.enabled = !state.enabled;
+        info!("Toggled realtime shadows to: {}", state.enabled);
+    }
+}
+
+/// Controls DirectionalLights shadows based on the global state.
+fn apply_directional_shadows_system(
+    shadows_state: Res<RealtimeShadowsState>,
+    mut dir_q: Query<(Entity, &mut DirectionalLight, Option<&OriginalShadowCaster>)>,
+    mut commands: Commands,
+) {
+    for (entity, mut light, original_caster) in &mut dir_q {
+        // If we haven't tagged it yet, and it was spawned with shadows enabled, tag it.
+        let is_caster = if original_caster.is_some() {
+            true
+        } else if light.shadows_enabled && shadows_state.enabled {
+            commands.entity(entity).insert(OriginalShadowCaster);
+            true
+        } else {
+            false
+        };
+
+        let want = shadows_state.enabled && is_caster;
+        if light.shadows_enabled != want {
+            light.shadows_enabled = want;
+        }
+    }
+}
+
+/// Controls non-LOD Point/SpotLights shadows based on the global state.
+fn apply_other_shadows_system(
+    shadows_state: Res<RealtimeShadowsState>,
+    mut point_q: Query<(Entity, &mut PointLight, Option<&OriginalShadowCaster>), Without<ShadowCandidate>>,
+    mut spot_q: Query<(Entity, &mut SpotLight, Option<&OriginalShadowCaster>), Without<ShadowCandidate>>,
+    mut commands: Commands,
+) {
+    for (entity, mut light, original_caster) in &mut point_q {
+        let is_caster = if original_caster.is_some() {
+            true
+        } else if light.shadows_enabled && shadows_state.enabled {
+            commands.entity(entity).insert(OriginalShadowCaster);
+            true
+        } else {
+            false
+        };
+
+        let want = shadows_state.enabled && is_caster;
+        if light.shadows_enabled != want {
+            light.shadows_enabled = want;
+        }
+    }
+
+    for (entity, mut light, original_caster) in &mut spot_q {
+        let is_caster = if original_caster.is_some() {
+            true
+        } else if light.shadows_enabled && shadows_state.enabled {
+            commands.entity(entity).insert(OriginalShadowCaster);
+            true
+        } else {
+            false
+        };
+
+        let want = shadows_state.enabled && is_caster;
+        if light.shadows_enabled != want {
+            light.shadows_enabled = want;
+        }
+    }
+}
+
 /// Pick the top-K nearest `ShadowCandidate` lights to the player and
 /// turn their shadows on; turn off the rest.
 fn update_shadow_lod_system(
     mut counter: ResMut<ShadowLodFrameCounter>,
     settings: Res<ShadowLodSettings>,
+    shadows_state: Res<RealtimeShadowsState>,
     player_q: Query<&GlobalTransform, With<Player>>,
     mut point_q: Query<(Entity, &GlobalTransform, &mut PointLight), With<ShadowCandidate>>,
     mut spot_q: Query<(Entity, &GlobalTransform, &mut SpotLight), With<ShadowCandidate>>,
 ) {
     counter.0 = counter.0.wrapping_add(1);
+
+    // If shadows state changed, apply immediately
+    if shadows_state.is_changed() {
+        if !shadows_state.enabled {
+            for (_, _, mut light) in &mut point_q {
+                light.shadows_enabled = false;
+            }
+            for (_, _, mut light) in &mut spot_q {
+                light.shadows_enabled = false;
+            }
+        }
+    }
+
+    if !shadows_state.enabled {
+        return;
+    }
+
     if settings.update_interval_frames == 0 || counter.0 % settings.update_interval_frames != 0 {
         return;
     }
@@ -130,6 +239,15 @@ impl Plugin for ShadowLodPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<ShadowLodSettings>()
             .init_resource::<ShadowLodFrameCounter>()
-            .add_systems(Update, update_shadow_lod_system);
+            .init_resource::<RealtimeShadowsState>()
+            .add_systems(
+                Update,
+                (
+                    toggle_shadows_input_system,
+                    update_shadow_lod_system,
+                    apply_directional_shadows_system,
+                    apply_other_shadows_system,
+                ),
+            );
     }
 }

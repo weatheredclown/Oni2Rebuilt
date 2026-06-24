@@ -844,13 +844,9 @@ impl Compiler {
                 }
             }
             TokenCode::Form => {
-                // `form <string>`.
+                // `form <string>` — set the leader's custom formation.
                 self.advance();
-                let arg = self.parse_expr();
-                Stmt::Unimplemented {
-                    command: "form".to_string(),
-                    args: vec![arg],
-                }
+                Stmt::SetFormation(self.parse_expr())
             }
             TokenCode::PadRumbleLargeMotor => {
                 // `padRumbleLargeMotor [totaltime N] [rampuptime N]

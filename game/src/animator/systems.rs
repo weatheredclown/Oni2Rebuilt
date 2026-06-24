@@ -23,6 +23,7 @@ use super::components::{
     ActionPlayer, ActionResult, HeadIkMode, MainAction, action_flags, pending_flags, sub_state_0,
     sub_state_1,
 };
+use super::actions::Action;
 use super::events::{
     ActionEndedMessage, ActionStartedMessage, AnimStartedMessage, ControlAnimMessage,
     EndActionMessage, HeadIkModeMessage, JumpImpulseMessage, PlayDieMessage, PlayReactMessage,
@@ -256,6 +257,28 @@ pub(crate) fn build_jump_schedule(
 /// `schedule_out` is an out-parameter: if the action produces a multi-stage
 /// animation queue (Jump does), the built schedule is returned through it so
 /// the caller can attach it via Commands.
+/// True when a *moving* locomotion gait is currently playing — i.e. a looping
+/// gait that isn't one of the at-rest idle poses.  Used to skip standing
+/// transition clips (e.g. fight-stance → stand) that would visibly interrupt a
+/// run/walk; from rest these poses are absent and the transition plays.
+fn is_moving_locomotion(state: &Oni2AnimState) -> bool {
+    use crate::oni2_loader::animation::AnimId;
+    // Gaits are always looping; a non-looping anim is a one-shot, not movement.
+    if !state.looping {
+        return false;
+    }
+    let Some(cur) = state.current_anim_id else {
+        return false;
+    };
+    // At-rest poses (incl. the in-stance idle ANIMFIGHTSTANCE_FIGHT).
+    const REST: [AnimId; 3] = [
+        AnimId::new("ANIMFIGHTSTANCE_FIGHT"),
+        AnimId::new("ANIMNAV_STAND"),
+        AnimId::new("ANIMNORMAL_IDLE"),
+    ];
+    !REST.contains(&cur)
+}
+
 fn try_start_action(
     action: MainAction,
     substate: i32,
@@ -373,6 +396,18 @@ fn try_start_action(
                     return ActionResult::Denied;
                 }
                 ap.flags &= !action_flags::FIGHTSTANCE;
+
+                // Silent switch: if a moving locomotion gait is already
+                // playing (the actor is running/walking), just drop the
+                // FIGHTSTANCE flag and let the gait selector swap to the
+                // non-stance moving gait next tick.  Playing the standing
+                // FIGHT_TO_STAND clip here would blip the actor to a stand
+                // transition and snap back to the run — the visible glitch.
+                // The transition clip only makes sense from rest.
+                if is_moving_locomotion(state) {
+                    return ActionResult::Succeeded;
+                }
+
                 play_and_record(
                     "ANIMFIGHTSTANCE_FIGHT_TO_STAND",
                     sub_state_1::TRANSITION,
@@ -404,6 +439,14 @@ fn try_start_action(
                     return ActionResult::Succeeded;
                 }
 
+                // Same silent switch as the leave path: if a moving gait is
+                // playing, set the flag and let the gait selector swap to the
+                // in-stance moving gait next tick instead of blipping through
+                // the standing STAND_TO_FIGHT clip.
+                if is_moving_locomotion(state) {
+                    return ActionResult::Succeeded;
+                }
+
                 play_and_record(
                     "ANIMFIGHTSTANCE_STAND_TO_FIGHT",
                     sub_state_1::TRANSITION,
@@ -414,20 +457,7 @@ fn try_start_action(
             }
         }
 
-        MainAction::DrawWeapon => {
-            if ap.find_at_least_one_flag(action_flags::REJECTLIST_DRAWWEAPON) {
-                return ActionResult::Denied;
-            }
-            ap.flags |= action_flags::WEAPON;
-            ap.set_pending(pending_flags::DRAW | pending_flags::ARM_IK);
-            play_and_record(
-                "ANIMWEAPON_GET_FROM_HOLSTER",
-                sub_state_1::WEAPON_GET_FROM_HOLSTER,
-                ap,
-                lib,
-                state,
-            )
-        }
+        MainAction::DrawWeapon => ActionResult::Failed,
 
         MainAction::Fall => {
             // NOTE: this legacy arm is bypassed when the action registry
@@ -661,10 +691,7 @@ fn do_end_action(
                 ap.flags &= !action_flags::FIGHTSTANCE;
             }
         }
-        MainAction::DrawWeapon => {
-            ap.flags &= !action_flags::WEAPON;
-            ap.set_pending(pending_flags::HOLSTER);
-        }
+
         MainAction::LieDown => {
             ap.flags &= !action_flags::LYINGDOWN;
         }
@@ -759,14 +786,26 @@ pub fn action_start_system(
 // ---------------------------------------------------------------------------
 
 pub fn action_end_system(
+    mut commands: Commands,
     mut reader: MessageReader<EndActionMessage>,
     mut writer: MessageWriter<ActionEndedMessage>,
-    mut query: Query<(&mut ActionPlayer, &Oni2AnimLibrary, &mut Oni2AnimState)>,
+    registry: Res<super::actions::ActionRegistry>,
+    mut query: Query<(
+        Entity,
+        &mut ActionPlayer,
+        &mut super::actions::ActiveAction,
+        &mut AnimSchedule,
+        &mut Oni2AnimState,
+        &Oni2AnimLibrary,
+        Option<&crate::inventory::components::Inventory>,
+        Option<&mut super::gravity::GravityModifiers>,
+    )>,
+    weapons: Query<&crate::weapons::components::Weapon>,
 ) {
     for msg in reader.read() {
         // Special case from original Oni2: ending CROUCH while LYING_DOWN remaps to LIE/LIE_2STAND.
         let (action, subaction) = if msg.action == MainAction::Crouch {
-            if let Ok((ap, _, _)) = query.get(msg.entity) {
+            if let Ok((_, ap, _, _, _, _, _, _)) = query.get(msg.entity) {
                 if ap.check_flags(action_flags::LYINGDOWN) {
                     (
                         MainAction::LieDown,
@@ -782,7 +821,58 @@ pub fn action_end_system(
             (msg.action, msg.subaction)
         };
 
-        if let Ok((mut ap, lib, mut state)) = query.get_mut(msg.entity) {
+        // Migration: actions registered in the new pipeline are handled by it.
+        // Intercept DrawWeapon to start the holster sequence.
+        if registry.contains(action) {
+            if action == MainAction::DrawWeapon && subaction != 0 {
+                if let Ok((entity, mut ap, mut active, mut schedule, mut anim_state, lib, inv_opt, gravity_opt)) =
+                    query.get_mut(msg.entity)
+                {
+                    let hold_type = inv_opt
+                        .and_then(|inv| inv.current_weapon_entity())
+                        .and_then(|weap_ent| weapons.get(weap_ent).ok())
+                        .map(|weap| weap.hold_type())
+                        .unwrap_or(crate::weapons::components::HoldType::Invalid);
+
+                    let mut holster_action = super::actions::draw_weapon::DrawWeaponAction::new_holster();
+                    
+                    let is_grounded = anim_state.is_grounded;
+                    let gravity_mut = gravity_opt.map(|g| g.into_inner());
+                    let mut broadcasts = Vec::new();
+                    let mut ctx = super::actions::ActionCtx {
+                        entity,
+                        ap: &mut ap,
+                        schedule: &mut schedule,
+                        anim_state: &mut anim_state,
+                        lib,
+                        jump_controller: None,
+                        gravity: gravity_mut,
+                        is_grounded,
+                        ground_just_regained: false,
+                        ground_just_lost: false,
+                        wall_grab_available: false,
+                        zipline_available: false,
+                        high_velocity_landing: false,
+                        broadcasts: &mut broadcasts,
+                        weapon_hold_type: hold_type,
+                    };
+
+                    if holster_action.can_enter(&ctx, subaction) {
+                        holster_action.on_enter(&mut ctx, subaction);
+                        active.0 = Some(Box::new(holster_action));
+                    }
+                }
+            }
+            
+            writer.write(ActionEndedMessage {
+                entity: msg.entity,
+                action,
+                subaction,
+            });
+            continue;
+        }
+
+        if let Ok((_, mut ap, _, _, mut state, lib, _, _)) = query.get_mut(msg.entity) {
             do_end_action(action, subaction, &mut ap, lib, &mut state);
         }
 
@@ -1227,6 +1317,7 @@ pub fn schedule_finished_end_action_system(
         &crate::animator::schedule::AnimSchedule,
         &ActionPlayer,
     )>,
+    registry: Res<super::actions::ActionRegistry>,
     mut was_finished: Local<bevy::ecs::entity::EntityHashMap<bool>>,
 ) {
     for (entity, schedule, ap) in &query {
@@ -1240,6 +1331,9 @@ pub fn schedule_finished_end_action_system(
             continue;
         }
         if ap.last_action == MainAction::None {
+            continue;
+        }
+        if registry.contains(ap.last_action) {
             continue;
         }
 

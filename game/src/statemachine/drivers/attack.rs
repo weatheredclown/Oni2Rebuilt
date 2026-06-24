@@ -257,9 +257,149 @@ impl AtkAction for ActionDistance {
 }
 
 atk_action_stub!(ActionCombo, "combo");
-atk_action_stub!(ActionGrapple, "grapple");
-atk_action_stub!(ActionCtrlGrapple, "ctrlgrapple");
-atk_action_stub!(ActionGrapplePush, "grapplepush");
+pub struct ActionGrapple {
+    pub args: String,
+}
+impl AtkAction for ActionGrapple {
+    fn name(&self) -> &str {
+        "grapple"
+    }
+    fn start(&mut self, _ctx: &mut AttackCtx, output: &mut AttackOutput) -> bool {
+        let mut parts = self.args.split_whitespace();
+        let Some(anim) = parts.next().map(String::from) else {
+            return false;
+        };
+        let Some(table) = parts.next().map(String::from) else {
+            return false;
+        };
+        output.attack_anim = Some(anim.clone());
+        output.grapple_start = Some((anim, table));
+        true
+    }
+    fn update(&mut self, ctx: &mut AttackCtx, _output: &mut AttackOutput, _dt: f32) -> bool {
+        ctx.is_grappling
+    }
+}
+
+pub struct ActionCtrlGrapple {
+    pub args: String,
+}
+impl AtkAction for ActionCtrlGrapple {
+    fn name(&self) -> &str {
+        "ctrlgrapple"
+    }
+    fn start(&mut self, _ctx: &mut AttackCtx, output: &mut AttackOutput) -> bool {
+        let cmd = parse_string_arg(&self.args);
+        let action = crate::fight::components::GrabAction::from_str(&cmd);
+        output.grapple_action = Some(action);
+        true
+    }
+    fn update(&mut self, ctx: &mut AttackCtx, _output: &mut AttackOutput, _dt: f32) -> bool {
+        ctx.is_ready
+    }
+}
+
+pub struct ActionGrapplePush {
+    pub args: String,
+    pub min_dist: f32,
+    pub max_dist: f32,
+    pub turn_only: bool,
+    pub end_attack: Option<String>,
+}
+impl ActionGrapplePush {
+    pub fn new(args: String) -> Self {
+        Self {
+            args,
+            min_dist: 0.0,
+            max_dist: 0.0,
+            turn_only: false,
+            end_attack: None,
+        }
+    }
+}
+impl AtkAction for ActionGrapplePush {
+    fn name(&self) -> &str {
+        "grapplepush"
+    }
+    fn start(&mut self, _ctx: &mut AttackCtx, _output: &mut AttackOutput) -> bool {
+        self.min_dist = 0.0;
+        self.max_dist = 0.0;
+        self.turn_only = false;
+        self.end_attack = None;
+
+        let parts: Vec<&str> = self.args.split_whitespace().collect();
+        let mut i = 0;
+        while i < parts.len() {
+            match parts[i] {
+                "min" => {
+                    if i + 1 < parts.len() {
+                        self.min_dist = parts[i + 1].parse::<f32>().unwrap_or(0.0);
+                        i += 2;
+                    } else {
+                        i += 1;
+                    }
+                }
+                "max" => {
+                    if i + 1 < parts.len() {
+                        self.max_dist = parts[i + 1].parse::<f32>().unwrap_or(0.0);
+                        i += 2;
+                    } else {
+                        i += 1;
+                    }
+                }
+                "turnonly" => {
+                    self.turn_only = true;
+                    i += 1;
+                }
+                "attack" => {
+                    if i + 1 < parts.len() {
+                        self.end_attack = Some(parts[i + 1].to_string());
+                        i += 2;
+                    } else {
+                        i += 1;
+                    }
+                }
+                _ => {
+                    i += 1;
+                }
+            }
+        }
+        true
+    }
+    fn update(&mut self, ctx: &mut AttackCtx, output: &mut AttackOutput, _dt: f32) -> bool {
+        let Some(_target) = ctx.target else {
+            return true;
+        };
+        let dist = ctx.target_distance;
+        if self.turn_only && (dist < self.min_dist || dist > self.max_dist) {
+            return true;
+        }
+
+        if !ctx.target_facing_within_30 {
+            if ctx.target_cross_y < 0.0 {
+                output.grapple_action = Some(crate::fight::components::GrabAction::TurnLeft);
+            } else {
+                output.grapple_action = Some(crate::fight::components::GrabAction::TurnRight);
+            }
+            return false;
+        }
+
+        if !self.turn_only && dist > self.max_dist {
+            output.grapple_action = Some(crate::fight::components::GrabAction::MoveForward);
+            return false;
+        } else if !self.turn_only && dist < self.min_dist {
+            output.grapple_action = Some(crate::fight::components::GrabAction::MoveBackward);
+            return false;
+        } else {
+            if let Some(end_atk) = &self.end_attack {
+                output.attack_anim = Some(end_atk.clone());
+            } else {
+                output.grapple_action = Some(crate::fight::components::GrabAction::End);
+            }
+            true
+        }
+    }
+}
 atk_action_stub!(ActionEvade, "evade");
 atk_action_stub!(ActionJump, "jump");
 atk_action_stub!(ActionSideMove, "sidemove");
@@ -307,7 +447,16 @@ pub fn build_atk_action(name: &str, args: &str) -> Box<dyn AtkAction> {
         "combo" => Box::new(ActionCombo { args }),
         "grapple" => Box::new(ActionGrapple { args }),
         "ctrlgrapple" => Box::new(ActionCtrlGrapple { args }),
-        "grapplepush" => Box::new(ActionGrapplePush { args }),
+        // Stopgap defaults for the new min_dist/max_dist/turn_only/end_attack
+        // fields so the workspace compiles — the in-progress grapplepush arg
+        // parser should populate these from `args`.
+        "grapplepush" => Box::new(ActionGrapplePush {
+            args,
+            min_dist: 0.0,
+            max_dist: 0.0,
+            turn_only: false,
+            end_attack: None,
+        }),
         "evade" => Box::new(ActionEvade { args }),
         "jump" => Box::new(ActionJump { args }),
         "distance" => Box::new(ActionDistance::new(args)),
@@ -416,6 +565,13 @@ pub struct AttackCtx {
     pub target_distance_current: Option<f32>,
     /// The entity owning this FSM, for debug logging.
     pub entity: Option<bevy::prelude::Entity>,
+
+    pub target: Option<bevy::prelude::Entity>,
+    pub target_distance: f32,
+    pub target_facing_within_30: bool,
+    pub target_cross_y: f32,
+    pub is_grappling: bool,
+    pub is_ready: bool,
 }
 
 impl Default for AttackCtx {
@@ -431,8 +587,22 @@ impl Default for AttackCtx {
             anim_looping: false,
             target_distance_current: None,
             entity: None,
+            target: None,
+            target_distance: 0.0,
+            target_facing_within_30: false,
+            target_cross_y: 0.0,
+            is_grappling: false,
+            is_ready: false,
         }
     }
+}
+
+#[derive(Clone, Debug)]
+pub struct GrapplePushRequest {
+    pub min_dist: f32,
+    pub max_dist: f32,
+    pub end_attack: Option<String>,
+    pub turn_only: bool,
 }
 
 /// Output produced by one tick.  `done` is the terminal flag — the host stops
@@ -463,6 +633,10 @@ pub struct AttackOutput {
     pub custom_anim: Option<String>,
     /// Script-requested intent for pathfinding/steering toward a target distance.
     pub start_following_distance: Option<f32>,
+
+    pub grapple_start: Option<(String, String)>,
+    pub grapple_action: Option<crate::fight::components::GrabAction>,
+    pub grapple_push: Option<GrapplePushRequest>,
 }
 
 // ---------------------------------------------------------------------------
@@ -580,6 +754,9 @@ impl SmDriver for AttackDriver {
         output.custom_anim = None;
         output.start_following_distance = None;
         output.events.clear();
+        output.grapple_start = None;
+        output.grapple_action = None;
+        output.grapple_push = None;
 
         let Some(mut action) = ctx.current_action.take() else {
             return;

@@ -163,6 +163,7 @@ fn main() {
     // `--testlayout`-only behaviour).  `--testlayout` is kept as a
     // no-op alias so existing scripts keep working.
     let ogmenu_mode = args.iter().any(|a| a == "--ogmenu");
+    let testsound_mode = args.iter().any(|a| a == "--testsound" || a == "--soundtest");
     let _testlayout_alias = args.iter().any(|a| a == "--testlayout");
 
     // --- VFS setup ---
@@ -337,6 +338,8 @@ fn main() {
     } else if ogmenu_mode {
         app.insert_resource(menu::OgMenuMode);
         app.insert_state(AppState::FrontEnd);
+    } else if testsound_mode {
+        app.insert_state(AppState::SoundMenu);
     } else {
         // Default: dev test-layout picker (`AppState::Menu` is now
         // the `#[default]` variant).

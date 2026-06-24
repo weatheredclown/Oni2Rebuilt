@@ -20,12 +20,15 @@ pub struct TdSplit {
 pub struct TdProgram {
     pub name: String,
     pub splits: Vec<TdSplit>,
+    pub vags: Vec<String>,
 }
 
 #[derive(Resource, Default, Debug, Clone)]
 pub struct SoundBankDirectory {
     /// Maps "ProgramName:SplitName" -> (BankFileName, VAGIndex)
     pub sounds: HashMap<String, (String, usize)>,
+    /// Maps bank name -> list of named VAG files
+    pub bank_vags: HashMap<String, Vec<String>>,
 }
 
 pub fn parse_td_file(content: &str) -> Option<TdProgram> {
@@ -45,6 +48,7 @@ pub fn parse_td_file(content: &str) -> Option<TdProgram> {
 
     let mut program_name = String::new();
     let mut splits = Vec::new();
+    let mut vags = Vec::new();
 
     while let Some(line) = lines.next() {
         if line.starts_with("PROGRAM") {
@@ -75,6 +79,17 @@ pub fn parse_td_file(content: &str) -> Option<TdProgram> {
                     });
                 }
             }
+        } else if line.starts_with("NUMVAGS") {
+            let num_vags_str = line.strip_prefix("NUMVAGS").unwrap().trim();
+            if let Ok(num) = num_vags_str.parse::<usize>() {
+                for _ in 0..num {
+                    if let Some(vag_name) = lines.next() {
+                        vags.push(vag_name.to_string());
+                    } else {
+                        break;
+                    }
+                }
+            }
         }
     }
 
@@ -84,6 +99,7 @@ pub fn parse_td_file(content: &str) -> Option<TdProgram> {
         Some(TdProgram {
             name: program_name,
             splits,
+            vags,
         })
     }
 }
@@ -112,6 +128,7 @@ pub fn load_all_tds() -> SoundBankDirectory {
                             dir.sounds
                                 .insert(full_name, (bank_base.clone(), split.vag_index));
                         }
+                        dir.bank_vags.insert(bank_base.clone(), prog.vags.clone());
                         td_count += 1;
                     } else {
                         warn!("Failed to parse valid TdProgram from: {}", path);

@@ -12,6 +12,12 @@ use bevy::prelude::*;
 
 pub fn exec(ctx: &mut OpsCtx, stmt: &Stmt) -> bool {
     match stmt {
+        // `form <name>` — set the script actor's leader formation.
+        Stmt::SetFormation(expr) => {
+            let name = ctx.eval_string(expr);
+            ctx.sys_request(SysRequest::SetFormation(name));
+            true
+        }
         Stmt::Attack(expr) => {
             let ent = ctx.eval(expr);
             let target_ent = match ent {

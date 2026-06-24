@@ -27,6 +27,7 @@ pub enum AppState {
     Menu,
     AnimMenu,
     EntityMenu,
+    SoundMenu,
     LoadingLayout,
     InGame,
 }

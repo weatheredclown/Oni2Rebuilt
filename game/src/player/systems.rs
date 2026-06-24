@@ -29,9 +29,16 @@ const JUMP_IMPULSE: f32 = 8.0;
 pub fn keyboard_input_system(
     keyboard: Res<ButtonInput<KeyCode>>,
     mouse: Res<ButtonInput<MouseButton>>,
-    mut query: Query<&mut InputState, With<Player>>,
+    mut query: Query<(&mut InputState, Option<&crate::fight::components::FighterState>), With<Player>>,
 ) {
-    for mut input in &mut query {
+    for (mut input, fs_opt) in &mut query {
+        if let Some(fs) = fs_opt {
+            if fs.is_grappling() || fs.is_being_grappled() {
+                *input = InputState::default();
+                continue;
+            }
+        }
+
         // Movement: W=forward(−y), S=back(+y), A=left(+x), D=right(−x)
         let mut movement = Vec2::ZERO;
         if keyboard.pressed(KeyCode::KeyW) {
@@ -62,6 +69,11 @@ pub fn keyboard_input_system(
         input.grab = keyboard.just_pressed(KeyCode::KeyE);
         input.jump = keyboard.just_pressed(KeyCode::KeyQ);
         input.evade = keyboard.just_pressed(KeyCode::KeyF);
+        
+        // Targeting
+        input.targeting_modifier = keyboard.pressed(KeyCode::ControlLeft);
+        input.reticle_input = Vec2::ZERO;
+        input.reticle_input_is_absolute = false;
     }
 }
 
@@ -75,14 +87,21 @@ pub fn keyboard_input_system(
 pub fn gamepad_input_system(
     pad_settings: Res<PadTuneSettings>,
     gamepads: Query<(Entity, &Gamepad)>,
-    mut query: Query<&mut InputState, With<Player>>,
+    mut query: Query<(&mut InputState, Option<&crate::fight::components::FighterState>), With<Player>>,
 ) {
     // Find the first connected gamepad
     let Some((_, gamepad)) = gamepads.iter().next() else {
         return;
     };
 
-    for mut input in &mut query {
+    for (mut input, fs_opt) in &mut query {
+        if let Some(fs) = fs_opt {
+            if fs.is_grappling() || fs.is_being_grappled() {
+                *input = InputState::default();
+                continue;
+            }
+        }
+
         // Left stick → movement
         let lx = gamepad.get(GamepadAxis::LeftStickX).unwrap_or(0.0);
         let ly = gamepad.get(GamepadAxis::LeftStickY).unwrap_or(0.0);
@@ -115,6 +134,16 @@ pub fn gamepad_input_system(
 
         if gamepad.just_pressed(GamepadButton::RightTrigger) {
             input.grab = true;
+        }
+
+        // Targeting
+        input.targeting_modifier = gamepad.pressed(GamepadButton::RightTrigger);
+        let rx = gamepad.get(GamepadAxis::RightStickX).unwrap_or(0.0);
+        let ry = gamepad.get(GamepadAxis::RightStickY).unwrap_or(0.0);
+        let stick = Vec2::new(rx, ry);
+        if stick.length() > pad_settings.threshold {
+            input.reticle_input = stick;
+            input.reticle_input_is_absolute = true;
         }
     }
 }
@@ -248,12 +277,14 @@ pub fn pad_mapper_update_system(
         frame.hold("L1");
     }
 
-    // R3 (KeyV / Gamepad RightThumb)
+    // R3 (KeyV / KeyH / Gamepad RightThumb)
     let r3_pressed = keyboard.just_pressed(KeyCode::KeyV)
+        || keyboard.just_pressed(KeyCode::KeyH)
         || gamepad_opt
             .map(|g| g.just_pressed(GamepadButton::RightThumb))
             .unwrap_or(false);
     let r3_held = keyboard.pressed(KeyCode::KeyV)
+        || keyboard.pressed(KeyCode::KeyH)
         || gamepad_opt
             .map(|g| g.pressed(GamepadButton::RightThumb))
             .unwrap_or(false);
@@ -455,7 +486,12 @@ pub fn pad_mapper_update_system(
 
 pub fn player_mouse_look_system(
     mut motion_reader: MessageReader<MouseMotion>,
-    mut query: Query<(&mut Transform, &mut Fighter, &mut InputState), With<Player>>,
+    mut query: Query<(
+        &mut Transform,
+        &mut Fighter,
+        &mut InputState,
+        Option<&crate::fight::components::FighterState>,
+    ), With<Player>>,
     mut camera_query: Query<&mut crate::camera::channel::CameraChannel>,
 ) {
     let mut total_delta = Vec2::ZERO;
@@ -467,11 +503,23 @@ pub fn player_mouse_look_system(
         return;
     }
 
-    for (_transform, mut fighter, mut input) in &mut query {
+    for (_transform, mut fighter, mut input, fs_opt) in &mut query {
+        if let Some(fs) = fs_opt {
+            if fs.is_grappling() || fs.is_being_grappled() {
+                input.yaw_delta = 0.0;
+                input.reticle_input = Vec2::ZERO;
+                continue;
+            }
+        }
+
         let yaw = -total_delta.x * MOUSE_SENSITIVITY;
         input.yaw_delta = yaw;
 
-        if input.blocking {
+        if input.targeting_modifier {
+            // Redirect mouse movement to reticle delta
+            input.reticle_input = Vec2::new(total_delta.x, total_delta.y) * MOUSE_SENSITIVITY;
+            input.reticle_input_is_absolute = false;
+        } else if input.blocking {
             fighter.facing = Quat::from_rotation_y(yaw) * fighter.facing;
         } else if let Some(mut channel) = camera_query.iter_mut().next() {
             channel.desired_azimuth += yaw;
@@ -753,6 +801,7 @@ pub fn player_movement_system(
             &mut Fighter,
             Option<&crate::statemachine::runtime::FsmRuntime>,
             Option<&crate::oni2_loader::animation::Oni2AnimState>,
+            Option<&crate::fight::components::FighterState>,
         ),
         With<Player>,
     >,
@@ -768,8 +817,17 @@ pub fn player_movement_system(
 ) {
     let camera_tf_opt = camera_query.iter().next();
 
-    for (entity, input, transform, mut velocity, mut fighter, fsm_opt, anim_state_opt) in &mut query
+    for (entity, input, transform, mut velocity, mut fighter, fsm_opt, anim_state_opt, fs_opt) in &mut query
     {
+        if let Some(fs) = fs_opt {
+            if fs.is_grappling() || fs.is_being_grappled() {
+                // Completely lock out movement and steering while grappling or being grappled
+                velocity.x = 0.0;
+                velocity.z = 0.0;
+                continue;
+            }
+        }
+
         if let Some(fsm) = fsm_opt {
             // Lock movement and steering while an attack/block animation is actively playing
             if fsm.ctx.active_anim.is_some() && !fsm.ctx.timed_out {
@@ -878,6 +936,43 @@ pub fn player_movement_system(
     }
 }
 
+pub fn player_weapon_toggle_system(
+    pad_mapper: Res<PadMapper>,
+    mut start_writer: MessageWriter<crate::animator::StartActionMessage>,
+    mut end_writer: MessageWriter<crate::animator::EndActionMessage>,
+    query: Query<(
+        Entity,
+        &crate::animator::components::ActionPlayer,
+        Option<&crate::inventory::components::Inventory>,
+    ), With<Player>>,
+) {
+    if pad_mapper.get("PADCMD_WEAPON_DRAW") > 0.0 {
+        for (entity, ap, inv_opt) in &query {
+            // Check if player has a weapon equipped
+            let has_weapon = inv_opt
+                .map(|inv| inv.current_weapon.is_some())
+                .unwrap_or(false);
+            if has_weapon {
+                if ap.is_weapon_drawn() {
+                    end_writer.write(crate::animator::EndActionMessage {
+                        entity,
+                        action: crate::animator::MainAction::DrawWeapon,
+                        subaction: crate::animator::components::sub_state_0::DRAWWEAPON_NO_TGT,
+                    });
+                    info!("PADCMD_WEAPON_DRAW: Requesting holster (EndAction DrawWeapon)");
+                } else {
+                    start_writer.write(crate::animator::StartActionMessage {
+                        entity,
+                        action: crate::animator::MainAction::DrawWeapon,
+                        substate: crate::animator::components::sub_state_0::DRAWWEAPON_NO_TGT,
+                    });
+                    info!("PADCMD_WEAPON_DRAW: Requesting draw (StartAction DrawWeapon)");
+                }
+            }
+        }
+    }
+}
+
 pub fn clear_inputs_on_enter(
     mut mouse: ResMut<ButtonInput<MouseButton>>,
     mut keys: ResMut<ButtonInput<KeyCode>>,
@@ -889,3 +984,48 @@ pub fn clear_inputs_on_enter(
     pad_mapper.clear();
     cushion.0 = 0.4;
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::fight::components::FighterState;
+    use bevy::prelude::App;
+
+    #[test]
+    fn test_player_movement_lockout_during_grapple() {
+        let mut app = App::new();
+
+        app.add_message::<crate::animator::JumpImpulseMessage>();
+        app.add_message::<crate::animator::StartActionMessage>();
+
+        app.insert_resource(Time::<()>::default());
+
+        app.add_systems(Update, player_movement_system);
+
+        let mut fs = FighterState::default();
+        fs.grapple_attacker = Some(Entity::PLACEHOLDER);
+
+        let player = app
+            .world_mut()
+            .spawn((
+                Player,
+                InputState {
+                    movement: Vec2::new(0.0, -1.0), // W key (forward)
+                    ..Default::default()
+                },
+                Transform::from_xyz(0.0, 0.0, 0.0),
+                LinearVelocity(Vec3::new(1.0, 2.0, 3.0)),
+                Fighter::default(),
+                fs,
+            ))
+            .id();
+
+        app.update();
+
+        // The linear velocity must be locked to 0.0 horizontally
+        let vel = app.world().get::<LinearVelocity>(player).unwrap();
+        assert_eq!(vel.x, 0.0);
+        assert_eq!(vel.z, 0.0);
+    }
+}
+

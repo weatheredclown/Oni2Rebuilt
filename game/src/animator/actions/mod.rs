@@ -28,7 +28,10 @@ use crate::animator::components::{ActionPlayer, MainAction};
 use crate::animator::schedule::AnimSchedule;
 use crate::oni2_loader::animation::{Oni2AnimLibrary, Oni2AnimState};
 use crate::oni2_loader::parsers::jump::JumpController;
+use crate::inventory::components::Inventory;
+use crate::weapons::components::{HoldType, Weapon};
 
+pub mod draw_weapon;
 pub mod fall;
 pub mod jump;
 
@@ -65,6 +68,7 @@ pub struct ActionCtx<'a> {
     /// `AnimatorBroadcastEvent`s by the dispatcher so the existing
     /// `animator_broadcast_handler` can route them.
     pub broadcasts: &'a mut Vec<String>,
+    pub weapon_hold_type: crate::weapons::components::HoldType,
 }
 
 // ---------------------------------------------------------------------------
@@ -171,6 +175,7 @@ impl ActionRegistry {
 pub fn register_default_actions(registry: &mut ActionRegistry) {
     registry.register(MainAction::Jump, || Box::new(jump::JumpAction::default()));
     registry.register(MainAction::Fall, || Box::new(fall::FallAction::default()));
+    registry.register(MainAction::DrawWeapon, || Box::new(draw_weapon::DrawWeaponAction::default()));
     // No separate Land action — LAND is the last phase of JumpAction and
     // FallAction (matches the C++ where LAND was the last entry of the
     // Jump animlist).
@@ -199,7 +204,9 @@ pub fn action_start_dispatch_system(
         &Oni2AnimLibrary,
         Option<&JumpController>,
         Option<&mut super::gravity::GravityModifiers>,
+        Option<&Inventory>,
     )>,
+    weapons: Query<&Weapon>,
     mut broadcast_writer: MessageWriter<AnimatorBroadcastEvent>,
     mut end_writer: MessageWriter<EndActionMessage>,
 ) {
@@ -208,7 +215,7 @@ pub fn action_start_dispatch_system(
             // Leave unported actions to action_start_system.
             continue;
         }
-        let Ok((mut ap, mut active, mut schedule, mut anim_state, lib, jc, gravity_opt)) =
+        let Ok((mut ap, mut active, mut schedule, mut anim_state, lib, jc, gravity_opt, inv_opt)) =
             query.get_mut(msg.entity)
         else {
             continue;
@@ -228,6 +235,11 @@ pub fn action_start_dispatch_system(
         // shared + exclusive borrow on the same component.
         let is_grounded = anim_state.is_grounded;
         let gravity_mut = gravity_opt.map(|g| g.into_inner());
+        let weapon_hold_type = inv_opt
+            .and_then(|inv| inv.current_weapon_entity())
+            .and_then(|weap_ent| weapons.get(weap_ent).ok())
+            .map(|weap| weap.hold_type())
+            .unwrap_or(HoldType::Invalid);
         let mut ctx = ActionCtx {
             entity: msg.entity,
             ap: &mut ap,
@@ -245,6 +257,7 @@ pub fn action_start_dispatch_system(
             zipline_available: false,
             high_velocity_landing: false,
             broadcasts: &mut broadcasts,
+            weapon_hold_type,
         };
 
         if !new_action.can_enter(&ctx, msg.substate) {
@@ -279,6 +292,8 @@ pub fn action_start_dispatch_system(
         }
 
         new_action.on_enter(&mut ctx, msg.substate);
+        ap.last_action = msg.action;
+        ap.set_sub_state_0(msg.action, msg.substate);
         active.0 = Some(new_action);
 
         for payload in broadcasts {
@@ -313,7 +328,9 @@ pub fn action_dispatch_system(
         Option<&JumpController>,
         Option<&AnimatorRuntime>,
         Option<&mut super::gravity::GravityModifiers>,
+        Option<&Inventory>,
     )>,
+    weapons: Query<&Weapon>,
     mut broadcast_writer: MessageWriter<AnimatorBroadcastEvent>,
     mut end_writer: MessageWriter<EndActionMessage>,
     mut was_grounded: Local<bevy::ecs::entity::EntityHashMap<bool>>,
@@ -329,6 +346,7 @@ pub fn action_dispatch_system(
         jc,
         animator_opt,
         gravity_opt,
+        inv_opt,
     ) in &mut query
     {
         // Derive ground edges locally so we don't depend on
@@ -361,6 +379,11 @@ pub fn action_dispatch_system(
         let mut broadcasts: Vec<String> = Vec::new();
         let is_grounded = anim_state.is_grounded;
         let gravity_mut = gravity_opt.map(|g| g.into_inner());
+        let weapon_hold_type = inv_opt
+            .and_then(|inv| inv.current_weapon_entity())
+            .and_then(|weap_ent| weapons.get(weap_ent).ok())
+            .map(|weap| weap.hold_type())
+            .unwrap_or(HoldType::Invalid);
         let mut ctx = ActionCtx {
             entity,
             ap: &mut ap,
@@ -376,6 +399,7 @@ pub fn action_dispatch_system(
             zipline_available: zipline,
             high_velocity_landing: high_vel_land,
             broadcasts: &mut broadcasts,
+            weapon_hold_type,
         };
 
         let outcome = current.update(&mut ctx, dt);

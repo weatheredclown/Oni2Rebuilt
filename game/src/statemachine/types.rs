@@ -71,6 +71,8 @@ pub mod pad_flags {
     /// PacketCondition.  Until something writes the bit, the rule is
     /// inert.
     pub const PADCMD_SHAKE: u64 = 1 << 41;
+    /// Draw or holster weapon command (mapped to R3 button press in control.map).
+    pub const PADCMD_WEAPON_DRAW: u64 = 1 << 42;
 }
 
 /// Character body-state flags checked as Packet conditions.

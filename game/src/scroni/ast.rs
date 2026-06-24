@@ -481,6 +481,11 @@ pub enum Stmt {
     /// `usepad`
     UsePad,
 
+    /// `form <name>` — set the squad leader's custom formation by name
+    /// (`DoForm` → `aiMsgSetFormation`).  Applies to the script's actor when
+    /// it's a `Leader`.
+    SetFormation(Expr),
+
     /// `PlayerTaskBegin [<expr>]` — presents player with a task objective (optional timeout)
     PlayerTaskBegin(Option<Expr>),
     /// `PlayerTaskSuccessful` — marks the current player task as completed

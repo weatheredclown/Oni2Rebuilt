@@ -323,6 +323,12 @@ pub struct ActionPlayer {
     pub head_ik_mode: HeadIkMode,
     /// True if targeting-IK is permitted (set by ACT_S1_WEAPON_READY_TO_TARGET transitions).
     pub allow_targeting_ik: bool,
+    /// Weapon-ready idle gait to hold while `weapon_state == Drawn`
+    /// (`ANIMWEAP_PISTOL_STAND` / `ANIMWEAP_RIFLE_STAND`), set from the hold
+    /// type at draw time.  The locomotion gait selector swaps the unarmed
+    /// rest pose for this so the drawn weapon stays up (mirrors the legacy
+    /// `ANIMSTACK_WEAPON` idle overlay).  `None` when no weapon is drawn.
+    pub weapon_stand_anim: Option<crate::oni2_loader::animation::AnimId>,
 
     /// Animator throttle override (0.0..1.0).  Forced throttle on the mover.
     pub animator_throttle: f32,
@@ -353,6 +359,7 @@ impl Default for ActionPlayer {
             weapon_state: WeaponState::Invisible,
             head_ik_mode: HeadIkMode::Disabled,
             allow_targeting_ik: false,
+            weapon_stand_anim: None,
             animator_throttle: 1.0,
             animator_tilt: 0.0,
             animator_slope: 0.0,

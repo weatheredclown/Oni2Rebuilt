@@ -1139,5 +1139,17 @@ pub fn scroni_sys_event_observer(
         | ScrOniSysEvent::MusicStop
         | ScrOniSysEvent::PlayCutScene { .. }
         | ScrOniSysEvent::EndCutScene => {}
+
+        // `form <name>` — set the leader's custom formation (aiMsgSetFormation).
+        // Overwrites the actor's `LeaderFormation`; the formation system picks
+        // it up next tick.  No-op for non-leaders (the component is harmless).
+        ScrOniSysEvent::SetFormation {
+            script_entity,
+            name,
+        } => {
+            commands
+                .entity(script_entity)
+                .insert(crate::fightai::formation_data::LeaderFormation { name: name.clone() });
+        }
     }
 }

@@ -4,6 +4,36 @@ use crate::ai::components::{AiFighter, AiInterceptor};
 use crate::combat::components::Health;
 use crate::combat::faction::{Faction, FactionManager, FactionStatus};
 
+/// Interceptor closing speed (≈ `MaxSpeed`, the AI run speed).
+const INTERCEPT_MAX_SPEED: f32 = 6.0;
+/// Cap on how far ahead of the target we aim (`aiInterceptorData::MaxLeadTime`).
+const INTERCEPT_MAX_LEAD_TIME: f32 = 1.0;
+
+/// Smallest positive interception time for a pursuer at `my_speed` chasing a
+/// target offset by `to_tgt` (flat XZ) moving at `tgt_vel` — port of
+/// `aiInterceptor::Solve`.  Solves `(|v|² − s²)t² + 2(v·d)t + |d|² = 0`.
+fn intercept_time(to_tgt: Vec3, my_speed: f32, tgt_vel: Vec3) -> Option<f32> {
+    let a = tgt_vel.length_squared() - my_speed * my_speed;
+    let b = 2.0 * tgt_vel.dot(to_tgt);
+    let c = to_tgt.length_squared();
+    if a.abs() < 1e-5 {
+        if b.abs() < 1e-5 {
+            return None;
+        }
+        let t = -c / b;
+        return (t > 0.0).then_some(t);
+    }
+    let disc = b * b - 4.0 * a * c;
+    if disc < 0.0 {
+        return None;
+    }
+    let sq = disc.sqrt();
+    [(-b - sq) / (2.0 * a), (-b + sq) / (2.0 * a)]
+        .into_iter()
+        .filter(|t| *t > 0.0)
+        .reduce(f32::min)
+}
+
 /// High-fidelity port of the target-acquisition half of
 /// `aiInterceptor` / `crFighter::GetClosestCreature`.
 ///
@@ -35,6 +65,7 @@ pub fn ai_interceptor_system(
         Option<&Faction>,
     )>,
     candidates: Query<(Entity, &GlobalTransform, &Faction, &Health)>,
+    velocities: Query<&avian3d::prelude::LinearVelocity>,
     factions: Res<FactionManager>,
 ) {
     for (self_entity, mut interceptor, mut fighter, self_tf, self_faction_opt) in &mut query {
@@ -77,23 +108,34 @@ pub fn ai_interceptor_system(
         // Resolve the position we steer toward this tick.  Preference
         // order: newly-acquired target → existing target (if alive
         // and still in candidate set) → none.
-        let intercept_target_pos = if let Some((ent, pos, _)) = chosen {
+        let intercept_target = if let Some((ent, pos, _)) = chosen {
             fighter.target = Some(ent);
-            Some(pos)
+            Some((ent, pos))
         } else if let Some(existing) = fighter.target {
             candidates
                 .get(existing)
                 .ok()
-                .map(|(_, tf, _, _)| tf.translation())
+                .map(|(e, tf, _, _)| (e, tf.translation()))
         } else {
             None
         };
 
-        if let Some(target_pos) = intercept_target_pos {
+        if let Some((target_ent, target_pos)) = intercept_target {
             let dist_sq = self_pos.distance_squared(target_pos);
             if dist_sq < radius_sq {
                 interceptor.active = true;
-                interceptor.intercept_point = Some(target_pos);
+                // Lead the moving target: aim at where it will be, not where it
+                // is (aiInterceptor::Solve + the MaxLeadTime clamp).
+                let mut to_tgt = target_pos - self_pos;
+                to_tgt.y = 0.0;
+                let tgt_vel = velocities
+                    .get(target_ent)
+                    .map(|v| Vec3::new(v.x, 0.0, v.z))
+                    .unwrap_or(Vec3::ZERO);
+                let lead = intercept_time(to_tgt, INTERCEPT_MAX_SPEED, tgt_vel)
+                    .unwrap_or(0.0)
+                    .clamp(0.0, INTERCEPT_MAX_LEAD_TIME);
+                interceptor.intercept_point = Some(target_pos + tgt_vel * lead);
             } else {
                 // Target slipped beyond perception — go inactive but
                 // KEEP fighter.target.  Mirrors the legacy: the AI

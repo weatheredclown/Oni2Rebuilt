@@ -109,6 +109,11 @@ pub struct LayoutActor {
     pub has_fight_ai: bool,
     /// The attack table (loads *.atk) parsed from FightAI configuration.
     pub attack_table: Option<String>,
+    /// Whether the actor is a squad leader (`FightAILeader` component).
+    pub is_leader: bool,
+    /// The leader's initial custom formation name, if declared in XML
+    /// (`FightAILeader.InitialFormation`); usually set at runtime via `form`.
+    pub leader_initial_formation: Option<String>,
     /// ScrOni script filename (from <ScrOni><Filename>). '$' prefix = layout-local.
     pub script_filename: Option<String>,
     /// ScrOni entry-point script name (from <ScrOni><MainScript>).
@@ -462,8 +467,12 @@ pub fn parse_actor_xml(dir: &str, filename: &str, template_dir: &str) -> Option<
     let curve_block = extract_component(&chain, has_components_xml, "Curve");
     let scroni_block = extract_component(&chain, has_components_xml, "ScrOni");
     let broadcast_block = extract_component(&chain, has_components_xml, "BroadcastTrigger");
+    // A leader carries `FightAILeader` (a FightAI subtype) instead of `FightAI`.
+    let fight_ai_leader_block = extract_component(&chain, has_components_xml, "FightAILeader")
+        .or_else(|| extract_component(&chain, has_components_xml, "FightAiLeader"));
     let fight_ai_block = extract_component(&chain, has_components_xml, "FightAI")
-        .or_else(|| extract_component(&chain, has_components_xml, "FightAi"));
+        .or_else(|| extract_component(&chain, has_components_xml, "FightAi"))
+        .or_else(|| fight_ai_leader_block.clone());
     let fight_vector_block = extract_component(&chain, has_components_xml, "FightVectorTrigger");
     let broadcast_trigger_block = extract_component(&chain, has_components_xml, "BroadcastTrigger");
     let fighter_block = extract_component(&chain, has_components_xml, "Fighter");
@@ -667,13 +676,21 @@ pub fn parse_actor_xml(dir: &str, filename: &str, template_dir: &str) -> Option<
 
     let has_fight_ai = fight_ai_block.is_some();
     let mut attack_table: Option<String> = None;
-    if let Some(block) = fight_ai_block
+    if let Some(block) = &fight_ai_block
         && let Some(v) =
-            extract_xml_attr(&block, "AttackTable").or_else(|| extract_xml_attr(&block, "Table"))
+            extract_xml_attr(block, "AttackTable").or_else(|| extract_xml_attr(block, "Table"))
         && !v.is_empty()
     {
         attack_table = Some(v);
     }
+
+    // FightAILeader: this creature leads a grunt squad with a custom formation.
+    // `InitialFormation` may be set in XML; when absent the formation is chosen
+    // at runtime by the ScrOni `form` command (the shipped Blast Chamber path).
+    let is_leader = fight_ai_leader_block.is_some();
+    let leader_initial_formation = fight_ai_leader_block
+        .as_ref()
+        .and_then(|block| extract_xml_attr(block, "InitialFormation").filter(|v| !v.is_empty()));
 
     let target_block = extract_component(&chain, has_components_xml, "Target");
     let target = target_block.map(|block| {
@@ -1108,6 +1125,8 @@ pub fn parse_actor_xml(dir: &str, filename: &str, template_dir: &str) -> Option<
         curve_speed,
         has_fight_ai,
         attack_table,
+        is_leader,
+        leader_initial_formation,
         script_filename,
         script_main,
         broadcast_radius,
@@ -1178,6 +1197,8 @@ const KNOWN_IMPLEMENTED_COMPONENTS: &[&str] = &[
     "FX",
     "FightAI",
     "FightAi",
+    "FightAILeader",
+    "FightAiLeader",
     "FightVectorTrigger",
     "Fighter",
     "ForceVectorTrigger",

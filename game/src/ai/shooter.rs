@@ -18,14 +18,24 @@ pub fn ai_shooter_system(
         Option<&Inventory>,
         Option<&mut BehaviorRuntime>,
         &GlobalTransform,
+        Option<&crate::ai::fightandshoot::FightAndShoot>,
     )>,
     transforms: Query<&GlobalTransform>,
 ) {
+    use crate::ai::fightandshoot::FightShootMode;
     let dt = time.delta_secs();
 
-    for (entity, mut cmds, mut shooter, fighter, inv_opt, mut behavior_rt_opt, self_tf) in
+    for (entity, mut cmds, mut shooter, fighter, inv_opt, mut behavior_rt_opt, self_tf, fas_opt) in
         &mut query
     {
+        // FightAndShoot decides shoot vs. melee: stand down (let the melee
+        // fight engage) unless we're in Shooting mode.  Absent component →
+        // legacy "always shoot when armed" behavior.
+        if matches!(fas_opt.map(|f| f.mode), Some(FightShootMode::Fighting)) {
+            shooter.state = 0; // STATE_INIT
+            continue;
+        }
+
         let Some(inv) = inv_opt else {
             continue;
         };
@@ -63,6 +73,14 @@ pub fn ai_shooter_system(
         // -------------------------------------------------------------------
         // This approximates STATE_BEHIND_FIXED -> STATE_AIMING -> STATE_FIRING
         // with basic burst control.
+        //
+        // TODO(shooter): port the full `aiShooter` — drive burst/fire timing
+        // from the equipped weapon's `AiParameters` (burst_duration[_randomness],
+        // fire_delay[_randomness], min_aim_time) instead of the hardcoded
+        // 300u/0.5-1.5s burst; add accuracy/miss (SetAccuracy/SetTryToMiss/
+        // MissRange), move-and-fire (EnableMoveAndFire), the shooting-point /
+        // firing-line manager (aiShootingPointManager), and the
+        // friendly-fire Consideration (RUTHLESS/REGULAR/CAUTIOUS).
 
         // Point at target
         // (Handled automatically by the ActorFollower/fight FSM if they track the target,
