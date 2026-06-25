@@ -14,6 +14,7 @@
  * play_die_system           — short-cut: StartAction(Die, die_enum)
  */
 use bevy::prelude::*;
+use avian3d::prelude::{LinearVelocity, RigidBody};
 
 use crate::oni2_loader::animation::{AnimId, Oni2AnimLibrary, Oni2AnimState};
 use crate::oni2_loader::parsers::jump::JumpController;
@@ -1451,17 +1452,24 @@ pub fn replenish_jumps_on_ground_system(
 /// Listens for top-level AnimatorBroadcastEvent messages generated from the
 /// character FSM and dispatches the native movement routines (translating string logic down to internal StartActionMessages).
 pub fn animator_broadcast_handler(
+    mut commands: Commands,
+    layout_paths: Option<Res<crate::oni2_loader::environment::LayoutPaths>>,
     mut events: MessageReader<crate::statemachine::runtime::AnimatorBroadcastEvent>,
     mut start_action_writer: MessageWriter<crate::animator::StartActionMessage>,
     mut player_query: Query<(
+        Entity,
         &mut ActionPlayer,
         Option<&crate::player::components::InputState>,
+        &mut Transform,
+        Option<&mut LinearVelocity>,
+        Option<&RigidBody>,
+        Option<&crate::player::components::PendingZiplineMount>,
     )>,
 ) {
     for ev in events.read() {
         match ev.payload.as_str() {
             "StartJumpCompress" => {
-                if let Ok((mut ap, input_opt)) = player_query.get_mut(ev.entity) {
+                if let Ok((_, mut ap, input_opt, _, _, _, _)) = player_query.get_mut(ev.entity) {
                     // Mid-air press → somersault.  Mirror the legacy
                     // gate (`action.cpp:618` ACT_S0_JUMP_SOMERSAULT
                     // `if (SubState1 != ACT_S1_JUMP_MAIN) return
@@ -1482,26 +1490,26 @@ pub fn animator_broadcast_handler(
                     }
 
                     let substate = if mid_air {
-                        crate::animator::sub_state_0::JUMP_SOMERSAULT
+                        crate::animator::components::sub_state_0::JUMP_SOMERSAULT
                     } else if let Some(input) = input_opt {
                         if input.movement.length_squared() > 0.05 {
                             if input.movement.y < -0.1 {
-                                crate::animator::sub_state_0::JUMP_FORWARD
+                                crate::animator::components::sub_state_0::JUMP_FORWARD
                             } else if input.movement.y > 0.1 {
-                                crate::animator::sub_state_0::JUMP_BACK
+                                crate::animator::components::sub_state_0::JUMP_BACK
                             } else if input.movement.x > 0.1 {
-                                crate::animator::sub_state_0::JUMP_LEFT
+                                crate::animator::components::sub_state_0::JUMP_LEFT
                             } else if input.movement.x < -0.1 {
-                                crate::animator::sub_state_0::JUMP_RIGHT
+                                crate::animator::components::sub_state_0::JUMP_RIGHT
                             } else {
-                                crate::animator::sub_state_0::JUMP_UP
+                                crate::animator::components::sub_state_0::JUMP_UP
                             }
                         } else {
-                            crate::animator::sub_state_0::JUMP_UP
+                            crate::animator::components::sub_state_0::JUMP_UP
                         }
                     } else {
                         // AI jump default for now (could parse velocity/facing intent instead later)
-                        crate::animator::sub_state_0::JUMP_UP
+                        crate::animator::components::sub_state_0::JUMP_UP
                     };
 
                     start_action_writer.write(crate::animator::StartActionMessage {
@@ -1534,14 +1542,63 @@ pub fn animator_broadcast_handler(
             // kept for FX / audio hooks to subscribe to later.
             "StartLand" | "StartHardLand" => {}
 
+            "StartZiplineGrab" => {
+                if let Ok((entity, mut _ap, _input, _tf, _vel, _rb_opt, Some(pending))) = player_query.get_mut(ev.entity) {
+                    if let Some(ref paths) = layout_paths {
+                        if let Some((_, pts)) = paths.curves.iter().find(|(name, _)| name.eq_ignore_ascii_case(&pending.curve_name)) {
+                            let curve = crate::oni2_loader::curve::NurbsCurve::new(pts.clone());
+                            
+                            commands.entity(entity).insert((
+                                crate::oni2_loader::components::CurveFollower {
+                                    curve,
+                                    phase: pending.t,
+                                    speed: 0.0,
+                                    speed_is_physical: true,
+                                    target_phase: 1.0,
+                                    wrap_around: false,
+                                    ping_pong: false,
+                                    look_along_xz: false,
+                                    fixed_orientation: false,
+                                    reached_target: false,
+                                },
+                                crate::player::components::PlayerZiplineState {
+                                    curve_name: pending.curve_name.clone(),
+                                    is_hangline: pending.is_hangline,
+                                }
+                            ));
+
+                            commands.entity(entity).remove::<crate::player::components::PendingZiplineMount>();
+                            commands.entity(entity).insert(RigidBody::Kinematic);
+                        }
+                    }
+                }
+            }
+
+            "EndZipline" => {
+                if let Ok((entity, mut _ap, _input, mut tf, mut vel_opt, _rb_opt, _pending)) = player_query.get_mut(ev.entity) {
+                    commands.entity(entity).remove::<(
+                        crate::oni2_loader::components::CurveFollower,
+                        crate::player::components::PlayerZiplineState
+                    )>();
+
+                    commands.entity(entity).insert(RigidBody::Dynamic);
+
+                    if let Some(mut vel) = vel_opt {
+                        vel.0 = Vec3::ZERO;
+                    }
+
+                    // Downward teleport to ground the character cleanly, matching hands-to-feet transition.
+                    tf.translation -= Vec3::Y * 2.0;
+                }
+            }
+
             // StartDeath / StartReact / StartEvade / StartSlide /
             // StartCrouch / EndCrouch / StartLedgeGrab / StartLedgeClamber
-            // / StartZiplineGrab / EndZipline / EndReact / StartPickup /
-            // StartCustomAnim: not yet wired to Actions; silent no-ops
+            // / StartPickup / StartCustomAnim: not yet wired to Actions; silent no-ops
             // until those modes migrate to the action pipeline.
             "StartDeath" | "StartReact" | "EndReact" | "StartEvade" | "StartSlide"
             | "StartCrouch" | "EndCrouch" | "StartLedgeGrab" | "StartLedgeClamber"
-            | "StartZiplineGrab" | "EndZipline" | "StartPickup" | "StartCustomAnim" => {}
+            | "StartPickup" | "StartCustomAnim" => {}
 
             _ => {
                 bevy::log::warn!(

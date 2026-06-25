@@ -5,7 +5,7 @@
  * Control points come from layout.paths; knot vector uses multiple end knots.
  * evaluate(t) → Vec3 used by CurveFollower and scripted camera paths.
  */
-use bevy::math::Vec3;
+use bevy::math::{Vec3, Vec2};
 
 /// Cubic B-spline (NURBS) curve for smooth path evaluation.
 /// Control points from layout.paths, knot vector generated with multiple end knots.
@@ -73,6 +73,55 @@ impl NurbsCurve {
             + self.points[i - 2] * b1
             + self.points[i - 1] * b2
             + self.points[i] * b3
+    }
+
+    /// Find the point on the curve closest to `test_pos` in XZ space.
+    /// Returns (closest_point_3d, parameter_t).
+    pub fn nearest_point_xz(&self, test_pos: Vec3) -> (Vec3, f32) {
+        let n_samples = 100;
+        let mut best_pt = Vec3::ZERO;
+        let mut best_t = 0.0;
+        let mut min_dist_xz = f32::MAX;
+
+        // Sample the curve at regular intervals
+        let mut samples = Vec::with_capacity(n_samples + 1);
+        for i in 0..=n_samples {
+            let t = i as f32 / n_samples as f32;
+            samples.push((t, self.get_curve_point(t)));
+        }
+
+        // Check distance to each segment
+        for i in 0..n_samples {
+            let (t1, p1) = samples[i];
+            let (t2, p2) = samples[i + 1];
+
+            // Project test_pos onto segment p1->p2 in XZ
+            let p1_xz = Vec2::new(p1.x, p1.z);
+            let p2_xz = Vec2::new(p2.x, p2.z);
+            let test_xz = Vec2::new(test_pos.x, test_pos.z);
+
+            let v = p2_xz - p1_xz;
+            let w = test_xz - p1_xz;
+            let d = v.length_squared();
+
+            let pct = if d > 1e-6 {
+                (w.dot(v) / d).clamp(0.0, 1.0)
+            } else {
+                0.0
+            };
+
+            // Interpolated 3D position
+            let segment_pt = p1.lerp(p2, pct);
+            let dist_xz = Vec2::new(segment_pt.x, segment_pt.z).distance(test_xz);
+
+            if dist_xz < min_dist_xz {
+                min_dist_xz = dist_xz;
+                best_pt = segment_pt;
+                best_t = t1 + pct * (t2 - t1);
+            }
+        }
+
+        (best_pt, best_t)
     }
 
     /// Cox-de Boor recursive B-spline basis function of order 4 (degree 3).

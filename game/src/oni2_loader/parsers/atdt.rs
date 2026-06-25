@@ -155,6 +155,12 @@ pub struct AtdtGrab {
     /// (e.g. `ANIMGRAB_DISARM_REACT_1`).  Not consumed by the disarm
     /// pipeline yet — kept for future plumbing.
     pub react_anim: String,
+    /// The victim's end animation (legacy `crGrabData::EnemyEndAnim`),
+    /// e.g. `ANIMREACT_GA_SLOT_0`.  This is an `animReactEnum` alias whose
+    /// `.rct` carries the follow-up `GetUpAnim` — that's how the slammed
+    /// victim is told to get up after the grab.  Consumed at grab-start to
+    /// resolve the getup queued when the react animation finishes.
+    pub enemy_end_anim: String,
     /// Damage application phase from the grab block.
     pub damage_phase: f32,
     /// Target rotation around the y-axis (legacy `crGrabData::RotationOffsetDegrees`)
@@ -583,6 +589,10 @@ pub fn parse_atdt_content(content: &str) -> AtdtData {
                             }
                             "reactanim" => {
                                 grab.react_anim = p.read_string(&a_key, &grab.react_anim);
+                            }
+                            "enemyendanim" => {
+                                grab.enemy_end_anim =
+                                    p.read_string(&a_key, &grab.enemy_end_anim);
                             }
                             "damagephase" => {
                                 grab.damage_phase = p.read_float(&a_key, grab.damage_phase)

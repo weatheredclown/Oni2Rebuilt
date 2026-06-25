@@ -36,6 +36,8 @@ impl Plugin for PlayerPlugin {
                     systems::player_mouse_look_system,
                     // 4. Animator FSM reads PadMapper
                     animator_update_system,
+                    // 4.5 Sync zipline state before ticking FSM
+                    systems::player_zipline_fsm_sync_system,
                     // 5. FSM reads PadMapper values
                     fsm_update_system,
                 )
@@ -47,6 +49,10 @@ impl Plugin for PlayerPlugin {
                 FixedUpdate,
                 (
                     oni2_loader::moving_platform_system,
+                    // Check and start zipline mounting
+                    systems::player_zipline_mount_system,
+                    // Update parametric velocity along active curve
+                    systems::player_zipline_speed_system,
                     // EATME magnetism: compute the snapped travel vector
                     // and target enemy from the raw stick + nearby foes.
                     // Must run BEFORE `player_movement_system` so the

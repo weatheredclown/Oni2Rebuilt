@@ -74,3 +74,19 @@ pub struct InputState {
     /// `bhPadMapper::ChrRelativeDir`.
     pub eatme_travel: Option<Vec3>,
 }
+
+/// Dynamic state stashed on the player while attached to a zipline or hangline curve.
+#[derive(Component, Debug, Clone)]
+pub struct PlayerZiplineState {
+    pub curve_name: String,
+    pub is_hangline: bool,
+}
+
+/// Temporary component storing intermediate target details while waiting for the animator FSM to transition.
+#[derive(Component, Debug, Clone)]
+pub struct PendingZiplineMount {
+    pub curve_name: String,
+    pub t: f32,
+    pub is_hangline: bool,
+}
+

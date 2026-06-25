@@ -287,6 +287,15 @@ pub struct FighterState {
 
     // --- Target repositioning ---
     pub grapple_reposition: Option<GrappleRepositionData>,
+    /// Grapple end-rotation deferred until the get-up animation finishes:
+    /// `(getup_anim_id, notches)`.  The getup animation rotates the body to
+    /// its final orientation on its own; baking the notches into
+    /// `Fighter.facing` only when the getup *ends* keeps the getup playing
+    /// from the correct pre-grab facing (applying it at react-end made the
+    /// getup play facing the wrong way).  Mirrors how the strike-hit path's
+    /// `react_end_rotation_system` waits for the whole react+getup reaction
+    /// to clear before applying `EndRotationNotches`.
+    pub pending_getup_end_rotation: Option<(crate::oni2_loader::animation::AnimId, i32)>,
 }
 
 /// Cap on `FighterState::targets_pending` — mirrors
@@ -345,6 +354,7 @@ impl Default for FighterState {
             attack_hit_classes: Vec::new(),
             targets_pending: Vec::new(),
             grapple_reposition: None,
+            pending_getup_end_rotation: None,
         }
     }
 }
@@ -357,6 +367,21 @@ pub struct GrappleRepositionData {
     pub rotation_offset_notches: i32,
     pub one_off: bool,
     pub attacker_entity: Entity,
+    /// Get-up animation to queue when the react/end animation finishes,
+    /// resolved at grab-start from the grab's `EnemyEndAnim` react's `.rct`
+    /// `GetUpAnim` (e.g. `ANIMGRAP_SLAM_GETUP`).  `None` for grabs whose end
+    /// react has no getup — the victim then just returns to idle.  Mirrors
+    /// the `crReactData::GetGetUpAnim()` chain in `crGrab::End`.
+    pub getup_anim: Option<String>,
+    /// End-rotation notches from the grab's EnemyEndAnim react `.rct`
+    /// (`EndRotationNotches`), applied to `Fighter.facing` when the react
+    /// finishes so the rotation the slam animation performs is baked in.
+    /// Without this the victim snaps back to their pre-grab orientation the
+    /// moment the animation stops driving the body pose, because
+    /// `fighter_rotation_sync_system` re-asserts the unchanged `facing`.
+    /// Mirrors `crReactData::ApplyRotationNotches` for the grapple path
+    /// (the strike-hit path applies it via `react_end_rotation_system`).
+    pub end_rotation_notches: i32,
 }
 
 impl FighterState {

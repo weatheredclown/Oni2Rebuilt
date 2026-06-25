@@ -802,6 +802,7 @@ pub fn player_movement_system(
             Option<&crate::statemachine::runtime::FsmRuntime>,
             Option<&crate::oni2_loader::animation::Oni2AnimState>,
             Option<&crate::fight::components::FighterState>,
+            Option<&crate::player::components::PlayerZiplineState>,
         ),
         With<Player>,
     >,
@@ -817,8 +818,12 @@ pub fn player_movement_system(
 ) {
     let camera_tf_opt = camera_query.iter().next();
 
-    for (entity, input, transform, mut velocity, mut fighter, fsm_opt, anim_state_opt, fs_opt) in &mut query
+    for (entity, input, transform, mut velocity, mut fighter, fsm_opt, anim_state_opt, fs_opt, zip_state_opt) in &mut query
     {
+        if zip_state_opt.is_some() {
+            // Locomotion is completely suspended while riding a zipline/hangline
+            continue;
+        }
         if let Some(fs) = fs_opt {
             if fs.is_grappling() || fs.is_being_grappled() {
                 // Completely lock out movement and steering while grappling or being grappled
@@ -985,11 +990,138 @@ pub fn clear_inputs_on_enter(
     cushion.0 = 0.4;
 }
 
+pub fn player_zipline_mount_system(
+    mut commands: Commands,
+    layout_paths: Option<Res<crate::oni2_loader::environment::LayoutPaths>>,
+    mut query: Query<(
+        Entity,
+        &Transform,
+        &InputState,
+        &crate::animator::components::ActionPlayer,
+        &crate::oni2_loader::animation::Oni2AnimState,
+        Option<&crate::player::components::PlayerZiplineState>,
+        Option<&crate::player::components::PendingZiplineMount>,
+    ), With<Player>>,
+    mut start_action_writer: MessageWriter<crate::animator::StartActionMessage>,
+) {
+    let Some(paths) = layout_paths else { return; };
+    for (entity, tf, input, ap, anim_state, zip_state, pending) in &mut query {
+        if zip_state.is_some() || pending.is_some() {
+            continue;
+        }
+        // Must be jumping or in the air to mount a zipline/hangline
+        let is_jumping = ap.check_flags(crate::animator::components::action_flags::JUMPING)
+            || !anim_state.is_grounded
+            || input.jump;
+
+        if is_jumping {
+            let player_pos = tf.translation;
+            let mut closest_curve = None;
+            let mut best_t = 0.0;
+            let mut min_dist_xz = f32::MAX;
+
+            for (name, pts) in &paths.curves {
+                if pts.len() < 4 { continue; }
+                let is_zip = name.to_lowercase().contains("zipline");
+                let is_hang = name.to_lowercase().contains("hangline");
+                if !is_zip && !is_hang {
+                    continue;
+                }
+                let curve = crate::oni2_loader::curve::NurbsCurve::new(pts.clone());
+                let (pt, t) = curve.nearest_point_xz(player_pos);
+                let dist_xz = Vec2::new(pt.x, pt.z).distance(Vec2::new(player_pos.x, player_pos.z));
+                let dist_y = (pt.y - player_pos.y).abs();
+
+                // Proximity bounds: XZ < 1.2m, Y < 3.0m
+                if dist_xz < 1.2 && dist_y < 3.0 {
+                    if dist_xz < min_dist_xz {
+                        min_dist_xz = dist_xz;
+                        closest_curve = Some((name.clone(), is_hang));
+                        best_t = t;
+                    }
+                }
+            }
+
+            if let Some((name, is_hang)) = closest_curve {
+                info!("Grabbed zipline/hangline '{}' at phase {:.3}", name, best_t);
+                commands.entity(entity).insert(crate::player::components::PendingZiplineMount {
+                    curve_name: name,
+                    t: best_t,
+                    is_hangline: is_hang,
+                });
+
+                // Send start action message to trigger animator FSM transition to MainAction::ZipLine
+                start_action_writer.write(crate::animator::StartActionMessage {
+                    entity,
+                    action: crate::animator::MainAction::ZipLine,
+                    substate: if is_hang {
+                        crate::animator::components::sub_state_0::ZIPLINE_NAV
+                    } else {
+                        crate::animator::components::sub_state_0::ZIPLINE_SLIDE
+                    },
+                });
+            }
+        }
+    }
+}
+
+pub fn player_zipline_speed_system(
+    mut query: Query<(
+        &crate::player::components::PlayerZiplineState,
+        &mut crate::oni2_loader::components::CurveFollower,
+        &InputState,
+    ), With<Player>>,
+) {
+    for (zip_state, mut follower, input) in &mut query {
+        if zip_state.is_hangline {
+            // controllable navigation along hangline
+            follower.speed = -input.movement.y * 4.0;
+        } else {
+            // fast forward slide down zipline
+            follower.speed = 12.0;
+        }
+    }
+}
+
+pub fn player_zipline_fsm_sync_system(
+    mut query: Query<(
+        &mut crate::statemachine::runtime::AnimatorRuntime,
+        Option<&crate::player::components::PlayerZiplineState>,
+        Option<&crate::player::components::PendingZiplineMount>,
+        Option<&crate::oni2_loader::components::CurveFollower>,
+    ), With<Player>>,
+) {
+    for (mut animator, zip_state, pending_opt, follower_opt) in &mut query {
+        let mut available = false;
+        if pending_opt.is_some() {
+            available = true;
+        } else if let Some(zip) = zip_state {
+            if let Some(follower) = follower_opt {
+                if zip.is_hangline {
+                    if follower.phase > 0.001 && follower.phase < 0.999 {
+                        available = true;
+                    }
+                } else {
+                    if follower.phase < 0.999 {
+                        available = true;
+                    }
+                }
+            } else {
+                available = true;
+            }
+        }
+        animator.ctx.zipline_available = available;
+    }
+}
+
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::fight::components::FighterState;
     use bevy::prelude::App;
+    use std::collections::HashMap;
+    use crate::animator::components::ActionPlayer;
 
     #[test]
     fn test_player_movement_lockout_during_grapple() {
@@ -1026,6 +1158,122 @@ mod tests {
         let vel = app.world().get::<LinearVelocity>(player).unwrap();
         assert_eq!(vel.x, 0.0);
         assert_eq!(vel.z, 0.0);
+    }
+
+    #[test]
+    fn test_zipline_proximity_detection() {
+        let mut app = App::new();
+
+        app.add_message::<crate::animator::StartActionMessage>();
+
+        let curves = vec![
+            (
+                "zipline1".to_string(),
+                vec![
+                    Vec3::new(0.0, 10.0, 0.0),
+                    Vec3::new(0.0, 10.0, 5.0),
+                    Vec3::new(0.0, 10.0, 10.0),
+                    Vec3::new(0.0, 10.0, 15.0),
+                ],
+            ),
+        ];
+        app.insert_resource(crate::oni2_loader::environment::LayoutPaths {
+            curves,
+            ..Default::default()
+        });
+
+        app.add_systems(Update, player_zipline_mount_system);
+
+        let player = app
+            .world_mut()
+            .spawn((
+                Player,
+                Transform::from_xyz(0.5, 9.0, 5.0), // XZ close (dist=0.5 < 1.2), Y close (diff=1.0 < 3.0)
+                InputState {
+                    jump: true,
+                    ..Default::default()
+                },
+                ActionPlayer::default(),
+                crate::oni2_loader::animation::Oni2AnimState {
+                    anim: Default::default(),
+                    skeleton: Default::default(),
+                    current_time: 0.0,
+                    fps: 30.0,
+                    paused: false,
+                    looping: false,
+                    speed_multiplier: 1.0,
+                    pending_step: 0,
+                    last_rendered_time: 0.0,
+                    joint_entities: vec![],
+                    base_rotation: Quat::IDENTITY,
+                    current_frame: vec![],
+                    current_anim_id: None,
+                    previous_anim_id: None,
+                    anim_just_started: false,
+                    root_motion_just_started: false,
+                    is_grounded: false,
+                    material_stood_on: None,
+                    root_offset_this_frame: Vec3::ZERO,
+                    root_offset_prev_frame: Vec3::ZERO,
+                },
+            ))
+            .id();
+
+        app.update();
+
+        // Check that PendingZiplineMount was inserted
+        let pending = app.world().get::<crate::player::components::PendingZiplineMount>(player);
+        assert!(pending.is_some(), "PendingZiplineMount should have been inserted");
+        let pending = pending.unwrap();
+        assert_eq!(pending.curve_name, "zipline1");
+        assert!(!pending.is_hangline);
+    }
+
+    #[test]
+    fn test_zipline_dismount_teleport() {
+        use avian3d::prelude::{LinearVelocity, RigidBody};
+        let mut app = App::new();
+
+        app.add_message::<crate::statemachine::runtime::AnimatorBroadcastEvent>();
+        app.add_message::<crate::animator::StartActionMessage>();
+
+        app.add_systems(Update, crate::animator::systems::animator_broadcast_handler);
+
+        let initial_pos = Vec3::new(0.0, 10.0, 0.0);
+        let player = app
+            .world_mut()
+            .spawn((
+                Player,
+                Transform::from_translation(initial_pos),
+                ActionPlayer::default(),
+                LinearVelocity(Vec3::new(5.0, 0.0, 5.0)),
+                RigidBody::Kinematic,
+            ))
+            .id();
+
+        // Send EndZipline event
+        let mut writer = app
+            .world_mut()
+            .resource_mut::<Messages<crate::statemachine::runtime::AnimatorBroadcastEvent>>();
+        writer.write(crate::statemachine::runtime::AnimatorBroadcastEvent {
+            entity: player,
+            payload: "EndZipline".to_string(),
+        });
+
+        app.update();
+
+        // Verify entity state after update:
+        // 1. RigidBody component should be restored to RigidBody::Dynamic.
+        // 2. LinearVelocity should be reset to zero.
+        // 3. Transform should be teleported downward by 2.0 meters.
+        let rb = app.world().get::<RigidBody>(player).unwrap();
+        assert_eq!(*rb, RigidBody::Dynamic);
+
+        let vel = app.world().get::<LinearVelocity>(player).unwrap();
+        assert_eq!(vel.0, Vec3::ZERO);
+
+        let tf = app.world().get::<Transform>(player).unwrap();
+        assert_eq!(tf.translation, initial_pos - Vec3::Y * 2.0);
     }
 }
 

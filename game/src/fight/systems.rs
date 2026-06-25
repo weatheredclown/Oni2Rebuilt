@@ -21,7 +21,7 @@ use crate::animator::events::{ControlAnimMessage, control_anim_bits};
 use crate::combat::components::{
     ComboTracker, Fighter, Health, HitReaction, ReactLibrary, ReactionKind,
 };
-use crate::animator::components::{ActionPlayer, MainAction, sub_state_1};
+use crate::animator::components::{ActionPlayer, MainAction, action_flags, sub_state_1};
 use crate::animator::schedule::{AnimSchedule, AnimScheduleEntry};
 use crate::combat::events::{AboutToBeHitMessage, HitReactionMessage};
 use crate::oni2_loader::animation::{AnimId, Oni2AnimLibrary, Oni2AnimState};
@@ -424,7 +424,16 @@ pub fn grapple_tick_system(
     mut start_events: MessageReader<GrappleStartEvent>,
     time: Res<Time>,
     mut commands: Commands,
-    mut non_holders: Query<(&mut FighterState, &Health, &Oni2AnimState), Without<GrappleState>>,
+    mut non_holders: Query<
+        (
+            &mut FighterState,
+            &Health,
+            &Oni2AnimState,
+            Option<&mut ActionPlayer>,
+            Option<&ReactLibrary>,
+        ),
+        Without<GrappleState>,
+    >,
     mut holders: Query<(Entity, &mut GrappleState, &FighterState, &Health)>,
     mut transforms: Query<&mut Transform>,
     fighter_types: Query<&FighterType>,
@@ -440,22 +449,38 @@ pub fn grapple_tick_system(
         let mut rotation_offset = 0.0;
         let mut one_off = false;
         let mut react_anim = String::new();
+        let mut enemy_end_anim = String::new();
         let mut start_health = 0.0;
         let mut success = false;
         let mut grab_offset = Vec3::ZERO;
 
         {
-            if let Ok((mut attacker_fs, health, anim_state)) = non_holders.get_mut(ev.attacker) {
+            if let Ok((mut attacker_fs, health, anim_state, attacker_ap, _)) =
+                non_holders.get_mut(ev.attacker)
+            {
                 start_health = health.current;
                 if let Some(attack_data) = anim_state.anim.attack_data.as_ref() {
                     if let Some(grab) = attack_data.grab.as_ref() {
                         rotation_offset = grab.rotation_offset;
                         one_off = grab.one_off;
                         react_anim = grab.react_anim.clone();
+                        enemy_end_anim = grab.enemy_end_anim.clone();
                         grab_offset = grab.offset;
                     }
                 }
                 attacker_fs.grapple_target = Some(ev.target);
+
+                // Put the grappler into fight stance, mirroring
+                // `crGrab::End → EnterFightStance()`.  Set on grab-start so the
+                // gait selector swaps the idle to ANIMFIGHTSTANCE_FIGHT the
+                // moment the one-shot grab animation finishes — otherwise the
+                // attacker pops to the neutral ANIMNAV_STAND.  (The legacy
+                // stand→fight transition anim is not played here; the grab move
+                // already occupies the body until it ends.)
+                if let Some(mut ap) = attacker_ap {
+                    ap.flags |= action_flags::FIGHTSTANCE;
+                }
+
                 success = true;
             }
         }
@@ -496,7 +521,7 @@ pub fn grapple_tick_system(
                 }
             }
 
-            if let Ok((mut target_fs, _, _)) = non_holders.get_mut(ev.target) {
+            if let Ok((mut target_fs, _, _, _, react_lib)) = non_holders.get_mut(ev.target) {
                 target_fs.grapple_attacker = Some(ev.attacker);
 
                 if !react_anim.is_empty() {
@@ -510,6 +535,30 @@ pub fn grapple_tick_system(
                         pause: false,
                     });
 
+                    // Resolve the get-up animation and end-rotation from the
+                    // grab's EnemyEndAnim react `.rct`.  `crGrab::End` queues
+                    // `reactdata.GetGetUpAnim()` after the victim's end react and
+                    // applies its rotation notches.  e.g. EnemyEndAnim
+                    // `ANIMREACT_GA_SLOT_0` → `GetUpAnim ANIMGRAP_SLAM_GETUP`
+                    // plus `EndRotationNotches 4` (180°).  Both are consumed by
+                    // `grapple_reposition` when the react anim ends, so a slammed
+                    // victim gets up (instead of popping to ANIMNAV_STAND) and
+                    // keeps the orientation the slam animation gave them (instead
+                    // of snapping back to their pre-grab facing).
+                    let (getup_anim, end_rotation_notches) = react_lib
+                        .and_then(|lib| {
+                            ANIMREACT_NAMES
+                                .iter()
+                                .position(|&n| n == enemy_end_anim)
+                                .and_then(|idx| lib.get(idx as i32))
+                        })
+                        .map(|rd| {
+                            let getup = (!rd.get_up_anim.is_empty())
+                                .then(|| rd.get_up_anim.clone());
+                            (getup, rd.end_rotation_notches)
+                        })
+                        .unwrap_or((None, 0));
+
                     let anim_id = AnimId::new(&react_anim);
                     let notches = (rotation_offset / 45.0).round() as i32;
                     target_fs.grapple_reposition = Some(GrappleRepositionData {
@@ -517,6 +566,8 @@ pub fn grapple_tick_system(
                         rotation_offset_notches: notches,
                         one_off,
                         attacker_entity: ev.attacker,
+                        getup_anim,
+                        end_rotation_notches,
                     });
                 }
             }
@@ -1919,6 +1970,9 @@ pub fn grapple_attack_sync_system(
                     rotation_offset_notches: tgt_rotation_notches,
                     one_off: true,
                     attacker_entity: attacker,
+                    // GrappleAttack reactions don't carry an EnemyEndAnim getup.
+                    getup_anim: None,
+                    end_rotation_notches: 0,
                 });
             }
 
@@ -1956,13 +2010,28 @@ pub fn grapple_reposition_system(
             mut tf,
             mut fs,
             anim_state,
-            anim_library_opt,
-            react_library_opt,
+            _anim_library_opt,
+            _react_library_opt,
             mut action_player_opt,
         )) = query.get_mut(msg.entity)
         else {
             continue;
         };
+
+        // Apply the grapple end-rotation deferred until the get-up animation
+        // finishes.  The getup rotates the body to its final orientation on
+        // its own; baking the notches into `Fighter.facing` now (at getup-end)
+        // matches that visual end with no snap, and kept the getup playing from
+        // the correct pre-grab facing.  (A separate message from the react-end
+        // below, so the two never collide.)
+        if let Some((getup_id, notches)) = fs.pending_getup_end_rotation {
+            if msg.anim_id == Some(getup_id) {
+                if notches != 0 {
+                    rotation_writer.write(ApplyRotationNotchesEvent { entity, notches });
+                }
+                fs.pending_getup_end_rotation = None;
+            }
+        }
 
         if let Some(repo) = fs.grapple_reposition.clone() {
             if Some(repo.anim_id) == msg.anim_id {
@@ -1987,13 +2056,6 @@ pub fn grapple_reposition_system(
                     }
                 }
 
-                if repo.rotation_offset_notches != 0 {
-                    rotation_writer.write(ApplyRotationNotchesEvent {
-                        entity,
-                        notches: repo.rotation_offset_notches,
-                    });
-                }
-
                 if repo.one_off {
                     end_writer.write(GrappleEndEvent {
                         attacker: repo.attacker_entity,
@@ -2002,37 +2064,64 @@ pub fn grapple_reposition_system(
                     });
                 }
 
-                // If it is a throw, trigger a getup animation if configured in the react library.
-                if repo.one_off {
-                    if let Some(anim_library) = anim_library_opt
-                        && let Some(react_library) = react_library_opt
-                    {
-                        if let Some(anim_name) = anim_library.debug_names.get(&repo.anim_id) {
-                            if let Some(react_enum) = ANIMREACT_NAMES.iter().position(|&name| name == anim_name) {
-                                if let Some(react_data) = react_library.get(react_enum as i32) {
-                                    let getup = &react_data.get_up_anim;
-                                    if !getup.is_empty() {
-                                        bevy::log::info!(
-                                            "grapple_reposition: Queueing getup animation '{}' for entity {:?}",
-                                            getup,
-                                            entity
-                                        );
+                // Queue the get-up animation resolved at grab-start from the
+                // grab's EnemyEndAnim react `.rct` (`crGrab::End` chains
+                // `reactdata.GetGetUpAnim()` after the victim's end react).
+                // Fires for held grabs too, not just one-off throws — a slammed
+                // victim plays e.g. ANIMGRAP_SLAM_GETUP instead of snapping to
+                // the neutral ANIMNAV_STAND the gait selector would otherwise
+                // pick the moment the react animation hits its last frame.
+                let has_getup = if let Some(getup) = repo.getup_anim.as_deref() {
+                    bevy::log::info!(
+                        "grapple_reposition: Queueing getup animation '{}' for entity {:?}",
+                        getup,
+                        entity
+                    );
 
-                                        let schedule = AnimSchedule::new(vec![
-                                            AnimScheduleEntry::new(getup, sub_state_1::REACT)
-                                        ]);
-                                        commands.entity(entity).insert(schedule);
+                    let schedule = AnimSchedule::new(vec![AnimScheduleEntry::new(
+                        getup,
+                        sub_state_1::REACT,
+                    )]);
+                    commands.entity(entity).insert(schedule);
 
-                                        // Set action player state to REACT to lock locomotion
-                                        if let Some(ref mut ap) = action_player_opt {
-                                            ap.last_action = MainAction::React;
-                                            ap.record_new_substate_1(sub_state_1::REACT);
-                                        }
-                                    }
-                                }
-                            }
-                        }
+                    // Lock locomotion to REACT so the gait selector / FSM
+                    // doesn't clobber the queued getup (mirrors `IsReacting()`).
+                    if let Some(ref mut ap) = action_player_opt {
+                        ap.last_action = MainAction::React;
+                        ap.record_new_substate_1(sub_state_1::REACT);
                     }
+
+                    // Defer the end-react's EndRotationNotches until the getup
+                    // finishes — the getup animation rotates the body itself, so
+                    // applying the notches now would make it play facing the
+                    // wrong way (it only looks right once the getup's own root
+                    // rotation reaches its final frame, which the deferred bake
+                    // then matches).
+                    if repo.end_rotation_notches != 0 {
+                        fs.pending_getup_end_rotation =
+                            Some((AnimId::new(getup), repo.end_rotation_notches));
+                    }
+                    true
+                } else {
+                    false
+                };
+
+                // Bake the rotation into `Fighter.facing` (via
+                // `rotation_notches_system`, which `fighter_rotation_sync_system`
+                // treats as authoritative — so the victim keeps the orientation
+                // the slam gave them instead of snapping back).  The grab's
+                // rotation-offset applies at react-end always; the end-react's
+                // EndRotationNotches applies here only when there's no getup to
+                // defer it to (otherwise it's handled at getup-end above).
+                let mut react_end_notches = repo.rotation_offset_notches;
+                if !has_getup {
+                    react_end_notches += repo.end_rotation_notches;
+                }
+                if react_end_notches != 0 {
+                    rotation_writer.write(ApplyRotationNotchesEvent {
+                        entity,
+                        notches: react_end_notches,
+                    });
                 }
 
                 fs.grapple_reposition = None;
@@ -2512,6 +2601,8 @@ mod strike_facing_tests {
             rotation_offset_notches: 2,
             one_off: true,
             attacker_entity: attacker,
+            getup_anim: None,
+            end_rotation_notches: 0,
         });
 
         let victim = app
@@ -2755,6 +2846,12 @@ mod strike_facing_tests {
             rotation_offset_notches: 2,
             one_off: true,
             attacker_entity: attacker,
+            // Getup is now resolved at grab-start (from the grab's EnemyEndAnim
+            // react `.rct`) and carried on the reposition data, so the
+            // reposition system queues it directly rather than re-deriving it
+            // from the ReactLibrary.
+            getup_anim: Some("ANIMREACT_KNOCKDOWN_GETUP".to_string()),
+            end_rotation_notches: 0,
         });
 
         let action_player = ActionPlayer::default();
