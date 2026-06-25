@@ -483,6 +483,15 @@ fn setup_scene(
         );
         player_bundle.fighter.facing = pi.rotation * Vec3::Z;
 
+        // Clean up any AI-specific components if this actor was promoted
+        commands.entity(pi.entity)
+            .remove::<crate::combat::components::Enemy>()
+            .remove::<crate::fightai::components::FightRuntime>()
+            .remove::<crate::fightai::components::AttackRuntime>()
+            .remove::<crate::ai::components::AiFighter>()
+            .remove::<crate::fightai::components::Leader>()
+            .remove::<crate::fightai::formation_data::LeaderFormation>();
+
         commands.entity(pi.entity).insert((
             scoped.clone(),
             player_bundle,

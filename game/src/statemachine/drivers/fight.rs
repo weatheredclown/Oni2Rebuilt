@@ -154,9 +154,9 @@ pub struct FightCtx {
     /// One additional legacy nuance the formula above doesn't capture:
     /// `aiAttackStateMachine::Update` ALSO force-yields the cookie when
     /// a fighter has held it longer than `FIGHTMGR.CookieHogTime`
-    /// without swinging.  That's a watchdog timer separate from this
-    /// flag — port it as a duration check on `FightResources` rather
-    /// than threading it through here.
+    /// without swinging.  That watchdog is implemented separately as a
+    /// duration check in `fightai::position::fight_resources_offer_system`
+    /// (`COOKIE_HOG_TIME`), not threaded through this flag.
     pub prepare_next_attacker: bool,
     pub attacked: bool,
     /// String mode tag used by `EMode("foo")` events.

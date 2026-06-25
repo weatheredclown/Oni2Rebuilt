@@ -642,11 +642,10 @@ pub fn attack_runtime_update_system(
 ///        it (legacy `aiAtkAction` subclasses set FLAG_DELAYED_COOKIE
 ///        on the attack state machine).  Read that flag out of the
 ///        attached `AttackRuntime.ctx` here.
-///     3. Independently, port `FIGHTMGR.CookieHogTime` as a watchdog
-///        on `FightResources` (offer-system can force-clear
-///        `cookie_holder` if the holder has held longer than the
-///        timeout without an `IsAttacking` window) — that's the
-///        legacy `aiAttackStateMachine` safety net.
+///     3. (Done) `FIGHTMGR.CookieHogTime` is ported as a watchdog in
+///        `fight_resources_offer_system` — it force-clears `cookie_holder`
+///        when the holder has held longer than `COOKIE_HOG_TIME` while
+///        others are queued (the legacy `aiAttackStateMachine` safety net).
 ///
 ///   See also `FightCtx::prepare_next_attacker` and
 ///   `FightEvent::PrepareNextAttacker` for the field/event docs.
@@ -873,7 +872,11 @@ pub fn fight_runtime_update_system(
         // This is the missing piece for round-robin combat among AI groups.
         // It drives E_PREPARE_NEXT_ATTACKER, which signals the FSM to yield
         // the combat cookie so another fighter can attack.
-        runtime.ctx.prepare_next_attacker = runtime.ctx.attack_finished;
+        //
+        // If the actor lacks an AttackRuntime entirely, they can never tick
+        // attack animations to progress, so we force prepare_next_attacker
+        // to yield the cookie immediately instead of hoarding it.
+        runtime.ctx.prepare_next_attacker = runtime.ctx.attack_finished || attack_rt_opt.is_none();
 
         runtime.ctx.attacked = fs_opt.is_some_and(|fs| fs.in_invuln_phase);
 

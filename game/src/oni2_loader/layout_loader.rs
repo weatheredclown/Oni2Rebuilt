@@ -86,6 +86,7 @@ pub struct PendingLayoutLoad {
     pub layout_paths: LayoutPaths,
     pub texture_collections: TextureCollections,
     pub player_info: Option<LayoutPlayerInfo>,
+    pub kno_info: Option<LayoutPlayerInfo>,
     pub spawned: u32,
     pub creatures: u32,
     pub skipped: u32,
@@ -242,6 +243,7 @@ pub fn begin_chunked_layout_load(
         layout_paths,
         texture_collections: TextureCollections::default(),
         player_info: None,
+        kno_info: None,
         spawned: 0,
         creatures: 0,
         skipped: 0,
@@ -335,6 +337,9 @@ pub struct ChunkedSpawnResult {
     /// player info had been recorded yet.  Caller should store this
     /// in `state.player_info`.
     pub player_info: Option<LayoutPlayerInfo>,
+    /// `Some` if the spawned actor has type "kno" (case-insensitive) but is not a player.
+    /// Caller should store this in `state.kno_info` as a fallback candidate.
+    pub kno_info: Option<LayoutPlayerInfo>,
     pub is_creature: bool,
     pub is_basic_entity: bool,
     pub failed: bool,
@@ -374,9 +379,24 @@ pub fn spawn_queued_layout_actor(
             } else {
                 None
             };
+            let kno_info = if actor.is_creature && !actor.is_player && actor.entity_type.eq_ignore_ascii_case("kno") {
+                Some(LayoutPlayerInfo {
+                    entity,
+                    position: actor.position,
+                    rotation: space::to_bevy_space_rot(actor.orientation_o2),
+                    entity_type: actor.entity_type.clone(),
+                    animator_type: actor.animator_type.clone().unwrap_or_default(),
+                    max_hitpoints: actor.max_hitpoints,
+                    faction: actor.faction.clone(),
+                    pad_fsm: actor.pad_fsm.clone(),
+                })
+            } else {
+                None
+            };
             ChunkedSpawnResult {
                 spawned_entity: Some(entity),
                 player_info,
+                kno_info,
                 is_creature: actor.is_creature,
                 is_basic_entity: !actor.is_creature,
                 failed: false,
@@ -385,6 +405,7 @@ pub fn spawn_queued_layout_actor(
         None => ChunkedSpawnResult {
             spawned_entity: None,
             player_info: None,
+            kno_info: None,
             is_creature: false,
             is_basic_entity: false,
             failed: true,
@@ -500,6 +521,9 @@ pub fn drive_chunked_actor_spawn_system(
             if state.player_info.is_none() && result.player_info.is_some() {
                 state.player_info = result.player_info;
             }
+            if state.kno_info.is_none() && result.kno_info.is_some() {
+                state.kno_info = result.kno_info;
+            }
         } else if result.is_basic_entity {
             state.spawned += 1;
         }
@@ -518,7 +542,19 @@ pub fn drive_chunked_actor_spawn_system(
         );
         match state.scope {
             LayoutLoadScope::InGame => {
-                if let Some(player_info) = state.player_info.take() {
+                let resolved_player = if let Some(player_info) = state.player_info.take() {
+                    Some(player_info)
+                } else if let Some(kno_info) = state.kno_info.take() {
+                    bevy::log::info!(
+                        "Layout: No player found in level, but kno actor was found. Promoting to player: {:?}",
+                        kno_info.entity
+                    );
+                    Some(kno_info)
+                } else {
+                    None
+                };
+
+                if let Some(player_info) = resolved_player {
                     commands.insert_resource(LoadedLayoutPlayer(player_info));
                 }
             }
@@ -713,6 +749,7 @@ pub fn load_layout(
     let mut creatures = 0;
     let mut skipped = 0;
     let mut player_info: Option<LayoutPlayerInfo> = None;
+    let mut kno_info: Option<LayoutPlayerInfo> = None;
     for line in actors_content.lines() {
         let actor_name = line.trim();
         if actor_name.is_empty() || actor_name.parse::<u32>().is_ok() {
@@ -761,6 +798,18 @@ pub fn load_layout(
                         pad_fsm: actor.pad_fsm.clone(),
                     });
                 }
+                if !actor.is_player && actor.entity_type.eq_ignore_ascii_case("kno") && kno_info.is_none() {
+                    kno_info = Some(LayoutPlayerInfo {
+                        entity,
+                        position: actor.position,
+                        rotation: space::to_bevy_space_rot(actor.orientation_o2),
+                        entity_type: actor.entity_type.clone(),
+                        animator_type: actor.animator_type.clone().unwrap_or_default(),
+                        max_hitpoints: actor.max_hitpoints,
+                        faction: actor.faction.clone(),
+                        pad_fsm: actor.pad_fsm.clone(),
+                    });
+                }
             } else {
                 spawned += 1;
             }
@@ -773,7 +822,8 @@ pub fn load_layout(
         "Layout: spawned {} entities, {} creatures, skipped {}",
         spawned, creatures, skipped
     );
-    if let Some(ref pi) = player_info {
+    let resolved_player = player_info.or(kno_info);
+    if let Some(ref pi) = resolved_player {
         info!(
             "Layout: player creature found: type={} animator={}",
             pi.entity_type, pi.animator_type
@@ -833,7 +883,7 @@ pub fn load_layout(
     load_layout_lights(commands, meshes, materials, images, layout_dir);
     load_level_geometry(commands, meshes, materials, layout_dir);
 
-    player_info
+    resolved_player
 }
 
 /// Spawns a single actor by name, parsing its XML internally. Can override position.

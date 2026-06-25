@@ -101,3 +101,44 @@ pub fn extract_xml_block(content: &str, tag: &str) -> Option<String> {
     let end_idx = content[start_idx..].find(&close_pattern)? + start_idx + close_pattern.len();
     Some(content[start_idx..end_idx].to_string())
 }
+
+/// Strip XML comments (<!-- ... -->) from a string.
+pub fn strip_xml_comments(content: &str) -> String {
+    let mut result = String::with_capacity(content.len());
+    let mut current = content;
+    while let Some(start_idx) = current.find("<!--") {
+        result.push_str(&current[..start_idx]);
+        let remaining = &current[start_idx + 4..];
+        if let Some(end_idx) = remaining.find("-->") {
+            current = &remaining[end_idx + 3..];
+        } else {
+            current = "";
+            break;
+        }
+    }
+    result.push_str(current);
+    result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_strip_xml_comments() {
+        let xml = r#"
+            <actor>
+                <!-- This is a comment -->
+                <AttackTable value="tim_attack_grappled"/>
+                <!-- Another comment
+                <AttackTable value="should_be_ignored"/>
+                -->
+            </actor>
+        "#;
+        let stripped = strip_xml_comments(xml);
+        assert!(!stripped.contains("should_be_ignored"));
+        assert!(stripped.contains("tim_attack_grappled"));
+    }
+}
+
+

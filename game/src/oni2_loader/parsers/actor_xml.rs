@@ -18,8 +18,9 @@ fn cached_read_to_string(dir: &str, filename: &str) -> std::io::Result<String> {
         return Ok(content.clone());
     }
     let content = crate::vfs::read_to_string(dir, filename)?;
-    XML_CACHE.write().unwrap().insert(key, content.clone());
-    Ok(content)
+    let stripped = strip_xml_comments(&content);
+    XML_CACHE.write().unwrap().insert(key, stripped.clone());
+    Ok(stripped)
 }
 
 pub fn clear_xml_cache() {
@@ -28,8 +29,9 @@ pub fn clear_xml_cache() {
 
 use crate::oni2_loader::utils::parse::{
     extract_root_xml_attr, extract_xml_attr, extract_xml_attr_bool, extract_xml_base_attr,
-    extract_xml_block, parse_vec3, parse_xml_bool,
+    extract_xml_block, parse_vec3, parse_xml_bool, strip_xml_comments,
 };
+
 use crate::oni2_loader::utils::space;
 
 /// Per-nugget cueing mode for the `<Sound>` component.  Mirrors

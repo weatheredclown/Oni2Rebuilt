@@ -61,6 +61,14 @@ use bevy::prelude::*;
 
 pub const NUM_POSITIONS: usize = 8;
 
+/// Maximum time (seconds) a fighter may hold a defender's cookie before the
+/// offer system force-releases it, so a stalled holder can't starve the other
+/// queued attackers.  Port of `FIGHTMGR.CookieHogTime` (legacy default 2.0s),
+/// the watchdog in `aiAttackStateMachine::Update`.
+/// TODO: source from fight-manager settings once those are parsed; until then
+/// the legacy default stands.
+pub const COOKIE_HOG_TIME: f32 = 2.0;
+
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
@@ -100,6 +108,9 @@ pub struct FightResources {
     pub cookie_holder: Option<Entity>,
     /// Absolute time (seconds) when the cookie was last released.
     pub cookie_released_at: f64,
+    /// Absolute time (seconds) when the cookie was last grabbed.  Used by
+    /// the `COOKIE_HOG_TIME` watchdog to force-release a stalled holder.
+    pub cookie_grabbed_at: f64,
     /// Mandatory minimum delay between cookie releases — set at grab
     /// time from `crFighter::GetCookieDelay` (legacy).  Defaults to 0.
     pub cookie_delay: f32,
@@ -113,6 +124,7 @@ impl Default for FightResources {
             cookie_offered_to: None,
             cookie_holder: None,
             cookie_released_at: 0.0,
+            cookie_grabbed_at: 0.0,
             cookie_delay: 0.0,
         }
     }
@@ -326,6 +338,7 @@ pub fn fight_resources_offer_system(
     time: Res<Time>,
     mut state_q: Query<&mut FightSlotState>,
     mut resources_q: Query<(Entity, &mut FightResources)>,
+    fighter_q: Query<&crate::fight::components::FighterState>,
 ) {
     // 1. Clear stale per-frame offers on every state.
     for mut st in &mut state_q {
@@ -334,6 +347,10 @@ pub fn fight_resources_offer_system(
     }
 
     let now = time.elapsed_secs_f64();
+
+    // Ex-holders whose cookie the watchdog force-released this frame; their
+    // attacker-side `cookie_held` flag is cleared after the resources borrow.
+    let mut cookie_evictions: Vec<Entity> = Vec::new();
 
     // 2. For each defender, offer any free slot to the next queued requester
     //    and offer the cookie if past the cooldown.  We collect notifications
@@ -367,6 +384,37 @@ pub fn fight_resources_offer_system(
             };
             slot.offered_to = Some(fighter);
             position_offers.push((fighter, owner, slot_idx as i32));
+        }
+
+        // Cookie-hog watchdog (port of `aiAttackStateMachine::Update`'s
+        // `CookieHogTime` safety net): if the holder has sat on the cookie
+        // longer than `COOKIE_HOG_TIME` while other attackers are queued
+        // for it, force-release so the fight group can't deadlock on a
+        // stalled holder (e.g. one that entered the attack state but has no
+        // usable attack to complete and release normally).  Grapplers are
+        // exempt — a grapple legitimately holds the cookie for its duration
+        // (legacy `!Fighter->IsGrappling()`).  Skipping the release when no
+        // one is waiting mirrors the legacy `!oneAttacker` gate.
+        if let Some(holder) = res.cookie_holder {
+            let held_for = now - res.cookie_grabbed_at;
+            let contention = !res.cookie_queue.is_empty();
+            let grappling = fighter_q
+                .get(holder)
+                .map(|fs| fs.is_grappling())
+                .unwrap_or(false);
+            if held_for > COOKIE_HOG_TIME as f64 && contention && !grappling {
+                bevy::log::info!(
+                    "cookie watchdog: force-releasing {:?}'s cookie held by {:?} for {:.2}s ({} waiting)",
+                    owner,
+                    holder,
+                    held_for,
+                    res.cookie_queue.len()
+                );
+                res.cookie_holder = None;
+                res.cookie_offered_to = None;
+                res.cookie_released_at = now;
+                cookie_evictions.push(holder);
+            }
         }
 
         // Cookie — same non-destructive peek as the position queue.  Actor
@@ -411,16 +459,27 @@ pub fn fight_resources_offer_system(
             st.cookie_offered_by = Some(owner);
         }
     }
+
+    // Clear the attacker-side flag on anyone the watchdog evicted, so the
+    // ex-holder's view matches the defender (mirrors the legacy watchdog
+    // clearing `FLAG_GOT_COOKIE` on the holder's own attack state machine).
+    for holder in cookie_evictions {
+        if let Ok(mut st) = state_q.get_mut(holder) {
+            st.cookie_held = false;
+        }
+    }
 }
 
 /// Drains every FightSlotState's `pending_ops` and applies the
 /// cross-entity mutation.  Runs AFTER the FSM tick so the FSM has had
 /// a chance to enqueue requests this frame.
 pub fn fight_resource_apply_system(
+    time: Res<Time>,
     transforms_q: Query<&GlobalTransform>,
     mut state_q: Query<(Entity, &mut FightSlotState)>,
     mut resources_q: Query<&mut FightResources>,
 ) {
+    let now = time.elapsed_secs_f64();
     // Phase A: drain all pending_ops into a flat list so we can reborrow
     // state_q later without aliasing.
     let mut ops: Vec<(Entity, ResourceOp)> = Vec::new();
@@ -599,6 +658,10 @@ pub fn fight_resource_apply_system(
                     if res.cookie_offered_to == Some(actor) {
                         res.cookie_holder = Some(actor);
                         res.cookie_offered_to = None;
+                        // Stamp the grab time so the `COOKIE_HOG_TIME` watchdog
+                        // in `fight_resources_offer_system` can force-release a
+                        // stalled holder.
+                        res.cookie_grabbed_at = now;
                         // Pop the cookie queue here (non-destructive offers —
                         // see GrabPosition above for the matching rationale).
                         res.cookie_queue.retain(|&(_, e)| e != actor);
@@ -659,5 +722,91 @@ mod tests {
         let target = Vec3::new(10.0, 0.0, 5.0);
         let p = slot_world_pos(target, 0, 1.0);
         assert!((p.x - 11.0).abs() < 1e-4 && (p.z - 5.0).abs() < 1e-4);
+    }
+
+    /// The COOKIE_HOG_TIME watchdog force-releases a cookie that's been held
+    /// too long while another attacker is queued, and re-offers it to the
+    /// waiter — preventing a stalled holder from deadlocking the fight group.
+    #[test]
+    fn cookie_hog_watchdog_force_releases_to_waiter() {
+        let mut app = App::new();
+        app.insert_resource(Time::<()>::default());
+        app.add_systems(Update, fight_resources_offer_system);
+
+        // Holder currently sits on the cookie; waiter is queued behind it.
+        let holder = app
+            .world_mut()
+            .spawn(FightSlotState {
+                cookie_held: true,
+                ..Default::default()
+            })
+            .id();
+        let waiter = app.world_mut().spawn(FightSlotState::default()).id();
+
+        let defender = app
+            .world_mut()
+            .spawn(FightResources {
+                cookie_holder: Some(holder),
+                // Grabbed well in the past (elapsed time is 0 in this test).
+                cookie_grabbed_at: -(COOKIE_HOG_TIME as f64) - 5.0,
+                cookie_queue: vec![(2, waiter)],
+                ..Default::default()
+            })
+            .id();
+
+        app.update();
+
+        let res = app.world().get::<FightResources>(defender).unwrap();
+        assert_eq!(res.cookie_holder, None, "watchdog should release the cookie");
+        assert_eq!(
+            res.cookie_offered_to,
+            Some(waiter),
+            "freed cookie should be re-offered to the queued waiter"
+        );
+
+        let waiter_st = app.world().get::<FightSlotState>(waiter).unwrap();
+        assert_eq!(waiter_st.cookie_offered_by, Some(defender));
+
+        let holder_st = app.world().get::<FightSlotState>(holder).unwrap();
+        assert!(
+            !holder_st.cookie_held,
+            "evicted holder's cookie_held flag should be cleared"
+        );
+    }
+
+    /// With no one queued for the cookie, the watchdog leaves a long-held
+    /// cookie alone (mirrors the legacy `!oneAttacker` gate — don't yank it
+    /// when there's no contention).
+    #[test]
+    fn cookie_hog_watchdog_skips_when_uncontested() {
+        let mut app = App::new();
+        app.insert_resource(Time::<()>::default());
+        app.add_systems(Update, fight_resources_offer_system);
+
+        let holder = app
+            .world_mut()
+            .spawn(FightSlotState {
+                cookie_held: true,
+                ..Default::default()
+            })
+            .id();
+        let defender = app
+            .world_mut()
+            .spawn(FightResources {
+                cookie_holder: Some(holder),
+                cookie_grabbed_at: -(COOKIE_HOG_TIME as f64) - 5.0,
+                cookie_queue: Vec::new(),
+                ..Default::default()
+            })
+            .id();
+
+        app.update();
+
+        let res = app.world().get::<FightResources>(defender).unwrap();
+        assert_eq!(
+            res.cookie_holder,
+            Some(holder),
+            "uncontested cookie should not be force-released"
+        );
     }
 }
