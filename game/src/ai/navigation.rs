@@ -286,12 +286,15 @@ pub fn path_following_system(
         &mut avian3d::prelude::LinearVelocity,
         &mut crate::combat::components::Fighter,
         Option<&mut crate::ai::components::AiDrivenVelocityThisTick>,
+        Option<&mut crate::mover::steering::LocomotionSteering>,
     )>,
 ) {
     let speed_multiplier = 4.5;
     let dt = time.delta_secs();
 
-    for (entity, mut follower, mut tf, mut vel, mut fighter, mut driven_opt) in &mut query {
+    for (entity, mut follower, mut tf, mut vel, mut fighter, mut driven_opt, mut steering_opt) in
+        &mut query
+    {
         if follower.current_wp >= follower.path.len() {
             commands.entity(entity).remove::<ActorPathfollower>();
             vel.x = 0.0;
@@ -325,18 +328,25 @@ pub fn path_following_system(
             driven.0 = true;
         }
 
-        // Rotate to face movement direction. Oni2 models face +Z in local space;
-        // look_at makes -Z face the target, so rotate 180° Y afterward.
-        let look_target = tf.translation + dir;
-        let mut target_tf = *tf;
-        target_tf.look_at(look_target, Vec3::Y);
-        target_tf.rotate_y(std::f32::consts::PI);
-        tf.rotation = tf.rotation.slerp(target_tf.rotation, (10.0 * dt).min(1.0));
-
-        fighter.facing = (tf.rotation * Vec3::Z).normalize_or_zero();
-        if fighter.facing.length_squared() < 0.1 {
-            fighter.facing = dir; // Fallback
-        }
+        // Rate-limited turn toward the movement direction.  Replaces a
+        // frame-rate-dependent slerp — `steer_facing` filters the turn through
+        // accel/decel + a max turn rate so a heading that flips frame-to-frame
+        // (on a ledge/corner) can't strobe the body.  Combat facing snaps don't
+        // come through here, so they stay instant.
+        let new_facing = match steering_opt.as_deref_mut() {
+            Some(st) => crate::mover::steering::steer_facing(fighter.facing, dir, st, dt),
+            None => dir,
+        };
+        fighter.facing = if new_facing.length_squared() > 0.1 {
+            new_facing
+        } else {
+            dir
+        };
+        // Mirror onto the Transform now (fighter_rotation_sync_system also
+        // enforces this from `Fighter.facing`).  Oni2 models face local +Z;
+        // look_to aligns -Z, so rotate 180° afterward.
+        tf.look_to(fighter.facing, Vec3::Y);
+        tf.rotate_y(std::f32::consts::PI);
     }
 }
 
@@ -349,13 +359,16 @@ pub fn actor_follower_system(
         &mut crate::combat::components::Fighter,
         Option<&mut crate::ai::components::AiDrivenVelocityThisTick>,
         Option<&crate::oni2_loader::animation::Oni2AnimState>,
+        Option<&mut crate::mover::steering::LocomotionSteering>,
     )>,
     targets: Query<&Transform, Without<crate::ai::components::ActorFollower>>,
 ) {
     let speed_multiplier = 4.5;
     let dt = time.delta_secs();
 
-    for (follower, mut tf, mut vel, mut fighter, mut driven_opt, anim_state_opt) in &mut query {
+    for (follower, mut tf, mut vel, mut fighter, mut driven_opt, anim_state_opt, mut steering_opt) in
+        &mut query
+    {
         if let Ok(target_tf) = targets.get(follower.target) {
             let mut to_target = target_tf.translation - tf.translation;
             to_target.y = 0.0;
@@ -377,18 +390,19 @@ pub fn actor_follower_system(
             }
 
             if !anim_state_opt.is_some_and(crate::combat::locked_movement) {
-                let look_target = tf.translation + dir;
-                let mut expected_tf = *tf;
-                expected_tf.look_at(look_target, Vec3::Y);
-                expected_tf.rotate_y(std::f32::consts::PI);
-                tf.rotation = tf
-                    .rotation
-                    .slerp(expected_tf.rotation, (10.0 * dt).min(1.0));
-
-                fighter.facing = (tf.rotation * Vec3::Z).normalize_or_zero();
-                if fighter.facing.length_squared() < 0.1 {
-                    fighter.facing = dir; // Fallback
-                }
+                // Rate-limited turn toward the follow direction (anti-strobe);
+                // combat snaps bypass this path and stay instant.
+                let new_facing = match steering_opt.as_deref_mut() {
+                    Some(st) => crate::mover::steering::steer_facing(fighter.facing, dir, st, dt),
+                    None => dir,
+                };
+                fighter.facing = if new_facing.length_squared() > 0.1 {
+                    new_facing
+                } else {
+                    dir
+                };
+                tf.look_to(fighter.facing, Vec3::Y);
+                tf.rotate_y(std::f32::consts::PI);
             }
         }
     }

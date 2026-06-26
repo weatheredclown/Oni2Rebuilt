@@ -100,6 +100,9 @@ pub struct TnuaCreaturePhysicsBundle {
     /// Characters never sleep — see the note on
     /// `combat::CreaturePhysicsBundle::sleeping_disabled`.
     pub sleeping_disabled: SleepingDisabled,
+    /// Characters don't physically collide with each other — see
+    /// `combat::bundles::character_collision_layers`.
+    pub collision_layers: CollisionLayers,
 }
 
 impl TnuaCreaturePhysicsBundle {
@@ -128,6 +131,7 @@ impl TnuaCreaturePhysicsBundle {
             sensor_shape: TnuaAvian3dSensorShape(Collider::sphere(capsule_radius * 0.95)),
             state: MoverState::default(),
             sleeping_disabled: SleepingDisabled,
+            collision_layers: crate::combat::bundles::character_collision_layers(),
         }
     }
 }

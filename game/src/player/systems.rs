@@ -803,6 +803,7 @@ pub fn player_movement_system(
             Option<&crate::oni2_loader::animation::Oni2AnimState>,
             Option<&crate::fight::components::FighterState>,
             Option<&crate::player::components::PlayerZiplineState>,
+            Option<&mut crate::mover::steering::LocomotionSteering>,
         ),
         With<Player>,
     >,
@@ -813,12 +814,25 @@ pub fn player_movement_system(
             Without<Player>,
         ),
     >,
+    time: Res<Time>,
     _start_action_writer: MessageWriter<crate::animator::StartActionMessage>,
     mut jump_writer: MessageWriter<crate::animator::JumpImpulseMessage>,
 ) {
     let camera_tf_opt = camera_query.iter().next();
+    let dt = time.delta_secs();
 
-    for (entity, input, transform, mut velocity, mut fighter, fsm_opt, anim_state_opt, fs_opt, zip_state_opt) in &mut query
+    for (
+        entity,
+        input,
+        transform,
+        mut velocity,
+        mut fighter,
+        fsm_opt,
+        anim_state_opt,
+        fs_opt,
+        zip_state_opt,
+        mut steering_opt,
+    ) in &mut query
     {
         if zip_state_opt.is_some() {
             // Locomotion is completely suspended while riding a zipline/hangline
@@ -919,14 +933,20 @@ pub fn player_movement_system(
 
             travel = travel.normalize_or_zero();
 
-            if travel.length_squared() > 0.001 {
-                // Since visually the model faces local +Z, we must point local -Z OPPOSITE to travel
-                let target_rot = Transform::default().looking_to(-travel, Vec3::Y).rotation;
-
-                let current_rot =
-                    Quat::from_rotation_arc(Vec3::Z, fighter.facing.normalize_or_zero());
-                let new_rot = current_rot.slerp(target_rot, 0.25);
-                fighter.facing = new_rot * Vec3::Z;
+            // Skip locomotion turning while committed to a one-shot
+            // (attack/react/grapple) — those write `Fighter.facing` directly and
+            // must stay instant.
+            let locked = anim_state_opt.is_some_and(crate::combat::locked_movement);
+            if !locked && travel.length_squared() > 0.001 {
+                // The model faces local +Z, so the desired facing IS the travel
+                // direction.  Rate-limit the turn toward it (frame-rate
+                // independent, accel/decel + max turn rate) instead of the old
+                // fixed-factor slerp, so fast camera swings don't snap-strobe.
+                let desired = travel.normalize_or_zero();
+                fighter.facing = match steering_opt.as_deref_mut() {
+                    Some(st) => crate::mover::steering::steer_facing(fighter.facing, desired, st, dt),
+                    None => desired,
+                };
             }
         } else {
             let visual_front = fighter.facing;

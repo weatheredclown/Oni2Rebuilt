@@ -108,136 +108,96 @@ fn process_one_way(
     }
 }
 
-/// Resolves character-vs-character overlap so that a moving character runs
-/// into another as if it were an immovable wall — no character's locomotion
-/// ever pushes another character.  Replaces Avian's mutual dynamic shove
-/// (which let the player bulldoze stationary AI and let crowds stand inside
-/// each other).  This is the Avian/Tnua equivalent of the legacy crmover
-/// `SetMoveable(false)` behaviour, where a passive character was a solid wall
-/// the active mover swept along.
+/// Keeps characters solid against each other while ensuring no character's
+/// locomotion ever pushes another — the legacy `SetMoveable(false)` rule, where
+/// a moving character runs into others as if they were immovable walls.
 ///
-/// The mover is identified by velocity (who is moving *into* the contact),
-/// not by attack state — locomotion is the thing that must not push.
-pub fn character_collision_presolve_system(
-    mut contact_graph: ResMut<ContactGraph>,
-    fighter_query: Query<&FighterState>,
-    mut actor_query: Query<(&mut Position, &mut LinearVelocity)>,
+/// Characters don't physically collide in Avian (they share the `Character`
+/// collision layer, which only collides with the world — see
+/// `combat::bundles::character_collision_layers`), so the dynamic solver never
+/// transfers one character's momentum into another.  That means this analytic
+/// pass is the *only* thing keeping characters from interpenetrating.  Because
+/// the upright capsules can't rotate (axes locked) and all share the same
+/// radius, their overlap is just two circles in the XZ plane — cheap to resolve
+/// exactly without touching the contact graph.
+///
+/// Runs in `FixedUpdate` (after the movement systems write velocity, before the
+/// physics step integrates it) and mutates `Position`/`LinearVelocity`
+/// directly.  Doing this *outside* Avian's narrow-phase/solver sidesteps the
+/// contact-graph/island bookkeeping that panics when mutated mid-step.
+pub fn character_separation_system(
+    mut characters: Query<(&mut Position, &mut LinearVelocity, &FighterState)>,
 ) {
-    for contacts in contact_graph.iter_active_touching_mut() {
-        let (e1, e2) = (contacts.collider1, contacts.collider2);
-        if fighter_query.contains(e1) && fighter_query.contains(e2) {
-            process_character_collision_presolve(e1, e2, contacts, &fighter_query, &mut actor_query);
-        }
-    }
-    // Characters spawn with `SleepingDisabled`, so a char-vs-char pair should
-    // never appear here; kept as a backstop in case a character body is ever
-    // allowed to sleep.
-    for contacts in contact_graph.iter_sleeping_touching_mut() {
-        let (e1, e2) = (contacts.collider1, contacts.collider2);
-        if fighter_query.contains(e1) && fighter_query.contains(e2) {
-            process_character_collision_presolve(e1, e2, contacts, &fighter_query, &mut actor_query);
-        }
-    }
-}
-
-fn process_character_collision_presolve(
-    e1: Entity,
-    e2: Entity,
-    contacts: &mut ContactPair,
-    fighter_query: &Query<&FighterState>,
-    actor_query: &mut Query<(&mut Position, &mut LinearVelocity)>,
-) {
-    let (Ok(fs1), Ok(fs2)) = (fighter_query.get(e1), fighter_query.get(e2)) else {
-        return;
-    };
-
-    // Grapple exemption: while either side is grappling/being grappled the
-    // grab system owns both transforms (it teleports the victim to a fixed
-    // offset).  Suppress the manifold so the dynamic solver doesn't shove the
-    // pair, but otherwise leave their positions to the grapple.
-    let grappling = |fs: &FighterState| fs.grapple_target.is_some() || fs.is_being_grappled();
-    if grappling(fs1) || grappling(fs2) {
-        suppress_manifold(contacts);
-        return;
-    }
-
-    // Aggregate the contact: averaged normal (points from e1 toward e2) and
-    // the deepest penetration across all manifold points.
-    let mut max_penetration = 0.0f32;
-    let mut normal = Vec3::ZERO;
-    let mut count = 0;
-    for manifold in &contacts.manifolds {
-        for point in &manifold.points {
-            if point.penetration > max_penetration {
-                max_penetration = point.penetration;
-            }
-        }
-        normal += manifold.normal;
-        count += 1;
-    }
-    if count == 0 || max_penetration <= 0.001 {
-        return;
-    }
-    normal = normal.normalize_or_zero();
-    if normal.length_squared() < 0.5 {
-        return; // degenerate / opposing normals cancelled out
-    }
-
-    let Ok([(mut pos1, mut vel1), (mut pos2, mut vel2)]) =
-        actor_query.get_many_mut([e1, e2])
-    else {
-        return;
-    };
-
-    // Velocity along the contact normal.  Normal points e1 -> e2, so a
-    // positive `v1n` means char 1 is closing on char 2, and a negative `v2n`
-    // means char 2 is closing on char 1.
+    // Upright capsule: radius 0.4, cylinder length 1.2 -> total height 2.0.
+    // Matches `combat::CreaturePhysicsBundle::new` and the Tnua bundle.
+    const RADIUS: f32 = 0.4;
+    const MIN_DIST: f32 = 2.0 * RADIUS; // centres closer than this overlap in XZ
+    const HEIGHT: f32 = 2.0; // vertical extent; skip pairs on different levels
     const MOVE_EPS: f32 = 0.05;
-    let v1n = vel1.0.dot(normal);
-    let v2n = vel2.0.dot(normal);
-    let e1_moving_in = v1n > MOVE_EPS;
-    let e2_moving_in = v2n < -MOVE_EPS;
 
-    // Project out only the inward component of a *moving* character's velocity
-    // so its own locomotion can't drive it through the other (it slides along
-    // instead).  A stationary or receding character keeps its velocity — it's
-    // an immovable wall, never shoved by the other's motion.
-    if e1_moving_in {
-        vel1.0 -= v1n * normal;
-    }
-    if e2_moving_in {
-        vel2.0 -= v2n * normal;
-    }
-
-    // Depenetrate.  A character is only displaced to undo ITS OWN incursion:
-    //   - exactly one moving  -> that one backs out 100%, the wall is unmoved;
-    //   - both moving in       -> each backs off half (they met head-on);
-    //   - neither moving in    -> residual static overlap (e.g. two idle
-    //                             actors left embedded); separate gently 50/50
-    //                             so they don't stand inside each other.
-    let half = max_penetration * 0.5;
-    match (e1_moving_in, e2_moving_in) {
-        (true, false) => pos1.0 -= normal * max_penetration,
-        (false, true) => pos2.0 += normal * max_penetration,
-        _ => {
-            pos1.0 -= normal * half;
-            pos2.0 += normal * half;
+    let mut pairs = characters.iter_combinations_mut::<2>();
+    while let Some([(mut pos1, mut vel1, fs1), (mut pos2, mut vel2, fs2)]) = pairs.fetch_next() {
+        // The grab system owns the transforms of a grappling pair.
+        let grappling = |fs: &FighterState| fs.grapple_target.is_some() || fs.is_being_grappled();
+        if grappling(fs1) || grappling(fs2) {
+            continue;
         }
-    }
 
-    // Tell the solver these bodies are effectively separated so it applies no
-    // positional bias push.  (NOTE: this alone does NOT stop the solver's
-    // normal impulse against approaching velocity — see the velocity handling
-    // above and the system ordering, which keep the mover from approaching.)
-    suppress_manifold(contacts);
-}
+        let (p1, p2) = (pos1.0, pos2.0);
 
-/// Mark a contact pair's points as separated so Avian's solver applies no
-/// positional correction (we've resolved the overlap manually).
-fn suppress_manifold(contacts: &mut ContactPair) {
-    for manifold in &mut contacts.manifolds {
-        for point in &mut manifold.points {
-            point.penetration = -100.0;
+        // Vertical gate: capsules at very different heights (e.g. one on a
+        // platform above the other) don't overlap, so don't separate them.
+        if (p1.y - p2.y).abs() >= HEIGHT {
+            continue;
+        }
+
+        // XZ overlap of two upright equal-radius capsules == two circles.
+        let dx = p2.x - p1.x;
+        let dz = p2.z - p1.z;
+        let dist_sq = dx * dx + dz * dz;
+        if dist_sq >= MIN_DIST * MIN_DIST {
+            continue;
+        }
+        let dist = dist_sq.sqrt();
+        let penetration = MIN_DIST - dist;
+
+        // Normal points from char 1 toward char 2 (XZ).  Exact-overlap fallback
+        // picks an arbitrary horizontal direction so they still split apart.
+        let normal = if dist > 1e-4 {
+            Vec3::new(dx / dist, 0.0, dz / dist)
+        } else {
+            Vec3::X
+        };
+
+        // Who is moving into the contact?  normal points 1 -> 2, so v1n > 0
+        // means char 1 closes on char 2, and v2n < 0 means char 2 closes on 1.
+        let v1n = vel1.0.dot(normal);
+        let v2n = vel2.0.dot(normal);
+        let e1_in = v1n > MOVE_EPS;
+        let e2_in = v2n < -MOVE_EPS;
+
+        // Project out only a *moving* character's inward velocity so it slides
+        // along the other instead of driving through it.  A stationary or
+        // receding character keeps its velocity — it's an immovable wall.
+        if e1_in {
+            vel1.0 -= v1n * normal;
+        }
+        if e2_in {
+            vel2.0 -= v2n * normal;
+        }
+
+        // Depenetrate: a character is only displaced to undo ITS OWN incursion.
+        //   one moving     -> that one backs out 100%, the wall is unmoved;
+        //   both / neither -> split 50/50 (head-on, or residual static overlap
+        //                     from two idle actors left embedded).
+        let half = penetration * 0.5;
+        match (e1_in, e2_in) {
+            (true, false) => pos1.0 -= normal * penetration,
+            (false, true) => pos2.0 += normal * penetration,
+            _ => {
+                pos1.0 -= normal * half;
+                pos2.0 += normal * half;
+            }
         }
     }
 }

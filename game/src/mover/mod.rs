@@ -32,14 +32,18 @@
  * calculation. This rendered the victim completely static in the physics world, allowing
  * the active attacker/grappler to sweep and slide along their bounds like an immovable wall.
  *
- * WE IMPLEMENTED A SIMILAR EFFECT (Option B) in Avian 3D:
- * We added `character_collision_presolve_system` in `oni2_loader/physics.rs` (running in PreSolve).
- * When two characters collide:
- *   - Attacking/Grappling vs Locomotion: We manually displace the passive character out of the
- *     active attacker's path and project their velocity to slide off.
- *   - Locomotion vs Locomotion: Both act as immovable walls to each other, splitting the separation
- *     displacement 50/50 and projecting both velocities along the contact normal to slide cleanly.
- *   - The contact point penetrations are then set to -100.0 so Avian ignores them, preventing beach-ball pushing.
+ * WE IMPLEMENTED A SIMILAR EFFECT in Avian 3D:
+ * Characters share a `Character` collision layer that only collides with the world (see
+ * `combat::bundles::character_collision_layers`), so Avian's dynamic solver never generates a
+ * character-vs-character contact — one character can never transfer its momentum into another.
+ * (We first tried resolving inside the narrow-phase/solver via manifold edits; suppressing the
+ * penetration does NOT stop the solver's normal impulse, and clearing GENERATE_CONSTRAINTS
+ * corrupts island bookkeeping and panics. Taking characters off each other's collision layer
+ * avoids both.)
+ * Solidity is then restored by `character_separation_system` (`oni2_loader/physics.rs`, FixedUpdate):
+ * an analytic upright-capsule (XZ circle) depenetration where the moving character yields and a
+ * stationary one is an immovable wall — the `SetMoveable(false)` rule, with the grappling pair
+ * exempt so the grab keeps ownership of their transforms.
  */
 use bevy::ecs::system::EntityCommands;
 use bevy::prelude::*;
@@ -48,6 +52,7 @@ use bevy_tnua_avian3d::prelude::*;
 
 pub mod bridge;
 pub mod components;
+pub mod steering;
 
 pub use components::{Oni2Scheme, Oni2SchemeConfig, TnuaCreaturePhysicsBundle};
 

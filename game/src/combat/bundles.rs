@@ -35,6 +35,40 @@ pub struct FighterBundle {
     pub fighter_state: FighterState,
     pub fighter_type: FighterType,
     pub block_library: BlockLibrary,
+    /// Rate-limits locomotion turning so navigation can't snap-strobe the body
+    /// at decision boundaries.  Combat facing snaps bypass it (they write
+    /// `Fighter.facing` directly).  See `mover::steering`.
+    pub steering: crate::mover::steering::LocomotionSteering,
+}
+
+// ---------------------------------------------------------------------------
+// Collision layers
+// ---------------------------------------------------------------------------
+
+/// Physics collision layers.  The first variant maps to bit 0, which is also
+/// Avian's `LayerMask::DEFAULT` — i.e. the membership every collider that
+/// doesn't set `CollisionLayers` (all world / level geometry, projectiles,
+/// triggers) carries.  So `Default` means "everything that isn't explicitly
+/// layered."
+#[derive(PhysicsLayer, Default, Clone, Copy, Debug)]
+pub enum GameLayer {
+    /// Bit 0 — world geometry and everything without an explicit layer.
+    #[default]
+    Default,
+    /// Characters (player + AI creatures).
+    Character,
+}
+
+/// `CollisionLayers` for a character body: a member of `Character` that
+/// collides only with `Default` (the world).  Characters therefore generate
+/// **no** physics contacts with each other — Avian's solver never pushes one
+/// character with another's momentum.  Character-vs-character overlap is kept
+/// solid manually by `character_separation_system` (an analytic upright-capsule
+/// depenetration), where the moving character yields and the other is an
+/// immovable wall.  This is the legacy `SetMoveable(false)` behaviour without
+/// fighting the dynamic solver.
+pub fn character_collision_layers() -> CollisionLayers {
+    CollisionLayers::new(GameLayer::Character, GameLayer::Default)
 }
 
 // ---------------------------------------------------------------------------
@@ -63,13 +97,16 @@ pub struct CreaturePhysicsBundle {
     /// character falls at base gravity (floaty).  Default 1.0 here
     /// mirrors the `GravityModifiers` base.
     pub gravity_scale: GravityScale,
-    /// Characters never sleep.  `character_collision_presolve_system`
-    /// resolves character-vs-character overlap by editing `Position`
-    /// directly; a sleeping body ignores those edits (and the suppressed
-    /// contact manifold can't wake it), so two idle actors would otherwise
+    /// Characters never sleep.  `character_separation_system` resolves
+    /// character-vs-character overlap by editing `Position` directly; a
+    /// sleeping body ignores those edits, so two idle actors would otherwise
     /// stay frozen standing inside each other.  There are only a handful of
     /// characters, so keeping them awake costs nothing.
     pub sleeping_disabled: SleepingDisabled,
+    /// Members of the `Character` layer don't collide with each other, so the
+    /// solver never pushes one character with another's momentum.  See
+    /// [`character_collision_layers`].
+    pub collision_layers: CollisionLayers,
 }
 
 impl CreaturePhysicsBundle {
@@ -95,6 +132,7 @@ impl CreaturePhysicsBundle {
             .with_max_distance(0.3),
             gravity_scale: GravityScale(1.0),
             sleeping_disabled: SleepingDisabled,
+            collision_layers: character_collision_layers(),
         }
     }
 }

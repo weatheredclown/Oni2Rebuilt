@@ -424,9 +424,20 @@ pub enum CreatureMovementAnim {
     RunRight,
 }
 
+/// Tracks whether the character is using forward or strafe locomotion gaits,
+/// with a cooldown to prevent high-frequency strobing/chatter between them.
+#[derive(Component, Default, Debug, Clone)]
+pub struct LocoGaitState {
+    pub is_forward: bool,
+    pub change_cooldown: f32,
+}
+
 /// Pick stand/walk/run animations based on horizontal velocity for all creatures.
 pub fn creature_movement_anim_system(
+    mut commands: Commands,
+    time: Res<Time>,
     mut creatures: Query<(
+        Entity,
         &crate::oni2_loader::animation::Oni2AnimLibrary,
         &mut crate::oni2_loader::animation::Oni2AnimState,
         &mut CreatureMovementAnim,
@@ -438,11 +449,14 @@ pub fn creature_movement_anim_system(
         Option<&crate::animator::AnimSchedule>,
         Option<&crate::animator::components::ActionPlayer>,
         Option<&crate::oni2_loader::components::ConveyorPush>,
+        Option<&mut LocoGaitState>,
     )>,
 ) {
+    let dt = time.delta_secs();
     const MAX_RUN_SPEED: f32 = 6.0;
 
     for (
+        entity,
         library,
         mut anim_state,
         mut move_anim,
@@ -454,6 +468,7 @@ pub fn creature_movement_anim_system(
         schedule_opt,
         ap_opt,
         conveyor_push_opt,
+        mut state_opt,
     ) in &mut creatures
     {
         // Block locomotion while an FSM-driven animation (attack, etc.) is playing.
@@ -515,7 +530,35 @@ pub fn creature_movement_anim_system(
                 throttle_right = 0.0;
             }
 
-            let (gaits, throttle) = if throttle_fwd.abs() >= throttle_right.abs() {
+            let want_forward = throttle_fwd.abs() >= throttle_right.abs();
+
+            let (mut is_forward, mut cooldown) = if let Some(ref state) = state_opt {
+                (state.is_forward, state.change_cooldown)
+            } else {
+                (true, 0.0)
+            };
+
+            // Limit switching back and forth with a 0.1-second hysteresis cooldown.
+            if cooldown <= 0.0 {
+                if want_forward != is_forward {
+                    is_forward = want_forward;
+                    cooldown = 0.1;
+                }
+            } else {
+                cooldown = (cooldown - dt).max(0.0);
+            }
+
+            if let Some(ref mut state) = state_opt {
+                state.is_forward = is_forward;
+                state.change_cooldown = cooldown;
+            } else {
+                commands.entity(entity).insert(LocoGaitState {
+                    is_forward,
+                    change_cooldown: cooldown,
+                });
+            }
+
+            let (gaits, throttle) = if is_forward {
                 (loco.forward_gaits.as_slice(), throttle_fwd)
             } else {
                 (loco.strafe_gaits.as_slice(), throttle_right)
