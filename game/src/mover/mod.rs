@@ -20,10 +20,26 @@
  *
  * Not yet ported (deferred): jump, ledgehang, walljump, zipline, grapple,
  * snowboard, slope-slide-band classification (slide_steepness vs
- * wall_steepness), Mover Gem backward-rejection, character-vs-character
- * separation. The dynamic body Tnua sits on still allows characters to push
- * each other — fixing that is a separate change (collision layers or custom
- * separation pass).
+ * wall_steepness), Mover Gem backward-rejection.
+ *
+ * NOTE ON LEGACY C++ CHARACTER-VS-CHARACTER COLLISIONS:
+ * In the original crmover (mover.cpp, bound.cpp, algorithm.cpp), creature-vs-creature
+ * collision was enabled by checking the `CollideWithCreatures` flag, which added
+ * `BOUNDFLAG_CREATURE` to the sweep/probe tests. When a character was grappled, hit-reacting,
+ * or ledge-hanging, the engine called `SetMoveable(false)`.
+ * The locomotion and collision resolution loops in `MoveAwayFromContacts`, `MoveAlongSurface`,
+ * and `MoveThroughAir` checked `!IsMoveable()` and immediately bypassed movement/delta
+ * calculation. This rendered the victim completely static in the physics world, allowing
+ * the active attacker/grappler to sweep and slide along their bounds like an immovable wall.
+ *
+ * WE IMPLEMENTED A SIMILAR EFFECT (Option B) in Avian 3D:
+ * We added `character_collision_presolve_system` in `oni2_loader/physics.rs` (running in PreSolve).
+ * When two characters collide:
+ *   - Attacking/Grappling vs Locomotion: We manually displace the passive character out of the
+ *     active attacker's path and project their velocity to slide off.
+ *   - Locomotion vs Locomotion: Both act as immovable walls to each other, splitting the separation
+ *     displacement 50/50 and projecting both velocities along the contact normal to slide cleanly.
+ *   - The contact point penetrations are then set to -100.0 so Avian ignores them, preventing beach-ball pushing.
  */
 use bevy::ecs::system::EntityCommands;
 use bevy::prelude::*;

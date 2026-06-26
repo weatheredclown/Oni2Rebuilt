@@ -297,6 +297,10 @@ impl Plugin for FightAiPlugin {
                     // FSM tick.
                     position::fight_resource_apply_system.after(fight_runtime_update_system),
                     attack_runtime_update_system.after(fight_runtime_update_system),
+                    // Throws basic strikes for actors with no attack table;
+                    // reads the `fallback_strike_pending` flag set by the
+                    // container system, so it must run after it.
+                    fight_fallback_strike_system.after(fight_runtime_update_system),
                 )
                     .run_if(in_state(crate::menu::AppState::InGame)),
             );
@@ -873,10 +877,19 @@ pub fn fight_runtime_update_system(
         // It drives E_PREPARE_NEXT_ATTACKER, which signals the FSM to yield
         // the combat cookie so another fighter can attack.
         //
-        // If the actor lacks an AttackRuntime entirely, they can never tick
-        // attack animations to progress, so we force prepare_next_attacker
-        // to yield the cookie immediately instead of hoarding it.
-        runtime.ctx.prepare_next_attacker = runtime.ctx.attack_finished || attack_rt_opt.is_none();
+        // Keyed purely off `attack_finished` (an anim-based proxy, so it works
+        // with OR without an AttackRuntime): an actor relying on the
+        // fallback-strike path yields the cookie when its basic strike anim
+        // ends, exactly like one driven by an attack table.  An actor that
+        // genuinely can't attack at all is caught by the COOKIE_HOG_TIME
+        // watchdog rather than force-yielding here (which used to rob
+        // no-AttackRuntime actors of any chance to swing).
+        runtime.ctx.prepare_next_attacker = runtime.ctx.attack_finished;
+
+        // Reset the per-tick fallback-strike request; the Attack action arm
+        // below re-sets it when the FightDriver pulses an attack on an actor
+        // that has no AttackRuntime.
+        runtime.ctx.fallback_strike_pending = false;
 
         runtime.ctx.attacked = fs_opt.is_some_and(|fs| fs.in_invuln_phase);
 
@@ -966,14 +979,23 @@ pub fn fight_runtime_update_system(
                             );
                         }
                         attack_rt.ctx.got_cookie = true;
-                    } else if !runtime.ctx.warned_no_attack_rt {
-                        bevy::log::warn!(
-                            "FightRuntime: {:?} on {:?} but NO AttackRuntime — \
-                             actor has no attack_table, no swing will happen",
-                            action,
-                            entity
-                        );
-                        runtime.ctx.warned_no_attack_rt = true;
+                    } else {
+                        // No attack table → request a fallback basic strike.
+                        // `fight_fallback_strike_system` (which carries the
+                        // anim library + Fighter this system lacks) picks a
+                        // random strike from the actor's AiAttackTable and
+                        // plays it.  Port of `aiFighter::StartAttack`'s
+                        // uninitialized-attack-state-machine fallback.
+                        runtime.ctx.fallback_strike_pending = true;
+                        if !runtime.ctx.warned_no_attack_rt {
+                            bevy::log::debug!(
+                                "FightRuntime: {:?} on {:?} has no AttackRuntime — \
+                                 using fallback basic-strike path",
+                                action,
+                                entity
+                            );
+                            runtime.ctx.warned_no_attack_rt = true;
+                        }
                     }
                 }
                 FightAction::AtkIdle => {
@@ -1097,6 +1119,99 @@ pub fn fight_runtime_update_system(
                 // --- Check / Display already handled inside apply_action ---
                 FightAction::Check(_) | FightAction::Display(_) => {}
             }
+        }
+    }
+}
+
+/// Fallback basic-strike dispatcher for AI fighters with NO `AttackRuntime`
+/// (their `.atk` attack table is missing or failed to load).  Mirrors the
+/// `!AttackStateMachine->IsInitialized()` branch of `aiFighter::StartAttack`:
+/// when such an actor's FightDriver wants to attack
+/// (`FightCtx::fallback_strike_pending`, set by `fight_runtime_update_system`),
+/// pick a random strike from its `AiAttackTable` — geometry-filtered against
+/// the target when one exists (`ChooseRandomStrike(matrix, tgt, height)`),
+/// else purely random — and play it.  Without this an actor with a broken
+/// attack table just stands in S_ATTACK doing nothing.
+///
+/// Lives in a dedicated system (not `fight_runtime_update_system`) because the
+/// swing needs the `Oni2AnimLibrary` + mutable `Fighter`/`Oni2AnimState` that
+/// the container system deliberately doesn't hold.  Scoped to `Without<
+/// AttackRuntime>` so attack-table fighters keep using their normal path.
+pub fn fight_fallback_strike_system(
+    mut query: Query<
+        (
+            Entity,
+            &mut crate::fightai::components::FightRuntime,
+            &crate::fight::ai_attack::AiAttackTable,
+            &crate::oni2_loader::animation::Oni2AnimLibrary,
+            &mut crate::oni2_loader::animation::Oni2AnimState,
+            &mut crate::combat::components::Fighter,
+            Option<&crate::ai::components::AiFighter>,
+            &GlobalTransform,
+        ),
+        Without<crate::fightai::components::AttackRuntime>,
+    >,
+    target_transforms: Query<&GlobalTransform>,
+) {
+    // The legacy height gate reads `target->GetFighterData().GetHeight()`;
+    // FighterType doesn't carry a height yet, so use a typical humanoid extent.
+    // TODO: source the real per-type height once it's parsed.
+    const DEFAULT_TARGET_HEIGHT: f32 = 2.0;
+
+    let mut rng = rand::rng();
+
+    for (entity, mut runtime, table, lib, mut anim_state, mut fighter, ai_opt, gt) in &mut query {
+        if !runtime.ctx.fallback_strike_pending {
+            continue;
+        }
+        runtime.ctx.fallback_strike_pending = false;
+
+        // Don't restart a swing that's still playing — the engine only starts
+        // a new strike between attacks.
+        if crate::combat::locked_movement(&anim_state) {
+            continue;
+        }
+        if table.attacks.is_empty() {
+            continue;
+        }
+
+        let attacker_pos = gt.translation();
+        let attacker_facing = fighter.facing;
+
+        let chosen = match ai_opt.and_then(|a| a.target) {
+            Some(target) => {
+                let tgt_pos = target_transforms
+                    .get(target)
+                    .map(|t| t.translation())
+                    .unwrap_or(attacker_pos);
+                // Geometry-filtered overload: random among strikes that can
+                // actually land.  If none are in range/aligned the actor is
+                // mispositioned and doesn't swing (matches the legacy -1 path).
+                table.choose_random_strike_for(
+                    &mut rng,
+                    attacker_pos,
+                    attacker_facing,
+                    tgt_pos,
+                    DEFAULT_TARGET_HEIGHT,
+                )
+            }
+            None => table.choose_random_strike(&mut rng),
+        };
+
+        if let Some(atk) = chosen {
+            let name = atk.anim_name.clone();
+            bevy::log::info!(
+                "fight_fallback_strike: {:?} throwing basic strike '{}' (no attack table)",
+                entity,
+                name
+            );
+            crate::statemachine::runtime::do_attack(
+                lib,
+                &mut anim_state,
+                &mut fighter,
+                &name,
+                0,
+            );
         }
     }
 }

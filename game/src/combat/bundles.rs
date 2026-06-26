@@ -63,6 +63,13 @@ pub struct CreaturePhysicsBundle {
     /// character falls at base gravity (floaty).  Default 1.0 here
     /// mirrors the `GravityModifiers` base.
     pub gravity_scale: GravityScale,
+    /// Characters never sleep.  `character_collision_presolve_system`
+    /// resolves character-vs-character overlap by editing `Position`
+    /// directly; a sleeping body ignores those edits (and the suppressed
+    /// contact manifold can't wake it), so two idle actors would otherwise
+    /// stay frozen standing inside each other.  There are only a handful of
+    /// characters, so keeping them awake costs nothing.
+    pub sleeping_disabled: SleepingDisabled,
 }
 
 impl CreaturePhysicsBundle {
@@ -87,6 +94,7 @@ impl CreaturePhysicsBundle {
             )
             .with_max_distance(0.3),
             gravity_scale: GravityScale(1.0),
+            sleeping_disabled: SleepingDisabled,
         }
     }
 }

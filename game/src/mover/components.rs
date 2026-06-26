@@ -97,6 +97,9 @@ pub struct TnuaCreaturePhysicsBundle {
     pub config: TnuaConfig<Oni2Scheme>,
     pub sensor_shape: TnuaAvian3dSensorShape,
     pub state: MoverState,
+    /// Characters never sleep — see the note on
+    /// `combat::CreaturePhysicsBundle::sleeping_disabled`.
+    pub sleeping_disabled: SleepingDisabled,
 }
 
 impl TnuaCreaturePhysicsBundle {
@@ -124,6 +127,7 @@ impl TnuaCreaturePhysicsBundle {
             // upward and the float spring settles the body ~0.5m too high.
             sensor_shape: TnuaAvian3dSensorShape(Collider::sphere(capsule_radius * 0.95)),
             state: MoverState::default(),
+            sleeping_disabled: SleepingDisabled,
         }
     }
 }

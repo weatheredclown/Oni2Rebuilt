@@ -168,6 +168,13 @@ pub struct FightCtx {
     /// One-shot dedup so the "no AttackRuntime" warning prints exactly
     /// once per entity instead of every tick of S_ATTACK.
     pub warned_no_attack_rt: bool,
+    /// Set for one tick by `fight_runtime_update_system` when the FightDriver
+    /// pulses Attack on an actor that has no `AttackRuntime` (no usable `.atk`
+    /// table).  Consumed by `fight_fallback_strike_system`, which throws a
+    /// random basic strike from the actor's `AiAttackTable` — the port of
+    /// `aiFighter::StartAttack`'s `!AttackStateMachine->IsInitialized()`
+    /// fallback to `ChooseRandomStrike`.
+    pub fallback_strike_pending: bool,
     /// One-shot dedup for the per-entity startup line dumping which
     /// optional combat components are attached.  Fires the very first
     /// tick of `fight_runtime_update_system` so we know the wiring is

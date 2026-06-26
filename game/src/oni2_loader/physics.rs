@@ -2,6 +2,7 @@ use avian3d::prelude::*;
 use bevy::prelude::*;
 
 use crate::oni2_loader::components::{OctreeInteriorRef, OneWayOctreeBound};
+use crate::fight::components::FighterState;
 
 pub fn octree_one_way_contact_system(
     mut contact_graph: ResMut<ContactGraph>,
@@ -105,4 +106,139 @@ fn process_one_way(
             }
         }
     }
+}
+
+/// Resolves character-vs-character overlap so that a moving character runs
+/// into another as if it were an immovable wall — no character's locomotion
+/// ever pushes another character.  Replaces Avian's mutual dynamic shove
+/// (which let the player bulldoze stationary AI and let crowds stand inside
+/// each other).  This is the Avian/Tnua equivalent of the legacy crmover
+/// `SetMoveable(false)` behaviour, where a passive character was a solid wall
+/// the active mover swept along.
+///
+/// The mover is identified by velocity (who is moving *into* the contact),
+/// not by attack state — locomotion is the thing that must not push.
+pub fn character_collision_presolve_system(
+    mut contact_graph: ResMut<ContactGraph>,
+    fighter_query: Query<&FighterState>,
+    mut actor_query: Query<(&mut Position, &mut LinearVelocity)>,
+) {
+    for contacts in contact_graph.iter_active_touching_mut() {
+        let (e1, e2) = (contacts.collider1, contacts.collider2);
+        if fighter_query.contains(e1) && fighter_query.contains(e2) {
+            process_character_collision_presolve(e1, e2, contacts, &fighter_query, &mut actor_query);
+        }
+    }
+    // Characters spawn with `SleepingDisabled`, so a char-vs-char pair should
+    // never appear here; kept as a backstop in case a character body is ever
+    // allowed to sleep.
+    for contacts in contact_graph.iter_sleeping_touching_mut() {
+        let (e1, e2) = (contacts.collider1, contacts.collider2);
+        if fighter_query.contains(e1) && fighter_query.contains(e2) {
+            process_character_collision_presolve(e1, e2, contacts, &fighter_query, &mut actor_query);
+        }
+    }
+}
+
+fn process_character_collision_presolve(
+    e1: Entity,
+    e2: Entity,
+    contacts: &mut ContactPair,
+    fighter_query: &Query<&FighterState>,
+    actor_query: &mut Query<(&mut Position, &mut LinearVelocity)>,
+) {
+    let (Ok(fs1), Ok(fs2)) = (fighter_query.get(e1), fighter_query.get(e2)) else {
+        return;
+    };
+
+    // Grapple exemption: while either side is grappling/being grappled the
+    // grab system owns both transforms (it teleports the victim to a fixed
+    // offset).  Suppress the manifold so the dynamic solver doesn't shove the
+    // pair, but otherwise leave their positions to the grapple.
+    let grappling = |fs: &FighterState| fs.grapple_target.is_some() || fs.is_being_grappled();
+    if grappling(fs1) || grappling(fs2) {
+        disable_contact_solving(contacts);
+        return;
+    }
+
+    // Aggregate the contact: averaged normal (points from e1 toward e2) and
+    // the deepest penetration across all manifold points.
+    let mut max_penetration = 0.0f32;
+    let mut normal = Vec3::ZERO;
+    let mut count = 0;
+    for manifold in &contacts.manifolds {
+        for point in &manifold.points {
+            if point.penetration > max_penetration {
+                max_penetration = point.penetration;
+            }
+        }
+        normal += manifold.normal;
+        count += 1;
+    }
+    if count == 0 || max_penetration <= 0.001 {
+        return;
+    }
+    normal = normal.normalize_or_zero();
+    if normal.length_squared() < 0.5 {
+        return; // degenerate / opposing normals cancelled out
+    }
+
+    let Ok([(mut pos1, mut vel1), (mut pos2, mut vel2)]) =
+        actor_query.get_many_mut([e1, e2])
+    else {
+        return;
+    };
+
+    // Velocity along the contact normal.  Normal points e1 -> e2, so a
+    // positive `v1n` means char 1 is closing on char 2, and a negative `v2n`
+    // means char 2 is closing on char 1.
+    const MOVE_EPS: f32 = 0.05;
+    let v1n = vel1.0.dot(normal);
+    let v2n = vel2.0.dot(normal);
+    let e1_moving_in = v1n > MOVE_EPS;
+    let e2_moving_in = v2n < -MOVE_EPS;
+
+    // Project out only the inward component of a *moving* character's velocity
+    // so its own locomotion can't drive it through the other (it slides along
+    // instead).  A stationary or receding character keeps its velocity — it's
+    // an immovable wall, never shoved by the other's motion.
+    if e1_moving_in {
+        vel1.0 -= v1n * normal;
+    }
+    if e2_moving_in {
+        vel2.0 -= v2n * normal;
+    }
+
+    // Depenetrate.  A character is only displaced to undo ITS OWN incursion:
+    //   - exactly one moving  -> that one backs out 100%, the wall is unmoved;
+    //   - both moving in       -> each backs off half (they met head-on);
+    //   - neither moving in    -> residual static overlap (e.g. two idle
+    //                             actors left embedded); separate gently 50/50
+    //                             so they don't stand inside each other.
+    let half = max_penetration * 0.5;
+    match (e1_moving_in, e2_moving_in) {
+        (true, false) => pos1.0 -= normal * max_penetration,
+        (false, true) => pos2.0 += normal * max_penetration,
+        _ => {
+            pos1.0 -= normal * half;
+            pos2.0 += normal * half;
+        }
+    }
+
+    // Stop Avian's dynamic solver from generating a contact constraint for
+    // this pair.  That solver impulse is what transferred the mover's
+    // momentum into the wall (letting the player shove an AI off a ledge);
+    // we've resolved the overlap manually above, so the solver must stay out
+    // of it entirely.  Merely zeroing the penetration is NOT enough — the
+    // solver still applies a normal impulse to halt the approaching velocity.
+    disable_contact_solving(contacts);
+}
+
+/// Clear `GENERATE_CONSTRAINTS` so Avian's solver skips this contact pair
+/// (no normal/friction impulse).  We run in `NarrowPhaseSystems::Last`, before
+/// the solver reads the flag in `generates_constraints()`, so the clear takes
+/// effect for the current step.  Character-vs-character overlap is resolved
+/// manually instead — the moving character yields, the other is immovable.
+fn disable_contact_solving(contacts: &mut ContactPair) {
+    contacts.flags.remove(ContactPairFlags::GENERATE_CONSTRAINTS);
 }

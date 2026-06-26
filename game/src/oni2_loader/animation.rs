@@ -1269,6 +1269,7 @@ pub fn update_oni2_animation(
         Option<&mut Oni2DebugSkeleton>,
         Option<&CreatureRenderOffset>,
         Option<&crate::oni2_loader::components::ActorAsleep>,
+        Option<&crate::animator::components::ActionPlayer>,
     )>,
     mut transform_query: Query<(
         &mut Transform,
@@ -1277,7 +1278,7 @@ pub fn update_oni2_animation(
     )>,
     mut anim_ended_writer: MessageWriter<crate::animator::AnimEndedMessage>,
 ) {
-    for (entity, mut anim_state, debug_skel, render_offset, asleep_opt) in &mut anim_query {
+    for (entity, mut anim_state, debug_skel, render_offset, asleep_opt, action_player_opt) in &mut anim_query {
         // Diagnostic: dump every anim transition's playback config exactly
         // once per transition (cleared at end of frame by
         // `reset_anim_transition_edges`).  Lets us see if a do_attack-issued
@@ -1451,8 +1452,19 @@ pub fn update_oni2_animation(
         }
 
         // Creature render offset (capsule Y compensation + facing)
-        let y_offset = render_offset.map(|o| o.y_offset).unwrap_or(0.0);
+        let mut y_offset = render_offset.map(|o| o.y_offset).unwrap_or(0.0);
         let facing = render_offset.map(|o| o.facing).unwrap_or(Quat::IDENTITY);
+
+        let mut z_offset = 0.0;
+        if let Some(ap) = action_player_opt {
+            if ap.flags & crate::animator::components::action_flags::LEDGEHANGING != 0 {
+                // HACK: move hands/body relative to physics capsule to align with ledge
+                // UP by 2 * Radius, BACKWARD by Radius
+                let radius = 0.4;
+                y_offset += radius * 2.0;
+                z_offset -= radius; // Negating Z in Bevy makes it +Z (backward)
+            }
+        }
 
         // Apply root motion displacement directly to the actor's Transform.
         // This ensures animations with baked-in translation (e.g. knockdown
@@ -1476,7 +1488,7 @@ pub fn update_oni2_animation(
                     transform_query.get_mut(joint_entity)
             {
                 // Convert from Oni2 coordinates to Bevy: negate X and Z
-                let bevy_pos = space::to_bevy_space_pos(Vec3::new(pos.x, pos.y + y_offset, pos.z));
+                let bevy_pos = space::to_bevy_space_pos(Vec3::new(pos.x, pos.y + y_offset, pos.z + z_offset));
                 // Conjugate rotation by 180° Y rotation: negate X and Z components
                 let bevy_rot = Quat::from_xyzw(-rot.x, rot.y, -rot.z, rot.w);
                 // Apply facing rotation (if model needs to be rotated)
@@ -1544,10 +1556,11 @@ pub fn refresh_anim_joints_post_fsm_system(
         &mut Oni2AnimState,
         Option<&CreatureRenderOffset>,
         Option<&crate::oni2_loader::components::ActorAsleep>,
+        Option<&crate::animator::components::ActionPlayer>,
     )>,
     mut transform_query: Query<&mut Transform>,
 ) {
-    for (entity, mut anim_state, render_offset, asleep_opt) in &mut anim_query {
+    for (entity, mut anim_state, render_offset, asleep_opt, action_player_opt) in &mut anim_query {
         if !anim_state.anim_just_started {
             continue;
         }
@@ -1603,14 +1616,23 @@ pub fn refresh_anim_joints_post_fsm_system(
             strip_root,
         );
 
-        let y_offset = render_offset.map(|o| o.y_offset).unwrap_or(0.0);
+        let mut y_offset = render_offset.map(|o| o.y_offset).unwrap_or(0.0);
         let facing = render_offset.map(|o| o.facing).unwrap_or(Quat::IDENTITY);
+
+        let mut z_offset = 0.0;
+        if let Some(ap) = action_player_opt {
+            if ap.flags & crate::animator::components::action_flags::LEDGEHANGING != 0 {
+                let radius = 0.4;
+                y_offset += radius * 2.0;
+                z_offset -= radius;
+            }
+        }
 
         for (i, (rot, pos)) in bone_result.bones.iter().enumerate() {
             if let Some(&joint_entity) = anim_state.joint_entities.get(i)
                 && let Ok(mut joint_tf) = transform_query.get_mut(joint_entity)
             {
-                let bevy_pos = space::to_bevy_space_pos(Vec3::new(pos.x, pos.y + y_offset, pos.z));
+                let bevy_pos = space::to_bevy_space_pos(Vec3::new(pos.x, pos.y + y_offset, pos.z + z_offset));
                 let bevy_rot = Quat::from_xyzw(-rot.x, rot.y, -rot.z, rot.w);
                 let final_rot = facing * bevy_rot;
                 let final_pos = facing * bevy_pos;

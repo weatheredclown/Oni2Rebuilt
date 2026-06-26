@@ -157,6 +157,7 @@ pub fn ground_snap_system(
         Option<&mut crate::oni2_loader::animation::Oni2AnimState>,
         Option<&crate::player::components::Player>,
     )>,
+    mut camera_query: Query<&mut crate::camera::channel::CameraChannel>,
     spatial_query: SpatialQuery,
 ) {
     for (entity, mut transform, mut snap, mut animator_opt, mut anim_state_opt, is_player) in
@@ -267,6 +268,13 @@ pub fn ground_snap_system(
                     "No ground found for creature {:?} near ({:.1}, {:.1}, {:.1}), spawning above origin",
                     entity, origin.x, origin.y, origin.z
                 );
+            }
+        }
+
+        // Reset camera snapped state so camera jumps to player instead of zipping through walls
+        for mut channel in &mut camera_query {
+            if channel.focus_actor == entity {
+                channel.has_snapped_to_target = false;
             }
         }
 
