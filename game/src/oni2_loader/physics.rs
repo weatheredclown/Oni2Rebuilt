@@ -157,7 +157,7 @@ fn process_character_collision_presolve(
     // pair, but otherwise leave their positions to the grapple.
     let grappling = |fs: &FighterState| fs.grapple_target.is_some() || fs.is_being_grappled();
     if grappling(fs1) || grappling(fs2) {
-        disable_contact_solving(contacts);
+        suppress_manifold(contacts);
         return;
     }
 
@@ -225,20 +225,19 @@ fn process_character_collision_presolve(
         }
     }
 
-    // Stop Avian's dynamic solver from generating a contact constraint for
-    // this pair.  That solver impulse is what transferred the mover's
-    // momentum into the wall (letting the player shove an AI off a ledge);
-    // we've resolved the overlap manually above, so the solver must stay out
-    // of it entirely.  Merely zeroing the penetration is NOT enough — the
-    // solver still applies a normal impulse to halt the approaching velocity.
-    disable_contact_solving(contacts);
+    // Tell the solver these bodies are effectively separated so it applies no
+    // positional bias push.  (NOTE: this alone does NOT stop the solver's
+    // normal impulse against approaching velocity — see the velocity handling
+    // above and the system ordering, which keep the mover from approaching.)
+    suppress_manifold(contacts);
 }
 
-/// Clear `GENERATE_CONSTRAINTS` so Avian's solver skips this contact pair
-/// (no normal/friction impulse).  We run in `NarrowPhaseSystems::Last`, before
-/// the solver reads the flag in `generates_constraints()`, so the clear takes
-/// effect for the current step.  Character-vs-character overlap is resolved
-/// manually instead — the moving character yields, the other is immovable.
-fn disable_contact_solving(contacts: &mut ContactPair) {
-    contacts.flags.remove(ContactPairFlags::GENERATE_CONSTRAINTS);
+/// Mark a contact pair's points as separated so Avian's solver applies no
+/// positional correction (we've resolved the overlap manually).
+fn suppress_manifold(contacts: &mut ContactPair) {
+    for manifold in &mut contacts.manifolds {
+        for point in &mut manifold.points {
+            point.penetration = -100.0;
+        }
+    }
 }
