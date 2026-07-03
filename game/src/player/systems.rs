@@ -1215,26 +1215,8 @@ mod tests {
                 },
                 ActionPlayer::default(),
                 crate::oni2_loader::animation::Oni2AnimState {
-                    anim: Default::default(),
-                    skeleton: Default::default(),
-                    current_time: 0.0,
-                    fps: 30.0,
-                    paused: false,
-                    looping: false,
-                    speed_multiplier: 1.0,
-                    pending_step: 0,
                     last_rendered_time: 0.0,
-                    joint_entities: vec![],
-                    base_rotation: Quat::IDENTITY,
-                    current_frame: vec![],
-                    current_anim_id: None,
-                    previous_anim_id: None,
-                    anim_just_started: false,
-                    root_motion_just_started: false,
-                    is_grounded: false,
-                    material_stood_on: None,
-                    root_offset_this_frame: Vec3::ZERO,
-                    root_offset_prev_frame: Vec3::ZERO,
+                    ..default()
                 },
             ))
             .id();

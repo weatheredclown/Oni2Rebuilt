@@ -295,6 +295,11 @@ pub struct Oni2AnimState {
     pub is_grounded: bool,
     pub material_stood_on: Option<String>,
 
+    /// Gait blending control state
+    pub gait_blend_active: bool,
+    pub gait_blend_phase: f32,
+    pub gait_blend_value: f32,
+
     // --- Captured root motion ---------------------------------------------
     //
     // When the playback system strips root XZ translation from channel data
@@ -323,7 +328,57 @@ pub struct Oni2AnimState {
     pub root_offset_prev_frame: Vec3,
 }
 
+impl Default for Oni2AnimState {
+    fn default() -> Self {
+        Self {
+            anim: Default::default(),
+            skeleton: Default::default(),
+            current_time: 0.0,
+            fps: 30.0,
+            paused: false,
+            looping: false,
+            speed_multiplier: 1.0,
+            pending_step: 0,
+            last_rendered_time: -1.0,
+            joint_entities: vec![],
+            base_rotation: Quat::IDENTITY,
+            current_frame: vec![],
+            current_anim_id: None,
+            previous_anim_id: None,
+            anim_just_started: false,
+            root_motion_just_started: false,
+            is_grounded: false,
+            material_stood_on: None,
+            gait_blend_active: false,
+            gait_blend_phase: 0.0,
+            gait_blend_value: 0.0,
+            root_offset_this_frame: Vec3::ZERO,
+            root_offset_prev_frame: Vec3::ZERO,
+        }
+    }
+}
+
 impl Oni2AnimState {
+    /// True when this state holds a real animation to sample.
+    ///
+    /// `anim`/`skeleton` are owned (non-`Option`) fields, so a freshly-spawned
+    /// actor legitimately sits at the EMPTY default — `anim =
+    /// Oni2Animation::default()` (zero frames), `current_anim_id = None` —
+    /// until the locomotion gait selector / FSM plays one on the first tick
+    /// (see the deliberate empty-default seed in `spawn.rs`).  "Empty default"
+    /// is therefore a valid runtime state meaning *"not initialized yet,"* not
+    /// an error — but it's an implicit convention with no type-level signal.
+    ///
+    /// Any consumer that indexes `anim.frames` (e.g. `frames[0]` /
+    /// `frames.len() - 1`) or samples the skeleton MUST gate on this first, or
+    /// it underflows / panics on a not-yet-ticked actor.  Funnel those checks
+    /// through here instead of re-deriving `frames.is_empty()` ad-hoc, so the
+    /// contract stays discoverable.  (This is the interim guard; the eventual
+    /// type-safe form is `Option<Oni2Animation>` / a `PlayingAnim` enum.)
+    pub fn has_anim(&self) -> bool {
+        !self.anim.frames.is_empty()
+    }
+
     /// Per-frame delta of the stripped root XZ translation.  Useful as a
     /// "this animation wants to move me by this much this tick" signal —
     /// e.g. a running lunge attack could feed this into Avian velocity so
@@ -1301,75 +1356,81 @@ pub fn update_oni2_animation(
             continue;
         }
 
-        let num_frames = anim_state.anim.num_frames as usize;
-        if num_frames <= 1 {
-            continue;
-        }
-
-        if anim_state.paused {
-            if anim_state.pending_step == 0 {
+        if !anim_state.gait_blend_active {
+            let num_frames = anim_state.anim.num_frames as usize;
+            if num_frames <= 1 {
                 continue;
             }
-            // Single-frame step
-            let cur = anim_state.current_time as i32 + anim_state.pending_step;
-            anim_state.current_time = cur.rem_euclid(num_frames as i32) as f32;
-            anim_state.pending_step = 0;
+
+            if anim_state.paused {
+                if anim_state.pending_step == 0 {
+                    continue;
+                }
+                // Single-frame step
+                let cur = anim_state.current_time as i32 + anim_state.pending_step;
+                anim_state.current_time = cur.rem_euclid(num_frames as i32) as f32;
+                anim_state.pending_step = 0;
+            } else {
+                // Advance time
+                let last_frame = (num_frames as f32 - 1.0).max(0.0);
+                let prev_time = anim_state.current_time;
+                anim_state.current_time +=
+                    time.delta_secs() * anim_state.fps * anim_state.speed_multiplier;
+                if anim_state.looping {
+                    if anim_state.current_time >= num_frames as f32 {
+                        anim_state.current_time %= num_frames as f32;
+                    }
+                } else {
+                    // Edge-trigger: emit `AnimEndedMessage` the FIRST tick a
+                    // non-looping anim's natural advancement would cross its
+                    // last frame.  Done BEFORE the clamp so consumers
+                    // (post-attack `end_rotation_notches` apply, etc.) get a
+                    // chance to mutate Fighter / Transform state in the same
+                    // FixedUpdate iteration the anim ends — fixing the
+                    // one-frame visual flash where the new anim would
+                    // otherwise render at the un-rotated orientation.
+                    //
+                    // `prev_time < last_frame` gates this to a single edge:
+                    // an anim already pinned at the last frame (e.g. holding
+                    // pose) doesn't re-fire.
+                    if anim_state.current_time > last_frame && prev_time < last_frame {
+                        anim_ended_writer.write(crate::animator::AnimEndedMessage {
+                            entity,
+                            anim_id: anim_state.current_anim_id,
+                        });
+                    }
+                    anim_state.current_time = anim_state.current_time.min(last_frame);
+                }
+            }
+            let frame_idx = (anim_state.current_time as usize).min(anim_state.anim.frames.len() - 1);
+            let mut next_idx = frame_idx + 1;
+            if next_idx >= anim_state.anim.frames.len() {
+                if anim_state.looping {
+                    next_idx = 0;
+                } else {
+                    next_idx = frame_idx;
+                }
+            }
+            let blend = anim_state.current_time - (anim_state.current_time as usize) as f32;
+
+            // Skip joint update if time hasn't changed
+            if anim_state.current_time == anim_state.last_rendered_time {
+                continue;
+            }
+            anim_state.last_rendered_time = anim_state.current_time;
+
+            // Ensure current_frame has correct capacity
+            let expected_len = anim_state.anim.frames[frame_idx].len();
+            if anim_state.current_frame.len() != expected_len {
+                anim_state.current_frame = vec![0.0; expected_len];
+            }
+
+            frame_lerp(&mut anim_state, frame_idx, next_idx, blend);
         } else {
-            // Advance time
-            let last_frame = (num_frames as f32 - 1.0).max(0.0);
-            let prev_time = anim_state.current_time;
-            anim_state.current_time +=
-                time.delta_secs() * anim_state.fps * anim_state.speed_multiplier;
-            if anim_state.looping {
-                if anim_state.current_time >= num_frames as f32 {
-                    anim_state.current_time %= num_frames as f32;
-                }
-            } else {
-                // Edge-trigger: emit `AnimEndedMessage` the FIRST tick a
-                // non-looping anim's natural advancement would cross its
-                // last frame.  Done BEFORE the clamp so consumers
-                // (post-attack `end_rotation_notches` apply, etc.) get a
-                // chance to mutate Fighter / Transform state in the same
-                // FixedUpdate iteration the anim ends — fixing the
-                // one-frame visual flash where the new anim would
-                // otherwise render at the un-rotated orientation.
-                //
-                // `prev_time < last_frame` gates this to a single edge:
-                // an anim already pinned at the last frame (e.g. holding
-                // pose) doesn't re-fire.
-                if anim_state.current_time > last_frame && prev_time < last_frame {
-                    anim_ended_writer.write(crate::animator::AnimEndedMessage {
-                        entity,
-                        anim_id: anim_state.current_anim_id,
-                    });
-                }
-                anim_state.current_time = anim_state.current_time.min(last_frame);
-            }
+            // Under gait blending, phase advancement and frame population are done by the blend system.
+            // Just force it to run downstream transform updates.
+            anim_state.last_rendered_time = -1.0;
         }
-        let frame_idx = (anim_state.current_time as usize).min(anim_state.anim.frames.len() - 1);
-        let mut next_idx = frame_idx + 1;
-        if next_idx >= anim_state.anim.frames.len() {
-            if anim_state.looping {
-                next_idx = 0;
-            } else {
-                next_idx = frame_idx;
-            }
-        }
-        let blend = anim_state.current_time - (anim_state.current_time as usize) as f32;
-
-        // Skip joint update if time hasn't changed
-        if anim_state.current_time == anim_state.last_rendered_time {
-            continue;
-        }
-        anim_state.last_rendered_time = anim_state.current_time;
-
-        // Ensure current_frame has correct capacity
-        let expected_len = anim_state.anim.frames[frame_idx].len();
-        if anim_state.current_frame.len() != expected_len {
-            anim_state.current_frame = vec![0.0; expected_len];
-        }
-
-        frame_lerp(&mut anim_state, frame_idx, next_idx, blend);
 
         let frame = &anim_state.current_frame;
 
@@ -1641,3 +1702,253 @@ pub fn refresh_anim_joints_post_fsm_system(
         }
     }
 }
+
+/// Sample an animation at a given time index (in frames), lerping between keyframes.
+pub fn sample_animation_pose(
+    anim: &Oni2Animation,
+    time: f32,
+    looping: bool,
+    skeleton: &Oni2Skeleton,
+) -> Vec<f32> {
+    let num_frames = anim.num_frames as usize;
+    if num_frames == 0 {
+        return vec![];
+    }
+    if num_frames == 1 {
+        return anim.frames[0].clone();
+    }
+
+    let frame_idx = (time as usize).min(num_frames - 1);
+    let mut next_idx = frame_idx + 1;
+    if next_idx >= num_frames {
+        if looping {
+            next_idx = 0;
+        } else {
+            next_idx = frame_idx;
+        }
+    }
+
+    let blend = time - (time as usize) as f32;
+    let a = &anim.frames[frame_idx];
+    let b = &anim.frames[next_idx];
+    let len = a.len().min(b.len());
+    let mut result = vec![0.0; len];
+
+    let rot_flags = &skeleton.channel_is_rot;
+
+    for i in 0..len {
+        let is_rot = if rot_flags.len() >= len {
+            rot_flags[i]
+        } else {
+            // Legacy fallback if no explicit channel map exists
+            if len == 1 {
+                false
+            } else {
+                !(3..6).contains(&i)
+            }
+        };
+
+        if is_rot {
+            // Shortest path interpolation for angles
+            let mut diff = (b[i] - a[i]).rem_euclid(std::f32::consts::TAU);
+            if diff > std::f32::consts::PI {
+                diff -= std::f32::consts::TAU;
+            }
+            result[i] = a[i] + diff * blend;
+        } else {
+            // Linear interpolation for translations
+            result[i] = a[i] + (b[i] - a[i]) * blend;
+        }
+    }
+
+    result
+}
+
+/// Driver system. Runs before `update_oni2_animation` in Update.
+/// Samples and blends locomotion animations, storing the result in `anim_state.current_frame`.
+pub fn oni2_gait_blend_system(
+    time: Res<Time>,
+    mut query: Query<(
+        Entity,
+        &Oni2AnimLibrary,
+        &mut Oni2AnimState,
+        Option<&crate::oni2_loader::parsers::loco::LocomotionController>,
+        Option<&crate::oni2_loader::spawn::LocoGaitState>,
+    )>,
+) {
+    let dt = time.delta_secs();
+    if dt <= 0.0001 {
+        return;
+    }
+
+    for (entity, anim_library, mut anim_state, loco_controller_opt, loco_gait_state_opt) in &mut query {
+        if !anim_state.gait_blend_active {
+            continue;
+        }
+
+        let Some(loco) = loco_controller_opt else {
+            continue;
+        };
+
+        // Determine if we should use forward_gaits or strafe_gaits.
+        let is_forward = loco_gait_state_opt
+            .map(|s| s.is_forward)
+            .unwrap_or(true);
+
+        let gaits = if is_forward {
+            &loco.forward_gaits
+        } else {
+            &loco.strafe_gaits
+        };
+
+        if gaits.is_empty() {
+            anim_state.gait_blend_active = false;
+            continue;
+        }
+
+        let value = anim_state.gait_blend_value;
+
+        // 1. Calculate scales (weights) for each gait in the list.
+        let mut scales = vec![0.0; gaits.len()];
+        for (idx, g) in gaits.iter().enumerate() {
+            if g.min_throttle == g.max_throttle {
+                scales[idx] = 1.0;
+            } else {
+                scales[idx] = ((value - g.min_throttle) / (g.max_throttle - g.min_throttle)).clamp(0.0, 1.0);
+            }
+        }
+
+        // 2. Find base gait index (highest index where scale == 1.0)
+        let mut base_idx = 0;
+        for idx in (0..gaits.len()).rev() {
+            if scales[idx] == 1.0 {
+                base_idx = idx;
+                break;
+            }
+        }
+
+        // 3. Find the driving gait index for synchronized phase updates.
+        let mut driving_idx = None;
+        for idx in (0..gaits.len()).rev() {
+            if scales[idx] > 0.0 && !gaits[idx].independent_phase {
+                driving_idx = Some(idx);
+                break;
+            }
+        }
+        let driving_idx = driving_idx.unwrap_or_else(|| {
+            gaits
+                .iter()
+                .position(|g| !g.independent_phase)
+                .unwrap_or(0)
+        });
+
+        let driving_gait = &gaits[driving_idx];
+        let driving_anim = match anim_library.anims.get(&driving_gait.anim) {
+            Some(a) => a,
+            None => {
+                continue;
+            }
+        };
+
+        // 4. Calculate blended rate (animRate).
+        // Since all animations for a creature run at the creature's base FPS (anim_state.fps),
+        // the base playback rate is uniform.
+        let anim_rate = anim_state.fps;
+
+        // 5. Advance the synchronized phase.
+        let driving_frames = driving_anim.num_frames as f32;
+        let phase_inc = if driving_frames > 1.0 {
+            anim_rate / (driving_frames - 1.0)
+        } else {
+            0.0
+        };
+
+        // Update phase
+        anim_state.gait_blend_phase = (anim_state.gait_blend_phase
+            + phase_inc * dt * anim_state.speed_multiplier)
+            .rem_euclid(1.0);
+
+        // 6. Evaluate all active animations and sequentially blend their poses.
+        let expected_len = anim_state.current_frame.len();
+        if expected_len == 0 {
+            let num_channels = driving_anim.num_channels as usize;
+            if num_channels > 0 {
+                anim_state.current_frame = vec![0.0; num_channels];
+            } else {
+                continue;
+            }
+        }
+        let expected_len = anim_state.current_frame.len();
+
+        // Base pose (evaluated at base_idx using synchronized or independent phase)
+        let base_gait = &gaits[base_idx];
+        let base_anim = match anim_library.anims.get(&base_gait.anim) {
+            Some(a) => a,
+            None => continue,
+        };
+
+        let base_time = if base_gait.independent_phase {
+            0.0
+        } else {
+            anim_state.gait_blend_phase * (base_anim.num_frames as f32 - 1.0).max(0.0)
+        };
+
+        let mut blended_pose = sample_animation_pose(base_anim, base_time, true, &anim_state.skeleton);
+        if blended_pose.len() < expected_len {
+            blended_pose.resize(expected_len, 0.0);
+        }
+
+        // Sequentially blend subsequent gaits k > base_idx
+        for k in (base_idx + 1)..gaits.len() {
+            let scale = scales[k];
+            if scale <= 0.0001 {
+                continue;
+            }
+
+            let gait = &gaits[k];
+            let anim = match anim_library.anims.get(&gait.anim) {
+                Some(a) => a,
+                None => continue,
+            };
+
+            let gait_time = if gait.independent_phase {
+                0.0
+            } else {
+                anim_state.gait_blend_phase * (anim.num_frames as f32 - 1.0).max(0.0)
+            };
+
+            let mut next_pose = sample_animation_pose(anim, gait_time, true, &anim_state.skeleton);
+            if next_pose.len() < expected_len {
+                next_pose.resize(expected_len, 0.0);
+            }
+
+            // Blend next_pose into blended_pose with weight scale
+            let rot_flags = &anim_state.skeleton.channel_is_rot;
+            for i in 0..expected_len {
+                let is_rot = if rot_flags.len() >= expected_len {
+                    rot_flags[i]
+                } else {
+                    if expected_len == 1 {
+                        false
+                    } else {
+                        !(3..6).contains(&i)
+                    }
+                };
+
+                if is_rot {
+                    let mut diff = (next_pose[i] - blended_pose[i]).rem_euclid(std::f32::consts::TAU);
+                    if diff > std::f32::consts::PI {
+                        diff -= std::f32::consts::TAU;
+                    }
+                    blended_pose[i] = blended_pose[i] + diff * scale;
+                } else {
+                    blended_pose[i] = blended_pose[i] + (next_pose[i] - blended_pose[i]) * scale;
+                }
+            }
+        }
+
+        // Write to anim_state.current_frame
+        anim_state.current_frame = blended_pose;
+    }
+}
+

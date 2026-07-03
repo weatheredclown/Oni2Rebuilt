@@ -220,7 +220,7 @@ pub fn anim_fx_system(
             let crossed = entry.phase > prev && entry.phase <= phase;
             // Edge case: entry.phase == 0.0 on the first tick after an anim
             // change should still fire (prev starts at 0.0).
-            let at_start = entry.phase <= 0.0 && prev <= 0.0 && !anim_state.anim.frames.is_empty();
+            let at_start = entry.phase <= 0.0 && prev <= 0.0 && anim_state.has_anim();
             if !crossed && !at_start {
                 continue;
             }

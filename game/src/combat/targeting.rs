@@ -351,8 +351,6 @@ mod tests {
     use bevy::prelude::App;
     use crate::combat::components::TargetComponent;
     use crate::oni2_loader::animation::Oni2AnimState;
-    use crate::oni2_loader::parsers::types::Oni2Animation;
-    use crate::oni2_loader::parsers::types::Oni2Skeleton;
     use bevy::ecs::system::SystemState;
 
     #[test]
@@ -396,26 +394,9 @@ mod tests {
         )).id();
 
         let anim_state = Oni2AnimState {
-            anim: Oni2Animation::default(),
-            skeleton: Oni2Skeleton::default(),
-            current_time: 0.0,
-            fps: 30.0,
-            paused: false,
-            looping: false,
-            speed_multiplier: 1.0,
-            pending_step: 0,
-            last_rendered_time: -1.0,
             joint_entities: vec![Entity::PLACEHOLDER, Entity::PLACEHOLDER, joint_ent],
-            base_rotation: Quat::IDENTITY,
-            current_frame: Vec::new(),
-            current_anim_id: None,
-            previous_anim_id: None,
-            anim_just_started: false,
-            root_motion_just_started: false,
             is_grounded: true,
-            material_stood_on: None,
-            root_offset_this_frame: Vec3::ZERO,
-            root_offset_prev_frame: Vec3::ZERO,
+            ..default()
         };
 
         let target_ent = app.world_mut().spawn((

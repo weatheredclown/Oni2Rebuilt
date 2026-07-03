@@ -478,11 +478,13 @@ pub fn creature_movement_anim_system(
             && fsm.ctx.active_anim.is_some()
             && !fsm.ctx.timed_out
         {
+            anim_state.gait_blend_active = false;
             continue;
         }
 
         // Block locomotion while a hit reaction animation is playing.
         if react_opt.is_some_and(|r| r.active.is_some()) {
+            anim_state.gait_blend_active = false;
             continue;
         }
 
@@ -490,6 +492,7 @@ pub fn creature_movement_anim_system(
         // compress → spring → main → land) — it drives Oni2AnimState each
         // tick and would otherwise be clobbered by the idle-gait lookup.
         if schedule_opt.is_some_and(|s| !s.finished && !s.entries.is_empty()) {
+            anim_state.gait_blend_active = false;
             continue;
         }
 
@@ -500,6 +503,7 @@ pub fn creature_movement_anim_system(
         // future complexity (jump carve-out, HitReaction handling, etc.)
         // in one place.  See `combat::locks` for the legacy reference.
         if crate::combat::locked_movement(&anim_state) {
+            anim_state.gait_blend_active = false;
             continue;
         }
 
@@ -648,45 +652,32 @@ pub fn creature_movement_anim_system(
             }
             last_gait_anim = played_anim;
 
-            if let Some(gait) = gait_to_play
-                && Some(gait.anim) != anim_state.current_anim_id
-            {
-                let prev_num_frames = anim_state.anim.frames.len().max(1) as f32;
-                let prev_was_looping = anim_state.looping;
-                let prev_phase = if prev_num_frames > 1.0 {
-                    anim_state.current_time / (prev_num_frames - 1.0)
-                } else {
-                    0.0
-                };
+            if let Some(gait) = gait_to_play {
+                anim_state.gait_blend_active = true;
+                anim_state.gait_blend_value = throttle.abs();
 
-                if library.play_id(gait.anim, &mut anim_state) {
-                    *move_anim = CreatureMovementAnim::Stand; // Prevent legacy code from desyncing state
+                if Some(gait.anim) != anim_state.current_anim_id {
+                    let prev_num_frames = anim_state.anim.frames.len().max(1) as f32;
+                    let prev_was_looping = anim_state.looping;
+                    let prev_phase = if prev_num_frames > 1.0 {
+                        anim_state.current_time / (prev_num_frames - 1.0)
+                    } else {
+                        0.0
+                    };
 
-                    // Phase-match the new gait only when transitioning
-                    // between locomotion gaits (both looping). When the
-                    // previous anim was a one-shot (attack / react /
-                    // block / evade), `play_id` already reset
-                    // `current_time` to 0 — leave it there so the gait
-                    // starts at its neutral pose.
-                    //
-                    // Why this matters: a one-shot ending at phase ~1.0
-                    // would, with unconditional phase-matching, restart
-                    // the new gait at its LAST frame. Composed with the
-                    // freshly-rotated parent Transform (from
-                    // `end_rotation_notches`), the gait's tail-frame
-                    // body pose renders for one tick at the new rotation
-                    // before the loop wraps around to frame 0 — a
-                    // visible "snap to wrong pose" blink at every combo
-                    // boundary, especially with side-rotating attacks
-                    // where the parent + gait-tail composite is most
-                    // visibly off-axis.
-                    let new_num_frames = anim_state.anim.frames.len().max(1) as f32;
-                    if new_num_frames > 1.0 && prev_was_looping {
-                        anim_state.current_time = prev_phase * (new_num_frames - 1.0);
+                    if library.play_id(gait.anim, &mut anim_state) {
+                        *move_anim = CreatureMovementAnim::Stand; // Prevent legacy code from desyncing state
+
+                        let new_num_frames = anim_state.anim.frames.len().max(1) as f32;
+                        if new_num_frames > 1.0 && prev_was_looping {
+                            anim_state.current_time = prev_phase * (new_num_frames - 1.0);
+                        }
+                    } else {
+                        warn!("Loco gait requested missing animation ID: {}", gait.anim);
                     }
-                } else {
-                    warn!("Loco gait requested missing animation ID: {}", gait.anim);
                 }
+            } else {
+                anim_state.gait_blend_active = false;
             }
 
             // Write the updated state back to the entity
@@ -1632,13 +1623,8 @@ pub fn spawn_oni2_entity_with_rotation(
             .insert(crate::oni2_loader::animation::Oni2AnimState {
                 anim: current_anim,
                 skeleton: skel,
-                current_time: 0.0,
                 fps: 20.0,
-                paused: false,
                 looping,
-                speed_multiplier: 1.0,
-                pending_step: 0,
-                last_rendered_time: -1.0,
                 joint_entities: joint_entities.clone(),
                 base_rotation: rotation,
                 current_frame: vec![
@@ -1649,14 +1635,8 @@ pub fn spawn_oni2_entity_with_rotation(
                         .and_then(|lib| lib.anims.values().next())
                         .map_or(0, |a| a.num_channels) as usize
                 ],
-                current_anim_id: None,
-                previous_anim_id: None,
-                anim_just_started: false,
-                root_motion_just_started: false,
                 is_grounded: true,
-                material_stood_on: None,
-                root_offset_this_frame: Vec3::ZERO,
-                root_offset_prev_frame: Vec3::ZERO,
+                ..default()
             });
 
         // Any actor with an animator also gets an ActionPlayer — it drives

@@ -2035,8 +2035,8 @@ pub fn grapple_reposition_system(
 
         if let Some(repo) = fs.grapple_reposition.clone() {
             if Some(repo.anim_id) == msg.anim_id {
-                let frames = &anim_state.anim.frames;
-                if !frames.is_empty() {
+                if anim_state.has_anim() {
+                    let frames = &anim_state.anim.frames;
                     let first_frame = &frames[0];
                     let last_frame = frames.last().unwrap();
 
@@ -2576,23 +2576,11 @@ mod strike_facing_tests {
             anim,
             skeleton: skel,
             current_time: 1.0,
-            fps: 30.0,
-            paused: false,
-            looping: false,
-            speed_multiplier: 1.0,
-            pending_step: 0,
             last_rendered_time: 1.0,
-            joint_entities: vec![],
-            base_rotation: Quat::IDENTITY,
             current_frame: vec![0.0, 0.0, 2.0],
             current_anim_id: Some(anim_id),
-            previous_anim_id: None,
-            anim_just_started: false,
-            root_motion_just_started: false,
             is_grounded: true,
-            material_stood_on: None,
-            root_offset_this_frame: Vec3::ZERO,
-            root_offset_prev_frame: Vec3::ZERO,
+            ..default()
         };
 
         let mut fs = FighterState::default();
@@ -2669,25 +2657,9 @@ mod strike_facing_tests {
 
         let attacker_anim = Oni2AnimState {
             anim,
-            skeleton: crate::oni2_loader::parsers::types::Oni2Skeleton::default(),
-            current_time: 0.0,
-            fps: 30.0,
-            paused: false,
-            looping: false,
-            speed_multiplier: 1.0,
-            pending_step: 0,
             last_rendered_time: 0.0,
-            joint_entities: vec![],
-            base_rotation: Quat::IDENTITY,
-            current_frame: vec![],
-            current_anim_id: None,
-            previous_anim_id: None,
-            anim_just_started: false,
-            root_motion_just_started: false,
             is_grounded: true,
-            material_stood_on: None,
-            root_offset_this_frame: Vec3::ZERO,
-            root_offset_prev_frame: Vec3::ZERO,
+            ..default()
         };
 
         let attacker = app
@@ -2704,26 +2676,9 @@ mod strike_facing_tests {
             .id();
 
         let victim_anim = Oni2AnimState {
-            anim: crate::oni2_loader::parsers::types::Oni2Animation::default(),
-            skeleton: crate::oni2_loader::parsers::types::Oni2Skeleton::default(),
-            current_time: 0.0,
-            fps: 30.0,
-            paused: false,
-            looping: false,
-            speed_multiplier: 1.0,
-            pending_step: 0,
             last_rendered_time: 0.0,
-            joint_entities: vec![],
-            base_rotation: Quat::IDENTITY,
-            current_frame: vec![],
-            current_anim_id: None,
-            previous_anim_id: None,
-            anim_just_started: false,
-            root_motion_just_started: false,
             is_grounded: true,
-            material_stood_on: None,
-            root_offset_this_frame: Vec3::ZERO,
-            root_offset_prev_frame: Vec3::ZERO,
+            ..default()
         };
 
         let victim = app
@@ -2821,23 +2776,11 @@ mod strike_facing_tests {
             anim,
             skeleton: skel,
             current_time: 1.0,
-            fps: 30.0,
-            paused: false,
-            looping: false,
-            speed_multiplier: 1.0,
-            pending_step: 0,
             last_rendered_time: 1.0,
-            joint_entities: vec![],
-            base_rotation: Quat::IDENTITY,
             current_frame: vec![0.0, 0.0, 2.0],
             current_anim_id: Some(anim_id),
-            previous_anim_id: None,
-            anim_just_started: false,
-            root_motion_just_started: false,
             is_grounded: true,
-            material_stood_on: None,
-            root_offset_this_frame: Vec3::ZERO,
-            root_offset_prev_frame: Vec3::ZERO,
+            ..default()
         };
 
         let mut fs = FighterState::default();

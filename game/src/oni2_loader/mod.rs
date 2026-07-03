@@ -111,6 +111,7 @@ impl Plugin for Oni2LoaderPlugin {
                 (
                     toggle_debug_bounds,
                     toggle_debug_skeleton,
+                    oni2_gait_blend_system.before(update_oni2_animation),
                     update_oni2_animation,
                     head_ik_setup_system,
                     head_ik_system.after(update_oni2_animation),
