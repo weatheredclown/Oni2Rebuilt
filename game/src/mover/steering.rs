@@ -18,40 +18,105 @@
  */
 use bevy::prelude::*;
 
-/// Per-character locomotion steering state + tuning.  Mirrors the heading-side
-/// fields of `mvrMoverComponentType` (`MaxTurnRate`, `YawAccel`, `YawDecel`,
-/// `InertiaEnable`) plus the running `CurrentYaw` control value.
+/// Frames per second the legacy `MaxTurnRate` (degrees per frame) is quoted at.
+pub const MOVER_FRAME_HZ: f32 = 60.0;
+
+/// Per-character mover tuning + runtime state — the consumed subset of the
+/// legacy `mvrMoverComponent` (`<Mover>` component).  Speeds, turn/inertia and
+/// the collision "hotdog" are resolved from `components.xml` (the base) with
+/// per-actor `<Mover>` overrides; `current_yaw` is the running control state.
 #[derive(Component, Debug, Clone)]
-pub struct LocomotionSteering {
-    /// Filtered yaw control in `[-1, 1]` — legacy `CurrentYaw`.  How hard the
-    /// character is currently turning, as a fraction of `max_turn_rate`.
-    pub current_yaw: f32,
-    /// Maximum turn rate in radians/second.  Legacy `MaxTurnRate` is stored in
+pub struct MoverData {
+    // --- Speeds (m/s) ---
+    /// `MaxForwardSpeed`.
+    pub max_forward_speed: f32,
+    /// `MaxReverseSpeed`.
+    pub max_reverse_speed: f32,
+    /// `MaxSideStepSpeed`.
+    pub max_sidestep_speed: f32,
+
+    // --- Turn / inertia ---
+    /// Maximum turn rate in radians/second.  `MaxTurnRate` is authored in
     /// degrees per (1/60)s frame; the rad/s form is `MaxTurnRate * DtoR * 60`.
     pub max_turn_rate: f32,
-    /// Rate the yaw control ramps UP toward its target, per second
-    /// (legacy `YawAccel`).
+    /// `YawAccel` — rate the yaw control ramps up toward its target, per second.
     pub yaw_accel: f32,
-    /// Rate the yaw control ramps DOWN toward zero, per second
-    /// (legacy `YawDecel`).
+    /// `YawDecel` — rate the yaw control ramps down toward zero, per second.
     pub yaw_decel: f32,
-    /// Master enable for the accel/decel filter (legacy `InertiaEnable`).  When
-    /// false, turning is still clamped to `max_turn_rate` but with no inertia.
+    /// `InertiaEnable` — master enable for the accel/decel filter.  When false,
+    /// turning is still clamped to `max_turn_rate` but with no ramp.
     pub inertia_enable: bool,
+
+    // --- Collision "hotdog" (capsule) ---
+    /// `CollisionHotdogRadius` (m) — the character capsule radius.
+    pub hotdog_radius: f32,
+    /// `CollisionHotdogLength` (m) — the character capsule cylinder length.
+    pub hotdog_length: f32,
+
+    // --- Runtime state ---
+    /// Filtered yaw control in `[-1, 1]` — legacy `CurrentYaw`.
+    pub current_yaw: f32,
 }
 
-impl Default for LocomotionSteering {
+impl Default for MoverData {
+    /// Safety fallback ONLY — the authoritative base values come from
+    /// `components.xml` via [`MoverData::from_defaults`].  These are used just
+    /// when neither the actor nor components.xml provides a value (e.g. the
+    /// components.xml load failed), so the character still moves sanely.
     fn default() -> Self {
-        // Defaults until per-character `mvrMoverComponentType` tuning is parsed.
-        // ~9.4 rad/s ≈ 540°/s top turn speed; the yaw control reaches full in
-        // ~0.15 s and bleeds off faster than it builds (decel > accel) so a
-        // one-frame flip in the desired heading barely moves the body.
         Self {
-            current_yaw: 0.0,
-            max_turn_rate: 9.42,
-            yaw_accel: 7.0,
-            yaw_decel: 12.0,
+            max_forward_speed: 7.5,
+            max_reverse_speed: 4.5,
+            max_sidestep_speed: 5.0,
+            max_turn_rate: deg_per_frame_to_rad_s(23.3),
+            yaw_accel: 3.0,
+            yaw_decel: 5.0,
             inertia_enable: true,
+            hotdog_radius: 0.25,
+            hotdog_length: 1.25,
+            current_yaw: 0.0,
+        }
+    }
+}
+
+/// Convert legacy `MaxTurnRate` (degrees per 1/60 s frame) to radians/second.
+pub fn deg_per_frame_to_rad_s(deg_per_frame: f32) -> f32 {
+    deg_per_frame.to_radians() * MOVER_FRAME_HZ
+}
+
+impl MoverData {
+    /// Build from a `<Mover>` component block.  The block is the actor's
+    /// *merged* Mover XML from `parse_actor_xml`: `components.xml`'s base
+    /// attributes are prepended to the template chain, so `extract_xml_attr`
+    /// (last-wins) already yields "the actor's explicit value, else the
+    /// components.xml default" for every field — no hardcoded base numbers.
+    /// The `Default` fallback only bites if `block` is `None` or a field is
+    /// missing from components.xml too (shouldn't happen).
+    pub fn from_mover_xml(block: Option<&str>) -> Self {
+        use crate::oni2_loader::utils::parse::{extract_xml_attr, parse_xml_bool};
+        let fb = Self::default();
+        let Some(block) = block else { return fb };
+        let f = |attr: &str, d: f32| {
+            extract_xml_attr(block, attr)
+                .and_then(|v| v.trim().parse().ok())
+                .unwrap_or(d)
+        };
+        Self {
+            max_forward_speed: f("MaxForwardSpeed", fb.max_forward_speed),
+            max_reverse_speed: f("MaxReverseSpeed", fb.max_reverse_speed),
+            max_sidestep_speed: f("MaxSideStepSpeed", fb.max_sidestep_speed),
+            max_turn_rate: deg_per_frame_to_rad_s(f(
+                "MaxTurnRate",
+                fb.max_turn_rate / (MOVER_FRAME_HZ * std::f32::consts::PI / 180.0),
+            )),
+            yaw_accel: f("YawAccel", fb.yaw_accel),
+            yaw_decel: f("YawDecel", fb.yaw_decel),
+            inertia_enable: extract_xml_attr(block, "InertiaEnable")
+                .map(|v| parse_xml_bool(&v))
+                .unwrap_or(fb.inertia_enable),
+            hotdog_radius: f("CollisionHotdogRadius", fb.hotdog_radius),
+            hotdog_length: f("CollisionHotdogLength", fb.hotdog_length),
+            current_yaw: 0.0,
         }
     }
 }
@@ -110,7 +175,7 @@ pub fn tend_to_control(control: f32, mut val: f32, decel: f32, accel: f32) -> f3
 pub fn steer_facing(
     facing: Vec3,
     desired: Vec3,
-    steering: &mut LocomotionSteering,
+    steering: &mut MoverData,
     dt: f32,
 ) -> Vec3 {
     if dt <= 0.0 {
@@ -187,7 +252,7 @@ mod tests {
     fn strobe_is_damped() {
         // Desired heading flips 180° every frame; the body should barely rotate
         // because `current_yaw` keeps getting reset toward zero.
-        let mut st = LocomotionSteering::default();
+        let mut st = MoverData::default();
         let mut facing = Vec3::Z;
         let dt = 1.0 / 120.0;
         let fwd = Vec3::Z;
@@ -207,7 +272,7 @@ mod tests {
 
     #[test]
     fn converges_to_steady_target() {
-        let mut st = LocomotionSteering::default();
+        let mut st = MoverData::default();
         let mut facing = Vec3::Z;
         let desired = Vec3::X;
         for _ in 0..240 {

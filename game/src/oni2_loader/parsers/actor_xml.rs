@@ -206,6 +206,10 @@ pub struct LayoutActor {
     pub camera_trigger: Option<CameraTriggerData>,
     pub force_trigger: Option<ForceTriggerData>,
     pub section_trigger: Option<SectionTriggerData>,
+    /// `<Mover>` component data (speeds, turn rate/inertia, collision hotdog),
+    /// resolved against the components.xml base.  Always present (base defaults
+    /// apply when the actor declares no overrides); consumed at creature spawn.
+    pub mover: crate::mover::steering::MoverData,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -481,6 +485,13 @@ pub fn parse_actor_xml(dir: &str, filename: &str, template_dir: &str) -> Option<
     let camera_trigger_block = extract_component(&chain, has_components_xml, "CameraTrigger");
     let force_trigger_block = extract_component(&chain, has_components_xml, "ForceVectorTrigger");
     let section_trigger_block = extract_component(&chain, has_components_xml, "SectionTrigger");
+
+    // Mover: speeds, turn rate/inertia, collision hotdog.  The merged block
+    // already carries components.xml base attributes (chain[0]) overridden by
+    // the actor, so `MoverData::from_mover_xml` resolves each field to the
+    // actor's value or the components.xml default.
+    let mover_block = extract_component(&chain, has_components_xml, "Mover");
+    let mover = crate::mover::steering::MoverData::from_mover_xml(mover_block.as_deref());
 
     // Extract Animator props
     let mut animator_type: Option<String> = None;
@@ -1166,6 +1177,7 @@ pub fn parse_actor_xml(dir: &str, filename: &str, template_dir: &str) -> Option<
         camera_trigger,
         force_trigger,
         section_trigger,
+        mover,
     })
 }
 
@@ -1206,6 +1218,7 @@ const KNOWN_IMPLEMENTED_COMPONENTS: &[&str] = &[
     "ForceVectorTrigger",
     "Health",
     "Inventory",
+    "Mover",
     "Prop",
     "Reticle",
     "ScrOni",

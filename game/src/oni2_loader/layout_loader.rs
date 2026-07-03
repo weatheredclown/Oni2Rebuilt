@@ -1173,6 +1173,13 @@ pub fn spawn_layout_actor(
                         },
                         ..Default::default()
                     });
+                // Override the FighterBundle's default MoverData with the one
+                // resolved from components.xml + this actor's <Mover> block
+                // (per-actor speeds, turn rate/inertia, collision hotdog).
+                assets
+                    .commands
+                    .entity(entity)
+                    .insert(actor.mover.clone());
                 assets
                     .commands
                     .entity(entity)

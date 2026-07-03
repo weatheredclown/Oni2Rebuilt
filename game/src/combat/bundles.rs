@@ -35,10 +35,11 @@ pub struct FighterBundle {
     pub fighter_state: FighterState,
     pub fighter_type: FighterType,
     pub block_library: BlockLibrary,
-    /// Rate-limits locomotion turning so navigation can't snap-strobe the body
-    /// at decision boundaries.  Combat facing snaps bypass it (they write
-    /// `Fighter.facing` directly).  See `mover::steering`.
-    pub steering: crate::mover::steering::LocomotionSteering,
+    /// Per-character mover tuning (speeds, turn rate/inertia, capsule hotdog)
+    /// + steering state.  This is the `Default` safety fallback; the creature
+    /// spawn path overrides it with a `MoverData` resolved from `components.xml`
+    /// + the actor's `<Mover>` block.  See `mover::steering`.
+    pub mover: crate::mover::steering::MoverData,
 }
 
 // ---------------------------------------------------------------------------

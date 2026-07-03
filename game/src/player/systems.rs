@@ -803,7 +803,7 @@ pub fn player_movement_system(
             Option<&crate::oni2_loader::animation::Oni2AnimState>,
             Option<&crate::fight::components::FighterState>,
             Option<&crate::player::components::PlayerZiplineState>,
-            Option<&mut crate::mover::steering::LocomotionSteering>,
+            Option<&mut crate::mover::steering::MoverData>,
         ),
         With<Player>,
     >,

@@ -94,17 +94,16 @@ impl Plugin for Oni2LoaderPlugin {
                     })
                     .in_set(NarrowPhaseSystems::Last),
             )
-            // Character-vs-character separation runs in FixedUpdate (before the
-            // physics step in FixedPostUpdate) and after the movement systems
-            // have written velocity, so it sees this tick's intended motion.
-            // It mutates Position/LinearVelocity outside the narrow-phase/solver
-            // — characters don't collide in Avian, so this is what keeps them
-            // solid against each other without the solver shoving them.
+            // Character-vs-character separation runs in FixedPostUpdate before
+            // physics step simulation. Since movement systems (Dynamic and Tnua)
+            // write velocity in FixedUpdate, running separation in FixedPostUpdate
+            // ensures we project out the actual velocity that will be integrated.
+            // This prevents "running in place" animations by setting the final
+            // post-solver velocity to 0 when blocked.
             .add_systems(
-                FixedUpdate,
+                FixedPostUpdate,
                 physics::character_separation_system
-                    .after(crate::player::systems::player_movement_system)
-                    .after(crate::mover::bridge::tnua_basis_from_linvel)
+                    .before(avian3d::prelude::PhysicsSet::StepSimulation)
                     .run_if(in_state(AppState::InGame)),
             )
             .add_systems(

@@ -286,7 +286,7 @@ pub fn path_following_system(
         &mut avian3d::prelude::LinearVelocity,
         &mut crate::combat::components::Fighter,
         Option<&mut crate::ai::components::AiDrivenVelocityThisTick>,
-        Option<&mut crate::mover::steering::LocomotionSteering>,
+        Option<&mut crate::mover::steering::MoverData>,
     )>,
 ) {
     let speed_multiplier = 4.5;
@@ -359,7 +359,7 @@ pub fn actor_follower_system(
         &mut crate::combat::components::Fighter,
         Option<&mut crate::ai::components::AiDrivenVelocityThisTick>,
         Option<&crate::oni2_loader::animation::Oni2AnimState>,
-        Option<&mut crate::mover::steering::LocomotionSteering>,
+        Option<&mut crate::mover::steering::MoverData>,
     )>,
     targets: Query<&Transform, Without<crate::ai::components::ActorFollower>>,
 ) {

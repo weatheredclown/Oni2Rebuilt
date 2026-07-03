@@ -155,11 +155,18 @@ pub fn character_separation_system(
         let dx = p2.x - p1.x;
         let dz = p2.z - p1.z;
         let dist_sq = dx * dx + dz * dz;
-        if dist_sq >= MIN_DIST * MIN_DIST {
+
+        // Detect contact within a small margin to prevent frame-to-frame physics 
+        // integration oscillation (strobe between RUN and STAND animations).
+        // A margin of 0.05 (5cm) is sufficient to catch characters running at
+        // max speed (6.0 m/s) before they penetrate on the next physics step.
+        const MARGIN: f32 = 0.05;
+        const DETECT_DIST: f32 = MIN_DIST + MARGIN;
+        if dist_sq >= DETECT_DIST * DETECT_DIST {
             continue;
         }
+
         let dist = dist_sq.sqrt();
-        let penetration = MIN_DIST - dist;
 
         // Normal points from char 1 toward char 2 (XZ).  Exact-overlap fallback
         // picks an arbitrary horizontal direction so they still split apart.
@@ -186,17 +193,17 @@ pub fn character_separation_system(
             vel2.0 -= v2n * normal;
         }
 
-        // Depenetrate: a character is only displaced to undo ITS OWN incursion.
-        //   one moving     -> that one backs out 100%, the wall is unmoved;
-        //   both / neither -> split 50/50 (head-on, or residual static overlap
-        //                     from two idle actors left embedded).
-        let half = penetration * 0.5;
-        match (e1_in, e2_in) {
-            (true, false) => pos1.0 -= normal * penetration,
-            (false, true) => pos2.0 += normal * penetration,
-            _ => {
-                pos1.0 -= normal * half;
-                pos2.0 += normal * half;
+        // Depenetrate only if they are actually interpenetrating (dist < MIN_DIST).
+        if dist < MIN_DIST {
+            let penetration = MIN_DIST - dist;
+            let half = penetration * 0.5;
+            match (e1_in, e2_in) {
+                (true, false) => pos1.0 -= normal * penetration,
+                (false, true) => pos2.0 += normal * penetration,
+                _ => {
+                    pos1.0 -= normal * half;
+                    pos2.0 += normal * half;
+                }
             }
         }
     }

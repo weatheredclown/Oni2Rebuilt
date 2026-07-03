@@ -430,6 +430,8 @@ pub enum CreatureMovementAnim {
 pub struct LocoGaitState {
     pub is_forward: bool,
     pub change_cooldown: f32,
+    pub last_gait_anim: Option<crate::oni2_loader::animation::AnimId>,
+    pub speed_change_cooldown: f32,
 }
 
 /// Pick stand/walk/run animations based on horizontal velocity for all creatures.
@@ -532,30 +534,29 @@ pub fn creature_movement_anim_system(
 
             let want_forward = throttle_fwd.abs() >= throttle_right.abs();
 
-            let (mut is_forward, mut cooldown) = if let Some(ref state) = state_opt {
-                (state.is_forward, state.change_cooldown)
-            } else {
-                (true, 0.0)
-            };
+            let (mut is_forward, mut cooldown, mut last_gait_anim, mut speed_cooldown) =
+                if let Some(ref state) = state_opt {
+                    (
+                        state.is_forward,
+                        state.change_cooldown,
+                        state.last_gait_anim,
+                        state.speed_change_cooldown,
+                    )
+                } else {
+                    (true, 0.0, None, 0.0)
+                };
+
+            // Update cooldowns
+            cooldown = (cooldown - dt).max(0.0);
+            speed_cooldown = (speed_cooldown - dt).max(0.0);
 
             // Limit switching back and forth with a 0.1-second hysteresis cooldown.
             if cooldown <= 0.0 {
                 if want_forward != is_forward {
                     is_forward = want_forward;
                     cooldown = 0.1;
+                    speed_cooldown = 0.0; // Reset speed cooldown on direction switch so the new direction's gait is chosen instantly.
                 }
-            } else {
-                cooldown = (cooldown - dt).max(0.0);
-            }
-
-            if let Some(ref mut state) = state_opt {
-                state.is_forward = is_forward;
-                state.change_cooldown = cooldown;
-            } else {
-                commands.entity(entity).insert(LocoGaitState {
-                    is_forward,
-                    change_cooldown: cooldown,
-                });
             }
 
             let (gaits, throttle) = if is_forward {
@@ -566,41 +567,54 @@ pub fn creature_movement_anim_system(
 
             let mut best_gait = None;
 
-            // Hysteresis: prevent physics micro-fluctuations from dropping
-            // states (bias against falling out below).  Skipped when
-            // `throttle` is exactly 0 — that's the snapped-to-zero rest
-            // condition, and gaits whose range butts up against 0 at one
-            // end (e.g. ANIMWALK_BACK with [0, -1]) would otherwise satisfy
-            // the hysteresis test forever after a backward run, pinning
-            // the back-run anim while the body sits still.  At a true
-            // stop the picker should always be free to return to the
-            // rest gait (ANIMWALK_STAND).
-            if throttle != 0.0
-                && let Some(cur_id) = anim_state.current_anim_id
-                && let Some(cur_gait) = gaits.iter().find(|g| g.anim == cur_id)
-            {
-                let lower = cur_gait.min_throttle.min(cur_gait.max_throttle) - 0.15;
-                let upper = cur_gait.min_throttle.max(cur_gait.max_throttle);
-                if throttle >= lower && throttle <= upper {
-                    best_gait = Some(cur_gait);
+            // If we are under a speed switch cooldown and not trying to stop (throttle != 0.0),
+            // stick to the last selected gait in the current gait list if it exists.
+            if throttle != 0.0 && speed_cooldown > 0.0 {
+                if let Some(last_anim) = last_gait_anim {
+                    if let Some(last_gait) = gaits.iter().find(|g| g.anim == last_anim) {
+                        best_gait = Some(last_gait);
+                    }
                 }
             }
 
             let best_gait = best_gait.or_else(|| {
-                gaits
-                    .iter()
-                    .find(|g| {
-                        let lower = g.min_throttle.min(g.max_throttle);
-                        let upper = g.min_throttle.max(g.max_throttle);
-                        throttle >= lower && throttle <= upper
-                    })
-                    .or_else(|| {
-                        gaits.iter().min_by(|a, b| {
-                            (a.ideal_throttle - throttle)
-                                .abs()
-                                .total_cmp(&(b.ideal_throttle - throttle).abs())
+                let mut bias_gait = None;
+                // Hysteresis: prevent physics micro-fluctuations from dropping
+                // states (bias against falling out below).  Skipped when
+                // `throttle` is exactly 0 — that's the snapped-to-zero rest
+                // condition, and gaits whose range butts up against 0 at one
+                // end (e.g. ANIMWALK_BACK with [0, -1]) would otherwise satisfy
+                // the hysteresis test forever after a backward run, pinning
+                // the back-run anim while the body sits still.  At a true
+                // stop the picker should always be free to return to the
+                // rest gait (ANIMWALK_STAND).
+                if throttle != 0.0
+                    && let Some(cur_id) = anim_state.current_anim_id
+                    && let Some(cur_gait) = gaits.iter().find(|g| g.anim == cur_id)
+                {
+                    let lower = cur_gait.min_throttle.min(cur_gait.max_throttle) - 0.15;
+                    let upper = cur_gait.min_throttle.max(cur_gait.max_throttle);
+                    if throttle >= lower && throttle <= upper {
+                        bias_gait = Some(cur_gait);
+                    }
+                }
+
+                bias_gait.or_else(|| {
+                    gaits
+                        .iter()
+                        .find(|g| {
+                            let lower = g.min_throttle.min(g.max_throttle);
+                            let upper = g.min_throttle.max(g.max_throttle);
+                            throttle >= lower && throttle <= upper
                         })
-                    })
+                        .or_else(|| {
+                            gaits.iter().min_by(|a, b| {
+                                (a.ideal_throttle - throttle)
+                                    .abs()
+                                    .total_cmp(&(b.ideal_throttle - throttle).abs())
+                            })
+                        })
+                })
             });
 
             let mut gait_to_play = best_gait.cloned();
@@ -625,6 +639,14 @@ pub fn creature_movement_anim_system(
                     }
                 }
             }
+
+            let played_anim = gait_to_play.as_ref().map(|g| g.anim);
+            if throttle == 0.0 {
+                speed_cooldown = 0.0;
+            } else if played_anim != last_gait_anim {
+                speed_cooldown = 0.1;
+            }
+            last_gait_anim = played_anim;
 
             if let Some(gait) = gait_to_play
                 && Some(gait.anim) != anim_state.current_anim_id
@@ -665,6 +687,21 @@ pub fn creature_movement_anim_system(
                 } else {
                     warn!("Loco gait requested missing animation ID: {}", gait.anim);
                 }
+            }
+
+            // Write the updated state back to the entity
+            if let Some(ref mut state) = state_opt {
+                state.is_forward = is_forward;
+                state.change_cooldown = cooldown;
+                state.last_gait_anim = last_gait_anim;
+                state.speed_change_cooldown = speed_cooldown;
+            } else {
+                commands.entity(entity).insert(LocoGaitState {
+                    is_forward,
+                    change_cooldown: cooldown,
+                    last_gait_anim,
+                    speed_change_cooldown: speed_cooldown,
+                });
             }
         }
     }
