@@ -1894,9 +1894,7 @@ pub fn oni2_gait_blend_system(
         };
 
         let mut blended_pose = sample_animation_pose(base_anim, base_time, true, &anim_state.skeleton);
-        if blended_pose.len() < expected_len {
-            blended_pose.resize(expected_len, 0.0);
-        }
+        blended_pose.resize(expected_len, 0.0);
 
         // Sequentially blend subsequent gaits k > base_idx
         for k in (base_idx + 1)..gaits.len() {
@@ -1918,9 +1916,7 @@ pub fn oni2_gait_blend_system(
             };
 
             let mut next_pose = sample_animation_pose(anim, gait_time, true, &anim_state.skeleton);
-            if next_pose.len() < expected_len {
-                next_pose.resize(expected_len, 0.0);
-            }
+            next_pose.resize(expected_len, 0.0);
 
             // Blend next_pose into blended_pose with weight scale
             let rot_flags = &anim_state.skeleton.channel_is_rot;
