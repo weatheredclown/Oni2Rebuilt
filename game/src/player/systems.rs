@@ -29,6 +29,7 @@ const JUMP_IMPULSE: f32 = 8.0;
 pub fn keyboard_input_system(
     keyboard: Res<ButtonInput<KeyCode>>,
     mouse: Res<ButtonInput<MouseButton>>,
+    script: Res<super::padscript::PadScript>,
     mut query: Query<(&mut InputState, Option<&crate::fight::components::FighterState>), With<Player>>,
 ) {
     for (mut input, fs_opt) in &mut query {
@@ -74,6 +75,13 @@ pub fn keyboard_input_system(
         input.targeting_modifier = keyboard.pressed(KeyCode::ControlLeft);
         input.reticle_input = Vec2::ZERO;
         input.reticle_input_is_absolute = false;
+
+        if script.enabled() {
+            // `--padscript` owns the stick and R1 (analog magnitude kept, as
+            // rb's pad does).
+            input.movement = script.movement();
+            input.targeting_modifier = script.held(super::padscript::PAD_R1);
+        }
     }
 }
 
@@ -180,6 +188,7 @@ pub fn pad_mapper_update_system(
     gamepads: Query<(Entity, &Gamepad)>,
     mut pad_mapper: ResMut<PadMapper>,
     mut cushion: ResMut<super::components::MenuTransitionInputCushion>,
+    script: Res<super::padscript::PadScript>,
     mut crouch_toggled: Local<bool>,
     mut block_toggled: Local<bool>,
     mut fight_mode_toggled: Local<bool>,
@@ -352,10 +361,12 @@ pub fn pad_mapper_update_system(
 
     // Fight Mode / Lock-On (R1)
     let r1_raw_pressed = keyboard.pressed(KeyCode::ControlLeft)
+        || script.held(super::padscript::PAD_R1)
         || gamepad_opt
             .map(|g| g.pressed(GamepadButton::RightTrigger))
             .unwrap_or(false);
     let r1_raw_just_pressed = keyboard.just_pressed(KeyCode::ControlLeft)
+        || script.just_pressed(super::padscript::PAD_R1)
         || gamepad_opt
             .map(|g| g.just_pressed(GamepadButton::RightTrigger))
             .unwrap_or(false);
@@ -391,26 +402,32 @@ pub fn pad_mapper_update_system(
 
     // ── Keyboard Movement analogs ──────────────────────────────────────────
 
-    let fwd = if keyboard.pressed(KeyCode::KeyW) {
+    let mut fwd = if keyboard.pressed(KeyCode::KeyW) {
         1.0_f32
     } else {
         0.0
     };
-    let back = if keyboard.pressed(KeyCode::KeyS) {
+    let mut back = if keyboard.pressed(KeyCode::KeyS) {
         1.0_f32
     } else {
         0.0
     };
-    let left = if keyboard.pressed(KeyCode::KeyA) {
+    let mut left = if keyboard.pressed(KeyCode::KeyA) {
         1.0_f32
     } else {
         0.0
     };
-    let right = if keyboard.pressed(KeyCode::KeyD) {
+    let mut right = if keyboard.pressed(KeyCode::KeyD) {
         1.0_f32
     } else {
         0.0
     };
+    if script.enabled() {
+        fwd = (-script.ly).max(0.0);
+        back = script.ly.max(0.0);
+        left = (-script.lx).max(0.0);
+        right = script.lx.max(0.0);
+    }
 
     frame.set_analog("AnalogCharacterForward", fwd);
     frame.set_analog("AnalogCharacterBackward", back);
@@ -817,6 +834,7 @@ pub fn player_movement_system(
     time: Res<Time>,
     _start_action_writer: MessageWriter<crate::animator::StartActionMessage>,
     mut jump_writer: MessageWriter<crate::animator::JumpImpulseMessage>,
+    mut inertia: Local<Vec2>,
 ) {
     let camera_tf_opt = camera_query.iter().next();
     let dt = time.delta_secs();
@@ -877,15 +895,32 @@ pub fn player_movement_system(
             });
         }
 
+        // Mover inertia + speeds from the actor's <Mover> (ThrottleAccel/Decel,
+        // SideStepAccel/Decel per second; mvrMoverComponent::ApplyInertia).
+        let mover = steering_opt.as_deref().cloned().unwrap_or_default();
+        let (max_f, max_r, max_s) = (mover.max_forward_speed, mover.max_reverse_speed, mover.max_sidestep_speed);
+        let (t_acc, t_dec) = (mover.throttle_accel * dt, mover.throttle_decel * dt);
+        let (s_acc, s_dec) = (mover.sidestep_accel * dt, mover.sidestep_decel * dt);
+        // Fight mode / lock-on (R1) strafes and back-pedals with the heading
+        // held, like blocking (rb bhPad::UpdateFightMode: throttle =
+        // character-relative forward, sideStep = character-relative x, yaw 0).
+        let strafe_mode = input.blocking || input.targeting_modifier;
+
         if input.movement.length_squared() < 0.001 {
-            velocity.x = 0.0;
-            velocity.z = 0.0;
+            // Decay through the mover's inertia instead of stopping dead.
+            inertia.x = crate::mover::steering::tend_to_control(0.0, inertia.x, t_dec, t_acc);
+            inertia.y = crate::mover::steering::tend_to_control(0.0, inertia.y, s_dec, s_acc);
+            let front = fighter.facing;
+            let left = Vec3::new(front.z, 0.0, -front.x);
+            let v = front * inertia.x * if inertia.x >= 0.0 { max_f } else { max_r } + left * inertia.y * max_s;
+            velocity.x = v.x;
+            velocity.z = v.z;
             continue;
         }
 
         let mut travel = Vec3::ZERO;
 
-        if input.blocking {
+        if strafe_mode {
             // The 3D model inherently faces local +Z (which is transform.back())
             let visual_front = transform.back().as_vec3();
             let visual_right = -transform.right().as_vec3(); // +X is left relative to +Z front, so right is -X
@@ -955,11 +990,36 @@ pub fn player_movement_system(
                 .normalize_or_zero();
         }
 
-        let desired = travel * MOVE_SPEED;
+        // ConvertHTSToTranslation: the mover moves along the CHARACTER's
+        // heading (throttle) and its left (side-step), not along the raw
+        // stick.  Normal mode: throttle = stick magnitude, side-step 0, so
+        // the body runs where it faces and carves through turns; moving
+        // straight along the stick while the facing lagged put a sideways
+        // component on the body-relative velocity and dragged the strafe
+        // legs into every turn.  Strafe mode: forward/back = throttle,
+        // left/right = side-step, heading held.
+        let front = fighter.facing;
+        let left = Vec3::new(front.z, 0.0, -front.x);
+        let (ctrl_t, ctrl_s) = if strafe_mode {
+            (travel.dot(front), travel.dot(left))
+        } else {
+            (input.movement.length().min(1.0), 0.0)
+        };
+        inertia.x = crate::mover::steering::tend_to_control(ctrl_t, inertia.x, t_dec, t_acc);
+        inertia.y = crate::mover::steering::tend_to_control(ctrl_s, inertia.y, s_dec, s_acc);
+        let (mut t, mut sstep) = (inertia.x, inertia.y);
+        let mag2 = t * t + sstep * sstep;
+        if mag2 > 1.0 {
+            let inv = mag2.sqrt().recip();
+            t *= inv;
+            sstep *= inv;
+        }
+        let desired = front * t * if t >= 0.0 { max_f } else { max_r } + left * sstep * max_s;
         velocity.x = desired.x;
         velocity.z = desired.z;
     }
 }
+
 
 pub fn player_weapon_toggle_system(
     pad_mapper: Res<PadMapper>,

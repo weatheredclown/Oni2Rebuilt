@@ -459,6 +459,7 @@ pub fn creature_movement_anim_system(
         Option<&crate::animator::components::ActionPlayer>,
         Option<&crate::oni2_loader::components::ConveyorPush>,
         Option<&mut LocoGaitState>,
+        Option<&crate::mover::steering::MoverData>,
     )>,
 ) {
     let dt = time.delta_secs();
@@ -478,6 +479,7 @@ pub fn creature_movement_anim_system(
         ap_opt,
         conveyor_push_opt,
         mut state_opt,
+        mover_opt,
     ) in &mut creatures
     {
         // Block locomotion while an FSM-driven animation (attack, etc.) is playing.
@@ -534,6 +536,38 @@ pub fn creature_movement_anim_system(
         if let Some(loco) = loco_opt {
             let mut throttle_fwd = -forward_speed / MAX_RUN_SPEED;
             let mut throttle_right = -right_speed / MAX_RUN_SPEED;
+
+            // crGaitBlender inputs, as the rb mover produces them
+            // (crmover/packet.cpp ConvertHTSToTranslation / UpdateSlewAnimation):
+            // throttle t and side-step s are the body-relative velocity over
+            // the mover's MaxForward/MaxReverse/MaxSideStep speed; if t²+s²>1
+            // they're normalised; the main gait value is t × GaitBlendFactor
+            // (1.75) clamped to ±1 (signed: backward is negative), the strafe
+            // sub-blender value is s (+left).  The old code fed |throttle| of
+            // whichever axis dominated, so backward showed the forward run
+            // and every right strafe the left strafe.
+            let (max_f, max_r, max_s) = mover_opt
+                .map(|m| (m.max_forward_speed, m.max_reverse_speed, m.max_sidestep_speed))
+                .unwrap_or((MAX_RUN_SPEED, MAX_RUN_SPEED, MAX_RUN_SPEED));
+            let fwd_speed = -forward_speed;
+            let left_speed = -right_speed;
+            let mut t = fwd_speed / if fwd_speed >= 0.0 { max_f.max(0.01) } else { max_r.max(0.01) };
+            let mut s = left_speed / max_s.max(0.01);
+            let mag2 = t * t + s * s;
+            if mag2 > 1.0 {
+                let inv = mag2.sqrt().recip();
+                t *= inv;
+                s *= inv;
+            }
+            if t.abs() < 0.02 {
+                t = 0.0;
+            }
+            if s.abs() < 0.02 {
+                s = 0.0;
+            }
+            let gait_blend_factor = mover_opt.map(|m| m.gait_blend_factor).unwrap_or(1.75);
+            let gait_value = (t * gait_blend_factor).clamp(-1.0, 1.0);
+            let gait_sub_value = s;
 
             // Snap small movements to 0
             if throttle_fwd.abs() < 0.05 {
@@ -661,7 +695,8 @@ pub fn creature_movement_anim_system(
 
             if let Some(gait) = gait_to_play {
                 anim_state.gait_blend_active = true;
-                anim_state.gait_blend_value = throttle.abs();
+                anim_state.gait_blend_value = gait_value;
+                anim_state.gait_sub_value = gait_sub_value;
 
                 if Some(gait.anim) != anim_state.current_anim_id {
                     let prev_num_frames = anim_state.anim.frames.len().max(1) as f32;

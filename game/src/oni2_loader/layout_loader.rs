@@ -48,6 +48,11 @@ pub struct LayoutPlayerInfo {
     /// stripped.  None when the XML did not specify one — callers fall back
     /// to `"player"`.
     pub pad_fsm: Option<String>,
+    /// The actor's resolved `<Mover>` (template chain + components.xml):
+    /// speeds, turn rate, inertia.  The player spawn path used to fall back
+    /// to MoverData::default (7.5 m/s, 23.3°/frame) instead of Konoko's
+    /// template values (5 / 4 / 4 m/s, 11.1°/frame, ThrottleAccel 3.25).
+    pub mover: Option<crate::mover::steering::MoverData>,
 }
 
 /// Who initiated a chunked layout load — determines cleanup scope and
@@ -375,6 +380,7 @@ pub fn spawn_queued_layout_actor(
                     max_hitpoints: actor.max_hitpoints,
                     faction: actor.faction.clone(),
                     pad_fsm: actor.pad_fsm.clone(),
+                    mover: Some(actor.mover.clone()),
                 })
             } else {
                 None
@@ -389,6 +395,7 @@ pub fn spawn_queued_layout_actor(
                     max_hitpoints: actor.max_hitpoints,
                     faction: actor.faction.clone(),
                     pad_fsm: actor.pad_fsm.clone(),
+                    mover: Some(actor.mover.clone()),
                 })
             } else {
                 None
@@ -796,6 +803,7 @@ pub fn load_layout(
                         max_hitpoints: actor.max_hitpoints,
                         faction: actor.faction.clone(),
                         pad_fsm: actor.pad_fsm.clone(),
+                        mover: Some(actor.mover.clone()),
                     });
                 }
                 if !actor.is_player && actor.entity_type.eq_ignore_ascii_case("kno") && kno_info.is_none() {
@@ -808,6 +816,7 @@ pub fn load_layout(
                         max_hitpoints: actor.max_hitpoints,
                         faction: actor.faction.clone(),
                         pad_fsm: actor.pad_fsm.clone(),
+                        mover: Some(actor.mover.clone()),
                     });
                 }
             } else {

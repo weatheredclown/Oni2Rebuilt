@@ -16,6 +16,7 @@ pub mod curve;
 pub mod drawable;
 pub mod environment;
 pub mod formation;
+pub mod gait_blender;
 pub mod headik;
 pub mod layout_loader;
 pub mod light_glow;

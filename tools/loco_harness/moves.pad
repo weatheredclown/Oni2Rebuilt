@@ -1,0 +1,24 @@
+# Locomotion harness pad script.  start dur lx ly [buttons_hex]
+# AGE stick convention: +lx = right, +ly = down/back (camera-relative).
+# R1 (0x0008) = PADCMD_WEAPON_FIGHT_MODE / LOCKON: strafe + back-pedal.
+#
+# --- normal mode: the player turns to face the stick ---
+2.0  2.0   0.0 -1.0          # run forward
+4.0  1.5   1.0  0.0          # stick right: turn + run right
+5.5  1.5   0.0  1.0          # stick back: turn around + run toward camera
+7.0  1.0   0.0 -1.0          # snap back to forward (180 reversal)
+8.0  1.0   0.0  0.0          # stop
+# --- fight mode (R1 held): strafe / back-pedal relative to facing ---
+9.0  1.0   0.0  0.0  0008    # enter fight mode standing
+10.0 1.5   0.0 -1.0  0008    # forward
+11.5 1.5   1.0  0.0  0008    # strafe right
+13.0 1.5   0.0  1.0  0008    # back-pedal
+14.5 1.5  -1.0  0.0  0008    # strafe left
+16.0 1.0   0.0 -1.0  0008    # forward
+17.0 1.0   0.0  1.0  0008    # straight to back-pedal (fwd->back flip)
+18.0 1.0   1.0  0.0  0008    # straight to strafe right
+19.0 1.0  -1.0  0.0  0008    # right->left flip
+20.0 1.0   0.7 -0.7  0008    # diagonal forward-right
+21.0 1.0  -0.7  0.7  0008    # diagonal back-left
+22.0 1.0   0.0  0.0  0008    # stop in fight mode
+23.0 1.0   0.0  0.0          # release

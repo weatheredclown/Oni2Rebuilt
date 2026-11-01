@@ -443,6 +443,7 @@ fn setup_scene(
             max_hitpoints: r.0.max_hitpoints,
             faction: r.0.faction.clone(),
             pad_fsm: r.0.pad_fsm.clone(),
+            mover: r.0.mover.clone(),
         });
         // Clean up the transient state used by the chunked loader so
         // the next layout load starts fresh.
@@ -503,6 +504,9 @@ fn setup_scene(
             crate::fightai::position::FightResources::default(),
             crate::fightai::position::FightSlotState::default(),
         ));
+        if let Some(mover) = pi.mover.clone() {
+            commands.entity(pi.entity).insert(mover);
+        }
         pi.entity
     } else {
         spawn_fallback_player(

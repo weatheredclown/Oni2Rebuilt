@@ -46,6 +46,15 @@ pub struct MoverData {
     /// `InertiaEnable` — master enable for the accel/decel filter.  When false,
     /// turning is still clamped to `max_turn_rate` but with no ramp.
     pub inertia_enable: bool,
+    /// `ThrottleAccel` / `ThrottleDecel` / `SideStepAccel` / `SideStepDecel`
+    /// — per-second inertia on the throttle and side-step controls
+    /// (`mvrMoverComponent::ApplyInertia`).
+    pub throttle_accel: f32,
+    pub throttle_decel: f32,
+    pub sidestep_accel: f32,
+    pub sidestep_decel: f32,
+    /// `GaitBlendFactor` — throttle × this is the gait blender value.
+    pub gait_blend_factor: f32,
 
     // --- Collision "hotdog" (capsule) ---
     /// `CollisionHotdogRadius` (m) — the character capsule radius.
@@ -72,6 +81,11 @@ impl Default for MoverData {
             yaw_accel: 3.0,
             yaw_decel: 5.0,
             inertia_enable: true,
+            throttle_accel: 9.0,
+            throttle_decel: 12.0,
+            sidestep_accel: 9.0,
+            sidestep_decel: 12.0,
+            gait_blend_factor: 1.75,
             hotdog_radius: 0.25,
             hotdog_length: 1.25,
             current_yaw: 0.0,
@@ -114,6 +128,11 @@ impl MoverData {
             inertia_enable: extract_xml_attr(block, "InertiaEnable")
                 .map(|v| parse_xml_bool(&v))
                 .unwrap_or(fb.inertia_enable),
+            throttle_accel: f("ThrottleAccel", fb.throttle_accel),
+            throttle_decel: f("ThrottleDecel", fb.throttle_decel),
+            sidestep_accel: f("SideStepAccel", fb.sidestep_accel),
+            sidestep_decel: f("SideStepDecel", fb.sidestep_decel),
+            gait_blend_factor: f("GaitBlendFactor", fb.gait_blend_factor),
             hotdog_radius: f("CollisionHotdogRadius", fb.hotdog_radius),
             hotdog_length: f("CollisionHotdogLength", fb.hotdog_length),
             current_yaw: 0.0,

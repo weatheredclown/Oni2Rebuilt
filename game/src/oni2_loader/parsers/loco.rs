@@ -23,6 +23,25 @@ pub struct LocoBlendGait {
     pub ideal_throttle: f32,
     pub independent_phase: bool,
     pub anim: AnimId,
+    /// `ideal_throttle` was given (crLocomotionData::Load: otherwise the
+    /// ideal is the range midpoint).
+    pub has_ideal: bool,
+    pub play_from_start: bool,
+    pub mirror: bool,
+    /// Seconds for the scale to ramp 0<->1 (0 = linear-in-value scale).
+    /// `ideal_throttle` implies 0.25 / blend_lo; `blend_time` overrides.
+    pub trans_blend_time: f32,
+    pub trans_blend_lo: bool,
+}
+
+impl LocoBlendGait {
+    pub fn ideal(&self) -> f32 {
+        if self.has_ideal {
+            self.ideal_throttle
+        } else {
+            (self.min_throttle + self.max_throttle) * 0.5
+        }
+    }
 }
 
 #[derive(Clone, Default, Debug)]
@@ -123,8 +142,17 @@ pub fn parse_loco_content(content: &str) -> LocomotionController {
             match key {
                 "min_throttle" => gait.min_throttle = val.parse().unwrap_or(0.0),
                 "max_throttle" => gait.max_throttle = val.parse().unwrap_or(0.0),
-                "ideal_throttle" => gait.ideal_throttle = val.parse().unwrap_or(0.0),
+                "ideal_throttle" => {
+                    gait.ideal_throttle = val.parse().unwrap_or(0.0);
+                    gait.has_ideal = true;
+                    gait.trans_blend_time = 0.25;
+                    gait.trans_blend_lo = true;
+                }
                 "independant_phase" => gait.independent_phase = val == "1",
+                "play_from_start" => gait.play_from_start = val != "0",
+                "mirror" => gait.mirror = val != "0",
+                "blend_time" => gait.trans_blend_time = val.parse().unwrap_or(0.0),
+                "blend_lo" => gait.trans_blend_lo = val != "0",
                 _ => {}
             }
         } else if current_transition.is_some() {

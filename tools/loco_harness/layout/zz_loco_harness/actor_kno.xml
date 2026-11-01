@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- edited by AUTOMATED_UNIT_0 -->
+<!DOCTYPE actor SYSTEM "actor.dtd">
+<actor name="actor_kno" base="template_konoko">
+	<contents>
+		<Creature>
+			<attributes>
+				<Position value="0.0332289006 0.2289489442 0.0332289006"/>
+			</attributes>
+		</Creature>
+	</contents>
+</actor>

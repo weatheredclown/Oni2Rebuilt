@@ -1263,7 +1263,12 @@ pub fn fight_stance_entry_system(
             || anim_opt.is_some_and(|a| a.anim.attack_data.is_some() && fs.is_attacking(a));
         let slow = vel_opt.is_none_or(|v| Vec2::new(v.x, v.z).length() < SLOW_SPEED);
         let auto_close = something_close && slow && !ap.check_flags(ap_flags::JUMPING);
-        let triggered = attack_input || pad_fight_mode || started_attack_or_block || auto_close;
+        // Holding the fight-mode / lock-on button (R1) does NOT enter stance
+        // in rb — the harness shows IsInFightStance()==0 throughout an R1
+        // strafe with nobody near; that button only switches the pad to
+        // strafe/back-pedal movement.
+        let _ = pad_fight_mode;
+        let triggered = attack_input || started_attack_or_block || auto_close;
         if !triggered {
             continue;
         }

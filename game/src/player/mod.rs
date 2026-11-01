@@ -8,6 +8,7 @@
  */
 pub mod bundles;
 pub mod components;
+pub mod padscript;
 pub mod systems;
 
 pub use bundles::PlayerIdentityBundle;
@@ -23,9 +24,12 @@ pub struct PlayerPlugin;
 impl Plugin for PlayerPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<components::MenuTransitionInputCushion>()
+            .insert_resource(padscript::PadScript::load_from_args())
             .add_systems(
                 Update,
                 (
+                    // 0. `--padscript` replay (locomotion harness)
+                    padscript::pad_script_tick_system,
                     // 1. Raw hardware → InputState (movement physics path)
                     systems::keyboard_input_system,
                     systems::gamepad_input_system,

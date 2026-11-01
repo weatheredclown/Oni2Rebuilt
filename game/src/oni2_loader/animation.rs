@@ -299,6 +299,9 @@ pub struct Oni2AnimState {
     pub gait_blend_active: bool,
     pub gait_blend_phase: f32,
     pub gait_blend_value: f32,
+    /// Strafe sub-blender value (side-step, +left) — crGaitBlender
+    /// `SetSubValue(0, s)`.
+    pub gait_sub_value: f32,
 
     // --- Captured root motion ---------------------------------------------
     //
@@ -352,6 +355,7 @@ impl Default for Oni2AnimState {
             gait_blend_active: false,
             gait_blend_phase: 0.0,
             gait_blend_value: 0.0,
+            gait_sub_value: 0.0,
             root_offset_this_frame: Vec3::ZERO,
             root_offset_prev_frame: Vec3::ZERO,
         }
@@ -1478,7 +1482,10 @@ pub fn update_oni2_animation(
         // See `Oni2AnimState` doc for the field contract.  The C++
         // equivalent was `ComputeFrameDeltas()` at load time; we compute
         // lazily at playback instead.
-        let strip_root = match anim_state.anim.gait_normalize {
+        // Gait-blended locomotion: rb's mover moves the character and the
+        // gait deltas are never applied (crGaitBlender DistanceThisFrame is
+        // unused), so always strip the root.
+        let strip_root = anim_state.gait_blend_active || match anim_state.anim.gait_normalize {
             Some(mode) => mode.should_strip_root(),
             // One-shot attack swings bake a forward lunge into the root
             // bone's XZ channels.  Strip it like a looping locomotion gait
@@ -1530,7 +1537,11 @@ pub fn update_oni2_animation(
         // Apply root motion displacement directly to the actor's Transform.
         // This ensures animations with baked-in translation (e.g. knockdown
         // throwbacks, lunges) physically move the character through the world.
-        let delta = anim_state.root_motion_delta();
+        let delta = if anim_state.gait_blend_active {
+            Vec3::ZERO
+        } else {
+            anim_state.root_motion_delta()
+        };
         if delta != Vec3::ZERO {
             let bevy_delta = space::to_bevy_space_pos(delta);
             if let Ok((mut tf, _, _)) = transform_query.get_mut(entity) {
@@ -1656,7 +1667,10 @@ pub fn refresh_anim_joints_post_fsm_system(
         anim_state.last_rendered_time = anim_state.current_time;
 
         let frame = &anim_state.current_frame;
-        let strip_root = match anim_state.anim.gait_normalize {
+        // Gait-blended locomotion: rb's mover moves the character and the
+        // gait deltas are never applied (crGaitBlender DistanceThisFrame is
+        // unused), so always strip the root.
+        let strip_root = anim_state.gait_blend_active || match anim_state.anim.gait_normalize {
             Some(mode) => mode.should_strip_root(),
             // One-shot attack swings bake a forward lunge into the root
             // bone's XZ channels.  Strip it like a looping locomotion gait
@@ -1764,187 +1778,134 @@ pub fn sample_animation_pose(
     result
 }
 
+static GAIT_LOG: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+
+/// `--gaitlog`: one line per frame describing the player's locomotion blend,
+/// in the same shape as rb.exe's `-gaitlog` (tools/loco_harness compares them).
+fn log_player_gait(
+    script: &Option<Res<crate::player::padscript::PadScript>>,
+    lib: &Oni2AnimLibrary,
+    st: &Oni2AnimState,
+    gtf: Option<&GlobalTransform>,
+    ap: Option<&crate::animator::components::ActionPlayer>,
+    blend: Option<String>,
+) {
+    let (t, lx, ly) = script.as_ref().map(|s| (s.now, s.lx, s.ly)).unwrap_or((0.0, 0.0, 0.0));
+    let (yaw, px, pz) = gtf
+        .map(|g| {
+            // Oni yaw convention (rb DoDirection): atan2(-fwd.x, -fwd.z) of
+            // the model's front; models face local +Z.
+            let f = g.rotation() * Vec3::Z;
+            let p = g.translation();
+            ((-f.x).atan2(-f.z).to_degrees(), p.x, p.z)
+        })
+        .unwrap_or((0.0, 0.0, 0.0));
+    let fs = ap.is_some_and(|a| a.is_in_fight_stance()) as i32;
+    let body = blend.unwrap_or_else(|| {
+        let cur = st
+            .current_anim_id
+            .as_ref()
+            .map(|i| lib.debug_names.get(i).cloned().unwrap_or_default())
+            .unwrap_or_default();
+        format!("noblend cur={}", cur)
+    });
+    info!(
+        "[gait] t={:.3} stick=({:.2},{:.2}) yaw={:.1} pos=({:.2},{:.2}) fs={} {}",
+        t, lx, ly, yaw, px, pz, fs, body
+    );
+}
+
 /// Driver system. Runs before `update_oni2_animation` in Update.
 /// Samples and blends locomotion animations, storing the result in `anim_state.current_frame`.
 pub fn oni2_gait_blend_system(
+    mut commands: Commands,
     time: Res<Time>,
+    script: Option<Res<crate::player::padscript::PadScript>>,
     mut query: Query<(
         Entity,
         &Oni2AnimLibrary,
         &mut Oni2AnimState,
         Option<&crate::oni2_loader::parsers::loco::LocomotionController>,
-        Option<&crate::oni2_loader::spawn::LocoGaitState>,
+        Option<&mut crate::oni2_loader::gait_blender::GaitBlendRuntime>,
+        Option<&crate::player::components::Player>,
+        Option<&GlobalTransform>,
+        Option<&crate::animator::components::ActionPlayer>,
     )>,
 ) {
     let dt = time.delta_secs();
     if dt <= 0.0001 {
         return;
     }
+    let gait_log = *GAIT_LOG.get_or_init(|| std::env::args().any(|a| a == "--gaitlog"));
 
-    for (entity, anim_library, mut anim_state, loco_controller_opt, loco_gait_state_opt) in &mut query {
-        if !anim_state.gait_blend_active {
-            continue;
-        }
-
+    for (entity, anim_library, mut anim_state, loco_controller_opt, rt_opt, player_opt, gtf_opt, ap_opt) in &mut query {
         let Some(loco) = loco_controller_opt else {
             continue;
         };
-
-        // Determine if we should use forward_gaits or strafe_gaits.
-        let is_forward = loco_gait_state_opt
-            .map(|s| s.is_forward)
-            .unwrap_or(true);
-
-        let gaits = if is_forward {
-            &loco.forward_gaits
-        } else {
-            &loco.strafe_gaits
-        };
-
-        if gaits.is_empty() {
-            anim_state.gait_blend_active = false;
+        if !anim_state.gait_blend_active || loco.forward_gaits.is_empty() {
+            if gait_log && player_opt.is_some() {
+                log_player_gait(&script, anim_library, &anim_state, gtf_opt, ap_opt, None);
+            }
             continue;
         }
+        let Some(mut rt) = rt_opt else {
+            commands
+                .entity(entity)
+                .insert(crate::oni2_loader::gait_blender::GaitBlendRuntime::default());
+            continue;
+        };
 
-        let value = anim_state.gait_blend_value;
-
-        // 1. Calculate scales (weights) for each gait in the list.
-        let mut scales = vec![0.0; gaits.len()];
-        for (idx, g) in gaits.iter().enumerate() {
-            if g.min_throttle == g.max_throttle {
-                scales[idx] = 1.0;
+        // Channel-0 stack override: a drawn weapon holds the weapon-ready
+        // idle, fight stance the fight idle (legacy ANIMSTACK_WEAPON /
+        // ANIMSTACK_FIGHTSTANCE on the stand channel).
+        let stand_override = ap_opt.and_then(|ap| {
+            if ap.weapon_state == crate::animator::components::WeaponState::Drawn
+                && let Some(stand) = ap.weapon_stand_anim
+            {
+                Some(stand)
+            } else if ap.is_in_fight_stance() {
+                Some(AnimId::new("ANIMFIGHTSTANCE_FIGHT"))
             } else {
-                scales[idx] = ((value - g.min_throttle) / (g.max_throttle - g.min_throttle)).clamp(0.0, 1.0);
+                None
             }
-        }
-
-        // 2. Find base gait index (highest index where scale == 1.0)
-        let mut base_idx = 0;
-        for idx in (0..gaits.len()).rev() {
-            if scales[idx] == 1.0 {
-                base_idx = idx;
-                break;
-            }
-        }
-
-        // 3. Find the driving gait index for synchronized phase updates.
-        let mut driving_idx = None;
-        for idx in (0..gaits.len()).rev() {
-            if scales[idx] > 0.0 && !gaits[idx].independent_phase {
-                driving_idx = Some(idx);
-                break;
-            }
-        }
-        let driving_idx = driving_idx.unwrap_or_else(|| {
-            gaits
-                .iter()
-                .position(|g| !g.independent_phase)
-                .unwrap_or(0)
         });
 
-        let driving_gait = &gaits[driving_idx];
-        let driving_anim = match anim_library.anims.get(&driving_gait.anim) {
-            Some(a) => a,
-            None => {
-                continue;
-            }
-        };
-
-        // 4. Calculate blended rate (animRate).
-        // Since all animations for a creature run at the creature's base FPS (anim_state.fps),
-        // the base playback rate is uniform.
-        let anim_rate = anim_state.fps;
-
-        // 5. Advance the synchronized phase.
-        let driving_frames = driving_anim.num_frames as f32;
-        let phase_inc = if driving_frames > 1.0 {
-            anim_rate / (driving_frames - 1.0)
-        } else {
-            0.0
-        };
-
-        // Update phase
-        anim_state.gait_blend_phase = (anim_state.gait_blend_phase
-            + phase_inc * dt * anim_state.speed_multiplier)
-            .rem_euclid(1.0);
-
-        // 6. Evaluate all active animations and sequentially blend their poses.
-        let expected_len = anim_state.current_frame.len();
-        if expected_len == 0 {
-            let num_channels = driving_anim.num_channels as usize;
-            if num_channels > 0 {
-                anim_state.current_frame = vec![0.0; num_channels];
-            } else {
-                continue;
-            }
+        let mut frame_len = anim_state.current_frame.len();
+        if frame_len == 0 {
+            frame_len = anim_library
+                .anims
+                .get(&loco.forward_gaits[0].anim)
+                .map(|a| a.num_channels as usize)
+                .unwrap_or(0);
         }
-        let expected_len = anim_state.current_frame.len();
-
-        // Base pose (evaluated at base_idx using synchronized or independent phase)
-        let base_gait = &gaits[base_idx];
-        let base_anim = match anim_library.anims.get(&base_gait.anim) {
-            Some(a) => a,
-            None => continue,
-        };
-
-        let base_time = if base_gait.independent_phase {
-            0.0
-        } else {
-            anim_state.gait_blend_phase * (base_anim.num_frames as f32 - 1.0).max(0.0)
-        };
-
-        let mut blended_pose = sample_animation_pose(base_anim, base_time, true, &anim_state.skeleton);
-        blended_pose.resize(expected_len, 0.0);
-
-        // Sequentially blend subsequent gaits k > base_idx
-        for k in (base_idx + 1)..gaits.len() {
-            let scale = scales[k];
-            if scale <= 0.0001 {
-                continue;
-            }
-
-            let gait = &gaits[k];
-            let anim = match anim_library.anims.get(&gait.anim) {
-                Some(a) => a,
-                None => continue,
-            };
-
-            let gait_time = if gait.independent_phase {
-                0.0
-            } else {
-                anim_state.gait_blend_phase * (anim.num_frames as f32 - 1.0).max(0.0)
-            };
-
-            let mut next_pose = sample_animation_pose(anim, gait_time, true, &anim_state.skeleton);
-            next_pose.resize(expected_len, 0.0);
-
-            // Blend next_pose into blended_pose with weight scale
-            let rot_flags = &anim_state.skeleton.channel_is_rot;
-            for i in 0..expected_len {
-                let is_rot = if rot_flags.len() >= expected_len {
-                    rot_flags[i]
-                } else {
-                    if expected_len == 1 {
-                        false
-                    } else {
-                        !(3..6).contains(&i)
-                    }
-                };
-
-                if is_rot {
-                    let mut diff = (next_pose[i] - blended_pose[i]).rem_euclid(std::f32::consts::TAU);
-                    if diff > std::f32::consts::PI {
-                        diff -= std::f32::consts::TAU;
-                    }
-                    blended_pose[i] = blended_pose[i] + diff * scale;
-                } else {
-                    blended_pose[i] = blended_pose[i] + (next_pose[i] - blended_pose[i]) * scale;
-                }
-            }
+        let (value, sub_value, fps) = (anim_state.gait_blend_value, anim_state.gait_sub_value, anim_state.fps);
+        let pose = crate::oni2_loader::gait_blender::blend(
+            &mut rt,
+            &loco.forward_gaits,
+            &loco.strafe_gaits,
+            anim_library,
+            &anim_state.skeleton,
+            value,
+            sub_value,
+            stand_override,
+            fps,
+            dt * anim_state.speed_multiplier,
+            frame_len,
+        );
+        if !pose.is_empty() {
+            anim_state.current_frame = pose;
         }
-
-        // Write to anim_state.current_frame
-        anim_state.current_frame = blended_pose;
+        if gait_log && player_opt.is_some() {
+            let desc = crate::oni2_loader::gait_blender::describe(
+                &rt,
+                &loco.forward_gaits,
+                &loco.strafe_gaits,
+                anim_library,
+                value,
+                sub_value,
+            );
+            log_player_gait(&script, anim_library, &anim_state, gtf_opt, ap_opt, Some(desc));
+        }
     }
 }
 
