@@ -28,7 +28,10 @@ pub struct NavGraph {
 
 #[derive(Clone, PartialEq)]
 struct AStarNode {
+    /// Priority: g + heuristic.
     cost: f32,
+    /// Path cost so far (g) when this entry was pushed.
+    g: f32,
     index: usize,
 }
 
@@ -68,11 +71,19 @@ impl NavGraph {
                 }
             }
 
+            // Edges are stored once in layout.graphs.  C++ makes every edge
+            // two-way unless it is flagged EDGE_DIRECTIONAL (bit 0)
+            // (graphs/subgraph.cpp:435, always called with directed=true);
+            // loading only a→b left about half of all routes unreachable.
+            const EDGE_DIRECTIONAL: u32 = 1;
             for e in g.edges {
                 let u = offset + e.a;
                 let v = offset + e.b;
                 if u < total_points && v < total_points {
                     adj[u].push((v, e.cost));
+                    if e.flags & EDGE_DIRECTIONAL == 0 {
+                        adj[v].push((u, e.cost));
+                    }
                 }
             }
 
@@ -223,10 +234,16 @@ impl NavGraph {
         dists[start_idx] = 0.0;
         pq.push(AStarNode {
             cost: 0.0,
+            g: 0.0,
             index: start_idx,
         });
 
-        while let Some(AStarNode { cost, index }) = pq.pop() {
+        // The queue is ordered by f = g + h, but the stale-entry check and
+        // edge relaxation must use g.  Using f for both (as before) skipped
+        // every node with h > 0 and folded heuristics into g, so only
+        // one-hop routes were ever found and `goto` fell back to a straight
+        // line at the target (NPCs walking into walls).
+        while let Some(AStarNode { g, index, .. }) = pq.pop() {
             if index == target_idx {
                 let mut path = Vec::new();
                 let mut curr = target_idx;
@@ -238,7 +255,7 @@ impl NavGraph {
                 return Some(path);
             }
 
-            if cost > dists[index] {
+            if g > dists[index] {
                 continue;
             }
 
@@ -250,7 +267,7 @@ impl NavGraph {
                     continue;
                 }
 
-                let next_cost = cost + w;
+                let next_cost = g + w;
                 if next_cost < dists[next] {
                     dists[next] = next_cost;
                     parents[next] = index;
@@ -258,6 +275,7 @@ impl NavGraph {
                     let h = self.points[next].distance(self.points[target_idx]);
                     pq.push(AStarNode {
                         cost: next_cost + h,
+                        g: next_cost,
                         index: next,
                     });
                 }
@@ -538,5 +556,57 @@ pub fn ai_velocity_residual_clamp_system(
             vel.z = 0.0; // leave y for gravity
         }
         driven.0 = false;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::oni2_loader::parsers::graph::{GraphEdge, GraphPoint, LayoutGraph};
+
+    fn point(x: f32, z: f32) -> GraphPoint {
+        GraphPoint {
+            position: Vec3::new(x, 0.0, z),
+            flags: 0,
+            name: String::new(),
+        }
+    }
+
+    fn edge(a: usize, b: usize, flags: u32) -> GraphEdge {
+        GraphEdge {
+            a,
+            b,
+            cost: 1.0,
+            flags,
+            subgraph: 0,
+        }
+    }
+
+    /// An L-shaped corridor 0-1-2-3 (edges stored once, a→b, as in
+    /// layout.graphs).  Needs multi-hop A* and, walking it backwards,
+    /// the implied reverse edges.
+    fn corridor(last_edge_flags: u32) -> NavGraph {
+        NavGraph::new(vec![LayoutGraph {
+            name: "test".into(),
+            points: vec![point(0.0, 0.0), point(5.0, 0.0), point(5.0, 5.0), point(10.0, 5.0)],
+            edges: vec![edge(0, 1, 0), edge(1, 2, 0), edge(2, 3, last_edge_flags)],
+        }])
+    }
+
+    #[test]
+    fn a_star_finds_multi_hop_routes() {
+        let g = corridor(0);
+        let path = g.a_star(0, 3).expect("route 0→3 exists");
+        assert_eq!(path.len(), 4, "walks every corridor node: {path:?}");
+    }
+
+    #[test]
+    fn edges_are_two_way_unless_directional() {
+        let g = corridor(0);
+        assert_eq!(g.a_star(3, 0).map(|p| p.len()), Some(4));
+
+        let one_way = corridor(1); // EDGE_DIRECTIONAL on 2→3
+        assert!(one_way.a_star(2, 3).is_some());
+        assert!(one_way.a_star(3, 0).is_none(), "3→2 is one-way 2→3 only");
     }
 }

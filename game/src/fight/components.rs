@@ -657,13 +657,16 @@ impl Default for FighterType {
     fn default() -> Self {
         Self {
             name: String::new(),
-            leave_fight_stance_delay: 3.0,
+            // ftFighterData: LeaveFightStanceDelay=1.0f, never loaded from
+            // data (fight/fightertype.cpp:46, the parse at :387 is commented out).
+            leave_fight_stance_delay: 1.0,
             super_meter_decay: 10.0,
             grapple_break_time: 5.0,
             successive_level0_reacts: 3,
             face_after_run: true,
             run_before_face: 0.5,
-            only_fight_enemies: true,
+            // components.xml <Fighter> default; templates override per type.
+            only_fight_enemies: false,
             auto_fight_stance: true,
             strike_noise_range: 5.0,
             creature_class: 0,

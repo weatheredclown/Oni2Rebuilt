@@ -197,6 +197,9 @@ pub struct PendingInventory {
 #[derive(Component, Debug, Clone)]
 pub struct ScheduledStopFiring {
     pub end_time: f64,
+    /// `shoot ... bullets N`: release after this many more shots
+    /// (counted from `WeaponFiredMessage`s owned by this entity).
+    pub bullets_left: Option<u32>,
 }
 
 /// Per-entity inventory.  Insert alongside a wielder (player or AI).

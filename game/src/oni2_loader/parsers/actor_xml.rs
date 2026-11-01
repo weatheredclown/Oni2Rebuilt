@@ -91,6 +91,11 @@ pub struct LayoutActor {
     pub animator_type: Option<String>,
     /// FighterType from Fighter component (resolved through templates).
     pub fighter_type: Option<String>,
+    /// Fighter `OnlyFightEnemies` / `AutoFightStance` (components.xml
+    /// defaults 0 / 1; templates such as template_grunt set
+    /// OnlyFightEnemies=1, some layouts AutoFightStance=0).
+    pub fighter_only_fight_enemies: Option<bool>,
+    pub fighter_auto_fight_stance: Option<bool>,
     /// Whether this actor has a Creature component (animated character).
     pub is_creature: bool,
     /// Whether this creature is the player (Player="1" in Creature component).
@@ -503,10 +508,18 @@ pub fn parse_actor_xml(dir: &str, filename: &str, template_dir: &str) -> Option<
 
     // Extract Fighter props
     let mut fighter_type: Option<String> = None;
-    if let Some(block) = fighter_block
-        && let Some(v) = extract_xml_attr(&block, "FighterType")
-    {
-        fighter_type = Some(v);
+    let mut fighter_only_fight_enemies: Option<bool> = None;
+    let mut fighter_auto_fight_stance: Option<bool> = None;
+    if let Some(block) = fighter_block {
+        if let Some(v) = extract_xml_attr(&block, "FighterType") {
+            fighter_type = Some(v);
+        }
+        let as_bool = |v: String| {
+            let v = v.trim();
+            v == "1" || v.eq_ignore_ascii_case("true")
+        };
+        fighter_only_fight_enemies = extract_xml_attr(&block, "OnlyFightEnemies").map(as_bool);
+        fighter_auto_fight_stance = extract_xml_attr(&block, "AutoFightStance").map(as_bool);
     }
 
     // Extract Creature props
@@ -1128,6 +1141,8 @@ pub fn parse_actor_xml(dir: &str, filename: &str, template_dir: &str) -> Option<
         orientation_o2,
         animator_type,
         fighter_type,
+        fighter_only_fight_enemies,
+        fighter_auto_fight_stance,
         is_creature,
         is_player,
         faction,

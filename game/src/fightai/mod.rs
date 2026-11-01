@@ -336,6 +336,7 @@ pub fn attack_runtime_update_system(
         Without<crate::oni2_loader::components::ActorAsleep>,
     >,
     transforms_q: Query<&GlobalTransform>,
+    health_q: Query<&crate::combat::components::Health>,
     mut attack_fsm_cache: ResMut<AttackFsmCache>,
     mut start_events: MessageWriter<crate::fight::events::GrappleStartEvent>,
 ) {
@@ -367,6 +368,7 @@ pub fn attack_runtime_update_system(
         runtime.ctx.anim_num_frames = anim_state.anim.num_frames as i32;
         runtime.ctx.anim_current_time = anim_state.current_time;
         runtime.ctx.anim_looping = anim_state.looping;
+        runtime.ctx.anim_id = anim_state.current_anim_id;
 
         // Distance to current AI target — read by `ActionDistance::update`
         // (and any future range-gated action) to decide when MB/MA-style
@@ -382,6 +384,26 @@ pub fn attack_runtime_update_system(
             });
 
         let target = ai_fighter_opt.and_then(|ai| ai.target);
+        // C++ only updates the attack machine while the fighter is fighting
+        // (aiFighter: A_ATK_ATTACK / A_ATK_IDLE).  Ticking it with no target
+        // ran the table's opening `distance` move before the script's
+        // `fight` had set one, and the move's one-shot follow request was
+        // dropped for lack of a target — the machine then sat in that move
+        // forever.
+        if target.is_none() {
+            continue;
+        }
+        // A dead target ends the fight in C++ (E_HAS_TARGET is "alive",
+        // aifight/statemachine.cpp:55; the fighter drops to M_IDLE and the
+        // attack machine only updates in attack/idle modes), so stop picking
+        // new swings.  Without this Tim kept punching Kno's corpse.
+        if target
+            .and_then(|t| health_q.get(t).ok())
+            .is_some_and(|h| h.current <= 0.0)
+        {
+            runtime.ctx.target = None;
+            continue;
+        }
         let mut target_dist = 0.0;
         let mut target_facing_within_30 = false;
         let mut target_cross_y = 0.0;
@@ -752,11 +774,12 @@ pub fn fight_runtime_update_system(
             }
         }
 
-        runtime.ctx.has_target = ai_target.is_some();
         runtime.ctx.is_reacting = action_player_opt.is_some_and(|ap| ap.is_reacting());
         runtime.ctx.target_killed = ai_target
             .and_then(|t| target_health.get(t).ok())
             .is_some_and(|h| h.current <= 0.0);
+        // C++ E_HAS_TARGET: a valid AND alive target.
+        runtime.ctx.has_target = ai_target.is_some() && !runtime.ctx.target_killed;
 
         // Position/cookie inputs from the coordinator.  We treat
         // `has_position` as "we hold a slot AROUND the current AI
@@ -861,17 +884,22 @@ pub fn fight_runtime_update_system(
         let behavior_state_name: Option<String> = behavior_rt_opt
             .as_deref()
             .map(|rt| rt.sm.data.state_name(rt.sm.current_state).to_string());
-        // attack_finished: proxy = current attack anim has played to end
-        // on a non-looping animation.  AttackRuntime doesn't publish
-        // a completion flag yet (the inner AttackDriver knows, but
-        // doesn't surface it back to the container).  Anim-end is a
-        // close-enough proxy: once an attack animation ends, the FSM
-        // is free to pick a next one.
-        runtime.ctx.attack_finished = anim_opt.is_some_and(|a| {
-            !a.looping
-                && a.anim.num_frames > 1
-                && a.current_time >= (a.anim.num_frames as f32 - 1.0)
-        });
+        // attack_finished: with an attack table, read the attack FSM itself
+        // like C++ (E_ATTACK_FINISHED = !IsAttacking(), statemachine.cpp:826):
+        // finished once the table took its `end N` branch (ActionFinish ->
+        // FLAG_FINISHED), NOT after every swing — the attacker keeps the
+        // cookie across a combo until the table says it's done.  The
+        // anim-end proxy stays only for table-less actors on the
+        // fallback-strike path.
+        runtime.ctx.attack_finished = if let Some(attack_rt) = attack_rt_opt.as_deref() {
+            attack_rt.ctx.atk_finished
+        } else {
+            anim_opt.is_some_and(|a| {
+                !a.looping
+                    && a.anim.num_frames > 1
+                    && a.current_time >= (a.anim.num_frames as f32 - 1.0)
+            })
+        };
 
         // This is the missing piece for round-robin combat among AI groups.
         // It drives E_PREPARE_NEXT_ATTACKER, which signals the FSM to yield
@@ -943,6 +971,7 @@ pub fn fight_runtime_update_system(
                     let had_rt = attack_rt_opt.is_some();
                     if let Some(attack_rt) = attack_rt_opt.as_deref_mut() {
                         attack_rt.ctx.got_cookie = true;
+                        attack_rt.ctx.atk_finished = false;
                     }
                     if let Some(slot) = slot_state_opt.as_deref_mut() {
                         slot.pending_ops.push(position::ResourceOp::GrabCookie);
@@ -979,6 +1008,7 @@ pub fn fight_runtime_update_system(
                             );
                         }
                         attack_rt.ctx.got_cookie = true;
+                        attack_rt.ctx.atk_finished = false;
                     } else {
                         // No attack table → request a fallback basic strike.
                         // `fight_fallback_strike_system` (which carries the

@@ -164,6 +164,12 @@ pub enum BlockingAction {
     },
     Fight,
     Shoot,
+    /// `shoot ... [bullets N] [for S]` — parked until the shooter's
+    /// `ScheduledStopFiring` releases the trigger (N shots fired, or the
+    /// `for` deadline).  Mirrors C++ BehaviorDoneOrTimeout on bhShoot,
+    /// whose IsDone is "NumBullets fired" (behavior/shoot.cpp:159).
+    /// Cleared by `scheduled_stop_firing_system`.
+    ShootUntilStopped,
     Patrol(Value),
     Follow(Value),
     Attack(Value),
@@ -291,6 +297,13 @@ pub enum SysRequest {
     /// Port of `bhMsgSetBehavior(kBehaviorTakeCover)`.
     /// `duration` is parsed but unused by the
     /// runtime today (no timed-cover behavior).
+    /// ScrOni `idle` in an actor context: C++ DoIdle broadcasts bhMsgIdle,
+    /// which ends whatever behavior the actor is running (fight, follow,
+    /// retreat...).  grunt.oni relies on it: "idle 0.1 # necessary to
+    /// abort the fight behavior".
+    StopBehavior {
+        actor: Entity,
+    },
     TakeCover {
         actor: Entity,
         // Parsed but unused by the runtime today (no timed-cover
@@ -416,6 +429,7 @@ pub enum SysRequest {
         target: Entity,
         miss: bool,
         duration: Option<f32>,
+        bullets: Option<i32>,
     },
     /// ScrOni `sound <channel> <verb> [args]` — broadcast to the
     /// script's parent actor in legacy C++ as `audMsgPlaySound`.
@@ -3118,6 +3132,27 @@ pub fn scroni_tick_system(
                         });
                     }
                 }
+                SysRequest::StopBehavior { actor } => {
+                    if let Ok(mut rt) = behavior_runtime_query.get_mut(actor) {
+                        rt.ctx.requested_idle = true;
+                    }
+                    // follow / retreat are steering components, not
+                    // BehaviorRuntime behaviors, so stop them directly.  Only
+                    // a script `follow` — the attack table's `distance` move
+                    // also uses ActorFollower and belongs to the fight AI.
+                    commands.queue(move |world: &mut World| {
+                        let Ok(mut e) = world.get_entity_mut(actor) else {
+                            return;
+                        };
+                        if e.contains::<crate::ai::components::ScriptedFollow>() {
+                            e.remove::<(
+                                crate::ai::components::ActorFollower,
+                                crate::ai::components::ScriptedFollow,
+                            )>();
+                        }
+                        e.remove::<crate::ai::components::ActorRetreating>();
+                    });
+                }
                 SysRequest::TakeCover { actor, duration: _ } => {
                     // Flip the actor's BehaviorRuntime into a TakeCover
                     // request — same handshake the goto/retreat scripts use
@@ -3354,6 +3389,7 @@ pub fn scroni_tick_system(
                     target,
                     miss,
                     duration,
+                    bullets,
                 } => {
                     let aim_target = if miss {
                         crate::weapons::AimTarget::Miss {
@@ -3380,10 +3416,16 @@ pub fn scroni_tick_system(
                             entity: actor,
                             multi_dir: false,
                         });
-                    if let Some(secs) = duration {
+                    let bullets_left = bullets.filter(|&b| b > 0).map(|b| b as u32);
+                    if duration.is_some() || bullets_left.is_some() {
+                        // `bullets` without `for` still needs a backstop
+                        // so a weapon that never fires can't park the
+                        // script forever.
+                        let secs = duration.unwrap_or(30.0);
                         commands.entity(actor).insert(
                             crate::inventory::components::ScheduledStopFiring {
                                 end_time: now + secs as f64,
+                                bullets_left,
                             },
                         );
                     } else {

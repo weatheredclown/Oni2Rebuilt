@@ -747,8 +747,12 @@ pub fn scroni_sys_event_observer(
                 .entity(actor)
                 .insert(crate::ai::components::ActorFollower {
                     target,
-                    within: 3.0,
-                });
+                    // bhFollow closes to 1.3 m (behavior/follow.cpp:127).
+                    // At 3.0 a grunt 3 m away never got inside the
+                    // `distance < 3` switch into FightPriv_Fight.
+                    within: 1.3,
+                })
+                .insert(crate::ai::components::ScriptedFollow);
             info!("VM: AI {:?} ordered to Follow {:?}", actor, target);
         }
         ScrOniSysEvent::SetLightIntensity {

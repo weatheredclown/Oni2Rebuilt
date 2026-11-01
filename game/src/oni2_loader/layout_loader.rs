@@ -1169,6 +1169,10 @@ pub fn spawn_layout_actor(
                                 .clone()
                                 .or_else(|| actor.animator_type.clone())
                                 .unwrap_or_else(|| actor.entity_type.clone()),
+                            only_fight_enemies: actor
+                                .fighter_only_fight_enemies
+                                .unwrap_or(false),
+                            auto_fight_stance: actor.fighter_auto_fight_stance.unwrap_or(true),
                             ..Default::default()
                         },
                         ..Default::default()

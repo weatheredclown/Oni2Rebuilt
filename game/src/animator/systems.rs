@@ -927,10 +927,33 @@ pub fn react_sound_tick_system(
     }
 }
 
-pub fn action_player_tick_system(mut query: Query<(&mut ActionPlayer, &Oni2AnimState)>) {
-    for (mut ap, anim) in &mut query {
+pub fn action_player_tick_system(
+    mut query: Query<(&mut ActionPlayer, &Oni2AnimState, Option<&AnimSchedule>)>,
+) {
+    for (mut ap, anim, sched_opt) in &mut query {
         // 1) Promote the previous sub_state_1 for `sub_state_1_is_fresh()`.
         ap.sub_state_1_last_frame = ap.sub_state_1;
+
+        // 1b) A transition clip started by `play_and_record` (fight stance
+        //     in/out, crouch start/stop, lie) has no AnimSchedule to roll
+        //     SubState1 back, so it stayed TRANSITION forever once the clip
+        //     ended.  C++'s action player drops to IDLE when its AnimList
+        //     drains.  Stuck TRANSITION made `is_transitioning()` true for
+        //     good, and `attack_runtime_update_system` skips transitioning
+        //     fighters, so any NPC that ever entered fight stance never
+        //     swung again.  Zipline reuses TRANSITION for held poses and
+        //     schedules manage their own substates, so leave those alone.
+        //     A looping anim means the (always non-looping) transition clip
+        //     has already been replaced, schedule or not; the end-of-clip
+        //     test defers to a live schedule.
+        if ap.sub_state_1 == sub_state_1::TRANSITION && !ap.check_flags(action_flags::ZIPLINE) {
+            let last = (anim.anim.num_frames as f32 - 1.0).max(0.0);
+            let clip_done = anim.looping
+                || (sched_opt.is_none_or(|s| s.finished) && anim.current_time >= last);
+            if clip_done {
+                ap.record_new_substate_1(sub_state_1::IDLE);
+            }
+        }
 
         // 2) If the animation id just changed, sub_state_1 remains whatever an
         //    earlier system wrote (usually via record_new_substate_1 during

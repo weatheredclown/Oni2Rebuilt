@@ -48,11 +48,21 @@ impl Behavior for FightBehavior {
     }
 
     fn update(&mut self, ctx: &mut BehaviorRunCtx<'_>, dt: f32) -> BehaviorUpdate {
-        // Hold position — approach / distance management will come from
-        // the fight-coordinator port (via cookie-table move options like
-        // `distance 2.0`).
-        ctx.velocity.x = 0.0;
-        ctx.velocity.z = 0.0;
+        // Hold position — except while the attack table runs a `distance`
+        // move: in C++ the fight behavior carries out the table's moves
+        // (aiAtkDistance -> DoMove -> GotoPrimaryPos).  Here the attack
+        // runtime hands that move to an ActorFollower; zeroing velocity
+        // every tick pinned the fighter, so `distance` never completed and
+        // the attack machine never reached a swing.
+        let moving = ctx
+            .attack_runtime
+            .as_deref()
+            .and_then(|rt| rt.ctx.current_action.as_ref())
+            .is_some_and(|a| a.name() == "distance" && !ctx.attack_runtime.as_deref().is_some_and(|rt| rt.ctx.current_finished));
+        if !moving {
+            ctx.velocity.x = 0.0;
+            ctx.velocity.z = 0.0;
+        }
 
         // Face the target so attack hitboxes aim at them.  Oni2 models
         // face +Z locally; look_at points -Z at target, so rotate 180°

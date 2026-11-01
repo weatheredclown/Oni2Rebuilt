@@ -162,8 +162,10 @@ pub enum Stmt {
         speed: Option<Expr>,
         duration: Option<Expr>,
     },
-    /// `fight [expr]`
-    Fight(Option<Expr>),
+    /// `fight [expr] [leader ...] [for <secs>]` — (target, timeout).
+    /// Blocks until the fight behavior is done (C++ BehaviorDone), or
+    /// until the timeout (BehaviorDoneOrTimeout) when `for` is given.
+    Fight(Option<Expr>, Option<Expr>),
     /// `shoot <target> [miss] [bullets|rate <expr>] [for <expr>]`.  Args
     /// arrive as a flat Vec of actor target + string literals ("miss"/
     /// "bullets"/"rate"/"for") interleaved with numeric expressions —

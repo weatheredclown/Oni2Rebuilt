@@ -35,6 +35,30 @@ fn resolve_child_tid(ctx: &OpsCtx, var: Option<&str>) -> Option<u32> {
         .then_some(tid)
 }
 
+/// Pop one stacked script back onto `t` (C++ scrExecutor::PopScript).  The
+/// parent resumes at its saved PC.  Returns false when nothing was stacked.
+fn pop_script(t: &mut ScrOniThread) -> bool {
+    let Some(frame) = t.call_stack.pop() else {
+        return false;
+    };
+    t.script = frame.script;
+    t.variables = frame.variables;
+    t.seq_pc = frame.seq_pc;
+    t.loop_stack = frame.loop_stack;
+    true
+}
+
+/// Pop back to the bottom ("home") script, as C++ does for `home` and
+/// `childhome` (`while (ScriptPtrStack.GetCount() > 1) PopScript()`).  The
+/// home script keeps its PC; already being home is a no-op, NOT a restart.
+fn pop_to_home(t: &mut ScrOniThread) -> bool {
+    let mut popped = false;
+    while pop_script(t) {
+        popped = true;
+    }
+    popped
+}
+
 pub fn exec(ctx: &mut OpsCtx, stmt: &Stmt) -> bool {
     match stmt {
         Stmt::Set { var, value } => {
@@ -257,24 +281,25 @@ pub fn exec(ctx: &mut OpsCtx, stmt: &Stmt) -> bool {
             true
         }
         Stmt::Done => {
-            let frame = ctx.thread_mut().call_stack.pop();
-            if let Some(frame) = frame {
-                let t = ctx.thread_mut();
-                t.script = frame.script;
-                t.variables = frame.variables;
-                t.seq_pc = frame.seq_pc;
-                t.loop_stack = frame.loop_stack;
+            // Whatever the finished script was waiting on (shoot/fight/
+            // follow/idle) belongs to it, not to the script we return to.
+            // Leaving it set parked the parent behind e.g. the 10000 s
+            // warning-shot wait.
+            let t = ctx.thread_mut();
+            t.blocking = None;
+            if pop_script(t) {
                 t.state = ExecState::AbortSequence;
             } else {
-                ctx.thread_mut().state = ExecState::Done;
+                t.state = ExecState::Done;
             }
             true
         }
         Stmt::Home => {
             let t = ctx.thread_mut();
-            t.seq_pc = 0;
-            t.loop_stack.clear();
-            t.state = ExecState::AbortSequence;
+            t.blocking = None;
+            if pop_to_home(t) {
+                t.state = ExecState::AbortSequence;
+            }
             true
         }
         Stmt::Log(exprs) => {
@@ -290,6 +315,11 @@ pub fn exec(ctx: &mut OpsCtx, stmt: &Stmt) -> bool {
         }
         Stmt::Idle(expr) => {
             let secs = ctx.eval_float(expr);
+            if ctx.exec.owner != Entity::PLACEHOLDER {
+                ctx.sys_request(SysRequest::StopBehavior {
+                    actor: ctx.exec.owner,
+                });
+            }
             ctx.thread_mut().blocking = Some(BlockingAction::Idle {
                 end_time: ctx.now + secs as f64,
             });
@@ -586,6 +616,7 @@ pub fn exec(ctx: &mut OpsCtx, stmt: &Stmt) -> bool {
                 init_variables(&mut t.variables, &t.script.variables);
                 t.seq_pc = 0;
                 t.loop_stack.clear();
+                t.blocking = None;
                 t.state = ExecState::AbortSequence;
             } else {
                 warn!(
@@ -604,6 +635,8 @@ pub fn exec(ctx: &mut OpsCtx, stmt: &Stmt) -> bool {
                 init_variables(&mut t.variables, &t.script.variables);
                 t.seq_pc = 0;
                 t.loop_stack.clear();
+                // The old script's wait dies with it (C++ PopScript).
+                t.blocking = None;
 
                 if ctx.tid == 0 {
                     ctx.exec.message_queue.clear();
@@ -636,6 +669,7 @@ pub fn exec(ctx: &mut OpsCtx, stmt: &Stmt) -> bool {
                     init_variables(&mut t.variables, &t.script.variables);
                     t.seq_pc = 0;
                     t.loop_stack.clear();
+                    t.blocking = None;
                     t.state = ExecState::AbortSequence;
                 } else {
                     warn!(
@@ -716,33 +750,40 @@ pub fn exec(ctx: &mut OpsCtx, stmt: &Stmt) -> bool {
             // stored in `<var>` (set by a prior childstack / childswitch).
             // Marking state=Done lets the VM's per-tick cleanup loop
             // (vm.rs:909-910) remove the thread entry on the next tick.
+            // C++ ChildDone pops ONE script off the child; only a child
+            // with nothing stacked under it ends.
             let target_tid = resolve_child_tid(ctx, var.as_deref());
+            let mut ended = true;
             if let Some(tid) = target_tid {
                 let thread = ctx.exec.get_thread_mut(tid);
-                thread.state = ExecState::Done;
+                thread.blocking = None;
+                if pop_script(thread) {
+                    thread.state = ExecState::Running;
+                    ended = false;
+                } else {
+                    thread.state = ExecState::Done;
+                }
             }
-            if let Some(v) = var {
+            if ended && let Some(v) = var {
                 ctx.set_var(v.clone(), Value::Int(0));
             }
             true
         }
         Stmt::ChildHome { var } => {
-            // `childhome <var>` resets the child thread to its home
-            // script (unwind any childstack pushes).  We don't yet track
-            // a per-thread script stack, so the minimum-viable shim
-            // rewinds the sequence PC to 0 and clears loop/call/blocking
-            // state — equivalent to "home" when the thread has never
-            // stacked a sub-script.  Full stack-unwind port comes with
-            // the childstack push/pop redesign.
+            // `childhome <var>` pops the child back to its home (bottom)
+            // script, which resumes where it was (C++ ChildHome:
+            // `while (ScriptPtrStack.GetCount() > 1) PopScript()`).  A child
+            // that is already home is left alone — the old shim rewound it
+            // to pc 0, so e.g. PreFight_Hold restarted and re-captured
+            // holdPos wherever the grunt happened to be.
             let target_tid = resolve_child_tid(ctx, var.as_deref());
             if let Some(tid) = target_tid {
                 let thread = ctx.exec.get_thread_mut(tid);
-                thread.seq_pc = 0;
-                thread.loop_stack.clear();
-                thread.call_stack.clear();
-                thread.blocking = None;
-                thread.state = ExecState::Running;
-                bevy::log::debug!("ChildHome: reset child tid={} to seq_pc=0", tid);
+                if pop_to_home(thread) {
+                    thread.blocking = None;
+                    thread.state = ExecState::Running;
+                    bevy::log::debug!("ChildHome: child tid={} popped to home", tid);
+                }
             }
             true
         }

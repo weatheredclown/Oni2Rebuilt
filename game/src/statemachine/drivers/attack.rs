@@ -109,6 +109,9 @@ pub struct ActionAttack {
     /// Set once `ctx.anim_current_time` has caught up to what we started
     /// (guards against the one-frame "stale prior anim" state).
     saw_our_anim: bool,
+    /// Seconds since `start`; a backstop so a swing that never shows up on
+    /// the anim state (or never ends) can't park the attack FSM forever.
+    elapsed: f32,
 }
 impl ActionAttack {
     fn new(args: String) -> Self {
@@ -116,6 +119,7 @@ impl ActionAttack {
             args,
             anim_name: String::new(),
             saw_our_anim: false,
+            elapsed: 0.0,
         }
     }
 }
@@ -131,6 +135,7 @@ impl AtkAction for ActionAttack {
         }
         self.anim_name = anim.clone();
         self.saw_our_anim = false;
+        self.elapsed = 0.0;
         output.attack_anim = Some(anim.clone());
         bevy::log::info!(
             "ActionAttack::start -> anim='{}' (output.attack_anim set)",
@@ -138,41 +143,47 @@ impl AtkAction for ActionAttack {
         );
         true
     }
-    fn update(&mut self, ctx: &mut AttackCtx, _output: &mut AttackOutput, _dt: f32) -> bool {
-        // Wait until we've actually entered our own anim and then until it
-        // plays through.  `anim_num_frames > 1` gates against the initial
-        // zero-state pre-play tick.  `saw_our_anim` flips once we've seen
-        // a tick AFTER the host wired in our anim — without it we'd match
-        // stale-anim end-of-play state left over from the previous action.
-        if ctx.anim_num_frames <= 1 {
-            bevy::log::trace!(
-                "ActionAttack::update '{}' waiting: anim_num_frames={} (need >1)",
-                self.anim_name,
-                ctx.anim_num_frames
-            );
-            return false;
-        }
+    fn update(&mut self, ctx: &mut AttackCtx, _output: &mut AttackOutput, dt: f32) -> bool {
+        // C++ aiAtkAttack finishes when the fighter is no longer attacking
+        // (crFighter's attack ended — played through OR was cut off by a
+        // react / stance change).  We mirror that from the anim state: the
+        // swing is done once OUR anim has played to its last frame, or once
+        // we've seen our anim and something else has replaced it.  The old
+        // check required `!anim_looping` on whatever was playing, so when
+        // the animator swapped the swing for a looping ANIMNAV_STAND the
+        // action never finished and the attack FSM parked in AA_RUN forever
+        // (timtest: one punch, then Tim stood still).
+        self.elapsed += dt;
+        let ours = crate::oni2_loader::AnimId::new(&self.anim_name);
+        let playing_ours = ctx.anim_id == Some(ours);
         if !self.saw_our_anim {
-            bevy::log::trace!(
-                "ActionAttack::update '{}' waiting saw_our_anim: t={:.2} num={} looping={}",
-                self.anim_name,
-                ctx.anim_current_time,
-                ctx.anim_num_frames,
-                ctx.anim_looping
-            );
-            if ctx.anim_current_time < 0.5 {
+            if playing_ours && ctx.anim_num_frames > 1 {
                 self.saw_our_anim = true;
+            } else if self.elapsed > 1.0 {
+                // The swing never got onto the anim state (alias missing
+                // from this creature's library, or stomped the same tick).
+                bevy::log::warn!(
+                    "ActionAttack::update '{}' never started playing; finishing",
+                    self.anim_name
+                );
+                return true;
             }
             return false;
         }
-        let last_frame = (ctx.anim_num_frames as f32 - 1.0).max(0.0);
-        let done = !ctx.anim_looping && ctx.anim_current_time >= last_frame;
+        let done = if !playing_ours {
+            true
+        } else {
+            let last_frame = (ctx.anim_num_frames as f32 - 1.0).max(0.0);
+            ctx.anim_current_time >= last_frame || self.elapsed > 5.0
+        };
         if done {
             bevy::log::info!(
-                "ActionAttack::update '{}' DONE: t={:.2}/{:.2}",
+                "ActionAttack::update '{}' DONE: t={:.2}/{} playing_ours={} elapsed={:.2}",
                 self.anim_name,
                 ctx.anim_current_time,
-                last_frame
+                ctx.anim_num_frames,
+                playing_ours,
+                self.elapsed
             );
         }
         done
@@ -561,6 +572,13 @@ pub struct AttackCtx {
     pub anim_num_frames: i32,
     pub anim_current_time: f32,
     pub anim_looping: bool,
+    /// Id of the anim currently on the attacker's Oni2AnimState, so an
+    /// action can tell its own anim from one that replaced it.
+    pub anim_id: Option<crate::oni2_loader::AnimId>,
+    /// Latched by `Finish` (the table's `end N`): C++ FLAG_FINISHED, read by
+    /// the fight AI as "this attacker is done, prepare the next one".
+    /// Cleared when the cookie is granted again.
+    pub atk_finished: bool,
     /// Distance to the entity's fight target, updated by the host system before tick()
     pub target_distance_current: Option<f32>,
     /// The entity owning this FSM, for debug logging.
@@ -585,6 +603,8 @@ impl Default for AttackCtx {
             anim_num_frames: 0,
             anim_current_time: 0.0,
             anim_looping: false,
+            anim_id: None,
+            atk_finished: false,
             target_distance_current: None,
             entity: None,
             target: None,
@@ -696,6 +716,7 @@ impl SmDriver for AttackDriver {
         match action {
             AttackAction::Finish => {
                 end_current(ctx);
+                ctx.atk_finished = true;
                 output.done = Some(true);
             }
             AttackAction::Fail => {

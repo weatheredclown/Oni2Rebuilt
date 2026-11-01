@@ -19,6 +19,12 @@ pub struct ActorFollower {
     pub within: f32, // Dist to stop following
 }
 
+/// Marks an `ActorFollower` that came from a ScrOni `follow` command (a
+/// behavior in C++, which `idle` ends), as opposed to one the attack table's
+/// `distance` move inserted (owned by the fight AI).
+#[derive(Component)]
+pub struct ScriptedFollow;
+
 #[derive(Component)]
 pub struct ActorRetreating {
     pub avoid_target: Option<Entity>,

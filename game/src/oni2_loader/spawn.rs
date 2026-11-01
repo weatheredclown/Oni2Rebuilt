@@ -229,13 +229,20 @@ pub fn ground_snap_system(
             }
         }
 
-        if let Some((ground_pos, _)) = best_hit {
+        if let Some((ground_pos, probe_dist)) = best_hit {
+            // Ground right under the spawn point: only fix the height and
+            // keep whatever x/z the actor has moved to while we waited for
+            // colliders (e.g. the STAND_TO_FIGHT root motion of an auto
+            // fight stance).  Resetting x/z to the spawn origin threw that
+            // away, so a grunt spawned 3.0 m from the player stayed at
+            // exactly 3.0 m instead of settling inside rb's `distance < 3`.
+            let (x, z) = if probe_dist < 0.01 {
+                (transform.translation.x, transform.translation.z)
+            } else {
+                (ground_pos.x, ground_pos.z)
+            };
             // Place capsule exactly on ground (no extra buffer) so ShapeCaster hits it quickly
-            let final_pos = Vec3::new(
-                ground_pos.x,
-                ground_pos.y + capsule_half_height + 0.01,
-                ground_pos.z,
-            );
+            let final_pos = Vec3::new(x, ground_pos.y + capsule_half_height + 0.01, z);
             transform.translation = final_pos;
             commands
                 .entity(entity)
@@ -1623,7 +1630,12 @@ pub fn spawn_oni2_entity_with_rotation(
             .insert(crate::oni2_loader::animation::Oni2AnimState {
                 anim: current_anim,
                 skeleton: skel,
-                fps: 20.0,
+                // Oni 2 anims are authored and played at 30 fps
+                // (cranimation/animation.h: GetRate() = 30/NumFrames).  This
+                // was 20, so every creature anim — swings, reacts,
+                // locomotion — ran at 2/3 speed and AI fights took ~1.5x
+                // as long as in rb.
+                fps: 30.0,
                 looping,
                 joint_entities: joint_entities.clone(),
                 base_rotation: rotation,

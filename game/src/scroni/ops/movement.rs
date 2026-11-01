@@ -52,6 +52,15 @@ pub fn exec(ctx: &mut OpsCtx, stmt: &Stmt) -> bool {
                     actor: ctx.exec.owner,
                     target: targets[0],
                 });
+                // C++ ParseFollow appends BehaviorDone: the script parks while
+                // following (EnterFight_GetClose is `follow tgtActor; done`
+                // and relies on its whenever to `done` once close enough).
+                // Follow never finishes on its own, so nothing resolves this
+                // wait except a whenever switch/done/stack.
+                ctx.thread_mut().blocking = Some(BlockingAction::WaitingForBehavior {
+                    kind: crate::statemachine::drivers::behavior::BehaviorKind::Follow,
+                    deadline: None,
+                });
             }
             ctx.yield_thread();
             true

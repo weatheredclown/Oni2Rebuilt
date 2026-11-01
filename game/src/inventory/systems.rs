@@ -751,15 +751,35 @@ pub fn scheduled_stop_firing_system(
     mut commands: Commands,
     time: Res<Time>,
     mut stop_writer: MessageWriter<InventoryStopFiringMessage>,
-    query: Query<(Entity, &crate::inventory::components::ScheduledStopFiring)>,
+    mut fired_reader: MessageReader<crate::weapons::events::WeaponFiredMessage>,
+    mut query: Query<(Entity, &mut crate::inventory::components::ScheduledStopFiring)>,
+    mut scripts: Query<&mut crate::scroni::vm::ScrOniScript>,
 ) {
     let now = time.elapsed_secs_f64();
+    for fired in fired_reader.read() {
+        if let Ok((_, mut sched)) = query.get_mut(fired.owner)
+            && let Some(left) = sched.bullets_left.as_mut()
+        {
+            *left = left.saturating_sub(1);
+        }
+    }
     for (entity, sched) in &query {
-        if now >= sched.end_time {
+        if now >= sched.end_time || sched.bullets_left == Some(0) {
             stop_writer.write(InventoryStopFiringMessage { entity });
             commands
                 .entity(entity)
                 .remove::<crate::inventory::components::ScheduledStopFiring>();
+            // Release the `shoot` that is waiting on this burst.
+            if let Ok(mut script) = scripts.get_mut(entity) {
+                for t in script.exec.all_threads_mut() {
+                    if matches!(
+                        t.blocking,
+                        Some(crate::scroni::vm::BlockingAction::ShootUntilStopped)
+                    ) {
+                        t.blocking = None;
+                    }
+                }
+            }
         }
     }
 }

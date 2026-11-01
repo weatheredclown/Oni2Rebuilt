@@ -446,10 +446,12 @@ impl Compiler {
                         _ => {}
                     }
                 }
-                if self.skip_if(TokenCode::For) {
-                    let _ = self.parse_expr();
-                }
-                Stmt::Fight(target)
+                let duration = if self.skip_if(TokenCode::For) {
+                    Some(self.parse_expr())
+                } else {
+                    None
+                };
+                Stmt::Fight(target, duration)
             }
             TokenCode::Shoot => self.parse_shoot(),
             TokenCode::Look => self.parse_look(),

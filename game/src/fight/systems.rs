@@ -1107,7 +1107,7 @@ pub fn fight_stance_timer_system(
 ) {
     for (mut fs, ft_opt, anim_state) in &mut query {
         // If we're playing an attack, block, or reaction, reset the timer
-        let delay = ft_opt.map(|ft| ft.leave_fight_stance_delay).unwrap_or(3.0);
+        let delay = ft_opt.map(|ft| ft.leave_fight_stance_delay).unwrap_or(1.0);
 
         // Reset if we're in fight mode and actively doing something
         if fs.in_fight_mode() {
@@ -1129,7 +1129,9 @@ pub fn fight_stance_timer_system(
 // character pushes into a combat-ready stance that stays on while they
 // can still walk, run, jump, etc.  Legacy engine models it as
 // `ACT_FLAG_FIGHTSTANCE` on the action player, driven by:
-//   • Enter triggers: attack pressed / damaged / fight-mode pad cmd held.
+//   • Enter triggers: attack pressed / fight-mode pad cmd held / starting
+//     an attack, block, evade or hit reaction / an enemy within 3.5 m
+//     (C++ AutoFightStance).
 //   • Exit trigger: `leave_fight_stance_delay` seconds of combat idle.
 //
 // We reproduce this with three cooperating systems:
@@ -1149,7 +1151,6 @@ pub fn fight_stance_timer_system(
 
 use crate::animator::components::{action_flags as ap_flags, sub_state_0};
 use crate::animator::events::StartActionMessage;
-use crate::combat::events::DamageMessage;
 use crate::control_map::PadMapper;
 use crate::player::components::InputState;
 
@@ -1159,7 +1160,6 @@ use crate::player::components::InputState;
 /// until something leaves stance again (this is a one-shot per entry).
 pub fn fight_stance_entry_system(
     mut writer: MessageWriter<StartActionMessage>,
-    mut damage_reader: MessageReader<DamageMessage>,
     pad_mapper: Option<Res<PadMapper>>,
     mut query: Query<(
         Entity,
@@ -1167,11 +1167,32 @@ pub fn fight_stance_entry_system(
         Option<&FighterType>,
         Option<&ActionPlayer>,
         Option<&InputState>,
+        Option<&GlobalTransform>,
+        Option<&avian3d::prelude::LinearVelocity>,
+        Option<&crate::combat::faction::Faction>,
+        Option<&Oni2AnimState>,
     )>,
+    creatures: Query<
+        (
+            Entity,
+            &GlobalTransform,
+            Option<&crate::combat::faction::Faction>,
+            Option<&crate::combat::components::Health>,
+        ),
+        With<FighterState>,
+    >,
+    factions: Option<Res<crate::combat::faction::FactionManager>>,
 ) {
-    use std::collections::HashSet;
-    // Gather entities that were damaged this tick — cheap to collect once.
-    let damaged: HashSet<Entity> = damage_reader.read().map(|m| m.target).collect();
+    // crFighter::GetClosestCreature(anyClose) radius (fight/fighter.cpp:679).
+    const MAX_CLOSE_RADIUS: f32 = 3.5;
+    // crFighter enters stance at throttle < 0.5; we have no throttle for
+    // every creature, so use horizontal speed below half a run (~4.5 m/s).
+    const SLOW_SPEED: f32 = 2.25;
+    let others: Vec<(Entity, Vec3, Option<String>)> = creatures
+        .iter()
+        .filter(|(_, _, _, h)| h.is_none_or(|h| h.current > 0.0))
+        .map(|(e, tf, f, _)| (e, tf.translation(), f.map(|f| f.0.clone())))
+        .collect();
 
     // Read pad-mode input once — the player entity shares this with all AI,
     // but AI entities lack InputState and won't trigger via this path.
@@ -1180,11 +1201,43 @@ pub fn fight_stance_entry_system(
         .map(|p| p.get("PADCMD_WEAPON_FIGHT_MODE") > 0.0 || p.get("PADCMD_WEAPON_LOCKON") > 0.0)
         .unwrap_or(false);
 
-    for (entity, mut fs, ft_opt, ap_opt, input_opt) in &mut query {
+    for (entity, mut fs, ft_opt, ap_opt, input_opt, tf_opt, vel_opt, faction_opt, anim_opt) in
+        &mut query
+    {
+        // C++ AutoFightStance (fight/fighter.cpp:1555): is any (enemy)
+        // creature within MaxCloseRadius?
+        let auto = ft_opt.is_none_or(|ft| ft.auto_fight_stance);
+        let enemies_only = ft_opt.is_none_or(|ft| ft.only_fight_enemies);
+        let something_close = auto
+            && tf_opt.is_some_and(|tf| {
+                let me = tf.translation();
+                others.iter().any(|(e, pos, f)| {
+                    if *e == entity || pos.distance_squared(me) > MAX_CLOSE_RADIUS * MAX_CLOSE_RADIUS {
+                        return false;
+                    }
+                    if !enemies_only {
+                        return true;
+                    }
+                    match (faction_opt, f, factions.as_deref()) {
+                        (Some(mine), Some(theirs), Some(mgr)) => {
+                            mgr.get_status(&mine.0, theirs)
+                                == crate::combat::faction::FactionStatus::Enemy
+                        }
+                        _ => false,
+                    }
+                })
+            });
+
         // Already in stance?  Nothing to trigger.  The sync system keeps
         // FighterState.FIGHT_MODE aligned with the animator's FIGHTSTANCE
         // flag, so this check is authoritative.
         if fs.in_fight_mode() {
+            // C++ only lets LeaveFightStanceTimer run while nothing is
+            // close; keep it topped up while an enemy is in range.
+            if something_close {
+                fs.leave_fight_stance_timer =
+                    ft_opt.map(|ft| ft.leave_fight_stance_delay).unwrap_or(1.0);
+            }
             continue;
         }
 
@@ -1198,8 +1251,19 @@ pub fn fight_stance_entry_system(
 
         // Trigger set.  Any one of these flips the enter flag.
         let attack_input = input_opt.map(|i| i.attack || i.attack_two).unwrap_or(false);
-        let was_damaged = damaged.contains(&entity);
-        let triggered = attack_input || pad_fight_mode || was_damaged;
+        // C++ enters stance from StartAttack (fight/fighter.cpp:1152), a
+        // block (blockdata.cpp:255), an evade (animator/action.cpp:821), a
+        // hit reaction (ActionStartReact, action.cpp:1280 — any react, melee
+        // or ranged, unconditionally), the end of a grab (grab.cpp:539) and
+        // AutoFightStance.  Reacting replaces the old "took damage" proxy:
+        // damage that doesn't start a react doesn't raise the guard in C++.
+        let started_attack_or_block = fs.is_blocking()
+            || ap.sub_state_1 == crate::animator::components::sub_state_1::REACT
+            || ap.is_evading()
+            || anim_opt.is_some_and(|a| a.anim.attack_data.is_some() && fs.is_attacking(a));
+        let slow = vel_opt.is_none_or(|v| Vec2::new(v.x, v.z).length() < SLOW_SPEED);
+        let auto_close = something_close && slow && !ap.check_flags(ap_flags::JUMPING);
+        let triggered = attack_input || pad_fight_mode || started_attack_or_block || auto_close;
         if !triggered {
             continue;
         }
@@ -1213,7 +1277,7 @@ pub fn fight_stance_entry_system(
         // Seed the leave-stance timer so the exit system has something to
         // tick down.  Without this the exit would fire immediately on the
         // next tick (timer at 0).
-        let delay = ft_opt.map(|ft| ft.leave_fight_stance_delay).unwrap_or(3.0);
+        let delay = ft_opt.map(|ft| ft.leave_fight_stance_delay).unwrap_or(1.0);
         fs.leave_fight_stance_timer = delay;
     }
 }

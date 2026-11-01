@@ -73,14 +73,18 @@ pub fn ai_interceptor_system(
         let radius = fighter.perception_radius();
         let radius_sq = radius * radius;
 
-        // Acquire-target path: only run when we don't already have a
-        // target and a script hasn't manually locked us out.  An AI
-        // with no Faction component can't resolve enemy status — skip
-        // auto-acquire for it (the legacy `GetClosestCreature` with
-        // `enemiesOnly=true` returns NULL when faction info is
-        // missing, same effect).
+        // Acquire-target path — DISABLED for rb parity.  C++ aiInterceptor
+        // never picks a target: it only chases the fighter's CurrentTarget
+        // (aifight/fighter.cpp:521), which comes from a script `fight` /
+        // `attack` or a squad order, after the script's own look/listen
+        // awareness.  Auto-acquiring the nearest enemy in range (no view
+        // cone, no line of sight) made e.g. kirk_meat_and_potatoes'
+        // WeaponDraw grunts — scripted only to draw/holster — run at the
+        // idle player and punch him.  Kept behind a const so the
+        // sandbox/formation demos can turn it back on.
+        const AUTO_ACQUIRE: bool = false;
         let mut chosen: Option<(Entity, Vec3, f32)> = None; // (entity, pos, dist²)
-        if !fighter.manual_target && fighter.target.is_none() {
+        if AUTO_ACQUIRE && !fighter.manual_target && fighter.target.is_none() {
             if let Some(self_faction) = self_faction_opt {
                 for (cand_entity, cand_tf, cand_faction, cand_health) in &candidates {
                     if cand_entity == self_entity {

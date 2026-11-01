@@ -113,6 +113,31 @@ pub fn decode_tex(data: &[u8]) -> Option<(u32, u32, Vec<u8>, bool)> {
                 }
             }
         }
+        0x08 => {
+            // L8 — 8-bit luminance/intensity, no palette (data at 0x0E).  Used by
+            // the GunFx glow sprites (corona, hit_pulse): the byte is the glow
+            // brightness, expanded to grayscale RGB with matching alpha so it
+            // composites under both additive and alpha blending.  (Distinct from
+            // 0x0B/A8, which forces white RGB so the FX layer can tint it.)
+            let data_off = 0x0E;
+            if data.len() < data_off + (width * height) as usize {
+                return None;
+            }
+            for y in 0..height {
+                for x in 0..width {
+                    let src = data_off + ((height - 1 - y) * width + x) as usize;
+                    let v = data[src];
+                    let dst = (y * width + x) as usize * 4;
+                    rgba[dst] = v;
+                    rgba[dst + 1] = v;
+                    rgba[dst + 2] = v;
+                    rgba[dst + 3] = v;
+                    if v < 255 {
+                        has_alpha = true;
+                    }
+                }
+            }
+        }
         0x0B => {
             // A8 — 8-bit alpha-only, no palette.  Used for strike/impact FX
             // masks (e.g. entity/strikefx/bam.tex): each byte is the alpha

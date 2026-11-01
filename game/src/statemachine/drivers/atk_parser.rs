@@ -87,6 +87,10 @@ struct AtkRow {
     /// Map of target option ID → effective weight (cat_weight × sub_weight),
     /// preserving file order.
     entries: Vec<(String, f32)>,
+    /// `end N` weight, on the same scale as `entries` (N × 100).  C++
+    /// treats it as the probability to ActionFinish — release the cookie
+    /// and drop to the no-cookie table (attackstatemachine.cpp:904,970).
+    end_weight: f32,
 }
 
 // ---------------------------------------------------------------------------
@@ -374,9 +378,9 @@ impl<'a> Parser<'a> {
             let kw = self.expect_any_word()?;
             let num = self.expect_int()?;
             if kw.eq_ignore_ascii_case("end") {
-                // `end N` — trailing marker on each row.  Ignored: we
-                // don't need a fallthrough weight today (normalized
-                // weights cover the distribution already).
+                // Entries are cat% × opt% (scale 100×100); `end` is a plain
+                // percentage, so scale it to match.
+                row.end_weight = num as f32 * 100.0;
                 continue;
             }
             // Any other identifier is a category row: `{cat} N { opt W ... }`.
@@ -488,7 +492,22 @@ fn build_sm_data(file: AtkFile) -> SmData<AttackDriver> {
     for opt in &file.options {
         let pick_c_idx = state_index[&format!("{}_PICK_C", opt.id)];
         let row = file.cookie_rows.get(&opt.id);
+        let pick_n_idx = state_index[&format!("{}_PICK_N", opt.id)];
         states[pick_c_idx].rules = build_pick_rules(row, &file.options, &state_index);
+        // C++ cookie states end with `EventAlways -> ActionFinish ->
+        // no-cookie state of this option`: whatever probability the row
+        // leaves over (its `end N`) finishes the attack, which is what
+        // tells the fight AI to hand the cookie to the next attacker.
+        // Rows that are all `end` (e.g. npc_cautious AA) used to get no
+        // rules at all and froze the machine.
+        if row.is_some_and(|r| r.end_weight > 0.0) || states[pick_c_idx].rules.is_empty() {
+            states[pick_c_idx].rules.push(SmRule {
+                event: AttackEvent::Probability(1.0),
+                negated: false,
+                actions: vec![AttackAction::Finish],
+                goto_state: Some(pick_n_idx),
+            });
+        }
     }
 
     // 4. Fill _PICK_N states from no_cookie rows.
@@ -517,7 +536,9 @@ fn build_pick_rules(
     let Some(row) = row else {
         return Vec::new();
     };
-    let total: f32 = row.entries.iter().map(|(_, w)| *w).sum();
+    // Normalise over the entries plus `end` (C++ asserts the row sums to
+    // 100%; normalising also absorbs 33/33/34-style rounding).
+    let total: f32 = row.entries.iter().map(|(_, w)| *w).sum::<f32>() + row.end_weight;
     if total <= 0.0 {
         // Row has all-zero weights — machine will be stuck in this pick
         // state.  Log once at build time; leave rules empty.

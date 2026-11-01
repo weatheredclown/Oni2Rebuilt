@@ -39,7 +39,7 @@ pub fn exec(ctx: &mut OpsCtx, stmt: &Stmt) -> bool {
             ctx.thread_mut().state = crate::scroni::vm::ExecState::Yielded;
             true
         }
-        Stmt::Fight(opt_expr) => {
+        Stmt::Fight(opt_expr, duration) => {
             let target_ent = opt_expr.as_ref().map(|expr| match ctx.eval(expr) {
                 Value::Actor(act) => act,
                 Value::Int(_) | Value::String(_) => {
@@ -57,6 +57,19 @@ pub fn exec(ctx: &mut OpsCtx, stmt: &Stmt) -> bool {
                 actor: ctx.exec.owner,
                 target: target_ent,
             });
+            // C++ ParseFight appends BehaviorDone (or BehaviorDoneOrTimeout
+            // with `for`), so the script parks here while the actor fights.
+            // bhFight::IsDone is always false, so in practice a whenever
+            // switch/done or the timeout is what moves the script on —
+            // grunt.oni's `fight tgtActor; done` relies on exactly that.
+            let deadline = duration
+                .as_ref()
+                .map(|e| ctx.now + ctx.eval(e).as_float() as f64);
+            ctx.thread_mut().blocking =
+                Some(crate::scroni::vm::BlockingAction::WaitingForBehavior {
+                    kind: crate::statemachine::drivers::behavior::BehaviorKind::Fight,
+                    deadline,
+                });
             ctx.thread_mut().state = crate::scroni::vm::ExecState::Yielded;
             true
         }
@@ -102,11 +115,10 @@ pub fn exec(ctx: &mut OpsCtx, stmt: &Stmt) -> bool {
                 }
                 i += 1;
             }
-            // `bullets` and `rate` are recognised but not yet honoured —
-            // the weapon's own RoundsPerMinute / Burst settings drive
-            // how many shots come out during the held-trigger window.
-            // Logged so callers can see when their numbers get ignored.
-            let _ = (rate, bullets);
+            // `bullets` ends the burst after N shots (C++ bhShoot::IsDone).
+            // `rate` is still not honoured — the weapon's own
+            // RoundsPerMinute drives the cadence.
+            let _ = rate;
 
             let target_ent = if let Some(v) = target_val.as_ref() {
                 let ents = ctx.ctx.resolve_targets(v);
@@ -120,12 +132,15 @@ pub fn exec(ctx: &mut OpsCtx, stmt: &Stmt) -> bool {
                 target_val, miss, rate, bullets, duration
             );
 
+            let mut waits = false;
             if let Some(target) = target_ent {
+                waits = duration.is_some() || bullets.is_some_and(|b| b > 0);
                 ctx.sys_request(SysRequest::Shoot {
                     actor: ctx.exec.owner,
                     target,
                     miss,
                     duration,
+                    bullets,
                 });
             } else {
                 warn!(
@@ -134,15 +149,13 @@ pub fn exec(ctx: &mut OpsCtx, stmt: &Stmt) -> bool {
                 );
             }
 
-            // Block the thread for `for` seconds.  The auto-stop on the
-            // ScheduledStopFiring component handles releasing the
-            // weapon trigger; the thread independently resumes once
-            // the deadline elapses and runs the next instruction
-            // (typically `idle 0.5` then another `shoot`).
-            if let Some(secs) = duration {
-                ctx.thread_mut().blocking = Some(BlockingAction::Idle {
-                    end_time: ctx.now + secs as f64,
-                });
+            // Park until the burst ends: `scheduled_stop_firing_system`
+            // releases the trigger after `bullets` shots or at the `for`
+            // deadline, whichever comes first, and clears this wait.  The
+            // old fixed `Idle { for }` held `shoot tgt miss bullets 1 for
+            // 10000` (the warning shot) for 10000 s.
+            if waits {
+                ctx.thread_mut().blocking = Some(BlockingAction::ShootUntilStopped);
                 ctx.thread_mut().state = ExecState::Blocked;
             } else {
                 ctx.thread_mut().state = ExecState::Yielded;

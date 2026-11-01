@@ -18,6 +18,8 @@ these file types and well known quirks or system behaviors when writing Oni code
 ## Coding Style & Naming Conventions
 Use stable Rust 1.78+ with edition 2024. The repo relies on default `rustfmt` (4-space indents, trailing commas), so never hand-format blocks. Modules, files, and components follow `snake_case`, while types and systems use `UpperCamelCase` (e.g., `ActiveStateSystem`). Only add the `Rb` prefix when mirroring Oni 2 structures, and keep modules small under `game/src/` (such as `systems/` and `asset/`) to preserve fast reloads.
 
+For C++ development in `age/`, adhere to strict header hygiene: avoid writing large function bodies or inline implementations in headers, and minimize includes inside header files. Always favor forward declarations in headers and place definitions, complex implementation logic, and heavy header inclusions directly inside the corresponding `.cpp` files to reduce compilation times and circular dependencies.
+
 ## Testing Guidelines
 Game-side tests live alongside modules (use `#[cfg(test)] mod tests`), while cross-crate checks reside in `shared/` and root fixtures such as `test_xml.rs`. Favor behavior-driven names like `handles_sleep_toggle` for clarity. When a test depends on script behavior, note the relevant entry in `docs/scroni_roadmap.md`. Run `cargo test --workspace` plus the relevant `cargo run` to validate entity playback.
 
