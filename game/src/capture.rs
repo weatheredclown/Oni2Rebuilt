@@ -22,7 +22,14 @@ impl Plugin for CapturePlugin {
             return;
         };
         let dir = std::env::var("RB_CAPTURE_DIR").unwrap_or_else(|_| ".".into());
-        app.insert_resource(CaptureSchedule {
+        // Capture runs are launched in the background, so the window never
+        // has focus; main.rs's unfocused mode (reactive low power, 500 ms)
+        // would pin them at 2 fps.  Render continuously regardless.
+        app.insert_resource(bevy::winit::WinitSettings {
+            focused_mode: bevy::winit::UpdateMode::Continuous,
+            unfocused_mode: bevy::winit::UpdateMode::Continuous,
+        })
+        .insert_resource(CaptureSchedule {
             pending: times,
             dir,
             in_game_secs: 0.0,
