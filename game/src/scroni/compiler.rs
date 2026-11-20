@@ -831,6 +831,34 @@ impl Compiler {
                     args: vec![item, value],
                 }
             }
+            TokenCode::UITexture | TokenCode::UIMove | TokenCode::UIColor => {
+                // rb Command.cpp ParseUITexture / ParseUIMove / ParseUIColor:
+                //   uitexture <item> <texture>
+                //   uimove    <item> <x> <y> <secs>
+                //   uicolor   <item> <r> <g> <b> <a> <secs>
+                // Same hook-unset no-op as uitext until overlay pages are
+                // ported; without them every script using a portrait (e.g.
+                // M04_A03_Executive_Suite exs_intro.oni) failed to compile and
+                // its cutscene never started.
+                let name = self.peek().text.clone().to_lowercase();
+                let numbers = match self.peek().code {
+                    TokenCode::UITexture => 0,
+                    TokenCode::UIMove => 3,
+                    _ => 5,
+                };
+                self.advance();
+                let mut args = vec![self.parse_expr()];
+                if numbers == 0 {
+                    args.push(self.parse_expr());
+                }
+                for _ in 0..numbers {
+                    args.push(self.parse_expr());
+                }
+                Stmt::Unimplemented {
+                    command: name,
+                    args,
+                }
+            }
             TokenCode::SetHud => {
                 // `sethud <value>`.  HUD
                 // rendering isn't wired yet; consume the arg.
