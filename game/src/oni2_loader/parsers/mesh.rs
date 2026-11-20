@@ -11,32 +11,6 @@ use bevy::prelude::*;
 
 /// Build one Bevy Mesh per material from an Oni2Model.
 /// Returns (material_index, Mesh) pairs so the caller can assign textures.
-/// A material whose first pass is `lighting none`: AGE draws it unlit with
-/// the .mod's baked (prelit) vertex colours — `RSTATE.SetLighting(false)`
-/// in gfx/model.cpp sApplyRmcPass — so the vertex colour is the lighting.
-pub fn material_is_prelit(mat: &crate::oni2_loader::parsers::types::Oni2Material) -> bool {
-    mat.passes
-        .first()
-        .and_then(|p| p.lighting.as_deref())
-        .map(|l| l.eq_ignore_ascii_case("none"))
-        .unwrap_or(false)
-}
-
-/// A prelit vertex colour as AGE's shader uses it: the PS2 GS convention
-/// (0x80 = 1.0, so a textured modulate draw scales vertex colour by 255/128,
-/// clamped — rgl.cpp `sGsColorBoost` / `vc.rgb = min(vc.rgb * texScale, ...)`),
-/// multiplied with the texture in gamma space.  Bevy multiplies vertex colour
-/// with the sRGB-decoded texture in linear space, so the boosted colour is
-/// decoded too: lin(t * vc) = lin(t) * lin(vc).  The material diffuse is not
-/// applied — AGE uses it only for lighting, which is off for these passes.
-fn prelit_vertex_color(c: [f32; 4]) -> [f32; 4] {
-    let f = |x: f32| {
-        let x = (x * (255.0 / 128.0)).clamp(0.0, 1.0);
-        if x <= 0.04045 { x / 12.92 } else { ((x + 0.055) / 1.055).powf(2.4) }
-    };
-    [f(c[0]), f(c[1]), f(c[2]), c[3]]
-}
-
 pub fn build_meshes_by_material(model: &Oni2Model) -> Vec<(usize, Mesh)> {
     // Group packets by material index
     let mat_count = model.materials.len().max(1);
@@ -49,17 +23,12 @@ pub fn build_meshes_by_material(model: &Oni2Model) -> Vec<(usize, Mesh)> {
     )> = (0..mat_count)
         .map(|_| (Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new()))
         .collect();
-    // Second UV set per material (only filled when the model has `t2`s).
-    let has_uv2 = !model.tex_coords2.is_empty();
-    let mut per_mat_uv2: Vec<Vec<[f32; 2]>> = (0..mat_count).map(|_| Vec::new()).collect();
 
     for packet in &model.packets {
         let mat_idx = packet.material_index.min(mat_count - 1);
         let mat = model.materials.get(mat_idx);
         let mat_diffuse = mat.map(|m| m.diffuse).unwrap_or([0.8, 0.8, 0.8]);
-        let prelit = mat.map(material_is_prelit).unwrap_or(false);
         let (positions, normals, uvs, colors, indices) = &mut per_mat[mat_idx];
-        let uv2s = &mut per_mat_uv2[mat_idx];
 
         for (strip_idx, strip) in packet.strips.iter().enumerate() {
             if strip.len() < 3 {
@@ -74,7 +43,6 @@ pub fn build_meshes_by_material(model: &Oni2Model) -> Vec<(usize, Mesh)> {
                     normal_idx: 0,
                     color_idx: 0,
                     tex1_idx: -1,
-                    tex2_idx: -1,
                     bone_idx: 0,
                 };
                 let adj = packet
@@ -153,30 +121,18 @@ pub fn build_meshes_by_material(model: &Oni2Model) -> Vec<(usize, Mesh)> {
                     .copied()
                     .unwrap_or([1.0, 1.0, 1.0, 1.0]);
 
-                let tinted = if prelit {
-                    prelit_vertex_color(color)
-                } else {
-                    [
-                        color[0] * mat_diffuse[0],
-                        color[1] * mat_diffuse[1],
-                        color[2] * mat_diffuse[2],
-                        color[3],
-                    ]
-                };
+                let tinted = [
+                    color[0] * mat_diffuse[0],
+                    color[1] * mat_diffuse[1],
+                    color[2] * mat_diffuse[2],
+                    color[3],
+                ];
 
                 let vert_idx = positions.len() as u32;
                 positions.push(pos);
                 normals.push(norm);
                 uvs.push(uv);
                 colors.push(tinted);
-                if has_uv2 {
-                    let raw = if adj.tex2_idx >= 0 {
-                        model.tex_coords2.get(adj.tex2_idx as usize).copied().unwrap_or([0.0; 2])
-                    } else {
-                        [0.0; 2]
-                    };
-                    uv2s.push([raw[0], 1.0 - raw[1]]);
-                }
                 strip_verts.push(vert_idx);
             }
 
@@ -199,9 +155,7 @@ pub fn build_meshes_by_material(model: &Oni2Model) -> Vec<(usize, Mesh)> {
     }
 
     let mut result = Vec::new();
-    for (mat_idx, ((positions, normals, uvs, colors, indices), uv2s)) in
-        per_mat.into_iter().zip(per_mat_uv2).enumerate()
-    {
+    for (mat_idx, (positions, normals, uvs, colors, indices)) in per_mat.into_iter().enumerate() {
         if positions.is_empty() {
             continue;
         }
@@ -210,9 +164,6 @@ pub fn build_meshes_by_material(model: &Oni2Model) -> Vec<(usize, Mesh)> {
         mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, positions);
         mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, normals);
         mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, uvs);
-        if has_uv2 {
-            mesh.insert_attribute(Mesh::ATTRIBUTE_UV_1, uv2s);
-        }
         mesh.insert_attribute(Mesh::ATTRIBUTE_COLOR, colors);
         mesh.insert_indices(Indices::U32(indices));
 
@@ -272,7 +223,6 @@ pub fn build_skinned_meshes_by_material(
                     normal_idx: 0,
                     color_idx: 0,
                     tex1_idx: -1,
-                    tex2_idx: -1,
                     bone_idx: 0,
                 };
                 let adj = packet
@@ -658,7 +608,6 @@ pub fn parse_mesh(content: &str, _entity_dir: &str) -> Option<Oni2Model> {
         normals,
         colors,
         tex_coords,
-        tex_coords2: Vec::new(),
         materials,
         packets,
         // Seed identity bone 0 so the build_meshes_by_material bone path
@@ -771,7 +720,6 @@ fn read_adjuncts(lines: &[&str], start: usize, count: usize) -> (usize, Vec<Oni2
             normal_idx: n,
             color_idx: c,
             tex1_idx: t,
-            tex2_idx: -1,
             bone_idx: 0,
         });
     }

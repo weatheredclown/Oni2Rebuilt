@@ -187,9 +187,6 @@ pub fn scroni_curve_bridge_system(
                                 let hold_val = *hold;
                                 let rate_val = *rate;
                                 if lib.play(&name_val, state) {
-                                    // A `controlanimation ... pause` pre-pose
-                                    // must not freeze the next clip.
-                                    state.paused = false;
                                     state.looping = *loop_anim;
                                     state.speed_multiplier = rate_val.unwrap_or(1.0);
                                     if hold_val {
@@ -211,38 +208,6 @@ pub fn scroni_curve_bridge_system(
                             t.blocking = None;
                             t.state = scroni::vm::ExecState::Running;
                         }
-                    }
-                    scroni::vm::BlockingAction::ControlAnimation { name, verb, rate } => {
-                        use crate::scroni::ast::ControlAnimVerb;
-                        if let (Some(lib), Some(state)) =
-                            (anim_lib.as_ref(), anim_state.as_deref_mut())
-                        {
-                            // animMsgControlAnim names the clip it controls;
-                            // select it if something else is playing (this
-                            // is how CS_Actor's POSE shows a slot's first
-                            // frame before the camera cuts in).
-                            let id = AnimId::new(name);
-                            let is_current = state.current_anim_id == Some(id);
-                            let ready = is_current || lib.play_id(id, state);
-                            if ready {
-                                match verb {
-                                    ControlAnimVerb::Start => state.paused = false,
-                                    ControlAnimVerb::Pause | ControlAnimVerb::Stop => {
-                                        state.paused = true
-                                    }
-                                    ControlAnimVerb::Rate => {
-                                        state.speed_multiplier = rate.unwrap_or(1.0)
-                                    }
-                                }
-                            } else {
-                                warn!(
-                                    "ControlAnimation command couldn't find animation '{}'",
-                                    name
-                                );
-                            }
-                        }
-                        t.blocking = None;
-                        t.state = scroni::vm::ExecState::Running;
                     }
                     scroni::vm::BlockingAction::WaitingForAnimation => {
                         if let Some(state) = anim_state.as_deref() {

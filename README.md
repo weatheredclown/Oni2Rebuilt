@@ -80,8 +80,6 @@ opt-in via `--ogmenu` until it's polished.
 
 ### Toggles
 - `--fog` &mdash; enable layout fog (disabled by default).
-- `--crt` &mdash; apply the PS2-CRT colour grade and Bevy's TonyMcMapface
-  tonemapping.  Off by default so colours match the C++ (AGE) build.
 - `--diagnostics` &mdash; install Bevy's `LogDiagnosticsPlugin` (frame-time
   / FPS log spam).
 

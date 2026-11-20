@@ -145,12 +145,9 @@ pub enum Stmt {
         loop_anim: bool,
         duration: Option<Expr>,
     },
-    /// `ControlAnimation <string> (start | pause | stop | rate <expr>)`
-    /// (C++ scrCompiler::ParseControlAnimation, AnimCommand.cpp).
+    /// `ControlAnimation <string> ...`
     ControlAnimation {
         name: Expr,
-        verb: ControlAnimVerb,
-        rate: Option<Expr>,
     },
 
     /// `face <expr> [in <expr>]`
@@ -323,9 +320,8 @@ pub enum Stmt {
     SetHealth(Expr),
     /// `ResetHealth`
     ResetHealth,
-    /// `SetActorEnabled <guid> to <value>` (C++ ParseSetActorEnabled,
-    /// Command.cpp).  Disabling removes the actor from the level.
-    SetActorEnabled { target: Expr, value: Expr },
+    /// `SetActorEnabled <expr>`
+    SetActorEnabled(Expr),
     /// `SetFaction <expr>`
     SetFaction(Expr),
     /// `SetUnbreakable <expr>`
@@ -473,12 +469,6 @@ pub enum Stmt {
     At(Expr, Expr),
     /// `drawtext <expr>`
     DrawText(Expr),
-    /// `uioverlay <string page>` — show a PAGE_OVERLAY (`""` hides it).
-    UiOverlay(Expr),
-    /// `uitext <string item> <string text>` — replace an overlay item's text.
-    UiText(Expr, Expr),
-    /// `uivisible <string item> <bool>` — show / hide an overlay item.
-    UiVisible(Expr, Expr),
     /// `color R,G,B,A` — sets current debug-draw color.  Used by drawtext
     /// lines in debug/legacy scripts (e.g. `drawtext "..." at x,y color
     /// r,g,b,a`) where `at` and `color` are separate statements sharing
@@ -584,13 +574,4 @@ pub enum BinOp {
 pub enum TextureMovieAction {
     SetFrame,
     SetRate,
-}
-
-/// Verb of `ControlAnimation` (C++ viControlAnimation).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ControlAnimVerb {
-    Start,
-    Pause,
-    Stop,
-    Rate,
 }

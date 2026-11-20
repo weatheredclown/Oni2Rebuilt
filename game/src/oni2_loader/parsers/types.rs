@@ -14,8 +14,6 @@ pub struct Oni2Model {
     pub normals: Vec<[f32; 3]>,
     pub colors: Vec<[f32; 4]>,
     pub tex_coords: Vec<[f32; 2]>,
-    /// Second UV set (`t2` lines / tex2s block), indexed by `Oni2Adjunct::tex2_idx`.
-    pub tex_coords2: Vec<[f32; 2]>,
     pub materials: Vec<Oni2Material>,
     pub packets: Vec<Oni2Packet>,
     /// Per-bone world-space positions from skeleton (bind pose or animated).
@@ -71,8 +69,6 @@ pub struct Oni2Adjunct {
     pub normal_idx: u32,
     pub color_idx: u32,
     pub tex1_idx: i32, // can be -1
-    /// Second UV set (`texsrc 1` lightmaps / decals); -1 when absent.
-    pub tex2_idx: i32,
     pub bone_idx: u32, // local bone index within packet's bone_map
 }
 

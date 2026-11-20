@@ -291,12 +291,11 @@ pub fn parse_effect(
             } else {
                 asset_server.load(format!("texture/{}.tga", tex_name))
             };
-            let blend_set = block.get_i32("BlendSet", 0);
             Some(EffectDef::Sprite(SpriteEffectDef {
                 name: name.to_string(),
                 texture: tex_handle,
                 color: block.get_color("Color", Color::WHITE),
-                blend_set,
+                blend_set: block.get_i32("BlendSet", 0),
                 duration: block.get_f32("Duration", 0.0),
                 line_length: block.get_f32("LineLength", 0.0),
                 line_width: block.get_f32("LineWidth", 0.0),
@@ -410,9 +409,6 @@ pub fn parse_effect(
                     .unwrap_or_else(|| asset_server.load(format!("texture/{}.tga", tail_name))),
                 )
             };
-            // fxLaser draws both with blendSet_SrcAlpha_One.
-            let head_handle = head_handle.map(|h| crate::oni2_loader::parsers::texture::additive_texture(images, &h));
-            let tail_handle = tail_handle.map(|h| crate::oni2_loader::parsers::texture::additive_texture(images, &h));
             Some(EffectDef::Laser(LaserFxDef {
                 name: name.to_string(),
                 width: block.get_f32("Width", 1.0),
@@ -471,8 +467,6 @@ pub fn parse_effect(
             } else {
                 Some(asset_server.load(format!("texture/{}.tga", glow_texture_name)))
             };
-            // Glow coronas are drawn additively (light_glow.rs).
-            let glow_texture_handle = glow_texture_handle.map(|h| crate::oni2_loader::parsers::texture::additive_texture(images, &h));
             Some(EffectDef::LightGlow(LightGlowDef {
                 name: name.to_string(),
                 glow_texture_name,
@@ -527,8 +521,6 @@ pub fn parse_effect(
                 )
             };
 
-            // Strike FX are drawn additively (fx_visuals spawn_strike).
-            let tex_handle = tex_handle.map(|h| crate::oni2_loader::parsers::texture::additive_texture(images, &h));
             Some(EffectDef::Strike(StrikeFxDef {
                 name: name.to_string(),
                 exponent: block.get_f32("Exponent", 1.0),

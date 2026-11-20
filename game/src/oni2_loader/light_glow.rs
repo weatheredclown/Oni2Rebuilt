@@ -420,10 +420,7 @@ pub fn update_light_glow_billboards(
         };
         tf.scale = Vec3::splat(glowsize * 2.0);
         if let Some(mat) = materials.get_mut(&glow.material) {
-            // Additive corona: fade in AGE's gamma-space terms.
-            mat.base_color = mat
-                .base_color
-                .with_alpha(crate::oni2_loader::parsers::texture::additive_alpha(alpha));
+            mat.base_color = mat.base_color.with_alpha(alpha);
         }
     }
 }

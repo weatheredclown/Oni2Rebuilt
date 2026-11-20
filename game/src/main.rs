@@ -49,7 +49,6 @@ mod scroni;
 mod shadow_lod;
 mod statemachine;
 mod telemetry;
-mod ui_overlay;
 mod water;
 mod weapons;
 pub use filesystem::dave_vfs;
@@ -212,14 +211,7 @@ fn main() {
     // back cleanly when focus returns.  Keeps focused mode at full FPS.
     app.insert_resource(WinitSettings {
         focused_mode: UpdateMode::Continuous,
-        // Unattended captures (RB_SHOT / --padscript) need real-rate updates even
-        // in a background window: throttled, Time<Virtual> clamps each 500 ms
-        // frame to 250 ms and the script/screenshot clock runs at half speed.
-        unfocused_mode: if std::env::var_os("RB_SHOT").is_some() || args.iter().any(|a| a == "--padscript") {
-            UpdateMode::Continuous
-        } else {
-            UpdateMode::reactive_low_power(std::time::Duration::from_millis(500))
-        },
+        unfocused_mode: UpdateMode::reactive_low_power(std::time::Duration::from_millis(500)),
     });
 
     app.add_plugins(
@@ -257,7 +249,6 @@ fn main() {
     .add_plugins(ai::AiPlugin)
     .add_plugins(camera::CameraPlugin)
     .add_plugins(hud::HudPlugin)
-    .add_plugins(ui_overlay::UiOverlayPlugin)
     .add_plugins(mover::MoverPlugin)
     .add_plugins(fx_system::FxPlugin)
     .add_plugins(rbaudio::RbAudioPlugin)
@@ -533,13 +524,7 @@ fn setup_scene(
     };
 
     // Camera
-    // Colour output matches AGE by default: no tonemapping (AGE writes its
-    // 8-bit colours straight out) and no colour grade.  `--crt` restores the
-    // PS2-CRT grade + Bevy's default TonyMcMapface tonemapping — that grade
-    // was tuned to lift rooms the old lit-prelit bug left near-black, and on
-    // correctly prelit levels it crushes them (Blast Chambers went black).
-    let nograde = !std::env::args().any(|a| a == "--crt");
-    let mut cam = commands.spawn((
+    commands.spawn((
         Camera3d::default(),
         // Technically this is cheating to add this to the game
         // An effect like this would have been pretty out-of-reach
@@ -557,12 +542,8 @@ fn setup_scene(
             focus_actor: player_id,
             ..default()
         },
+        crt_post::CrtSettings::ps2_crt(),
     ));
-    if nograde {
-        cam.insert(bevy::core_pipeline::tonemapping::Tonemapping::None);
-    } else {
-        cam.insert(crt_post::CrtSettings::ps2_crt());
-    }
 }
 
 pub fn spawn_fallback_player(

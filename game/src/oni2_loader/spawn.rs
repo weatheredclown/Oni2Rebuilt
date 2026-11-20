@@ -89,41 +89,12 @@ pub(crate) fn build_pass_material(
         AlphaMode::Opaque
     };
 
-    // `lighting none`: AGE draws the pass unlit (RSTATE.SetLighting(false));
-    // its colour is texture x the prelit vertex colour (see mesh.rs
-    // prelit_vertex_color).  Lit through Bevy's PBR path instead, enclosed
-    // prelit rooms (FX Cathedral) went near-black: the shadow-casting sun
-    // never reaches inside and only the dim ambient term was left.
-    let unlit = pass
-        .lighting
-        .as_deref()
-        .map(|l| l.eq_ignore_ascii_case("none"))
-        .unwrap_or(false);
-    // `texsrc 1`: the pass samples the model's second UV set (lightmaps,
-    // shadow maps, detail decals).
-    let uv_channel = if pass.texsrc == Some(1) {
-        bevy::pbr::UvChannel::Uv1
-    } else {
-        bevy::pbr::UvChannel::Uv0
-    };
-    // A non-additive overlay pass whose texture is alpha-intensity (palette
-    // RGB all black, the intensity in alpha — e.g. M4_ShadowMap) is AGE's
-    // "black grime" decal: rgl.cpp swaps tex2colDecal for
-    // tex2colDarkenByIntensity, c *= clamp(1 - i * 255/128).
-    let texture_handle = match texture_handle {
-        Some(h) if pass_idx > 0 && !is_additive => Some(darken_by_intensity_texture(images, &h)),
-        other => other,
-    };
-
     PassMaterial::Standard(materials.add(StandardMaterial {
         base_color: if texture_handle.is_some() {
             Color::WHITE
         } else {
             diffuse
         },
-        unlit,
-        base_color_channel: uv_channel.clone(),
-        emissive_channel: uv_channel,
         // Additive passes route the texture into `emissive` so it
         // contributes at full intensity without being darkened by
         // ambient lighting.  Non-additive passes keep the existing
@@ -146,51 +117,6 @@ pub(crate) fn build_pass_material(
         depth_bias: pass_idx as f32 * 10.0,
         ..default()
     }))
-}
-
-/// For an alpha-intensity texture (every texel's RGB black), a copy whose
-/// alpha makes Bevy's alpha blend reproduce AGE's darken-by-intensity decal:
-/// AGE scales the colour below by k = clamp(1 - i * 255/128) in gamma space;
-/// in linear space that factor is lin(k), and `Blend` with RGB 0 scales the
-/// destination by (1 - alpha), so alpha = 1 - lin(k).  Any other texture is
-/// returned unchanged.  Cached per source image.
-fn darken_by_intensity_texture(images: &mut Assets<Image>, handle: &Handle<Image>) -> Handle<Image> {
-    use std::collections::HashMap;
-    use std::sync::{LazyLock, Mutex};
-    static CACHE: LazyLock<Mutex<HashMap<AssetId<Image>, Handle<Image>>>> =
-        LazyLock::new(|| Mutex::new(HashMap::new()));
-    let mut cache = CACHE.lock().unwrap();
-    if let Some(h) = cache.get(&handle.id()) {
-        return h.clone();
-    }
-    let Some(src) = images.get(handle) else {
-        return handle.clone();
-    };
-    let Some(data) = src.data.as_ref() else {
-        return handle.clone();
-    };
-    let intensity_only = data.len() >= 4
-        && data.chunks_exact(4).all(|p| p[0] == 0 && p[1] == 0 && p[2] == 0)
-        && data.chunks_exact(4).any(|p| p[3] != 0);
-    if !intensity_only {
-        cache.insert(handle.id(), handle.clone());
-        return handle.clone();
-    }
-    let lut: [u8; 256] = std::array::from_fn(|i| {
-        let k = (1.0 - i as f32 * (1.0 / 128.0)).clamp(0.0, 1.0);
-        let k_lin = if k <= 0.04045 { k / 12.92 } else { ((k + 0.055) / 1.055).powf(2.4) };
-        ((1.0 - k_lin) * 255.0).round() as u8
-    });
-    let mut img = src.clone();
-    if let Some(d) = img.data.as_mut() {
-        for p in d.chunks_exact_mut(4) {
-            p[3] = lut[p[3] as usize];
-        }
-    }
-    let out = images.add(img);
-    cache.insert(handle.id(), out.clone());
-    cache.insert(out.id(), out.clone());
-    out
 }
 
 #[derive(Component)]

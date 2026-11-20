@@ -393,25 +393,14 @@ fn get_or_create_ptx_asset(
         return handle.clone();
     }
 
-    // ptxParticleSystemType::ParticleBlendSets: 0 = blendSet_One_One
-    // (additive: the colour lerp's RGB is added, alpha plays no part),
-    // 1 = SrcAlpha_InvSrcAlpha, 2 = MinusOne_One.  For 0 the gradient alpha
-    // is forced to 0 and the effect uses hanabi's Premultiply blend
-    // (One, OneMinusSrcAlpha) — exactly One_One.  Hanabi's `Add`
-    // (SrcAlpha, One) would scale by alpha, which AGE never did.
-    let additive = ptx_def.blend_set == 0;
-    let key = |c: Color| {
-        let v = c.to_linear().to_vec4();
-        if additive { v.with_w(0.0) } else { v }
-    };
     let mut color_gradient = bevy_hanabi::Gradient::new();
     if ptx_def.color_ramp {
-        color_gradient.add_key(0.0, key(ptx_def.color_birth));
-        color_gradient.add_key(0.5, key(ptx_def.color_death));
-        color_gradient.add_key(1.0, key(ptx_def.color_birth));
+        color_gradient.add_key(0.0, ptx_def.color_birth.to_linear().to_vec4());
+        color_gradient.add_key(0.5, ptx_def.color_death.to_linear().to_vec4());
+        color_gradient.add_key(1.0, ptx_def.color_birth.to_linear().to_vec4());
     } else {
-        color_gradient.add_key(0.0, key(ptx_def.color_birth));
-        color_gradient.add_key(1.0, key(ptx_def.color_death));
+        color_gradient.add_key(0.0, ptx_def.color_birth.to_linear().to_vec4());
+        color_gradient.add_key(1.0, ptx_def.color_death.to_linear().to_vec4());
     }
 
     let mut size_gradient = bevy_hanabi::Gradient::new();
@@ -532,7 +521,7 @@ fn get_or_create_ptx_asset(
         .render(OrientModifier::new(OrientMode::FaceCameraPosition));
 
     asset.alpha_mode = match ptx_def.blend_set {
-        0 => bevy_hanabi::AlphaMode::Premultiply, // One_One with alpha 0 (see color_gradient)
+        0 => bevy_hanabi::AlphaMode::Add,
         1 => bevy_hanabi::AlphaMode::Blend,
         _ => bevy_hanabi::AlphaMode::Blend, // Subtractive isn't cleanly supported in standard Bevy AlphaMode
     };

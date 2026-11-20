@@ -162,13 +162,6 @@ pub enum BlockingAction {
         rate: Option<f32>,
         duration: Option<f32>,
     },
-    /// `controlanimation <slot> start|pause|stop|rate <r>` — non-blocking in
-    /// C++; parked only until the script-anim driver applies it.
-    ControlAnimation {
-        name: String,
-        verb: super::ast::ControlAnimVerb,
-        rate: Option<f32>,
-    },
     Fight,
     Shoot,
     /// `shoot ... [bullets N] [for S]` — parked until the shooter's
@@ -295,12 +288,6 @@ pub enum SysRequest {
         actor: Entity,
         faction: String,
     },
-    /// `setactorenabled <guid> to <0|1>` — C++ rbActor::SetEnabled removes
-    /// the actor from / re-adds it to the level.
-    SetActorEnabled {
-        actor: Entity,
-        enabled: bool,
-    },
     Retreat {
         actor: Entity,
         target: Option<Entity>,
@@ -362,9 +349,6 @@ pub enum SysRequest {
         save_point: i32,
     },
     DrawText(String),
-    UiOverlay(String),
-    UiText(String, String),
-    UiVisible(String, bool),
     At(f32, f32),
     MakeFx {
         script_entity: Entity,
@@ -607,9 +591,6 @@ pub enum ScrOniSysEvent {
         save_point: i32,
     },
     DrawText(String),
-    UiOverlay(String),
-    UiText(String, String),
-    UiVisible(String, bool),
     At(f32, f32),
     MakeFx {
         script_entity: Entity,
@@ -1877,13 +1858,6 @@ impl ScriptExec {
             Expr::Call { name, args } => {
                 match name.as_str() {
                     "clock" => Value::Float(now as f32),
-                    // C++ DoCutScenesEnabled: CameraManager::GetPlayCutscenes,
-                    // which is `!ARGS.Get("nocutscenes")`.
-                    "cutscenesenabled" => {
-                        let off = std::env::args()
-                            .any(|a| a == "-nocutscenes" || a == "--nocutscenes");
-                        Value::Int(if off { 0 } else { 1 })
-                    }
                     "blockingcommandfailed" => {
                         // Latched on this thread by the bridge whenever a
                         // `WaitingForBehavior` resolves; succeeds → false,
@@ -2203,15 +2177,7 @@ impl ScriptExec {
                                     target_msg,
                                     self.message_queue[idx].from
                                 );
-                                let m = self.message_queue.remove(idx);
-                                // `receivemessage "ID" with a, b` - C++
-                                // DoReceiveMessage copies the message's
-                                // values into the listed variables in order.
-                                for (expr, val) in args.iter().skip(1).zip(m.args) {
-                                    if let Expr::Var(name) = expr {
-                                        self.set_var(tid, name.clone(), val);
-                                    }
-                                }
+                                self.message_queue.remove(idx);
                                 return Value::Int(1);
                             }
                         }
@@ -3154,24 +3120,6 @@ pub fn scroni_tick_system(
                         face,
                     });
                 }
-                SysRequest::SetActorEnabled { actor, enabled } => {
-                    if let Ok(mut e_cmd) = commands.get_entity(actor) {
-                        use avian3d::prelude::{ColliderDisabled, RigidBodyDisabled};
-                        use crate::oni2_loader::components::ActorDisabled;
-                        if enabled {
-                            e_cmd
-                                .remove::<(ActorDisabled, RigidBodyDisabled, ColliderDisabled)>()
-                                .insert(Visibility::Inherited);
-                        } else {
-                            e_cmd.insert((
-                                ActorDisabled,
-                                RigidBodyDisabled,
-                                ColliderDisabled,
-                                Visibility::Hidden,
-                            ));
-                        }
-                    }
-                }
                 SysRequest::SetFaction { actor, faction } => {
                     if let Ok(mut e_cmd) = commands.get_entity(actor) {
                         e_cmd.insert(crate::combat::faction::Faction(faction));
@@ -3272,15 +3220,6 @@ pub fn scroni_tick_system(
                 }
                 SysRequest::DrawText(text) => {
                     commands.trigger(ScrOniSysEvent::DrawText(text));
-                }
-                SysRequest::UiOverlay(page) => {
-                    commands.trigger(ScrOniSysEvent::UiOverlay(page));
-                }
-                SysRequest::UiText(item, text) => {
-                    commands.trigger(ScrOniSysEvent::UiText(item, text));
-                }
-                SysRequest::UiVisible(item, visible) => {
-                    commands.trigger(ScrOniSysEvent::UiVisible(item, visible));
                 }
                 SysRequest::MakeFx {
                     script_entity,
