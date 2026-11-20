@@ -78,9 +78,22 @@ pub fn keyboard_input_system(
 
         if script.enabled() {
             // `--padscript` owns the stick and R1 (analog magnitude kept, as
-            // rb's pad does).
+            // rb's pad does); its face buttons act like the keys bound to
+            // the same pad buttons above.
+            use super::padscript::{PAD_BUTTONS, PAD_R1};
+            let bit = |name: &str| {
+                PAD_BUTTONS
+                    .iter()
+                    .find(|(_, n)| *n == name)
+                    .map_or(0, |b| b.0)
+            };
             input.movement = script.movement();
-            input.targeting_modifier = script.held(super::padscript::PAD_R1);
+            input.targeting_modifier = script.held(PAD_R1);
+            input.attack |= script.just_pressed(bit("Rup"));
+            input.attack_two |= script.just_pressed(bit("Rright"));
+            input.jump |= script.just_pressed(bit("Rdown"));
+            input.grab |= script.just_pressed(bit("Rleft"));
+            input.blocking |= script.held(bit("L2"));
         }
     }
 }
@@ -397,6 +410,19 @@ pub fn pad_mapper_update_system(
             frame.press("R1");
         } else {
             frame.hold("R1");
+        }
+    }
+
+    // `--padscript` buttons, as if pressed on a controller (R1 went through
+    // the fight-mode / lock-on handling above).
+    for &(bit, name) in &super::padscript::PAD_BUTTONS {
+        if bit == super::padscript::PAD_R1 {
+            continue;
+        }
+        if script.just_pressed(bit) {
+            frame.press(name);
+        } else if script.held(bit) {
+            frame.hold(name);
         }
     }
 

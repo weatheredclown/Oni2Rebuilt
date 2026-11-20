@@ -28,8 +28,9 @@ impl Plugin for PlayerPlugin {
             .add_systems(
                 Update,
                 (
-                    // 0. `--padscript` replay (locomotion harness)
+                    // 0. `--padscript` / `--padaim` replay (unattended captures)
                     padscript::pad_script_tick_system,
+                    padscript::pad_aim_system,
                     // 1. Raw hardware → InputState (movement physics path)
                     systems::keyboard_input_system,
                     systems::gamepad_input_system,
