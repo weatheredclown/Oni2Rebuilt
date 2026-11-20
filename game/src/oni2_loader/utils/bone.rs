@@ -447,6 +447,7 @@ mod tests {
                     normal_idx: i,
                     color_idx: i,
                     tex1_idx: i as i32,
+                    tex2_idx: -1,
                     bone_idx: 0, // local index — bone_map remaps
                 })
                 .collect(),
@@ -466,6 +467,7 @@ mod tests {
             normals,
             colors,
             tex_coords,
+            tex_coords2: Vec::new(),
             materials: vec![Oni2Material {
                 name: "test".into(),
                 diffuse: [1.0, 1.0, 1.0],
@@ -581,6 +583,7 @@ mod tests {
                     normal_idx: vi,
                     color_idx: 0,
                     tex1_idx: 0,
+                    tex2_idx: -1,
                     bone_idx: 0,
                 })
                 .collect(),
@@ -599,6 +602,7 @@ mod tests {
             normals,
             colors,
             tex_coords,
+            tex_coords2: Vec::new(),
             materials: vec![Oni2Material {
                 name: "test".into(),
                 diffuse: [1.0; 3],
@@ -689,6 +693,7 @@ mod tests {
             normals: vec![[0.0, 1.0, 0.0]; vertices.len()],
             colors: vec![[1.0; 4]; vertices.len()],
             tex_coords: vec![[0.0; 2]; vertices.len()],
+            tex_coords2: Vec::new(),
             materials: vec![Oni2Material {
                 name: "test".into(),
                 diffuse: [1.0; 3],
@@ -704,6 +709,7 @@ mod tests {
                         normal_idx: i,
                         color_idx: 0,
                         tex1_idx: 0,
+                        tex2_idx: -1,
                         bone_idx: 0,
                     })
                     .collect(),

@@ -408,9 +408,31 @@ impl Compiler {
             TokenCode::PlayActionAnimation => self.parse_play_action_animation(),
             TokenCode::ControlAnimation => {
                 self.advance();
-                Stmt::ControlAnimation {
-                    name: self.parse_expr(),
+                let name = self.parse_expr();
+                let mut rate = None;
+                let verb = match self.code() {
+                    TokenCode::Start => ControlAnimVerb::Start,
+                    TokenCode::Pause => ControlAnimVerb::Pause,
+                    TokenCode::Stop => ControlAnimVerb::Stop,
+                    TokenCode::Rate => ControlAnimVerb::Rate,
+                    _ => {
+                        self.error(
+                            "Looking for: start, stop, pause, or rate in ControlAnimation command"
+                                .into(),
+                        );
+                        ControlAnimVerb::Start
+                    }
+                };
+                if matches!(
+                    self.code(),
+                    TokenCode::Start | TokenCode::Pause | TokenCode::Stop | TokenCode::Rate
+                ) {
+                    self.advance();
                 }
+                if verb == ControlAnimVerb::Rate {
+                    rate = Some(self.parse_expr());
+                }
+                Stmt::ControlAnimation { name, verb, rate }
             }
 
             // Movement / combat (blocking)
@@ -608,7 +630,10 @@ impl Compiler {
             }
             TokenCode::SetActorEnabled => {
                 self.advance();
-                Stmt::SetActorEnabled(self.parse_expr())
+                let target = self.parse_expr();
+                self.expect(TokenCode::To);
+                let value = self.parse_expr();
+                Stmt::SetActorEnabled { target, value }
             }
             TokenCode::SetFaction => {
                 self.advance();
@@ -778,6 +803,22 @@ impl Compiler {
             TokenCode::DrawText => {
                 self.advance();
                 Stmt::DrawText(self.parse_expr())
+            }
+            TokenCode::UiOverlay => {
+                self.advance();
+                Stmt::UiOverlay(self.parse_expr())
+            }
+            TokenCode::UiText => {
+                self.advance();
+                let item = self.parse_expr();
+                self.skip_if(TokenCode::Comma);
+                Stmt::UiText(item, self.parse_expr())
+            }
+            TokenCode::UiVisible => {
+                self.advance();
+                let item = self.parse_expr();
+                self.skip_if(TokenCode::Comma);
+                Stmt::UiVisible(item, self.parse_expr())
             }
             TokenCode::Color => {
                 // `color R,G,B,A` — sets the current debug-draw color.
@@ -2138,6 +2179,14 @@ impl Compiler {
                 self.skip_if(TokenCode::RightCurlyBracket);
                 Expr::VectorLit(Box::new(x), Box::new(y), Box::new(z))
             }
+            // `cutscenesenabled` takes no arguments (C++ PreDefFunc.cpp).
+            TokenCode::CutScenesEnabled => {
+                self.advance();
+                Expr::Call {
+                    name: "cutscenesenabled".to_string(),
+                    args: Vec::new(),
+                }
+            }
             // Query functions that look like function calls
             TokenCode::Location
             | TokenCode::Direction
@@ -2460,6 +2509,9 @@ fn is_command_start(code: TokenCode) -> bool {
             | TokenCode::End
             | TokenCode::Eof
             | TokenCode::DrawText
+            | TokenCode::UiOverlay
+            | TokenCode::UiText
+            | TokenCode::UiVisible
             | TokenCode::CameraFollowActor
             | TokenCode::CameraTrackActor
             | TokenCode::CameraTrackPoint

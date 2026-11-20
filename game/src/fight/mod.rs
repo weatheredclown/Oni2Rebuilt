@@ -163,7 +163,9 @@ fn setup_default_impact_strike(mut fx_lib: ResMut<FxLibrary>, mut images: ResMut
         return;
     }
 
-    let texture_handle = load_texture("entity/strikefx", "bam", &mut images).map(|(h, _)| h);
+    // Strikes draw additively: linear-alpha copy (see texture::additive_alpha).
+    let texture_handle = load_texture("entity/strikefx", "bam", &mut images)
+        .map(|(h, _)| crate::oni2_loader::parsers::texture::additive_texture(&mut images, &h));
 
     let def = StrikeFxDef {
         name: fx_table::DEFAULT_IMPACT_STRIKE_NAME.to_string(),

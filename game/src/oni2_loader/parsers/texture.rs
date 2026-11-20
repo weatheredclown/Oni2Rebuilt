@@ -340,3 +340,81 @@ fn load_texture_inner(
     info!("Texture not found: {} (.tex/.tex.tga/.tga)", texture_name);
     None
 }
+
+// ---------------------------------------------------------------------------
+// Additive FX: match AGE's gamma-space SrcAlpha/One blending
+// ---------------------------------------------------------------------------
+
+/// AGE blends additive FX (`blendSet_SrcAlpha_One`, `blendset add`) into an
+/// 8-bit gamma-space framebuffer: `dst + c * a`.  Bevy blends in linear HDR
+/// and gamma-encodes at the end, so the same blend gives
+/// `encode(dst_lin + lin(c) * a)` — with `c` sRGB-decoded but `a` used as-is,
+/// a texel with alpha 0.1 adds ~0.35 to a black background instead of 0.1,
+/// and every soft-edged glow / flare / beam grows a wide halo.  Since
+/// `lin(c * a) ≈ lin(c) * lin(a)`, running the blend alpha through the sRGB
+/// EOTF reproduces AGE exactly over black (and closely over dark scenes).
+/// Use it on every alpha that feeds an additive blend: texture alpha (via
+/// [`additive_texture`]), material/vertex alpha, particle colour gradients.
+pub fn additive_alpha(a: f32) -> f32 {
+    let a = a.clamp(0.0, 1.0);
+    if a <= 0.04045 {
+        a / 12.92
+    } else {
+        ((a + 0.055) / 1.055).powf(2.4)
+    }
+}
+
+/// A copy of `handle`'s image with [`additive_alpha`] applied to its alpha
+/// channel (colour untouched), for textures drawn with an additive blend.
+/// Cached per source image; returns `handle` unchanged when the image isn't
+/// resident yet (asset-server fallbacks) or isn't 8-bit RGBA.
+pub fn additive_texture(images: &mut Assets<Image>, handle: &Handle<Image>) -> Handle<Image> {
+    use std::collections::HashMap;
+    use std::sync::{LazyLock, Mutex};
+    static CACHE: LazyLock<Mutex<HashMap<AssetId<Image>, Handle<Image>>>> =
+        LazyLock::new(|| Mutex::new(HashMap::new()));
+    static LUT: LazyLock<[u8; 256]> = LazyLock::new(|| {
+        std::array::from_fn(|i| (additive_alpha(i as f32 / 255.0) * 255.0).round() as u8)
+    });
+
+    let mut cache = CACHE.lock().unwrap();
+    if let Some(h) = cache.get(&handle.id()) {
+        return h.clone();
+    }
+    let Some(src) = images.get(handle) else {
+        return handle.clone();
+    };
+    use bevy::render::render_resource::TextureFormat;
+    if !matches!(
+        src.texture_descriptor.format,
+        TextureFormat::Rgba8UnormSrgb | TextureFormat::Rgba8Unorm
+    ) {
+        return handle.clone();
+    }
+    let mut img = src.clone();
+    let Some(data) = img.data.as_mut() else {
+        return handle.clone();
+    };
+    for px in data.chunks_exact_mut(4) {
+        px[3] = LUT[px[3] as usize];
+    }
+    let out = images.add(img);
+    cache.insert(handle.id(), out.clone());
+    cache.insert(out.id(), out.clone()); // converting a converted handle is a no-op
+    out
+}
+
+#[cfg(test)]
+mod additive_alpha_tests {
+    use super::additive_alpha;
+
+    #[test]
+    fn maps_gamma_alpha_to_linear() {
+        assert_eq!(additive_alpha(0.0), 0.0);
+        assert!((additive_alpha(1.0) - 1.0).abs() < 1e-6);
+        // A texel at alpha 0.5 adds 0.5 in AGE's gamma framebuffer, i.e. ~0.214 linear.
+        assert!((additive_alpha(0.5) - 0.214).abs() < 1e-3);
+        // Faint edges (the halo) are the ones pulled down hardest.
+        assert!(additive_alpha(0.1) < 0.011);
+    }
+}

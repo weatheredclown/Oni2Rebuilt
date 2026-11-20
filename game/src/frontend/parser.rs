@@ -43,6 +43,8 @@ pub fn parse_ui(src: &str) -> ParseResult<UiFile> {
             "PAGE_3D"
         } else if p.check_token("PAGE_MOVIE") {
             "PAGE_MOVIE"
+        } else if p.check_token("PAGE_OVERLAY") {
+            "PAGE_OVERLAY"
         } else {
             break;
         };
@@ -131,6 +133,7 @@ fn parse_page(p: &mut BlockParser, kind_keyword: &str) -> ParseResult<Page> {
             let movie = p.get_token()?;
             PageKind::PageMovie { movie }
         }
+        "PAGE_OVERLAY" => PageKind::PageOverlay,
         other => return Err(format!("ui parse: unknown page kind '{}'", other)),
     };
 
@@ -298,6 +301,13 @@ fn parse_rect3d(p: &mut BlockParser) -> ParseResult<Rect3DProps> {
     let top_left = p.get_vec3()?;
     p.get_delimiter("BOTTOM_RIGHT")?;
     let bottom_right = p.get_vec3()?;
+    // rb: `WORLD` then `NEAR <m>` (strict order, as in uiItemRect3D::InitCustom).
+    let world = p.check_token("WORLD");
+    let near = if p.check_token("NEAR") {
+        Some(p.get_float()?)
+    } else {
+        None
+    };
     let color = if p.check_token("COLOR") {
         p.get_color()?
     } else {
@@ -325,6 +335,8 @@ fn parse_rect3d(p: &mut BlockParser) -> ParseResult<Rect3DProps> {
         color,
         blend_mode,
         texture,
+        world,
+        near,
     })
 }
 
@@ -336,6 +348,14 @@ fn parse_string_source(p: &mut BlockParser) -> ParseResult<StringSource> {
         Ok(StringSource::StringId(p.get_token()?))
     } else if p.check_token("STRING_LEVEL_NAME") {
         Ok(StringSource::LevelName)
+    } else if p.check_token("TEXT") {
+        let text = p.get_token()?;
+        let font = if p.check_token("FONT") {
+            Some(p.get_token()?)
+        } else {
+            None
+        };
+        Ok(StringSource::Literal { text, font })
     } else {
         Ok(StringSource::LevelName)
     }

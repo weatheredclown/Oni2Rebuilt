@@ -93,6 +93,7 @@ pub fn apply_camera_transform(
         &mut Projection,
     )>,
     spatial_query: avian3d::prelude::SpatialQuery,
+    sensors: Query<(), With<avian3d::prelude::Sensor>>,
 ) {
     let dt = time.delta_secs();
 
@@ -141,14 +142,26 @@ pub fn apply_camera_transform(
         let cast_dir = Dir3::new(dir).unwrap_or(Dir3::Z);
 
         if cast_dist > 0.01 {
-            // Exclude the player/focus entity so camera does not hit them
-            let filter =
-                avian3d::prelude::SpatialQueryFilter::from_excluded_entities([channel.focus_actor]);
+            // rb's camera probe (camera_new/rbpolar.cpp) only tests bounds
+            // flagged BOUNDFLAG_MOVER — the world movers stand on.  Creatures
+            // (BOUNDFLAG_CREATURE) and trigger volumes never block it.  Hitting
+            // every collider here meant any grunt or camera trigger between
+            // the focus and the camera yanked it in to ~0.85x that distance,
+            // so fights were filmed from inside the crowd.
+            let filter = avian3d::prelude::SpatialQueryFilter::from_mask(
+                crate::combat::bundles::GameLayer::Default,
+            )
+            .with_excluded_entities([channel.focus_actor]);
 
             // Ray cast to keep camera comfortably out of walls
-            if let Some(hit) =
-                spatial_query.cast_ray(target_base, cast_dir, cast_dist, true, &filter)
-            {
+            if let Some(hit) = spatial_query.cast_ray_predicate(
+                target_base,
+                cast_dir,
+                cast_dist,
+                true,
+                &filter,
+                &|entity| !sensors.contains(entity),
+            ) {
                 // If hit, push camera closer across the vector
                 desired_pos = target_base + cast_dir * (hit.distance * 0.85); // 0.85 to add buffer
                 channel.is_colliding = true;

@@ -171,3 +171,9 @@ pub struct Conveyor {
     /// `ConveyorSpeed` from the physics material (units/sec).
     pub speed: f32,
 }
+
+/// Actor taken out of the level by ScrOni `setactorenabled <guid> to 0`
+/// (C++ rbActor::SetEnabled -> lvlLevel::RemoveAndPrepareActor): hidden, no
+/// physics, no pad input.  Removed again by `setactorenabled <guid> to 1`.
+#[derive(Component, Debug, Clone, Copy)]
+pub struct ActorDisabled;

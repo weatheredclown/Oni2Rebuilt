@@ -1156,6 +1156,10 @@ pub fn scroni_sys_event_observer(
         | ScrOniSysEvent::MusicStop
         | ScrOniSysEvent::PlayCutScene { .. }
         | ScrOniSysEvent::EndCutScene => {}
+        // Handled by `crate::ui_overlay`'s own observer.
+        ScrOniSysEvent::UiOverlay(_)
+        | ScrOniSysEvent::UiText(..)
+        | ScrOniSysEvent::UiVisible(..) => {}
 
         // `form <name>` — set the leader's custom formation (aiMsgSetFormation).
         // Overwrites the actor's `LeaderFormation`; the formation system picks

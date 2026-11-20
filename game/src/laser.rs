@@ -122,16 +122,15 @@ pub fn spawn_laser(
     at: Vec3,
     name_hint: &str,
 ) -> Entity {
-    // Ribbon: empty mesh now, rebuilt each frame.  Start with a bright
-    // opaque emissive material (no texture, no alpha blend) so we can
-    // see whether the GEOMETRY is getting to the screen.  Tail texture +
-    // additive blend can be layered back on once we confirm visibility.
+    // Ribbon: empty mesh now, rebuilt each frame.  Legacy fxLaser draws the
+    // tail texture untinted (vglColor4f(1,1,1,a)) with SrcAlpha/One additive
+    // blending and lighting off; LightColor only colours the point light.
+    // (This used to multiply by LightColor x 8 — and x 2 more via the vertex
+    // colours — which blew the beam out to a saturated bar.)
     let ribbon_mesh = meshes.add(empty_ribbon_mesh());
     let ribbon_mat = materials.add(StandardMaterial {
-        base_color: Color::from(ld.light_color.to_linear() * 8.0),
+        base_color: Color::WHITE,
         base_color_texture: ld.tail_texture_handle.clone(),
-        // Emissive is ignored when unlit: true, so we bake the HDR multiplier into base_color
-        emissive: (ld.light_color.to_linear() * 8.0).into(),
         alpha_mode: AlphaMode::Add,
         unlit: true,
         cull_mode: None,
@@ -142,9 +141,9 @@ pub fn spawn_laser(
     // Head sprite: unit quad, scaled via Transform to 0.5*Width*HeadScale.
     let head_quad = meshes.add(Rectangle::new(1.0, 1.0));
     let head_mat = materials.add(StandardMaterial {
-        base_color: Color::from(ld.light_color.to_linear() * 3.0),
+        // Legacy: vglColor4f(1,1,1,1) — the head texture as authored.
+        base_color: Color::WHITE,
         base_color_texture: ld.head_texture_handle.clone(),
-        emissive: (ld.light_color.to_linear() * 3.0).into(),
         alpha_mode: AlphaMode::Add,
         unlit: true,
         cull_mode: None,
@@ -406,7 +405,13 @@ fn laser_ribbon_rebuild(
             let mut j = trail.tail;
             loop {
                 let p_world = trail.path[j];
-                let t = k as f32 * inv_count;
+                // 0 at the tail .. 1 at the head, as legacy vglTexCoord2f(u, t).
+                // The .tex decoder stores images bottom row first (models
+                // need that), so a code-built V must be flipped to sample
+                // the same texel row AGE does: the tail textures run from
+                // transparent (file row 0) to the bright core (last row),
+                // and without the flip the beam faded toward its head.
+                let t = 1.0 - k as f32 * inv_count;
                 // Tail vertex gets alpha=0 to mask the hard edge
                 // (legacy comment: "to help fix hard edge at tail").
                 let alpha = if j == trail.tail { 0.0 } else { 1.0 };
@@ -420,8 +425,8 @@ fn laser_ribbon_rebuild(
                 normals.push([0.0, 1.0, 0.0]);
                 uvs.push([0.0, t]);
                 uvs.push([1.0, t]);
-                colors.push([2.0, 2.0, 2.0, alpha]);
-                colors.push([2.0, 2.0, 2.0, alpha]);
+                colors.push([1.0, 1.0, 1.0, alpha]);
+                colors.push([1.0, 1.0, 1.0, alpha]);
 
                 if k > 0 {
                     // Stitch to previous pair with two triangles.
@@ -512,10 +517,15 @@ fn laser_head_billboard(
                 continue;
             }
             *vis = Visibility::Visible;
-            // Parent entity's transform already sits at the head world
-            // position (see laser_trail_update), so the head sprite
-            // stays at local origin.
-            tf.translation = Vec3::ZERO;
+            // Legacy places the head "1 texel away from head to match
+            // texture fade": lerp(path[head-1], path[head], frac(count *
+            // TexelOffset)), TexelOffset = (texH-2)/(texH-1) = 62/63 for
+            // the 64-px tail textures.  The parent sits at path[head].
+            let n = trail.path.len();
+            let last = (trail.head + n - 1) % n;
+            let tt = trail.count() as f32 * (62.0 / 63.0);
+            let front = trail.path[last].lerp(trail.path[trail.head], tt - tt.floor());
+            tf.translation = front - trail.path[trail.head];
             // Billboard the unit quad (lying in XY, normal +Z) toward
             // the camera. A spherical billboard just copies the camera's rotation
             // so its local +Z faces exactly opposite the camera's look direction (-Z).
@@ -523,25 +533,6 @@ fn laser_head_billboard(
             tf.rotation = cam_rot;
             tf.scale = Vec3::splat(trail.width * trail.head_scale);
 
-            // --- Debug print requested by user ---
-            let cam_euler = cam_rot.to_euler(EulerRot::YXZ);
-            let head_euler = tf.rotation.to_euler(EulerRot::YXZ);
-
-            // Just use a simple static to rate limit or only print on change
-            static mut LAST_PRINT: (f32, f32) = (0.0, 0.0);
-            unsafe {
-                let diff_cam = (cam_euler.0 - LAST_PRINT.0).abs();
-                let diff_head = (head_euler.0 - LAST_PRINT.1).abs();
-                if diff_cam > 0.1 || diff_head > 0.1 {
-                    println!(
-                        "LASER DEBUG | Cam Yaw: {:.1}°, Head Yaw: {:.1}°",
-                        cam_euler.0.to_degrees(),
-                        head_euler.0.to_degrees()
-                    );
-                    LAST_PRINT = (cam_euler.0, head_euler.0);
-                }
-            }
-            // -------------------------------------
         }
     }
 }

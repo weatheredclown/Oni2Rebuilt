@@ -261,6 +261,22 @@ pub fn exec(ctx: &mut OpsCtx, stmt: &Stmt) -> bool {
             });
             true
         }
+        Stmt::SetActorEnabled { target, value } => {
+            let val = ctx.eval(target);
+            let enabled = ctx.eval_int(value) != 0;
+            let targets = ctx.ctx.resolve_targets(&val);
+            if targets.is_empty() {
+                warn!(
+                    "[ScrOni][{}] Tried to enable/disable actor that doesn't exist! ({:?})",
+                    ctx.thread().script.name,
+                    val
+                );
+            }
+            for actor in targets {
+                ctx.sys_request(SysRequest::SetActorEnabled { actor, enabled });
+            }
+            true
+        }
         Stmt::Destroy(target) => {
             let val = ctx.eval(target);
             match val {
@@ -460,13 +476,25 @@ pub fn exec(ctx: &mut OpsCtx, stmt: &Stmt) -> bool {
                     target_name,
                     ctx.thread().seq_pc
                 );
-                ctx.exec.outgoing_messages.push(ScriptMessage {
+                let m = ScriptMessage {
                     msg: msg_str.clone(),
                     from: ctx.exec.owner,
                     to: entity,
                     args: args.clone(),
                     is_action: false,
-                });
+                };
+                // C++ DoSendMessage is a synchronous guid->Broadcast: the
+                // message is in the target's MUD data before the next
+                // instruction.  Other targets are delivered after this
+                // tick, but a message to ourselves must be readable right
+                // away - cutscene.oni's CS_Actor re-sends a cue to itself
+                // ("PLAY" -> "pLAY") and then switches, and the restarted
+                // sequence reads it on its first pass.
+                if entity == ctx.exec.owner {
+                    ctx.exec.message_queue.push(m);
+                } else {
+                    ctx.exec.outgoing_messages.push(m);
+                }
             }
             true
         }
@@ -636,11 +664,9 @@ pub fn exec(ctx: &mut OpsCtx, stmt: &Stmt) -> bool {
                 t.seq_pc = 0;
                 t.loop_stack.clear();
                 // The old script's wait dies with it (C++ PopScript).
+                // Pending messages do not: C++ keeps them in the actor's
+                // MUD data, untouched by scrExecutor::Switch.
                 t.blocking = None;
-
-                if ctx.tid == 0 {
-                    ctx.exec.message_queue.clear();
-                }
 
                 ctx.thread_mut().state = ExecState::AbortSequence;
             } else {
@@ -814,6 +840,23 @@ pub fn exec(ctx: &mut OpsCtx, stmt: &Stmt) -> bool {
             let x = ctx.eval_float(x_expr);
             let y = ctx.eval_float(y_expr);
             ctx.sys_request(SysRequest::At(x, y));
+            true
+        }
+        Stmt::UiOverlay(page) => {
+            let page = ctx.eval_string(page);
+            ctx.sys_request(SysRequest::UiOverlay(page));
+            true
+        }
+        Stmt::UiText(item, text) => {
+            let item = ctx.eval_string(item);
+            let text = ctx.eval_string(text);
+            ctx.sys_request(SysRequest::UiText(item, text));
+            true
+        }
+        Stmt::UiVisible(item, visible) => {
+            let item = ctx.eval_string(item);
+            let visible = ctx.eval_bool(visible);
+            ctx.sys_request(SysRequest::UiVisible(item, visible));
             true
         }
         Stmt::DrawText(text_expr) => {

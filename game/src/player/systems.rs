@@ -30,9 +30,20 @@ pub fn keyboard_input_system(
     keyboard: Res<ButtonInput<KeyCode>>,
     mouse: Res<ButtonInput<MouseButton>>,
     script: Res<super::padscript::PadScript>,
-    mut query: Query<(&mut InputState, Option<&crate::fight::components::FighterState>), With<Player>>,
+    mut query: Query<
+        (
+            &mut InputState,
+            Option<&crate::fight::components::FighterState>,
+            Has<crate::oni2_loader::components::ActorDisabled>,
+        ),
+        With<Player>,
+    >,
 ) {
-    for (mut input, fs_opt) in &mut query {
+    for (mut input, fs_opt, disabled) in &mut query {
+        if disabled {
+            *input = InputState::default();
+            continue;
+        }
         if let Some(fs) = fs_opt {
             if fs.is_grappling() || fs.is_being_grappled() {
                 *input = InputState::default();
@@ -95,14 +106,25 @@ pub fn keyboard_input_system(
 pub fn gamepad_input_system(
     pad_settings: Res<PadTuneSettings>,
     gamepads: Query<(Entity, &Gamepad)>,
-    mut query: Query<(&mut InputState, Option<&crate::fight::components::FighterState>), With<Player>>,
+    mut query: Query<
+        (
+            &mut InputState,
+            Option<&crate::fight::components::FighterState>,
+            Has<crate::oni2_loader::components::ActorDisabled>,
+        ),
+        With<Player>,
+    >,
 ) {
     // Find the first connected gamepad
     let Some((_, gamepad)) = gamepads.iter().next() else {
         return;
     };
 
-    for (mut input, fs_opt) in &mut query {
+    for (mut input, fs_opt, disabled) in &mut query {
+        if disabled {
+            *input = InputState::default();
+            continue;
+        }
         if let Some(fs) = fs_opt {
             if fs.is_grappling() || fs.is_being_grappled() {
                 *input = InputState::default();
@@ -210,11 +232,14 @@ pub fn pad_mapper_update_system(
     // ── Unified Button Handling ──────────────────────────────────────────
 
     // Rup (Space / Gamepad North)
-    let rup_pressed = keyboard.just_pressed(KeyCode::Space)
+    // -padscript face button (ioPad bit 0x0010) — same file format as rb's -padscript
+    let rup_pressed = script.just_pressed(0x0010)
+        || keyboard.just_pressed(KeyCode::Space)
         || gamepad_opt
             .map(|g| g.just_pressed(GamepadButton::North))
             .unwrap_or(false);
-    let rup_held = keyboard.pressed(KeyCode::Space)
+    let rup_held = script.held(0x0010)
+        || keyboard.pressed(KeyCode::Space)
         || gamepad_opt
             .map(|g| g.pressed(GamepadButton::North))
             .unwrap_or(false);
@@ -225,11 +250,14 @@ pub fn pad_mapper_update_system(
     }
 
     // Rdown (KeyQ / Gamepad South)
-    let rdown_pressed = keyboard.just_pressed(KeyCode::KeyQ)
+    // -padscript face button (ioPad bit 0x0040) — same file format as rb's -padscript
+    let rdown_pressed = script.just_pressed(0x0040)
+        || keyboard.just_pressed(KeyCode::KeyQ)
         || gamepad_opt
             .map(|g| g.just_pressed(GamepadButton::South))
             .unwrap_or(false);
-    let rdown_held = keyboard.pressed(KeyCode::KeyQ)
+    let rdown_held = script.held(0x0040)
+        || keyboard.pressed(KeyCode::KeyQ)
         || gamepad_opt
             .map(|g| g.pressed(GamepadButton::South))
             .unwrap_or(false);
@@ -240,12 +268,15 @@ pub fn pad_mapper_update_system(
     }
 
     // Rleft (KeyE / LMB / Gamepad East)
-    let rleft_pressed = keyboard.just_pressed(KeyCode::KeyE)
+    // -padscript face button (ioPad bit 0x0080) — same file format as rb's -padscript
+    let rleft_pressed = script.just_pressed(0x0080)
+        || keyboard.just_pressed(KeyCode::KeyE)
         || mouse.just_pressed(MouseButton::Left)
         || gamepad_opt
             .map(|g| g.just_pressed(GamepadButton::East))
             .unwrap_or(false);
-    let rleft_held = keyboard.pressed(KeyCode::KeyE)
+    let rleft_held = script.held(0x0080)
+        || keyboard.pressed(KeyCode::KeyE)
         || mouse.pressed(MouseButton::Left)
         || gamepad_opt
             .map(|g| g.pressed(GamepadButton::East))
@@ -257,11 +288,14 @@ pub fn pad_mapper_update_system(
     }
 
     // Rright (RMB / Gamepad West)
-    let rright_pressed = mouse.just_pressed(MouseButton::Right)
+    // -padscript face button (ioPad bit 0x0020) — same file format as rb's -padscript
+    let rright_pressed = script.just_pressed(0x0020)
+        || mouse.just_pressed(MouseButton::Right)
         || gamepad_opt
             .map(|g| g.just_pressed(GamepadButton::West))
             .unwrap_or(false);
-    let rright_held = mouse.pressed(MouseButton::Right)
+    let rright_held = script.held(0x0020)
+        || mouse.pressed(MouseButton::Right)
         || gamepad_opt
             .map(|g| g.pressed(GamepadButton::West))
             .unwrap_or(false);
@@ -287,12 +321,14 @@ pub fn pad_mapper_update_system(
     }
 
     // R3 (KeyV / KeyH / Gamepad RightThumb)
-    let r3_pressed = keyboard.just_pressed(KeyCode::KeyV)
+    let r3_pressed = script.just_pressed(0x0400)
+        || keyboard.just_pressed(KeyCode::KeyV)
         || keyboard.just_pressed(KeyCode::KeyH)
         || gamepad_opt
             .map(|g| g.just_pressed(GamepadButton::RightThumb))
             .unwrap_or(false);
-    let r3_held = keyboard.pressed(KeyCode::KeyV)
+    let r3_held = script.held(0x0400)
+        || keyboard.pressed(KeyCode::KeyV)
         || keyboard.pressed(KeyCode::KeyH)
         || gamepad_opt
             .map(|g| g.pressed(GamepadButton::RightThumb))

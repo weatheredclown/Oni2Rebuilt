@@ -14,6 +14,7 @@ pub fn parse_mod(content: &str, entity_dir: &str) -> Oni2Model {
     let mut vertices = Vec::new();
     let mut normals = Vec::new();
     let mut colors = Vec::new();
+    let mut tex_coords2: Vec<[f32; 2]> = Vec::new();
     let mut tex_coords = Vec::new();
     let mut materials = Vec::new();
     let mut packets = Vec::new();
@@ -62,6 +63,15 @@ pub fn parse_mod(content: &str, entity_dir: &str) -> Oni2Model {
                 let u: f32 = parts[1].parse().unwrap_or(0.0);
                 let v: f32 = parts[2].parse().unwrap_or(0.0);
                 tex_coords.push([u, v]);
+            }
+        }
+        // Second UV set (lightmaps / decal passes with `texsrc 1`)
+        else if trimmed.starts_with("t2\t") || trimmed.starts_with("t2 ") {
+            let parts: Vec<&str> = trimmed.split_whitespace().collect();
+            if parts.len() >= 3 {
+                let u: f32 = parts[1].parse().unwrap_or(0.0);
+                let v: f32 = parts[2].parse().unwrap_or(0.0);
+                tex_coords2.push([u, v]);
             }
         }
         // Material
@@ -158,6 +168,13 @@ pub fn parse_mod(content: &str, entity_dir: &str) -> Oni2Model {
                             normal_idx: parts[2].parse().unwrap_or(0),
                             color_idx: parts[3].parse().unwrap_or(0),
                             tex1_idx: parts[4].parse().unwrap_or(-1),
+                            // `adj p n c t1 t2 bone` (AGE gfx/model.cpp): t2 is
+                            // the second-UV-set index, present with the bone.
+                            tex2_idx: if parts.len() >= 7 {
+                                parts[5].parse().unwrap_or(-1)
+                            } else {
+                                -1
+                            },
                             bone_idx,
                         });
                     }
@@ -234,6 +251,7 @@ pub fn parse_mod(content: &str, entity_dir: &str) -> Oni2Model {
         normals,
         colors,
         tex_coords,
+        tex_coords2,
         materials,
         packets,
         bone_world_positions: Vec::new(),
@@ -609,6 +627,7 @@ pub fn parse_mod_binary(data: &[u8], entity_dir: &str) -> Option<Oni2Model> {
                 normal_idx: n,
                 color_idx: c,
                 tex1_idx: t1,
+                tex2_idx: -1,
                 bone_idx: bone,
             });
             off += 24;
@@ -663,6 +682,7 @@ pub fn parse_mod_binary(data: &[u8], entity_dir: &str) -> Option<Oni2Model> {
         normals,
         colors,
         tex_coords,
+        tex_coords2: Vec::new(),
         materials,
         packets,
         bone_world_positions: Vec::new(),

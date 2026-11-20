@@ -62,6 +62,8 @@ fn get_or_load_flash_texture(
     }
     let (h, _) =
         crate::oni2_loader::parsers::texture::load_texture("texture", "daisyalpha", images)?;
+    // Flashes draw additively: linear-alpha copy (see texture::additive_alpha).
+    let h = crate::oni2_loader::parsers::texture::additive_texture(images, &h);
     cache.0 = Some(h.clone());
     Some(h)
 }
@@ -305,7 +307,10 @@ fn update_flash_fx(
         // Material alpha + Transform scale (×2 because the unit quad
         // spans 1.0 not 2.0).
         if let Some(mat) = materials.get_mut(&flash.material) {
-            mat.base_color = mat.base_color.with_alpha(alpha);
+            // Additive: fade in AGE's gamma-space terms (texture::additive_alpha).
+            mat.base_color = mat
+                .base_color
+                .with_alpha(crate::oni2_loader::parsers::texture::additive_alpha(alpha));
         }
         let world_size = flash.current_scale * 2.0;
         // Preserve the per-instance Z rotation set at spawn — only
@@ -366,16 +371,19 @@ pub fn spawn_sprite(
             1.0
         }
     };
-    // Legacy `BlendSet 1` = `blendSet_SrcAlpha_One` (additive); other
-    // values fall back to alpha blending.  Most muzzle/flare uses are
-    // additive in practice, so the typical visible behaviour matches.
-    let alpha_mode = if def.blend_set == 1 {
-        AlphaMode::Add
+    // fxSpriteEffect::smBlendSets: BlendSet 0 = "Add" (blendSet_One_One),
+    // 1 = "Alpha blend" (SrcAlpha_InvSrcAlpha), 2 = "Subtract" (MinusOne_One).
+    // (This used to treat 1 as additive and 0 as alpha blend — swapped.)
+    // One_One adds the colour and ignores alpha: Bevy's premultiplied blend
+    // (One, OneMinusSrcAlpha) with the fragment alpha forced to 0 is exactly
+    // that.  Subtract has no Bevy blend state; it falls back to alpha blend.
+    let (alpha_mode, base_color) = if def.blend_set == 0 {
+        (AlphaMode::Premultiplied, def.color.with_alpha(0.0))
     } else {
-        AlphaMode::Blend
+        (AlphaMode::Blend, def.color)
     };
     let material = materials.add(StandardMaterial {
-        base_color: def.color,
+        base_color,
         base_color_texture: Some(def.texture.clone()),
         alpha_mode,
         unlit: true,
@@ -585,6 +593,8 @@ fn update_strike_fx(
         // get the same effective fade, pre-multiply alpha into RGB each frame
         // from the *stable* `base_tint` (not from `mat.base_color`, which we
         // overwrite below — re-reading it would compound the fade).
+        // Additive: fade in AGE's gamma-space terms (texture::additive_alpha).
+        let alpha = crate::oni2_loader::parsers::texture::additive_alpha(alpha);
         if let Some(mat) = materials.get_mut(&strike.material) {
             let t = strike.base_tint;
             mat.base_color = Color::LinearRgba(LinearRgba::new(

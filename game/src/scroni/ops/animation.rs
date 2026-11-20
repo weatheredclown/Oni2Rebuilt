@@ -128,8 +128,18 @@ pub fn exec(ctx: &mut OpsCtx, stmt: &Stmt) -> bool {
             });
             true
         }
-        Stmt::ControlAnimation { name: _ } => {
-            // Control animation isn't fully implemented in the main loop either
+        Stmt::ControlAnimation { name, verb, rate } => {
+            // C++ DoControlAnimation pops the rate (if any) then the name and
+            // broadcasts animMsgControlAnim; it never blocks the script.  The
+            // block here is serviced (and released) in the same frame by
+            // oni2_loader::animation's script-anim driver.
+            let r = rate.as_ref().map(|e| ctx.eval_float(e));
+            let n = ctx.eval_string(name);
+            ctx.block(BlockingAction::ControlAnimation {
+                name: n,
+                verb: *verb,
+                rate: r,
+            });
             true
         }
         _ => false,

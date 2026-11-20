@@ -369,6 +369,9 @@ fn spawn_page_chrome(
                 ));
             });
         }
+        // Overlay pages are drawn in-game by `crate::ui_overlay`, never as a
+        // front-end page.
+        PageKind::PageOverlay => {}
     }
 
     root
@@ -438,6 +441,7 @@ fn spawn_item(
         ItemKind::Rect2DText { string, .. } | ItemKind::Rect3DText { string, .. } => match string {
             StringSource::StringId(s) => s.clone(),
             StringSource::LevelName => "<level>".to_string(),
+            StringSource::Literal { text, .. } => text.clone(),
         },
         ItemKind::Slider2D { .. } => format!("{} (slider)", item.name),
         ItemKind::Rect2D(_) | ItemKind::Rect3D(_) | ItemKind::QuadList2D(_) => item.name.clone(),
