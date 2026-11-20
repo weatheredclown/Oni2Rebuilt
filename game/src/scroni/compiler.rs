@@ -1780,6 +1780,12 @@ impl Compiler {
                 TokenCode::Miss => args.push(Expr::StringLit("miss".to_string())),
                 TokenCode::Bullets => args.push(Expr::StringLit("bullets".to_string())),
                 TokenCode::Rate => args.push(Expr::StringLit("rate".to_string())),
+                // rb BlockingCommand.cpp ParseShoot: `miss [range <v>]`,
+                // `accuracy <v>` -- unknown here, they ended the statement and
+                // every script using them (Shooter.oni, firefight.oni) failed
+                // to compile, so those shooters never fired.
+                TokenCode::Range => args.push(Expr::StringLit("range".to_string())),
+                TokenCode::Accuracy => args.push(Expr::StringLit("accuracy".to_string())),
                 TokenCode::For => args.push(Expr::StringLit("for".to_string())),
                 _ => is_kw = false,
             }

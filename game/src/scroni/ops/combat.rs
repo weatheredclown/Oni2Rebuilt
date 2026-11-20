@@ -102,6 +102,17 @@ pub fn exec(ctx: &mut OpsCtx, stmt: &Stmt) -> bool {
                             i += 1;
                         }
                     }
+                    // `miss range <v>` / `accuracy <v>`: parsed (rb
+                    // ParseShoot) but, like `rate`, not honoured yet.
+                    Expr::StringLit(s)
+                        if s.eq_ignore_ascii_case("range") || s.eq_ignore_ascii_case("accuracy") =>
+                    {
+                        if i + 1 < args.len() {
+                            let v = ctx.eval_float(&args[i + 1]);
+                            debug!("VM: Shoot {} {} (not honoured)", s, v);
+                            i += 1;
+                        }
+                    }
                     Expr::StringLit(s) if s.eq_ignore_ascii_case("for") => {
                         if i + 1 < args.len() {
                             duration = Some(ctx.eval_float(&args[i + 1]));
