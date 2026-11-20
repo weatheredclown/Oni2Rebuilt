@@ -128,8 +128,14 @@ pub fn exec(ctx: &mut OpsCtx, stmt: &Stmt) -> bool {
             });
             true
         }
-        Stmt::ControlAnimation { name: _ } => {
-            // Control animation isn't fully implemented in the main loop either
+        Stmt::ControlAnimation { name, verb, rate } => {
+            let n = ctx.eval_string(name);
+            let r = rate.as_ref().map(|e| ctx.eval_float(e));
+            ctx.block(BlockingAction::ControlAnimation {
+                name: n,
+                verb: *verb,
+                rate: r,
+            });
             true
         }
         _ => false,

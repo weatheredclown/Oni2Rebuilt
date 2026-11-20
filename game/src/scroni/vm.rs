@@ -162,6 +162,14 @@ pub enum BlockingAction {
         rate: Option<f32>,
         duration: Option<f32>,
     },
+    /// `controlanimation <name> <verb>` — non-blocking in C++
+    /// (DoControlAnimation, rb/src/scroni/XAnimCommand.cpp:126); parked only
+    /// until `scroni_curve_bridge_system` applies it to the Oni2AnimState.
+    ControlAnimation {
+        name: String,
+        verb: super::ast::AnimControlVerb,
+        rate: Option<f32>,
+    },
     Fight,
     Shoot,
     /// `shoot ... [bullets N] [for S]` — parked until the shooter's
@@ -419,6 +427,13 @@ pub enum SysRequest {
         at: [f32; 3],
     },
     Destroy(Entity),
+    /// `setactorenabled <guid> to <value>` — rbActor::SetEnabled
+    /// (rb/src/rbactor/actor.cpp:113) takes the actor out of / back into the
+    /// level.  Ported as the visible half: hide / show it.
+    SetActorEnabled {
+        actor: Entity,
+        enabled: bool,
+    },
     /// `shoot <target> [for <duration>] [bullets <n>] [rate <r>] [miss]`.
     /// Aims the actor's current weapon at `target` and pulls the trigger;
     /// when `duration` elapses the system bridge writes a matching
@@ -2177,7 +2192,18 @@ impl ScriptExec {
                                     target_msg,
                                     self.message_queue[idx].from
                                 );
-                                self.message_queue.remove(idx);
+                                let msg = self.message_queue.remove(idx);
+                                // `receivemessage <id> with <var>, ...` stores the
+                                // message's values into the listed variables, in
+                                // order (DoReceiveMessage,
+                                // rb/src/scroni/XMessageCommand.cpp:303-336 — after
+                                // its numeric/string checks it assigns the sent
+                                // value as is).
+                                for (var_expr, val) in args.iter().skip(1).zip(msg.args) {
+                                    if let Expr::Var(var_name) = var_expr {
+                                        self.set_var(tid, var_name.clone(), val);
+                                    }
+                                }
                                 return Value::Int(1);
                             }
                         }
@@ -2203,6 +2229,10 @@ impl ScriptExec {
                         Value::Int(0)
                     }
                     "getcheckpointindex" => Value::Int(ctx.current_checkpoint),
+                    // DoCutScenesEnabled (rb/src/scroni/XPreDefFunc.cpp:1248):
+                    // camManager::sm_PlayCutscenes, true unless the game was
+                    // started with -nocutscenes (camera/manager.cpp:159).
+                    "cutscenesenabled" => Value::Int(1),
                     "first" => {
                         if let Some(Expr::Var(list_name)) = args.first()
                             && let Value::ActorList(entities, _) = self.get_var(tid, list_name)
@@ -3383,6 +3413,15 @@ pub fn scroni_tick_system(
                 }
                 SysRequest::Destroy(ent) => {
                     commands.trigger(ScrOniSysEvent::Destroy(ent));
+                }
+                SysRequest::SetActorEnabled { actor, enabled } => {
+                    if let Ok(mut e_cmd) = commands.get_entity(actor) {
+                        e_cmd.insert(if enabled {
+                            Visibility::Inherited
+                        } else {
+                            Visibility::Hidden
+                        });
+                    }
                 }
                 SysRequest::Shoot {
                     actor,

@@ -145,9 +145,12 @@ pub enum Stmt {
         loop_anim: bool,
         duration: Option<Expr>,
     },
-    /// `ControlAnimation <string> ...`
+    /// `ControlAnimation <string> (start | pause | stop | rate <expr>)`
+    /// (scrCompiler::ParseControlAnimation, rb/src/scroni/AnimCommand.cpp:108).
     ControlAnimation {
         name: Expr,
+        verb: AnimControlVerb,
+        rate: Option<Expr>,
     },
 
     /// `face <expr> [in <expr>]`
@@ -320,8 +323,12 @@ pub enum Stmt {
     SetHealth(Expr),
     /// `ResetHealth`
     ResetHealth,
-    /// `SetActorEnabled <expr>`
-    SetActorEnabled(Expr),
+    /// `SetActorEnabled <guid> to <value>`
+    /// (scrCompiler::ParseSetActorEnabled, rb/src/scroni/Command.cpp:1500).
+    SetActorEnabled {
+        actor: Expr,
+        enabled: Expr,
+    },
     /// `SetFaction <expr>`
     SetFaction(Expr),
     /// `SetUnbreakable <expr>`
@@ -510,6 +517,15 @@ pub enum Stmt {
         command: String,
         args: Vec<Expr>,
     },
+}
+
+/// `ControlAnimation` verb (viControlAnimation::kStart/kPause/kStop/kRate).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AnimControlVerb {
+    Start,
+    Pause,
+    Stop,
+    Rate,
 }
 
 /// Expression in ScrOni.

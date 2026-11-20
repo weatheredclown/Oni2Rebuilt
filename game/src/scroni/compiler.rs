@@ -406,12 +406,7 @@ impl Compiler {
             // Animation
             TokenCode::PlayAnimation => self.parse_play_animation(),
             TokenCode::PlayActionAnimation => self.parse_play_action_animation(),
-            TokenCode::ControlAnimation => {
-                self.advance();
-                Stmt::ControlAnimation {
-                    name: self.parse_expr(),
-                }
-            }
+            TokenCode::ControlAnimation => self.parse_control_animation(),
 
             // Movement / combat (blocking)
             TokenCode::Idle => {
@@ -607,8 +602,14 @@ impl Compiler {
                 Stmt::ResetHealth
             }
             TokenCode::SetActorEnabled => {
+                // `setActorEnabled <guid> to <value>` — the `to` is
+                // required (scrCompiler::ParseSetActorEnabled,
+                // rb/src/scroni/Command.cpp:1500).
                 self.advance();
-                Stmt::SetActorEnabled(self.parse_expr())
+                let actor = self.parse_expr();
+                self.expect(TokenCode::To);
+                let enabled = self.parse_expr();
+                Stmt::SetActorEnabled { actor, enabled }
             }
             TokenCode::SetFaction => {
                 self.advance();
@@ -805,6 +806,30 @@ impl Compiler {
                 let var = self.peek().text.clone().to_lowercase();
                 self.advance();
                 Stmt::Normalize { var }
+            }
+            TokenCode::UIOverlay => {
+                // `uioverlay <string>` (rb/src/scroni/Command.cpp:549).  The
+                // C++ executor calls gScrUIOverlayHook, which is NULL without
+                // the front end (XCommand.cpp:471) — overlay pages aren't
+                // ported, so this is the hook-unset no-op.
+                self.advance();
+                let arg = self.parse_expr();
+                Stmt::Unimplemented {
+                    command: "uioverlay".to_string(),
+                    args: vec![arg],
+                }
+            }
+            TokenCode::UIText | TokenCode::UIVisible => {
+                // `uitext <item> <text>` / `uivisible <item> <value>`
+                // (Command.cpp:563/579): two values, hook-unset no-op as above.
+                let name = self.peek().text.clone().to_lowercase();
+                self.advance();
+                let item = self.parse_expr();
+                let value = self.parse_expr();
+                Stmt::Unimplemented {
+                    command: name,
+                    args: vec![item, value],
+                }
             }
             TokenCode::SetHud => {
                 // `sethud <value>`.  HUD
@@ -1221,6 +1246,36 @@ impl Compiler {
             rate,
             duration,
         }
+    }
+
+    /// `ControlAnimation <string> (start | pause | stop | rate <value>)` —
+    /// scrCompiler::ParseControlAnimation (rb/src/scroni/AnimCommand.cpp:108).
+    fn parse_control_animation(&mut self) -> Stmt {
+        self.advance();
+        let name = self.parse_expr();
+        let mut rate = None;
+        let verb = match self.code() {
+            TokenCode::Start => AnimControlVerb::Start,
+            TokenCode::Pause => AnimControlVerb::Pause,
+            TokenCode::Stop => AnimControlVerb::Stop,
+            TokenCode::Rate => AnimControlVerb::Rate,
+            _ => {
+                self.error(
+                    "Looking for: start, stop, pause, or rate in ControlAnimation command".into(),
+                );
+                AnimControlVerb::Start
+            }
+        };
+        if matches!(
+            self.code(),
+            TokenCode::Start | TokenCode::Pause | TokenCode::Stop | TokenCode::Rate
+        ) {
+            self.advance();
+        }
+        if verb == AnimControlVerb::Rate {
+            rate = Some(self.parse_expr());
+        }
+        Stmt::ControlAnimation { name, verb, rate }
     }
 
     fn parse_play_action_animation(&mut self) -> Stmt {
@@ -2179,6 +2234,7 @@ impl Compiler {
             | TokenCode::ReceiveMessage
             | TokenCode::ReceiveAction
             | TokenCode::GetCheckPointIndex
+            | TokenCode::CutScenesEnabled
             | TokenCode::GetDetectedActor
             | TokenCode::GetUIItemValue
             | TokenCode::GetLastHitType
@@ -2485,6 +2541,49 @@ fn is_command_start(code: TokenCode) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cutscene_cast_commands() {
+        // cutscene.oni CS_Actor / exs_intro.oni: `setactorenabled <guid> to
+        // <value>`, `controlanimation <slot> pause`, the overlay `uitext` /
+        // `uioverlay` commands and the bare `cutscenesenabled` query.
+        let src = r#"
+Script Q
+begin
+variable
+    string aslot
+whenever
+    if receivemessage "HIDE" then setactorenabled me to 0
+sequence
+    if not cutscenesenabled then exit
+    setactorenabled player to 1
+    uioverlay "EXS_Subs"
+    uitext "Who" ""
+    uivisible "Sub" 0
+    controlanimation aslot pause
+    controlanimation aslot rate 0.5
+end
+"#;
+        let file = Compiler::compile(src).expect("should compile");
+        let seq = &file.scripts[0].sequence;
+        assert!(matches!(seq[1], Stmt::SetActorEnabled { .. }));
+        assert!(matches!(
+            seq[5],
+            Stmt::ControlAnimation {
+                verb: AnimControlVerb::Pause,
+                rate: None,
+                ..
+            }
+        ));
+        assert!(matches!(
+            seq[6],
+            Stmt::ControlAnimation {
+                verb: AnimControlVerb::Rate,
+                rate: Some(_),
+                ..
+            }
+        ));
+    }
 
     #[test]
     fn vector_literal_with_plus() {

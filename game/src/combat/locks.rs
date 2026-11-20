@@ -37,5 +37,8 @@ use crate::oni2_loader::animation::Oni2AnimState;
 ///     locomotion gait selection so the AI's attack swing isn't
 ///     clobbered by `ANIMNAV_STAND` mid-swing.
 pub fn locked_movement(anim_state: &Oni2AnimState) -> bool {
-    anim_state.is_one_shot_in_progress()
+    // A script's custom-channel anim (playanimation loop/hold, controlanimation
+    // pause) also holds the pose: C++ runs it as the bhControlAnim behavior,
+    // which writes no movement, on the channel that overrides locomotion.
+    anim_state.is_one_shot_in_progress() || anim_state.custom_channel_active()
 }

@@ -187,8 +187,17 @@ pub fn scroni_curve_bridge_system(
                                 let hold_val = *hold;
                                 let rate_val = *rate;
                                 if lib.play(&name_val, state) {
+                                    // ANIM_RESTART -> crAnimPlayer::Restart
+                                    // also clears a pause left by
+                                    // `controlanimation ... pause`
+                                    // (age/src/cranimation/player.h:156).
+                                    state.paused = false;
                                     state.looping = *loop_anim;
                                     state.speed_multiplier = rate_val.unwrap_or(1.0);
+                                    state.custom_channel = Some(CustomChannel {
+                                        anim: AnimId::new(&name_val),
+                                        hold: hold_val,
+                                    });
                                     if hold_val {
                                         t.blocking =
                                             Some(scroni::vm::BlockingAction::WaitingForAnimation);
@@ -208,6 +217,54 @@ pub fn scroni_curve_bridge_system(
                             t.blocking = None;
                             t.state = scroni::vm::ExecState::Running;
                         }
+                    }
+                    scroni::vm::BlockingAction::ControlAnimation { name, verb, rate } => {
+                        // animAnimatorComponent::HandleControlAnim
+                        // (rb/src/animator/animator.cpp:1462): the named anim
+                        // goes on the custom channel without moving its phase;
+                        // start/pause restart it first when it isn't already
+                        // playing, then set the pause flag.  Never blocks.
+                        use scroni::ast::AnimControlVerb;
+                        if let (Some(lib), Some(state)) =
+                            (anim_lib.as_ref(), anim_state.as_deref_mut())
+                        {
+                            let id = AnimId::new(name);
+                            let playing = state.current_anim_id == Some(id);
+                            match verb {
+                                AnimControlVerb::Start | AnimControlVerb::Pause => {
+                                    if playing || lib.play_id(id, state) {
+                                        state.paused = *verb == AnimControlVerb::Pause;
+                                        if !playing {
+                                            state.custom_channel = Some(CustomChannel {
+                                                anim: id,
+                                                hold: false,
+                                            });
+                                        }
+                                    } else {
+                                        warn!(
+                                            "Unable to play animation '{}:{}'",
+                                            _entity_name, name
+                                        );
+                                    }
+                                }
+                                AnimControlVerb::Rate => {
+                                    if playing {
+                                        state.speed_multiplier = rate.unwrap_or(1.0);
+                                    }
+                                }
+                                AnimControlVerb::Stop => {
+                                    // crAnimPlayer::Stop deactivates the custom
+                                    // channel so the animator's lower channels
+                                    // show; Oni2AnimState has no channel stack.
+                                    debug!(
+                                        "controlanimation '{}' stop: no custom channel to stop",
+                                        name
+                                    );
+                                }
+                            }
+                        }
+                        t.blocking = None;
+                        t.state = scroni::vm::ExecState::Running;
                     }
                     scroni::vm::BlockingAction::WaitingForAnimation => {
                         if let Some(state) = anim_state.as_deref() {
@@ -329,6 +386,21 @@ pub struct Oni2AnimState {
     pub root_offset_this_frame: Vec3,
     /// Previous tick's `root_offset_this_frame` — subtract to get a delta.
     pub root_offset_prev_frame: Vec3,
+
+    /// The anim a script put on the animator's CUSTOM_CHANNEL
+    /// (`playanimation` / `controlanimation`), which in C++ overrides the
+    /// lower (locomotion) channels while it plays.  `play_id` clears it, so
+    /// any other system replacing the anim also ends the script's claim.
+    pub custom_channel: Option<CustomChannel>,
+}
+
+/// A script-owned custom-channel anim (see `Oni2AnimState::custom_channel`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CustomChannel {
+    pub anim: AnimId,
+    /// `playanimation ... hold`: the channel stays active on the last frame
+    /// (crAnimPlayer Hold) instead of stopping.
+    pub hold: bool,
 }
 
 impl Default for Oni2AnimState {
@@ -358,6 +430,7 @@ impl Default for Oni2AnimState {
             gait_sub_value: 0.0,
             root_offset_this_frame: Vec3::ZERO,
             root_offset_prev_frame: Vec3::ZERO,
+            custom_channel: None,
         }
     }
 }
@@ -390,6 +463,19 @@ impl Oni2AnimState {
     /// when the anim doesn't strip root translation or just started.
     pub fn root_motion_delta(&self) -> Vec3 {
         self.root_offset_this_frame - self.root_offset_prev_frame
+    }
+
+    /// True while a script's custom-channel anim still owns the pose: the
+    /// C++ CUSTOM_CHANNEL is playing (looping, held on its last frame, paused,
+    /// or a one-shot not yet finished) — animAnimatorComponent blends it over
+    /// the locomotion channels (rb/src/animator/animator.cpp HandleControlAnim;
+    /// bhControlAnim::IsDone, rb/src/behavior/controlanim.cpp).
+    pub fn custom_channel_active(&self) -> bool {
+        let Some(ch) = self.custom_channel else {
+            return false;
+        };
+        self.current_anim_id == Some(ch.anim)
+            && (self.looping || ch.hold || self.paused || self.is_one_shot_in_progress())
     }
 
     /// True iff a non-looping one-shot animation is currently mid-play
@@ -501,6 +587,7 @@ impl Oni2AnimLibrary {
             // clears it at the end of the frame.
             state.anim_just_started = true;
             state.root_motion_just_started = true;
+            state.custom_channel = None;
 
             // Resize current_frame to match animation channel count
             let num_channels = anim.num_channels as usize;

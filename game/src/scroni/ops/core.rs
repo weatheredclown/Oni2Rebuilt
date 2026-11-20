@@ -253,6 +253,23 @@ pub fn exec(ctx: &mut OpsCtx, stmt: &Stmt) -> bool {
             ctx.thread_mut().state = ExecState::Yielded;
             true
         }
+        Stmt::SetActorEnabled { actor, enabled } => {
+            // DoSetActorEnabled (rb/src/scroni/XCommand.cpp:1357): pops the
+            // guid and the value, warns when the guid doesn't resolve.
+            let actor_val = ctx.eval(actor);
+            let on = ctx.eval_int(enabled) != 0;
+            let targets = ctx.ctx.resolve_targets(&actor_val);
+            if targets.is_empty() {
+                warn!("Tried to enable/disable actor that doesn't exist!");
+            }
+            for t in targets {
+                ctx.sys_request(SysRequest::SetActorEnabled {
+                    actor: t,
+                    enabled: on,
+                });
+            }
+            true
+        }
         Stmt::SetFaction(expr) => {
             let faction_val = ctx.eval_string(expr);
             ctx.sys_request(SysRequest::SetFaction {
@@ -460,13 +477,25 @@ pub fn exec(ctx: &mut OpsCtx, stmt: &Stmt) -> bool {
                     target_name,
                     ctx.thread().seq_pc
                 );
-                ctx.exec.outgoing_messages.push(ScriptMessage {
+                let message = ScriptMessage {
                     msg: msg_str.clone(),
                     from: ctx.exec.owner,
                     to: entity,
                     args: args.clone(),
                     is_action: false,
-                });
+                };
+                // C++ DoSendMessage broadcasts scrMsgUserDefined, whose handler
+                // pushes straight onto the target's queue
+                // (scrScrOniComponent::HandleUserDefined,
+                // rb/src/scroni/scronicomponent.cpp:117), so a message to `me`
+                // is receivable at once — cutscene.oni's CS_Actor sends itself
+                // "pLAY" and then switches, and the restarted sequence must see
+                // it.  Other targets go through the end-of-tick delivery.
+                if entity == ctx.exec.owner {
+                    ctx.exec.message_queue.push(message);
+                } else {
+                    ctx.exec.outgoing_messages.push(message);
+                }
             }
             true
         }
@@ -637,10 +666,10 @@ pub fn exec(ctx: &mut OpsCtx, stmt: &Stmt) -> bool {
                 t.loop_stack.clear();
                 // The old script's wait dies with it (C++ PopScript).
                 t.blocking = None;
-
-                if ctx.tid == 0 {
-                    ctx.exec.message_queue.clear();
-                }
+                // The message queue survives: scrExecutor::Switch
+                // (rb/src/scroni/Executor.cpp:456) only swaps the script; the
+                // actor context's MUD queue is emptied by a component reset
+                // alone (scronicomponent.cpp:131/158/172).
 
                 ctx.thread_mut().state = ExecState::AbortSequence;
             } else {
