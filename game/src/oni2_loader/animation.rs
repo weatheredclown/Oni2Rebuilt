@@ -1603,9 +1603,19 @@ pub fn update_oni2_animation(
             // snap back when the swing ends.  Attack anims are the ones that
             // loaded a `.atdt` (only attack-class aliases do), so
             // `attack_data` is the reliable "this is an attack" signal.
+            // Reacts, custom anims, evades and transitions likewise move the
+            // actor in rb: crAnimActionPlayer::IsDoingTranslateAction hands
+            // their root translation to the mover.  Unstripped, a knockdown's
+            // flight was pose-only -- the body left its capsule, snapped back
+            // when the react ended, and lay at the attacker's feet to be
+            // struck again (melee_3: rb's Tom lands 2.1 m away, out of reach).
             None => {
                 render_offset.is_some()
-                    && (anim_state.looping || anim_state.anim.attack_data.is_some())
+                    && (anim_state.looping
+                        || anim_state.anim.attack_data.is_some()
+                        || action_player_opt
+                            .as_ref()
+                            .is_some_and(|ap| ap.is_doing_translate_action()))
             }
         };
         let bone_result = crate::oni2_loader::utils::bone::compute_animated_bone_transforms(
@@ -1790,9 +1800,19 @@ pub fn refresh_anim_joints_post_fsm_system(
             // snap back when the swing ends.  Attack anims are the ones that
             // loaded a `.atdt` (only attack-class aliases do), so
             // `attack_data` is the reliable "this is an attack" signal.
+            // Reacts, custom anims, evades and transitions likewise move the
+            // actor in rb: crAnimActionPlayer::IsDoingTranslateAction hands
+            // their root translation to the mover.  Unstripped, a knockdown's
+            // flight was pose-only -- the body left its capsule, snapped back
+            // when the react ended, and lay at the attacker's feet to be
+            // struck again (melee_3: rb's Tom lands 2.1 m away, out of reach).
             None => {
                 render_offset.is_some()
-                    && (anim_state.looping || anim_state.anim.attack_data.is_some())
+                    && (anim_state.looping
+                        || anim_state.anim.attack_data.is_some()
+                        || action_player_opt
+                            .as_ref()
+                            .is_some_and(|ap| ap.is_doing_translate_action()))
             }
         };
         let bone_result = crate::oni2_loader::utils::bone::compute_animated_bone_transforms(
