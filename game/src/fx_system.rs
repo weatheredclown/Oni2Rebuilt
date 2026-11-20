@@ -385,10 +385,14 @@ fn get_or_create_ptx_asset(
     ptx_def: &crate::oni2_loader::parsers::particle::ParticleSystemDef,
     rate_override: f32,
     num_particles_override: i32,
+    prefill: bool,
     effects: &mut ResMut<Assets<EffectAsset>>,
     effect_cache: &mut Local<std::collections::HashMap<String, Handle<EffectAsset>>>,
 ) -> Handle<EffectAsset> {
-    let cache_key = format!("{}_{}_{}", ptx_name, rate_override, num_particles_override);
+    let cache_key = format!(
+        "{}_{}_{}_{}",
+        ptx_name, rate_override, num_particles_override, prefill
+    );
     if let Some(handle) = effect_cache.get(&cache_key) {
         return handle.clone();
     }
@@ -404,9 +408,11 @@ fn get_or_create_ptx_asset(
     }
 
     let mut size_gradient = bevy_hanabi::Gradient::new();
+    // rmPtxBirth::DrawPersistent spans each quad camA*radiusX +- camB*radiusY:
+    // RadiusBirth is a HALF-size, Hanabi's size is the full quad.
     let start_size = Vec3::new(
-        ptx_def.radius_birth.x.max(0.1),
-        ptx_def.radius_birth.y.max(0.1),
+        (ptx_def.radius_birth.x * 2.0).max(0.1),
+        (ptx_def.radius_birth.y * 2.0).max(0.1),
         0.0,
     );
     let end_size = start_size * ptx_def.radius_death_percent.max(0.01);
@@ -415,21 +421,57 @@ fn get_or_create_ptx_asset(
 
     let writer = ExprWriter::new();
     let age = writer.lit(0.).expr();
-    let init_pos = SetPositionSphereModifier {
-        center: writer.lit(Vec3::ZERO).expr(),
-        radius: writer.lit(ptx_def.position_var.length()).expr(),
-        dimension: ShapeDimension::Volume,
+    // rmPtxBirth::InitParticle (age/src/rmptx/birth.cpp): every varied value
+    // is uniform in [mean - var, mean + var] PER AXIS (sVary / sVaryVector).
+    // Position: a box of half-size PositionVar round the emitter; velocity:
+    // the Velocity VECTOR plus a per-axis VelocityVar box (a direction, not
+    // a speed in a random direction); life: Life +- LifeVar.
+    let signed_unit = |w: &ExprWriter| {
+        w.rand(VectorType::VEC3F)
+            .mul(w.lit(2.0))
+            .sub(w.lit(Vec3::ONE))
     };
-
-    let init_vel = SetVelocitySphereModifier {
-        center: writer.lit(Vec3::ZERO).expr(),
-        speed: writer.lit(ptx_def.velocity.length().max(1.0)).expr(),
-    };
+    let init_pos = SetAttributeModifier::new(
+        Attribute::POSITION,
+        signed_unit(&writer).mul(writer.lit(ptx_def.position_var)).expr(),
+    );
+    let init_vel = SetAttributeModifier::new(
+        Attribute::VELOCITY,
+        writer
+            .lit(ptx_def.velocity)
+            .add(signed_unit(&writer).mul(writer.lit(ptx_def.velocity_var)))
+            .expr(),
+    );
 
     let init_age = SetAttributeModifier::new(Attribute::AGE, age);
-    let init_lifetime =
-        SetAttributeModifier::new(Attribute::LIFETIME, writer.lit(ptx_def.life).expr());
-    let drag_coef = writer.lit(ptx_def.velocity_damping.length()).expr();
+    let init_lifetime = SetAttributeModifier::new(
+        Attribute::LIFETIME,
+        writer
+            .lit(ptx_def.life)
+            .add(
+                writer
+                    .rand(ScalarType::Float)
+                    .mul(writer.lit(2.0))
+                    .sub(writer.lit(1.0))
+                    .mul(writer.lit(ptx_def.life_var)),
+            )
+            .max(writer.lit(0.0001))
+            .expr(),
+    );
+    // UpdatePersistent: v.axis *= 1 - VelocityDamping.axis * dt, per axis.
+    let damping = (ptx_def.velocity_damping != Vec3::ZERO).then(|| {
+        SetAttributeModifier::new(
+            Attribute::VELOCITY,
+            writer
+                .attr(Attribute::VELOCITY)
+                .mul(
+                    writer
+                        .lit(Vec3::ONE)
+                        .sub(writer.lit(ptx_def.velocity_damping).mul(writer.delta_time())),
+                )
+                .expr(),
+        )
+    });
 
     let mut gravity_expr = None;
     if ptx_def.gravity != 0.0 {
@@ -447,11 +489,12 @@ fn get_or_create_ptx_asset(
     } else {
         ptx_def.rate
     };
-    let spawner = if num_particles_override > 0 {
-        bevy_hanabi::SpawnerSettings::burst(
-            (num_particles_override as f32).into(),
-            bevy_hanabi::CpuValue::Single(rate),
-        )
+    // rb's FX component: NumParticles is ONE initial burst
+    // (ptxParticleSystem::Create at StartFX), then BirthRate per second.
+    // Hanabi has one spawner per effect, so the burst is a sibling `once`
+    // effect (prefill) next to the `rate` one.
+    let spawner = if prefill {
+        bevy_hanabi::SpawnerSettings::once((num_particles_override.max(0) as f32).into())
     } else {
         bevy_hanabi::SpawnerSettings::rate(rate.into())
     };
@@ -497,8 +540,10 @@ fn get_or_create_ptx_asset(
         .init(init_pos)
         .init(init_vel)
         .init(init_age)
-        .init(init_lifetime)
-        .update(LinearDragModifier::new(drag_coef));
+        .init(init_lifetime);
+    if let Some(d) = damping {
+        asset = asset.update(d);
+    }
 
     if let Some(g_expr) = gravity_expr {
         asset = asset.update(AccelModifier::new(g_expr));
@@ -603,6 +648,7 @@ fn handle_spawn_fx(
                     ptx_def,
                     0.0,
                     0,
+                    false,
                     &mut effects,
                     &mut effect_cache,
                 );
@@ -829,38 +875,41 @@ fn handle_spawn_ptx(
     try_load_ptx(&ptx_name, &asset_server, &mut ptx_lib, &mut images);
 
     if let Some(ptx_def) = ptx_lib.systems.get(&ptx_name) {
-        let handle = get_or_create_ptx_asset(
-            &ptx_name,
-            ptx_def,
-            ev.rate,
-            ev.num_particles,
-            &mut effects,
-            &mut effect_cache,
-        );
-
         let is_asleep = ev
             .parent
             .and_then(|p| actor_sleep_query.get(p).ok())
             .is_some();
         let effective_start_active = ev.start_active && !is_asleep;
 
-        let mut ec = commands.spawn((
-            ParticleEffect::new(handle),
-            EffectMaterial {
-                images: vec![ptx_def.texture.clone()],
-            },
-            Transform::from_translation(ev.at.unwrap_or(Vec3::ZERO)),
-            IntendedFxState(ev.start_active),
-            crate::menu::InGameEntity,
-        ));
-
-        if !effective_start_active {
-            ec.insert(FxStartInactive);
-        }
-
-        if let Some(parent) = ev.parent {
-            let child_id = ec.id();
-            commands.entity(parent).add_child(child_id);
+        // The continuous BirthRate stream, plus (FX NumParticles > 0) the
+        // initial burst rb's StartFX makes with ptxParticleSystem::Create.
+        let prefill = [false, true];
+        for &is_prefill in prefill.iter().take(if ev.num_particles > 0 { 2 } else { 1 }) {
+            let handle = get_or_create_ptx_asset(
+                &ptx_name,
+                ptx_def,
+                ev.rate,
+                ev.num_particles,
+                is_prefill,
+                &mut effects,
+                &mut effect_cache,
+            );
+            let mut ec = commands.spawn((
+                ParticleEffect::new(handle),
+                EffectMaterial {
+                    images: vec![ptx_def.texture.clone()],
+                },
+                Transform::from_translation(ev.at.unwrap_or(Vec3::ZERO)),
+                IntendedFxState(ev.start_active),
+                crate::menu::InGameEntity,
+            ));
+            if !effective_start_active {
+                ec.insert(FxStartInactive);
+            }
+            if let Some(parent) = ev.parent {
+                let child_id = ec.id();
+                commands.entity(parent).add_child(child_id);
+            }
         }
     } else {
         warn!(
