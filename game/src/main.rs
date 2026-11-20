@@ -2,7 +2,8 @@
  * main.rs — application entry point.
  *
  * Parses CLI flags (--layout, --sandbox, --formation, --testanim, --testentity,
- * --path, --dat, --fog, --diagnostics), mounts the virtual file system (DiskVfs +
+ * --path, --dat, --fog, --diagnostics; the sizzle-shot flags --cinecam,
+ * --padscript, --padaim, --fixedfps, --nohud live in sizzle/), mounts the virtual file system (DiskVfs +
  * DaveVfs archives), registers all Bevy plugins, and sets the initial AppState.
  *
  * setup_scene: OnEnter(InGame) system for normal / sandbox gameplay — loads the
@@ -47,6 +48,7 @@ mod projectile_system;
 mod rbaudio;
 mod scroni;
 mod shadow_lod;
+mod sizzle;
 mod statemachine;
 mod telemetry;
 mod water;
@@ -236,6 +238,7 @@ fn main() {
     .add_plugins(FrameTimeDiagnosticsPlugin::default())
     .add_plugins(telemetry::TelemetryPlugin)
     .add_plugins(capture::CapturePlugin)
+    .add_plugins(sizzle::SizzlePlugin)
     .add_plugins(menu::MenuPlugin)
     .add_plugins(combat::CombatPlugin)
     .add_plugins(fight::FightPlugin)

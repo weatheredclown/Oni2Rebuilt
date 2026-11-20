@@ -32,6 +32,7 @@ pub mod projectile_system;
 pub mod rbaudio;
 pub mod scroni;
 pub mod shadow_lod;
+pub mod sizzle;
 pub mod statemachine;
 pub mod telemetry;
 pub mod water;
