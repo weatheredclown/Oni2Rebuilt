@@ -1,88 +1,102 @@
 /*
- * camera/polar.rs — polar coordinate interpolation and transform application.
+ * camera/polar.rs — rb camnewPolar / camnewRBPolar location + collision.
  *
- * polar_interpolation_system: lerps current_azimuth / current_incline /
- * current_distance / current_fov toward their desired_ counterparts each frame.
- * apply_camera_transform: converts the current polar values into a world-space
- * Transform (position = focus + spherical offset, looking_at focus point).
+ * apply_camera_transform is the tail of rb's `camnewCamera::Update`
+ * (camera_new/camera.cpp:233-264): GetDesiredLocationAndFOV lerps each polar
+ * value one step from current toward desired, UpdateCollision
+ * (rbpolar.cpp:257-334) may re-aim desired incline/distance and recompute the
+ * location, then the camera looks at the focus point.  There is no further
+ * position smoothing: next frame the current polar values are re-read from
+ * the camera transform (systems::update_camera_channel).
+ *
+ * Also hosts the small rb angle helpers the mode evaluators share.
  */
 use super::channel::CameraChannel;
 use super::components::CameraController;
+use crate::oni2_loader::parsers::camera::{CameraClass, CameraParameterSet};
 use bevy::prelude::*;
+use std::f32::consts::{PI, TAU};
 
-/// Iterates `current_` polar values towards `desired_` polar values using mode-dependent lerp rates (if any).
-pub fn polar_interpolation_system(
-    time: Res<Time>,
-    // In a full implementation, we might get mode-specific lerp rates from the controller or channel.
-    // Right now we just do a generic smooth approach until all modes output their specific rates cleanly.
-    mut query: Query<(&CameraController, &mut CameraChannel)>,
-) {
-    let dt = time.delta_secs();
+/// rb `Wrap(x, lo, hi)`: wrap into [lo, hi).
+pub fn wrap_angle(x: f32, lo: f32, hi: f32) -> f32 {
+    let range = hi - lo;
+    lo + (x - lo).rem_euclid(range)
+}
 
-    for (_controller, mut channel) in &mut query {
-        // Script FOV override takes precedence over the package FOV
-        channel.desired_fov = channel.script_fov_override.unwrap_or(channel.package_fov);
+/// rb `GetRadiansDifference(a, b)`: a - b wrapped into [-pi, pi).
+pub fn radians_difference(a: f32, b: f32) -> f32 {
+    wrap_angle(a - b, -PI, PI)
+}
 
-        // Mode-specific lerp rates
-        let fov_speed = 5.0;
-        let dist_speed = 3.0;
-        let incline_speed = 4.0;
-
-        let mut azimuth_speed = match channel.focus_heading_zone {
-            super::channel::FocusHeadingZone::Zone1 => channel.package_zone_lerp_rates[0],
-            super::channel::FocusHeadingZone::Zone2 => channel.package_zone_lerp_rates[1],
-            super::channel::FocusHeadingZone::Zone3 => channel.package_zone_lerp_rates[2],
-            super::channel::FocusHeadingZone::Zone4 => channel.package_zone_lerp_rates[3],
-        };
-
-        // If combat, we don't care about zone fallback usually, but this is a rough approximation
-        // fallback in case package zeros out azimuth_speed unintentionally.
-        if azimuth_speed <= 0.01 {
-            azimuth_speed = 3.0;
-        }
-
-        // Smooth FOV
-        channel.current_fov = channel.current_fov
-            + (channel.desired_fov - channel.current_fov) * (fov_speed * dt).clamp(0.0, 1.0);
-
-        // Smooth Distance
-        channel.current_distance = channel.current_distance
-            + (channel.desired_distance - channel.current_distance)
-                * (dist_speed * dt).clamp(0.0, 1.0);
-
-        // Smooth Incline
-        channel.current_incline = channel.current_incline
-            + (channel.desired_incline - channel.current_incline)
-                * (incline_speed * dt).clamp(0.0, 1.0);
-
-        // Smooth Focus Tracking Interpolation
-        channel.current_focus_offset = channel
-            .current_focus_offset
-            .lerp(channel.desired_focus_offset, (6.0 * dt).clamp(0.0, 1.0));
-
-        // Target azimuth normalization
-        // Spherical paths cross 180/-180 constantly, we must map them locally.
-        let mut heading_diff = channel.desired_azimuth - channel.current_azimuth;
-        while heading_diff > std::f32::consts::PI {
-            heading_diff -= 2.0 * std::f32::consts::PI;
-        }
-        while heading_diff < -std::f32::consts::PI {
-            heading_diff += 2.0 * std::f32::consts::PI;
-        }
-
-        channel.current_azimuth += heading_diff * (azimuth_speed * dt).clamp(0.0, 1.0);
-
-        // Optional sharp turn spin threshold (from channel)
-        if channel.spin_threshold_exceeded {
-            channel.current_azimuth += heading_diff * (azimuth_speed * 1.5 * dt).clamp(0.0, 1.0);
-        }
-
-        // Decay bump
-        channel.bump_magnitude *= (1.0 - 4.0 * dt).max(0.0);
+/// Keep current within pi of desired so the lerp goes the short way
+/// (follow.cpp:279-285, fight.cpp:198-204, polar.cpp:249-255).
+pub fn fix_current_azimuth_wrap(ch: &mut CameraChannel) {
+    if ch.current_azimuth < 0.0 && ch.desired_azimuth > ch.current_azimuth + PI {
+        ch.current_azimuth += TAU;
+    } else if ch.current_azimuth > 0.0 && ch.desired_azimuth < ch.current_azimuth - PI {
+        ch.current_azimuth -= TAU;
     }
 }
 
-/// Computes the final Transform orientation and position from the interpolated spherical coordinates.
+/// camnewPolar::GetDesiredLocationAndFOV (polar.cpp:198-210).
+///
+/// The lerp-rate getters it calls are camnewPolar's by-value overloads
+/// (polar.h:45-48); camnewRBPolar/Follow/Fight declare `const camnewChannel&`
+/// versions (rbpolar.h:38-41, follow.h:38, fight.h:33), which hide rather
+/// than override them.  So in the shipped game the azimuth/incline/distance/
+/// FOV steps always use the plain m_LerpRate* of the active camera — the
+/// heading-zone, bump and collision lerp rates never reach this lerp.  (The
+/// third-person camera's azimuth rate is the exception, see below.)
+fn desired_location(ch: &CameraChannel, p: &CameraParameterSet, dt: f32) -> Vec3 {
+    let t = |rate: f32| (dt * rate).clamp(0.0, 1.0);
+    // camnewRBThirdPerson's GetAzimuthLerpRate does take the channel by
+    // value, so it is the one override that reaches here (rbthirdperson.h:37).
+    let azimuth_rate =
+        if p.class == CameraClass::RBThirdPerson && ch.cam_stick == Vec2::ZERO && ch.is_moving {
+            p.lerp_rate_follow_azimuth
+        } else {
+            p.lerp_rate_azimuth
+        };
+    let azimuth = ch.current_azimuth.lerp(ch.desired_azimuth, t(azimuth_rate));
+    let incline = ch
+        .current_incline
+        .lerp(ch.desired_incline, t(p.lerp_rate_incline));
+    let distance = ch
+        .current_distance
+        .lerp(ch.desired_distance, t(p.lerp_rate_distance));
+    ch.current_focus_point
+        + Vec3::new(
+            incline.cos() * azimuth.sin(),
+            incline.sin(),
+            incline.cos() * azimuth.cos(),
+        ) * distance
+}
+
+/// Collision response: rb aims the camera over the obstruction instead of
+/// just pulling it in.  `isect_flat` is the flat distance from the focus
+/// actor to the hit; the incline rises from InclineOffset (nothing in the
+/// way) toward CollisionInclineOffset (wall at the focus) and the distance is
+/// chosen so the camera's flat distance equals `isect_flat`
+/// (rbpolar.cpp:292-300 / 306-314).
+fn aim_over_hit(ch: &mut CameraChannel, p: &CameraParameterSet, hit: Vec3) {
+    let r = p.collision_sphere_radius;
+    let desired_flat = p.distance * ch.current_incline.cos() + r;
+    let isect_flat = hit
+        .xz()
+        .distance(ch.current_focus_pos.xz())
+        .clamp(0.0, desired_flat);
+    ch.desired_incline = if ch.cam_stick.y != 0.0 {
+        ch.current_incline.clamp(p.min_incline, p.max_incline)
+    } else {
+        p.collision_incline_offset
+            .lerp(p.incline_offset, isect_flat / desired_flat)
+            .clamp(p.min_incline, p.max_incline)
+    };
+    ch.desired_distance = isect_flat / ch.desired_incline.cos();
+    ch.is_colliding = true;
+}
+
+/// Applies the polar camera (and script overrides) to the camera Transform.
 pub fn apply_camera_transform(
     time: Res<Time>,
     mut camera_query: Query<(
@@ -98,11 +112,13 @@ pub fn apply_camera_transform(
     let dt = time.delta_secs();
 
     for (_controller, mut channel, mut cam_tf, mut cam_gtf, mut projection) in &mut camera_query {
-        if let Projection::Perspective(ref mut persp) = *projection {
-            persp.fov = channel.current_fov.to_radians();
-        }
-
         if let Some(script_tf) = channel.script_override_transform {
+            if let Some(fov) = channel.script_fov_override {
+                channel.current_fov = fov;
+            }
+            if let Projection::Perspective(ref mut persp) = *projection {
+                persp.fov = channel.current_fov.to_radians();
+            }
             cam_tf.translation = script_tf.translation;
             cam_tf.rotation = script_tf.rotation;
             apply_camera_shake(&mut cam_tf, &mut channel, dt);
@@ -116,70 +132,73 @@ pub fn apply_camera_transform(
             continue;
         }
 
-        let total_azimuth = channel.current_azimuth + channel.bump_magnitude;
-        let total_incline = channel.current_incline;
+        let first_frame = !channel.has_snapped_to_target;
+        let ch = &mut *channel;
+        let p = ch.params.clone();
+        if let Some(fov) = ch.script_fov_override {
+            ch.desired_fov = fov;
+        }
 
-        let dist = channel.current_distance;
-        let pitch_cos = total_incline.cos().max(0.01);
-        let pitch_sin = total_incline.sin();
-        let yaw_sin = total_azimuth.sin();
-        let yaw_cos = total_azimuth.cos();
+        let mut location = desired_location(ch, &p, dt);
+        let fov = ch
+            .current_fov
+            .lerp(ch.desired_fov, (dt * p.lerp_rate_fov).clamp(0.0, 1.0));
 
-        // Add custom tracking focus offset dynamically updated by follow modes
-        let target_base = channel.current_focus_pos + channel.current_focus_offset;
-
-        let offset = Vec3::new(
-            pitch_cos * yaw_sin * dist,
-            pitch_sin * dist,
-            pitch_cos * yaw_cos * dist,
-        );
-
-        let mut desired_pos = target_base + offset;
-
-        // Environmental collision spherecast
-        let dir = desired_pos - target_base;
-        let cast_dist = dir.length();
-        let cast_dir = Dir3::new(dir).unwrap_or(Dir3::Z);
-
-        if cast_dist > 0.01 {
-            // rb's camera probe (camera_new/rbpolar.cpp) only tests bounds
-            // flagged BOUNDFLAG_MOVER — the world movers stand on.  Creatures
-            // (BOUNDFLAG_CREATURE) and trigger volumes never block it.  Hitting
-            // every collider here meant any grunt or camera trigger between
-            // the focus and the camera yanked it in to ~0.85x that distance,
-            // so fights were filmed from inside the crowd.
+        // camnewRBPolar::UpdateCollision (rbpolar.cpp:257-334).  rb's probes
+        // only test BOUNDFLAG_MOVER bounds — the world movers stand on —
+        // so creatures and trigger volumes never block the camera.
+        if !first_frame {
             let filter = avian3d::prelude::SpatialQueryFilter::from_mask(
                 crate::combat::bundles::GameLayer::Default,
             )
-            .with_excluded_entities([channel.focus_actor]);
+            .with_excluded_entities([ch.focus_actor]);
+            let not_sensor = |e: Entity| !sensors.contains(e);
+            let r = p.collision_sphere_radius;
+            let was_colliding = ch.is_colliding;
+            ch.is_colliding = false;
 
-            // Ray cast to keep camera comfortably out of walls
-            if let Some(hit) = spatial_query.cast_ray_predicate(
-                target_base,
-                cast_dir,
-                cast_dist,
-                true,
-                &filter,
-                &|entity| !sensors.contains(entity),
-            ) {
-                // If hit, push camera closer across the vector
-                desired_pos = target_base + cast_dir * (hit.distance * 0.85); // 0.85 to add buffer
-                channel.is_colliding = true;
-            } else {
-                channel.is_colliding = false;
+            // Line of sight from the focus point to where the camera was last
+            // frame, pushed back by the sphere radius "to avoid near clip
+            // plane problems" (rbpolar.cpp:272-281).
+            let seg_a = ch.current_focus_point;
+            let seg_b = cam_tf.translation + cam_tf.back() * r;
+            let seg = seg_b - seg_a;
+            let probe_hit = Dir3::new(seg).ok().and_then(|dir| {
+                spatial_query
+                    .cast_ray_predicate(seg_a, dir, seg.length(), true, &filter, &not_sensor)
+                    .map(|hit| seg_a + dir * hit.distance)
+            });
+            // TestSphere(location, radius): nearest world surface point.
+            let sphere_hit = |radius: f32, at: Vec3| {
+                spatial_query
+                    .project_point_predicate(at, false, &filter, &not_sensor)
+                    .map(|proj| proj.point)
+                    .filter(|pt| pt.distance(at) < radius)
+            };
+
+            if let Some(hit) = probe_hit {
+                aim_over_hit(ch, &p, hit);
+                location = desired_location(ch, &p, dt);
+            } else if let Some(hit) = sphere_hit(r, location) {
+                aim_over_hit(ch, &p, hit);
+                location = desired_location(ch, &p, dt);
+            } else if was_colliding && sphere_hit(1.25 * r, location).is_some() {
+                // Still grazing: hold the distance (rbpolar.cpp:319-331).
+                ch.desired_distance = ch.current_distance;
+                ch.is_colliding = true;
+                location = desired_location(ch, &p, dt);
             }
         }
 
-        let t = (6.0 * dt).clamp(0.0, 1.0);
-        if !channel.has_snapped_to_target {
-            cam_tf.translation = desired_pos;
-            channel.has_snapped_to_target = true;
-        } else {
-            cam_tf.translation = cam_tf.translation.lerp(desired_pos, t);
+        ch.current_fov = fov;
+        if let Projection::Perspective(ref mut persp) = *projection {
+            persp.fov = fov.to_radians();
         }
-
-        // Lock looking at the target center
-        cam_tf.look_at(target_base, Vec3::Y);
+        cam_tf.translation = location;
+        if location.distance_squared(ch.current_focus_point) > 1e-8 {
+            cam_tf.look_at(ch.current_focus_point, Vec3::Y);
+        }
+        ch.has_snapped_to_target = true;
 
         apply_camera_shake(&mut cam_tf, &mut channel, dt);
         // Mirror onto GlobalTransform — this system runs in PostUpdate

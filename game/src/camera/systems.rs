@@ -115,9 +115,15 @@ pub fn debug_render_camera_targets(
     }
 }
 
-/// Gathers input and target data to populate the `CameraChannel` blackboard for specific modes to evaluate.
+/// Gathers input and target data to populate the `CameraChannel` blackboard
+/// for the mode evaluators.  Mirrors `camnewCamera::UpdateChannel`
+/// (camera_new/camera.cpp:290-337) plus the "current polar from the camera
+/// matrix" step every rb game camera does first (fight.cpp:105-108,
+/// follow.cpp:152-155): the current azimuth/incline/distance are re-read from
+/// where the camera actually ended up last frame, so collision moves carry over.
+#[allow(clippy::too_many_arguments)]
 pub fn update_camera_channel(
-    mut camera_query: Query<(&CameraController, &mut CameraChannel)>,
+    mut camera_query: Query<(&CameraController, &mut CameraChannel, &Transform)>,
     target_query: Query<
         (
             &Transform,
@@ -126,8 +132,17 @@ pub fn update_camera_channel(
         ),
         With<crate::player::components::Player>,
     >,
+    enemy_query: Query<
+        (&Transform, Option<&crate::combat::components::Health>),
+        (
+            With<crate::fight::components::FighterState>,
+            Without<crate::player::components::Player>,
+            Without<CameraController>,
+        ),
+    >,
     time: Res<Time>,
     scroll: Res<AccumulatedMouseScroll>,
+    keyboard: Res<ButtonInput<KeyCode>>,
     active_camera_package: Option<Res<crate::oni2_loader::environment::ActiveCameraPackage>>,
     camera_packages: Option<Res<crate::oni2_loader::environment::CameraPackages>>,
     camera_sets: Option<Res<crate::oni2_loader::environment::CameraParameterSets>>,
@@ -135,10 +150,11 @@ pub fn update_camera_channel(
     let dt = time.delta_secs();
     let scroll_y = scroll.delta.y;
 
-    for (controller, mut channel) in &mut camera_query {
+    for (controller, mut channel, cam_tf) in &mut camera_query {
         let Ok((target_tf, fighter, input_opt)) = target_query.get(channel.focus_actor) else {
             continue;
         };
+        let first_frame = !channel.has_snapped_to_target;
 
         // Populate Environmental Camera Packages
         if let (Some(active_pkg), Some(pkgs), Some(sets)) =
@@ -146,19 +162,22 @@ pub fn update_camera_channel(
             && let Some(pkg) = pkgs.packages.get(&active_pkg.name)
         {
             let is_combat = controller.active_mode == ActiveCameraMode::GameFighting;
+            channel.package_fight_mode_radius = pkg.fight_mode_radius;
+            channel.package_fight_mode_running_away_time = pkg.fight_mode_running_away_time;
 
-            let set_name = if is_combat && !pkg.fighting.is_empty() {
-                &pkg.fighting
-            } else if !pkg.navigation.is_empty() {
-                &pkg.navigation
-            } else {
-                ""
+            // camnewPackage::GetCamera(state): one camera per game state.
+            let set_name = match controller.active_mode {
+                ActiveCameraMode::GameFighting if !pkg.fighting.is_empty() => &pkg.fighting,
+                ActiveCameraMode::GameTargeting if !pkg.targeting.is_empty() => &pkg.targeting,
+                _ if !pkg.navigation.is_empty() => &pkg.navigation,
+                _ => "",
             };
 
             if let Some(params) = sets.sets.get(set_name) {
                 if channel.active_set_name != params.name {
                     info!("Camera selected parameter set: {}", params.name);
                     channel.active_set_name = params.name.clone();
+                    channel.params = params.clone();
                 }
 
                 channel.package_fov = params.fov;
@@ -186,41 +205,112 @@ pub fn update_camera_channel(
 
         let target_pos = target_tf.translation;
 
-        channel.previous_focus_pos = channel.current_focus_pos;
-        channel.current_focus_pos = target_pos;
+        // rb rbGameState fighter array + local count (rbgame/gamestate.cpp:220-230).
+        let radius = channel.package_fight_mode_radius;
+        channel.fighters = enemy_query
+            .iter()
+            .filter(|(_, h)| h.is_none_or(|h| h.current > 0.0))
+            .map(|(tf, _)| tf.translation)
+            .collect();
+        channel.num_local_fighters = channel
+            .fighters
+            .iter()
+            .filter(|p| p.distance(target_pos) < radius)
+            .count();
 
-        // Let the general desired focus float back to the package default.
-        // Modes like targeting will overwrite this later in the frame if active.
-        channel.desired_focus_offset = channel.package_focus_offset;
-
-        channel.previous_focus_azimuth = channel.current_focus_azimuth;
-        // fighter.facing points toward the model's visual front (+Z in Oni2 convention).
-        // The camera must sit BEHIND that direction, so we negate before atan2.
-        channel.current_focus_azimuth = (-fighter.facing.x).atan2(-fighter.facing.z);
-
-        if !channel.has_snapped_to_target {
-            channel.desired_azimuth = channel.current_focus_azimuth;
-            channel.current_azimuth = channel.current_focus_azimuth;
-            channel.desired_distance = channel.package_distance;
-            channel.current_distance = channel.package_distance;
-            channel.desired_incline = channel.package_incline_offset;
-            channel.current_incline = channel.package_incline_offset;
-            channel.desired_fov = channel.package_fov;
-            channel.current_fov = channel.package_fov;
-            channel.current_focus_offset = channel.package_focus_offset;
-            channel.previous_focus_pos = target_pos;
+        // Camera stick (rb tgtReticleComponent::GetFrameInput) from the arrow
+        // keys, dead-zoned by AnalogX/YStart (polar.cpp:224-225).
+        let axis = |neg: KeyCode, pos: KeyCode| {
+            (keyboard.pressed(pos) as i32 - keyboard.pressed(neg) as i32) as f32
+        };
+        let mut stick = Vec2::new(
+            axis(KeyCode::ArrowLeft, KeyCode::ArrowRight),
+            axis(KeyCode::ArrowUp, KeyCode::ArrowDown),
+        );
+        if stick.x.abs() < channel.params.analog_x_start {
+            stick.x = 0.0;
         }
+        if stick.y.abs() < channel.params.analog_y_start {
+            stick.y = 0.0;
+        }
+        channel.cam_stick = stick;
+
+        // Z-lock comes from the fight-mode button every frame (behavior/pad.cpp:978);
+        // no Rust input drives it yet, so only a ForceZLock camera sets it.
+        channel.is_zlock_targeting = false;
 
         channel.is_moving = input_opt.is_some_and(|i| i.movement.length_squared() > 0.01);
-
-        // Accumulate running time natively
         if channel.is_moving {
             channel.time_running += dt;
         } else {
             channel.time_running = 0.0;
         }
 
-        // Mouse wheel zoom defaults mapping natively over all standard modes
+        // Focus: offset lerps toward the collision offset while colliding
+        // (rbpolar.cpp:340-352), the focus point toward root + offset.
+        channel.previous_focus_pos = channel.current_focus_pos;
+        channel.current_focus_pos = target_pos;
+        channel.desired_focus_offset = Vec3::from_array(if channel.is_colliding {
+            channel.params.collision_focus_offset
+        } else {
+            channel.params.focus_offset
+        });
+        // rb's Vector3::Lerp(dt * rate) is unclamped; at 60 Hz it never
+        // exceeds 1, but Rust frames can be long, so clamp to stay a lerp.
+        let t = (dt * channel.params.lerp_rate_focus_offset).min(1.0);
+        channel.current_focus_offset = channel
+            .current_focus_offset
+            .lerp(channel.desired_focus_offset, t);
+
+        channel.previous_focus_azimuth = channel.current_focus_azimuth;
+        // fighter.facing points toward the model's visual front (+Z in Oni2 convention).
+        // The camera must sit BEHIND that direction, so we negate before atan2.
+        channel.current_focus_azimuth = (-fighter.facing.x).atan2(-fighter.facing.z);
+
+        channel.previous_focus_point = channel.current_focus_point;
+        channel.desired_focus_pos = target_pos + channel.current_focus_offset;
+        if channel.is_jumping {
+            channel.time_since_jumping = 0.0;
+        } else {
+            channel.time_since_jumping += dt;
+        }
+        let t = (dt * channel.params.lerp_rate_focus_point).min(1.0);
+        channel.current_focus_point = channel
+            .current_focus_point
+            .lerp(channel.desired_focus_pos, t);
+
+        if first_frame {
+            // camnewCamera::Update first frame: Reset + teleport (camera.cpp:240-252).
+            let focus_offset = Vec3::from_array(channel.params.focus_offset);
+            channel.is_colliding = false;
+            channel.time_since_jumping = 0.0;
+            channel.desired_focus_offset = focus_offset;
+            channel.current_focus_offset = focus_offset;
+            channel.desired_focus_pos = target_pos + focus_offset;
+            channel.current_focus_point = channel.desired_focus_pos;
+            channel.previous_focus_point = channel.current_focus_point;
+            channel.previous_focus_pos = target_pos;
+            channel.previous_focus_azimuth = channel.current_focus_azimuth;
+            channel.dead_zone_center = target_pos;
+            channel.desired_azimuth = channel.current_focus_azimuth;
+            channel.desired_distance = channel.params.distance;
+            channel.desired_incline = channel.params.incline_offset;
+            channel.desired_fov = channel.params.fov;
+            channel.current_azimuth = channel.desired_azimuth;
+            channel.current_distance = channel.desired_distance;
+            channel.current_incline = channel.desired_incline;
+            channel.current_fov = channel.desired_fov;
+        } else if channel.script_override_transform.is_none() {
+            let cam = cam_tf.translation;
+            let back = cam_tf.back();
+            let flat = channel.previous_focus_point.xz().distance(cam.xz());
+            channel.current_distance = channel.current_focus_point.distance(cam);
+            channel.current_azimuth = back.x.atan2(back.z) + channel.manual_yaw;
+            channel.current_incline = (cam.y - channel.previous_focus_point.y).atan2(flat);
+        }
+        channel.manual_yaw = 0.0;
+
+        // Mouse wheel zoom (PC only)
         if scroll_y.abs() > 0.01 {
             let zoom_speed = 2.0;
             let delta = -scroll_y * zoom_speed;

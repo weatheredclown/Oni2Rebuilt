@@ -540,7 +540,7 @@ pub fn player_mouse_look_system(
             fighter.facing = Quat::from_rotation_y(yaw) * fighter.facing;
         } else if let Some(mut channel) = camera_query.iter_mut().next() {
             channel.desired_azimuth += yaw;
-            channel.current_azimuth += yaw;
+            channel.manual_yaw += yaw;
         }
     }
 }

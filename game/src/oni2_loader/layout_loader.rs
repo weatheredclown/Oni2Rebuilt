@@ -617,9 +617,9 @@ pub fn finalize_chunked_layout_load(
     commands.insert_resource(std::mem::take(&mut state.texture_collections));
 
     // Camera packages + parameters.
-    let camera_packages = CameraPackages {
-        packages: crate::oni2_loader::parsers::camera::parse_campacknew(&state.layout_dir),
-    };
+    let (packages, first_package) =
+        crate::oni2_loader::parsers::camera::parse_campacknew(&state.layout_dir);
+    let camera_packages = CameraPackages { packages };
     let mut camera_sets = CameraParameterSets::default();
     let mut files_to_load = std::collections::HashSet::new();
     for pkg in camera_packages.packages.values() {
@@ -650,7 +650,10 @@ pub fn finalize_chunked_layout_load(
     );
     commands.insert_resource(camera_packages);
     commands.insert_resource(camera_sets);
-    commands.insert_resource(ActiveCameraPackage::default());
+    // rb starts on the first package in layout.campacknew (camera_new/manager.cpp:1088).
+    commands.insert_resource(ActiveCameraPackage {
+        name: first_package.unwrap_or_else(|| ActiveCameraPackage::default().name),
+    });
 
     // Lights, fog, skyhat.
     load_layout_lights(commands, meshes, materials, images, &state.layout_dir);
@@ -848,9 +851,9 @@ pub fn load_layout(
     commands.insert_resource(texture_collections);
 
     // Load camera packages and parameters
-    let camera_packages = CameraPackages {
-        packages: crate::oni2_loader::parsers::camera::parse_campacknew(layout_dir),
-    };
+    let (packages, first_package) =
+        crate::oni2_loader::parsers::camera::parse_campacknew(layout_dir);
+    let camera_packages = CameraPackages { packages };
     let mut camera_sets = CameraParameterSets::default();
 
     // We only need to load the xml files referenced in the packages
@@ -886,7 +889,10 @@ pub fn load_layout(
 
     commands.insert_resource(camera_packages);
     commands.insert_resource(camera_sets);
-    commands.insert_resource(ActiveCameraPackage::default());
+    // rb starts on the first package in layout.campacknew (camera_new/manager.cpp:1088).
+    commands.insert_resource(ActiveCameraPackage {
+        name: first_package.unwrap_or_else(|| ActiveCameraPackage::default().name),
+    });
 
     // Load lights, fog, skyhat
     load_layout_lights(commands, meshes, materials, images, layout_dir);

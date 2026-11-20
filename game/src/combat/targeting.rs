@@ -12,28 +12,18 @@ use crate::camera::components::{ActiveCameraMode, CameraController};
 use crate::camera::channel::CameraChannel;
 use crate::weapons::components::{Weapon, AimTarget};
 use crate::inventory::components::Inventory;
-use crate::fight::components::FighterState;
 
 /// Automatically switches the camera's mode between Navigation, Fighting, and Targeting
 /// based on wielder draw state and aiming inputs (replaces manual tab-toggle for targeting).
 pub fn camera_gameplay_mode_system(
     player_query: Query<(Entity, &Transform, &crate::animator::components::ActionPlayer, &InputState), With<Player>>,
     mut camera_query: Query<(&mut CameraController, &mut CameraChannel)>,
-    fighters_query: Query<(Entity, &Transform), (With<FighterState>, Without<Player>, Without<CameraController>)>,
 ) {
-    let Ok((_player_entity, player_tf, action_player, input_state)) = player_query.single() else {
+    let Ok((_player_entity, _player_tf, action_player, input_state)) = player_query.single() else {
         return;
     };
     let weapon_drawn = action_player.is_weapon_drawn();
     let targeting_modifier = input_state.targeting_modifier;
-
-    let mut nearby_fighters = 0;
-    let fight_mode_radius = 20.0;
-    for (_ent, tf) in &fighters_query {
-        if tf.translation.distance(player_tf.translation) < fight_mode_radius {
-            nearby_fighters += 1;
-        }
-    }
 
     for (mut controller, mut channel) in &mut camera_query {
         if controller.active_mode == ActiveCameraMode::Script {
@@ -44,9 +34,15 @@ pub fn camera_gameplay_mode_system(
                 controller.active_mode = ActiveCameraMode::GameTargeting;
                 channel.has_snapped_to_target = true; // snap polar settings immediately
             }
-        } else if nearby_fighters > 0 {
-            if controller.active_mode != ActiveCameraMode::GameFighting {
+        } else if channel.num_local_fighters > 0 {
+            // Fighters inside the package FightModeRadius (rbgame/gamestate.cpp:224-230);
+            // fighting only while not running away longer than
+            // FightModeRunningAwayTime (camera_new/manager.cpp:945, 1152).
+            let running_away = channel.time_running > channel.package_fight_mode_running_away_time;
+            if !running_away {
                 controller.active_mode = ActiveCameraMode::GameFighting;
+            } else if controller.active_mode == ActiveCameraMode::GameFighting {
+                controller.active_mode = ActiveCameraMode::GameNavigation;
             }
         } else {
             if controller.active_mode != ActiveCameraMode::GameNavigation {

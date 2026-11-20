@@ -42,6 +42,10 @@ pub struct CameraChannel {
     pub desired_focus_pos: Vec3,
     pub current_focus_offset: Vec3,
     pub desired_focus_offset: Vec3,
+    /// rb m_CurrentFocusPoint / m_PreviousFocusPoint: the smoothed look-at
+    /// point (actor root + focus offset, lerped at LerpRateFocusPoint).
+    pub current_focus_point: Vec3,
+    pub previous_focus_point: Vec3,
 
     // Polar Output coordinates
     pub current_azimuth: f32,
@@ -60,6 +64,13 @@ pub struct CameraChannel {
     // Shared Temporal Input Properties (Written by Sensor/Input System, Read by Mode)
     pub reticle_x: f32, // Right stick X
     pub reticle_y: f32, // Right stick Y
+    /// rb m_ReticleX / m_ReticleY as the follow/fight cameras see them: the
+    /// camera stick (arrow keys here), already dead-zoned by AnalogX/YStart.
+    pub cam_stick: Vec2,
+    pub prev_cam_stick: Vec2,
+    /// Mouse-look yaw accumulated this frame; applied straight to the camera
+    /// azimuth (PC-only control, no rb counterpart).
+    pub manual_yaw: f32,
 
     pub time_running: f32,                // Cumulative time actor is running
     pub time_remaining_lock_heading: f32, // Time to lock heading during fight->follow switch
@@ -93,6 +104,20 @@ pub struct CameraChannel {
 
     pub spin_threshold_exceeded: bool,
 
+    // camnewFollow dead zone (camera_new/follow.cpp:163-192)
+    pub dead_zone_center: Vec3,
+    pub check_standing_zone: bool,
+    pub in_dead_zone: bool,
+    pub in_transition_zone: bool,
+
+    /// Enemy fighter positions this frame (rb rbGameState fighter array).
+    pub fighters: Vec<Vec3>,
+    /// How many of `fighters` are inside the package FightModeRadius.
+    pub num_local_fighters: usize,
+
+    /// The active camera_new parameter set (template + layout cam_*.xml).
+    pub params: crate::oni2_loader::parsers::camera::CameraParameterSet,
+
     // Active Camera Package Parameters (populated automatically by update_camera_channel)
     pub package_fov: f32,
     pub package_distance: f32,
@@ -103,6 +128,10 @@ pub struct CameraChannel {
     pub package_focus_offset: Vec3,
     pub package_spin_threshold: f32,
     pub package_zone_lerp_rates: [f32; 4],
+    /// Package FightModeRadius / FightModeRunningAwayTime (rbgame/gamestate.cpp:224,
+    /// camera_new/manager.cpp:945,1152).
+    pub package_fight_mode_radius: f32,
+    pub package_fight_mode_running_away_time: f32,
     pub active_set_name: String,
 
     // Bypass constraints entirely if VM script forces explicit camera matrix
@@ -125,6 +154,8 @@ impl Default for CameraChannel {
             desired_focus_pos: Vec3::ZERO,
             current_focus_offset: Vec3::new(0.0, 1.4, 0.0),
             desired_focus_offset: Vec3::new(0.0, 1.4, 0.0),
+            current_focus_point: Vec3::ZERO,
+            previous_focus_point: Vec3::ZERO,
 
             current_azimuth: 0.0,
             current_incline: 0.0,
@@ -140,6 +171,9 @@ impl Default for CameraChannel {
 
             reticle_x: 0.0,
             reticle_y: 0.0,
+            cam_stick: Vec2::ZERO,
+            prev_cam_stick: Vec2::ZERO,
+            manual_yaw: 0.0,
 
             time_running: 0.0,
             time_remaining_lock_heading: 0.0,
@@ -156,7 +190,7 @@ impl Default for CameraChannel {
 
             is_moving: false,
             is_zlock_targeting: false,
-            bump_is_ready_to_use: true,
+            bump_is_ready_to_use: false,
             rotate_until_desired: false,
             is_colliding: false,
             has_snapped_to_target: false,
@@ -171,6 +205,16 @@ impl Default for CameraChannel {
 
             spin_threshold_exceeded: false,
 
+            dead_zone_center: Vec3::ZERO,
+            check_standing_zone: false,
+            in_dead_zone: false,
+            in_transition_zone: false,
+
+            fighters: Vec::new(),
+            num_local_fighters: 0,
+
+            params: Default::default(),
+
             package_fov: 50.0,
             package_distance: 5.0,
             package_incline_offset: space::oni2_camera_incline_to_bevy(10.0_f32.to_radians()),
@@ -182,6 +226,8 @@ impl Default for CameraChannel {
             package_focus_offset: Vec3::new(0.0, 1.4, 0.0),
             package_spin_threshold: 63.0_f32.to_radians(),
             package_zone_lerp_rates: [2.0, 3.0, 3.0, 3.0],
+            package_fight_mode_radius: 5.0,
+            package_fight_mode_running_away_time: 2.0,
             active_set_name: String::new(),
 
             script_override_transform: None,

@@ -5,7 +5,7 @@
  * so it reads CURRENT-frame `GlobalTransform`s for the player + targets,
  * not last-frame's stale values.  Order within the pass:
  *   update_camera_channel → mode evaluators (follow / fight / script /
- *   targeting) → polar_interpolation_system → apply_camera_transform.
+ *   targeting) → apply_camera_transform (rb polar lerp + collision).
  *
  * Why PostUpdate:
  *   - Avian's physics writes player `Transform` in FixedUpdate
@@ -36,9 +36,20 @@ pub mod polar;
 pub mod script;
 pub mod systems;
 pub mod targeting;
+pub mod thirdperson;
 
 use bevy::prelude::*;
 use bevy::transform::TransformSystems;
+
+/// Navigation and fighting run the package's camera for that state (its
+/// class picks follow / fight / third-person logic); targeting and script
+/// have their own systems.
+pub fn runs_game_camera(mode: components::ActiveCameraMode) -> bool {
+    matches!(
+        mode,
+        components::ActiveCameraMode::GameNavigation | components::ActiveCameraMode::GameFighting
+    )
+}
 
 pub struct CameraPlugin;
 
@@ -63,14 +74,15 @@ impl Plugin for CameraPlugin {
                     systems::update_camera_channel,
                     follow::follow_camera_system.after(systems::update_camera_channel),
                     fight::fight_camera_system.after(systems::update_camera_channel),
+                    thirdperson::third_person_camera_system.after(systems::update_camera_channel),
                     script::script_camera_system.after(systems::update_camera_channel),
                     targeting::targeting_camera_system.after(systems::update_camera_channel),
-                    polar::polar_interpolation_system
+                    polar::apply_camera_transform
                         .after(follow::follow_camera_system)
                         .after(fight::fight_camera_system)
+                        .after(thirdperson::third_person_camera_system)
                         .after(script::script_camera_system)
                         .after(targeting::targeting_camera_system),
-                    polar::apply_camera_transform.after(polar::polar_interpolation_system),
                 )
                     .after(TransformSystems::Propagate),
             );
