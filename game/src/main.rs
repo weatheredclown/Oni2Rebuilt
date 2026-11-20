@@ -15,6 +15,7 @@ mod animator;
 mod behavior;
 mod blast_fx;
 mod camera;
+mod capture;
 mod combat;
 mod common;
 mod control_map;
@@ -234,6 +235,7 @@ fn main() {
     .insert_resource(Gravity(Vec3::NEG_Y * 9.81))
     .add_plugins(FrameTimeDiagnosticsPlugin::default())
     .add_plugins(telemetry::TelemetryPlugin)
+    .add_plugins(capture::CapturePlugin)
     .add_plugins(menu::MenuPlugin)
     .add_plugins(combat::CombatPlugin)
     .add_plugins(fight::FightPlugin)
