@@ -235,6 +235,19 @@ pub fn load_texture(
     texture_name: &str,
     images: &mut Assets<Image>,
 ) -> Option<(Handle<Image>, bool)> {
+    load_texture_inner(entity_dir, texture_name, images, 0)
+}
+
+/// Shader redirects followed before giving up (guards against cycles such
+/// as `a.shader -> b`, `b.shader -> a`).
+const MAX_SHADER_REDIRECTS: u32 = 8;
+
+fn load_texture_inner(
+    entity_dir: &str,
+    texture_name: &str,
+    images: &mut Assets<Image>,
+    redirects: u32,
+) -> Option<(Handle<Image>, bool)> {
     // Sentinel "none" — used by source materials to mean "no texture
     // assigned".  Skip silently rather than logging a not-found warning
     // for what is by design a no-op.  Empty names get the same treatment.
@@ -284,11 +297,20 @@ pub fn load_texture(
                 let parts: Vec<&str> = trimmed.split_whitespace().collect();
                 if parts.len() >= 2 {
                     let actual_tex = parts[1].trim_matches('"').trim_end_matches(".tex");
+                    // A shader naming its own base name (photon_glow.shader ->
+                    // "photon_glow", backed by photon_glow.tga) isn't a
+                    // redirect: fall through to the .tga fallbacks below
+                    // instead of recursing forever.
+                    if actual_tex.eq_ignore_ascii_case(texture_name)
+                        || redirects >= MAX_SHADER_REDIRECTS
+                    {
+                        break;
+                    }
                     info!(
                         "Shader {} redirects to texture {}",
                         shader_filename, actual_tex
                     );
-                    return load_texture(entity_dir, actual_tex, images);
+                    return load_texture_inner(entity_dir, actual_tex, images, redirects + 1);
                 }
             }
         }

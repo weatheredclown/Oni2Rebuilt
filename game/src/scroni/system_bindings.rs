@@ -50,6 +50,7 @@ pub fn scroni_sys_event_observer(
                 Option<&mut avian3d::prelude::LinearVelocity>,
                 Option<&mut avian3d::prelude::Position>,
                 Option<&mut avian3d::prelude::Rotation>,
+                Has<crate::oni2_loader::spawn::CreatureRenderOffset>,
             ),
             Without<crate::camera::components::CameraController>,
         >,
@@ -237,7 +238,7 @@ pub fn scroni_sys_event_observer(
         ScrOniSysEvent::CameraFollowActor(actor_ent) => {
             let actor_pos = transform_query
                 .get(actor_ent)
-                .map(|(tf, _, _, _)| tf.translation)
+                .map(|(tf, _, _, _, _)| tf.translation)
                 .unwrap_or(Vec3::ZERO);
             for (_, mut controller, mut channel, _, _) in &mut camera_query {
                 info!(
@@ -582,8 +583,13 @@ pub fn scroni_sys_event_observer(
                 );
             }
 
-            if let Ok((mut transform, mut opt_vel, mut opt_phys_pos, mut opt_phys_rot)) =
-                transform_query.get_mut(target)
+            if let Ok((
+                mut transform,
+                mut opt_vel,
+                mut opt_phys_pos,
+                mut opt_phys_rot,
+                is_creature,
+            )) = transform_query.get_mut(target)
             {
                 if let Some(pos) = to {
                     let bevy_pos = space::to_bevy_space_pos(pos);
@@ -599,13 +605,20 @@ pub fn scroni_sys_event_observer(
                     if let Some(ref mut phys_pos) = opt_phys_pos {
                         phys_pos.0 = bevy_pos;
                     }
-                    commands
-                        .entity(target)
-                        .insert(crate::oni2_loader::spawn::NeedsGroundSnap {
-                            origin: bevy_pos,
-                            wait_frames: 4,
-                            capsule_half_height: 1.0,
-                        });
+                    // Only creatures stand on a physics capsule that needs
+                    // re-seating on the floor.  Props (doors, cutscene
+                    // puppets with an Animator) go exactly where the
+                    // script says: the creature snap lifted them by the
+                    // capsule half-height, leaving them floating ~1 m up.
+                    if is_creature {
+                        commands.entity(target).insert(
+                            crate::oni2_loader::spawn::NeedsGroundSnap {
+                                origin: bevy_pos,
+                                wait_frames: 4,
+                                capsule_half_height: 1.0,
+                            },
+                        );
+                    }
                 }
                 if let Some(angles_y) = face {
                     let rad = angles_y.to_radians();
@@ -648,7 +661,7 @@ pub fn scroni_sys_event_observer(
             let position = at.unwrap_or_else(|| {
                 transform_query
                     .get(script_entity)
-                    .map(|(tf, _, _, _)| tf.translation)
+                    .map(|(tf, _, _, _, _)| tf.translation)
                     .unwrap_or(Vec3::ZERO)
             });
             // ScrOni's `direction` is unit-length; combine with `speed`

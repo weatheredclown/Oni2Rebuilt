@@ -1042,6 +1042,27 @@ pub fn toggle_debug_skeleton(
     }
 }
 
+/// Render Y offset for a skeletal *prop* (no creature capsule), e.g. a
+/// cutscene double: `<Prop>` + `<Animator>`.
+///
+/// AGE's `crFrame::Pose` (crfanimation/frame.cpp) *replaces* a bone's local
+/// translation with its trans channels (`d.y = transData`), so a root
+/// `transY` is the absolute hip height.  `compute_animated_bone_transforms`
+/// adds the channel to the skeleton's rest offset instead, lifting the root
+/// by that rest offset (~1.04 m for the humans).  Creatures absorb this in
+/// their fixed `CreatureRenderOffset::y_offset`; props had nothing, so
+/// cutscene doubles floated ~1 m.  Subtracting the rest offset gives AGE's
+/// pose exactly.  The no-channel skeleton path always animates root
+/// translation, so it gets the same correction.
+fn prop_root_y_offset(skel: &crate::oni2_loader::parsers::types::Oni2Skeleton) -> f32 {
+    let Some(rest) = skel.local_offsets.first() else {
+        return 0.0;
+    };
+    let root_has_trans_y = skel.channel_is_rot.is_empty()
+        || skel.channels.first().is_some_and(|c| c.has_trans_y);
+    if root_has_trans_y { -rest[1] } else { 0.0 }
+}
+
 /// Draw skeleton bones as lines from child to parent, with spheres at joints.
 pub fn debug_draw_skeleton(
     query: Query<(
@@ -1520,7 +1541,9 @@ pub fn update_oni2_animation(
         }
 
         // Creature render offset (capsule Y compensation + facing)
-        let mut y_offset = render_offset.map(|o| o.y_offset).unwrap_or(0.0);
+        let mut y_offset = render_offset
+            .map(|o| o.y_offset)
+            .unwrap_or_else(|| prop_root_y_offset(&anim_state.skeleton));
         let facing = render_offset.map(|o| o.facing).unwrap_or(Quat::IDENTITY);
 
         let mut z_offset = 0.0;
@@ -1691,7 +1714,9 @@ pub fn refresh_anim_joints_post_fsm_system(
             strip_root,
         );
 
-        let mut y_offset = render_offset.map(|o| o.y_offset).unwrap_or(0.0);
+        let mut y_offset = render_offset
+            .map(|o| o.y_offset)
+            .unwrap_or_else(|| prop_root_y_offset(&anim_state.skeleton));
         let facing = render_offset.map(|o| o.facing).unwrap_or(Quat::IDENTITY);
 
         let mut z_offset = 0.0;
