@@ -2021,6 +2021,20 @@ fn load_level_geometry(
     }
 }
 
+/// Transform for a directional light that TRAVELS along `dir` (Bevy space).
+///
+/// default.environment's `lightDirection` (and layout.fog's light vectors)
+/// are the direction light travels: rb lights with `dot(n, -dir)` (rgl.cpp)
+/// and extrudes shadow volumes along it.  We used to put the light AT `dir`
+/// looking back at the origin, i.e. travelling along -dir: every sun with
+/// a downward vector shone up from under the floor, so characters' shadows
+/// fell on ceilings and never on the ground.
+fn sun_transform(dir: Vec3) -> Transform {
+    let dir = dir.try_normalize().unwrap_or(Vec3::NEG_Y);
+    let up = if dir.y.abs() > 0.99 { Vec3::Z } else { Vec3::Y };
+    Transform::from_translation(-dir * 100.0).looking_to(dir, up)
+}
+
 fn load_layout_lights(
     commands: &mut Commands,
     meshes: &mut ResMut<Assets<Mesh>>,
@@ -2053,12 +2067,7 @@ fn load_layout_lights(
                 color: Color::srgb(env.light_color[0], env.light_color[1], env.light_color[2]),
                 ..default()
             },
-            Transform::from_xyz(
-                env.light_direction.x,
-                env.light_direction.y,
-                env.light_direction.z,
-            )
-            .looking_at(Vec3::ZERO, Vec3::Y),
+            sun_transform(space::to_bevy_space_pos(env.light_direction)),
             InGameEntity,
         ));
 
@@ -2113,7 +2122,7 @@ fn load_layout_lights(
                         color,
                         ..default()
                     },
-                    Transform::from_translation(dir * 100.0).looking_at(Vec3::ZERO, Vec3::Y),
+                    sun_transform(dir),
                     InGameEntity,
                 ));
             } else {
@@ -2322,7 +2331,9 @@ fn load_layout_lights(
                 shadows_enabled: true,
                 ..default()
             },
-            Transform::from_xyz(50.0, 80.0, 50.0).looking_at(Vec3::ZERO, Vec3::Y),
+            // rb's lvlLevel::Load fallback when a level has no lights:
+            // ShadowManager->SetDefaultLight((-0.5, -0.7071, -0.5), asDir).
+            sun_transform(space::to_bevy_space_pos(Vec3::new(-0.5, -0.7071, -0.5))),
             InGameEntity,
         ));
         commands.spawn((
