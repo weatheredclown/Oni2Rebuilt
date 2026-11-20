@@ -122,16 +122,16 @@ pub fn spawn_laser(
     at: Vec3,
     name_hint: &str,
 ) -> Entity {
-    // Ribbon: empty mesh now, rebuilt each frame.  Start with a bright
-    // opaque emissive material (no texture, no alpha blend) so we can
-    // see whether the GEOMETRY is getting to the screen.  Tail texture +
-    // additive blend can be layered back on once we confirm visibility.
+    // Ribbon: empty mesh now, rebuilt each frame.  rb's fxLaserType draws
+    // the beam as texture x vertex colour (1,1,1) -- the magenta/green are
+    // the TailTexture's own colours (red_side, green_side ...); LightColor /
+    // LightMax only drive the beam's dynamic point light (fx/laser.cpp
+    // ~151, ~337).  A LightColor x 8 base colour (x2 vertex colour) blew
+    // every beam out to a fat white bar.
     let ribbon_mesh = meshes.add(empty_ribbon_mesh());
     let ribbon_mat = materials.add(StandardMaterial {
-        base_color: Color::from(ld.light_color.to_linear() * 8.0),
+        base_color: Color::WHITE,
         base_color_texture: ld.tail_texture_handle.clone(),
-        // Emissive is ignored when unlit: true, so we bake the HDR multiplier into base_color
-        emissive: (ld.light_color.to_linear() * 8.0).into(),
         alpha_mode: AlphaMode::Add,
         unlit: true,
         cull_mode: None,
@@ -142,9 +142,8 @@ pub fn spawn_laser(
     // Head sprite: unit quad, scaled via Transform to 0.5*Width*HeadScale.
     let head_quad = meshes.add(Rectangle::new(1.0, 1.0));
     let head_mat = materials.add(StandardMaterial {
-        base_color: Color::from(ld.light_color.to_linear() * 3.0),
+        base_color: Color::WHITE,
         base_color_texture: ld.head_texture_handle.clone(),
-        emissive: (ld.light_color.to_linear() * 3.0).into(),
         alpha_mode: AlphaMode::Add,
         unlit: true,
         cull_mode: None,
@@ -420,8 +419,8 @@ fn laser_ribbon_rebuild(
                 normals.push([0.0, 1.0, 0.0]);
                 uvs.push([0.0, t]);
                 uvs.push([1.0, t]);
-                colors.push([2.0, 2.0, 2.0, alpha]);
-                colors.push([2.0, 2.0, 2.0, alpha]);
+                colors.push([1.0, 1.0, 1.0, alpha]);
+                colors.push([1.0, 1.0, 1.0, alpha]);
 
                 if k > 0 {
                     // Stitch to previous pair with two triangles.
