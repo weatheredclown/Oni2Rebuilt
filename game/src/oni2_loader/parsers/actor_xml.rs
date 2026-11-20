@@ -91,6 +91,12 @@ pub struct LayoutActor {
     pub animator_type: Option<String>,
     /// FighterType from Fighter component (resolved through templates).
     pub fighter_type: Option<String>,
+    /// Creature `WeaponInterface` (resolved through templates), e.g.
+    /// `"tim/tim"`: rb loads weapon grip mounts from
+    /// `entity.tune/<WeaponInterface>.weap` (rbCreatureType::
+    /// LoadWeaponInterfaceData), not from the actor's own type — val
+    /// borrows tim's via template_grunt.
+    pub weapon_interface: Option<String>,
     /// Fighter `OnlyFightEnemies` / `AutoFightStance` (components.xml
     /// defaults 0 / 1; templates such as template_grunt set
     /// OnlyFightEnemies=1, some layouts AutoFightStance=0).
@@ -526,7 +532,9 @@ pub fn parse_actor_xml(dir: &str, filename: &str, template_dir: &str) -> Option<
     let is_creature = creature_block.is_some();
     let mut is_player = false;
     let mut faction: Option<String> = None;
+    let mut weapon_interface: Option<String> = None;
     if let Some(block) = &creature_block {
+        weapon_interface = extract_xml_attr(block, "WeaponInterface");
         if let Some(v) = extract_xml_attr(block, "Player") {
             is_player = v == "1";
         }
@@ -1141,6 +1149,7 @@ pub fn parse_actor_xml(dir: &str, filename: &str, template_dir: &str) -> Option<
         orientation_o2,
         animator_type,
         fighter_type,
+        weapon_interface,
         fighter_only_fight_enemies,
         fighter_auto_fight_stance,
         is_creature,

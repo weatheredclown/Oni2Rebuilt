@@ -1060,6 +1060,27 @@ pub fn spawn_layout_actor(
             assets.mover_backend,
             assets.mover_config.clone(),
         ) {
+            // Weapon grip mounts come from the creature's WeaponInterface
+            // library (rbCreatureType::LoadWeaponInterfaceData opens
+            // entity.tune/<WeaponInterface>.weap).  spawn_oni2_creature
+            // only tried entity.tune/<type>/<type>.weap, so e.g. val (no
+            // val.weap; WeaponInterface "tim/tim") fell back to raw bone
+            // 11 — her LEFT index finger — and held the gun in the wrong
+            // hand.  This overrides whatever that lookup inserted.
+            if let Some(wi) = actor.weapon_interface.as_deref().filter(|s| !s.is_empty()) {
+                let weap_file = format!("entity.tune/{}.weap", wi.trim_end_matches(".weap"));
+                match crate::vfs::read_to_string("", &weap_file) {
+                    Ok(content) => {
+                        assets.commands.entity(entity).insert(
+                            crate::oni2_loader::parsers::actor_weap::parse_actor_weap(&content),
+                        );
+                    }
+                    Err(e) => warn!(
+                        "{}: WeaponInterface '{}' -> {} not loaded: {}",
+                        actor_name, wi, weap_file, e
+                    ),
+                }
+            }
             if !actor.is_player {
                 // Non-player creature: attach AI + combat components
                 if actor.has_fight_ai {

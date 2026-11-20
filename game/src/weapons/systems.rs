@@ -438,8 +438,22 @@ pub fn weapon_attachment_system(
         let mut grip_rot = weapon.ty.grip_rot;
 
         if let Some(mounts) = mounts {
-            if let Some((out_mount, away_mount)) = mounts.mounts.get(&weapon.ty.name.to_lowercase())
-            {
+            // rb asks the creature for a grip by the weapon's HOLD TYPE
+            // (animator.cpp: rbMsgGripMatrix(inv->GetWeaponHoldType()) ->
+            // GetWeaponInterfaceByHold): .weap entries are named after hold
+            // types ("Pistol" / "Rifle" / "Pipe"), not weapons, so e.g.
+            // RedRifle uses the "Rifle" grip.  Fall back to the weapon name.
+            use crate::weapons::components::HoldType;
+            let hold_key = match weapon.hold_type() {
+                HoldType::Pistol => Some("pistol"),
+                HoldType::Rifle => Some("rifle"),
+                HoldType::Pipe => Some("pipe"),
+                HoldType::Invalid => None,
+            };
+            let mount = hold_key
+                .and_then(|k| mounts.mounts.get(k))
+                .or_else(|| mounts.mounts.get(&weapon.ty.name.to_lowercase()));
+            if let Some((out_mount, away_mount)) = mount {
                 let mount = if is_drawn { out_mount } else { away_mount };
                 bone_idx = mount.parent_bone;
                 // Always take the mount's Bevy-space values when present.
@@ -466,6 +480,14 @@ pub fn weapon_attachment_system(
             .map(|cof| cof.0 != joint_entity)
             .unwrap_or(true);
         if needs_reparent {
+            debug!(
+                "weapon {} on {:?} -> bone {} '{}' ({})",
+                weapon.ty.name,
+                weapon.owner,
+                bone_idx,
+                anim_state.skeleton.names.get(bone_idx).map_or("?", |n| n.as_str()),
+                if is_drawn { "drawn" } else { "holstered" },
+            );
             commands.entity(weapon_entity).insert(ChildOf(joint_entity));
         }
 
