@@ -247,7 +247,55 @@ impl Plugin for ShadowLodPlugin {
                     update_shadow_lod_system,
                     apply_directional_shadows_system,
                     apply_other_shadows_system,
+                    only_skinned_meshes_cast_shadows,
+                    rb_directional_shadow_range,
                 ),
             );
+    }
+}
+
+/// rb's `lvlShadowManager::DrawRange` default (rblevel/shadowmgr.cpp:82):
+/// shadow casters farther than this from the camera are not drawn.
+pub const RB_SHADOW_DRAW_RANGE: f32 = 20.0;
+
+/// rb casts realtime shadows only from skeletal actors: a `lvlShadowCaster`
+/// is an edge model + `Skeleton` (rblevel/shadowmgr.cpp:32-73), extruded
+/// into stencil volumes.  Level geometry never casts — its shadows are baked
+/// into the prelit vertex colours.  Bevy defaults every mesh to a caster, so
+/// the sun re-rendered whole rooftops (Sizzle_Brawl: dozens of sky cars,
+/// cranes, mechs) into its cascades every frame, ~3x the frame time.
+/// Tag every non-skinned mesh as it appears.
+fn only_skinned_meshes_cast_shadows(
+    mut commands: Commands,
+    added: Query<
+        Entity,
+        (
+            Added<Mesh3d>,
+            Without<bevy::mesh::skinning::SkinnedMesh>,
+            Without<bevy::light::NotShadowCaster>,
+        ),
+    >,
+) {
+    for entity in &added {
+        commands.entity(entity).insert(bevy::light::NotShadowCaster);
+    }
+}
+
+/// One cascade out to rb's `DrawRange` instead of Bevy's default 4 cascades
+/// to ~150 m: rb draws no shadow volume beyond 20 m of the camera.
+fn rb_directional_shadow_range(
+    mut commands: Commands,
+    added: Query<Entity, Added<DirectionalLight>>,
+) {
+    for entity in &added {
+        commands.entity(entity).insert(
+            bevy::light::CascadeShadowConfigBuilder {
+                num_cascades: 1,
+                minimum_distance: 0.1,
+                maximum_distance: RB_SHADOW_DRAW_RANGE,
+                ..default()
+            }
+            .build(),
+        );
     }
 }
