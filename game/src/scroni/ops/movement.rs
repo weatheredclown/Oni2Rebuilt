@@ -161,6 +161,17 @@ pub fn exec(ctx: &mut OpsCtx, stmt: &Stmt) -> bool {
             }
             true
         }
+        // rb XCommand.cpp DoDrawWeapon / DoHolsterWeapon: broadcast
+        // bhMsgWeapon(draw) to the script's own actor; its behavior turns it
+        // into a gun toggle (component.cpp HandleWeapon / Packet->SetGunToggle).
+        Stmt::DrawWeapon | Stmt::HolsterWeapon => {
+            let actor = ctx.exec.owner;
+            ctx.sys_request(SysRequest::Weapon {
+                actor,
+                draw: matches!(stmt, Stmt::DrawWeapon),
+            });
+            true
+        }
         _ => false,
     }
 }

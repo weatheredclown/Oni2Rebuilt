@@ -292,6 +292,11 @@ pub enum SysRequest {
         to: Option<Vec3>,
         face: Option<f32>,
     },
+    /// `drawweapon` (true) / `holsterweapon` (false) on the script's actor.
+    Weapon {
+        actor: Entity,
+        draw: bool,
+    },
     SetFaction {
         actor: Entity,
         faction: String,
@@ -3149,6 +3154,11 @@ pub fn scroni_tick_system(
                         to,
                         face,
                     });
+                }
+                SysRequest::Weapon { actor, draw } => {
+                    if let Ok(mut e_cmd) = commands.get_entity(actor) {
+                        e_cmd.insert(crate::animator::components::PendingWeaponCommand(draw));
+                    }
                 }
                 SysRequest::SetFaction { actor, faction } => {
                     if let Ok(mut e_cmd) = commands.get_entity(actor) {

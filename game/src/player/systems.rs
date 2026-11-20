@@ -1047,6 +1047,50 @@ pub fn player_movement_system(
 }
 
 
+/// Apply a script's `drawweapon` / `holsterweapon` (any actor, not just the
+/// player) the way rb's behavior does: a gun toggle only when the current
+/// drawn state differs and the actor has a weapon.  Same Start/End
+/// DrawWeapon actions as the player's PADCMD_WEAPON_DRAW below.
+pub fn script_weapon_command_system(
+    mut commands: Commands,
+    query: Query<(
+        Entity,
+        &crate::animator::components::PendingWeaponCommand,
+        Option<&crate::animator::components::ActionPlayer>,
+        Option<&crate::inventory::components::Inventory>,
+    )>,
+    mut start_writer: MessageWriter<crate::animator::StartActionMessage>,
+    mut end_writer: MessageWriter<crate::animator::EndActionMessage>,
+) {
+    for (entity, cmd, ap_opt, inv_opt) in &query {
+        commands
+            .entity(entity)
+            .remove::<crate::animator::components::PendingWeaponCommand>();
+        let Some(ap) = ap_opt else { continue };
+        if !inv_opt.is_some_and(|inv| inv.current_weapon.is_some()) {
+            continue;
+        }
+        let draw = cmd.0;
+        if draw == ap.is_weapon_drawn() {
+            continue;
+        }
+        info!("script {}weapon on {:?}", if draw { "draw" } else { "holster" }, entity);
+        if draw {
+            start_writer.write(crate::animator::StartActionMessage {
+                entity,
+                action: crate::animator::MainAction::DrawWeapon,
+                substate: crate::animator::components::sub_state_0::DRAWWEAPON_NO_TGT,
+            });
+        } else {
+            end_writer.write(crate::animator::EndActionMessage {
+                entity,
+                action: crate::animator::MainAction::DrawWeapon,
+                subaction: crate::animator::components::sub_state_0::DRAWWEAPON_NO_TGT,
+            });
+        }
+    }
+}
+
 pub fn player_weapon_toggle_system(
     pad_mapper: Res<PadMapper>,
     mut start_writer: MessageWriter<crate::animator::StartActionMessage>,

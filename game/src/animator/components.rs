@@ -544,3 +544,9 @@ pub struct PickupHitched {
     /// reference: `mat.d -= GetOffset()` in HandleDrop.
     pub offset: bevy::prelude::Vec3,
 }
+
+/// A script's `drawweapon` / `holsterweapon` waiting to be applied: rb keeps
+/// it in bhBehaviorComponent::WeaponCommand and on the next behavior update
+/// toggles the gun only if the drawn state differs (component.cpp ~564).
+#[derive(Component, Clone, Copy, Debug)]
+pub struct PendingWeaponCommand(pub bool);
