@@ -807,57 +807,51 @@ impl Compiler {
                 self.advance();
                 Stmt::Normalize { var }
             }
+            // rb Command.cpp ParseUIOverlay / ParseUIText / ParseUIVisible /
+            // ParseUITexture / ParseUIMove / ParseUIColor; run by crate::ui_overlay
+            // (rbUIManager's overlay hooks).
             TokenCode::UIOverlay => {
-                // `uioverlay <string>` (rb/src/scroni/Command.cpp:549).  The
-                // C++ executor calls gScrUIOverlayHook, which is NULL without
-                // the front end (XCommand.cpp:471) — overlay pages aren't
-                // ported, so this is the hook-unset no-op.
                 self.advance();
-                let arg = self.parse_expr();
-                Stmt::Unimplemented {
-                    command: "uioverlay".to_string(),
-                    args: vec![arg],
-                }
+                Stmt::UiOverlay(self.parse_expr())
             }
-            TokenCode::UIText | TokenCode::UIVisible => {
-                // `uitext <item> <text>` / `uivisible <item> <value>`
-                // (Command.cpp:563/579): two values, hook-unset no-op as above.
-                let name = self.peek().text.clone().to_lowercase();
+            TokenCode::UIText => {
                 self.advance();
                 let item = self.parse_expr();
-                let value = self.parse_expr();
-                Stmt::Unimplemented {
-                    command: name,
-                    args: vec![item, value],
-                }
+                self.skip_if(TokenCode::Comma);
+                Stmt::UiText(item, self.parse_expr())
             }
-            TokenCode::UITexture | TokenCode::UIMove | TokenCode::UIColor => {
-                // rb Command.cpp ParseUITexture / ParseUIMove / ParseUIColor:
-                //   uitexture <item> <texture>
-                //   uimove    <item> <x> <y> <secs>
-                //   uicolor   <item> <r> <g> <b> <a> <secs>
-                // Same hook-unset no-op as uitext until overlay pages are
-                // ported; without them every script using a portrait (e.g.
-                // M04_A03_Executive_Suite exs_intro.oni) failed to compile and
-                // its cutscene never started.
-                let name = self.peek().text.clone().to_lowercase();
-                let numbers = match self.peek().code {
-                    TokenCode::UITexture => 0,
-                    TokenCode::UIMove => 3,
-                    _ => 5,
-                };
+            TokenCode::UIVisible => {
                 self.advance();
-                let mut args = vec![self.parse_expr()];
-                if numbers == 0 {
-                    args.push(self.parse_expr());
-                }
-                for _ in 0..numbers {
-                    args.push(self.parse_expr());
-                }
-                Stmt::Unimplemented {
-                    command: name,
-                    args,
-                }
+                let item = self.parse_expr();
+                self.skip_if(TokenCode::Comma);
+                Stmt::UiVisible(item, self.parse_expr())
+            }
+            TokenCode::UITexture => {
+                self.advance();
+                let item = self.parse_expr();
+                self.skip_if(TokenCode::Comma);
+                Stmt::UiTexture(item, self.parse_expr())
+            }
+            TokenCode::UIMove => {
+                self.advance();
+                let item = self.parse_expr();
+                let mut n = || {
+                    self.skip_if(TokenCode::Comma);
+                    self.parse_expr()
+                };
+                let (x, y, secs) = (n(), n(), n());
+                Stmt::UiMove { item, x, y, secs }
+            }
+            TokenCode::UIColor => {
+                self.advance();
+                let item = self.parse_expr();
+                let mut n = || {
+                    self.skip_if(TokenCode::Comma);
+                    self.parse_expr()
+                };
+                let rgba = [n(), n(), n(), n()];
+                let secs = n();
+                Stmt::UiColor { item, rgba, secs }
             }
             TokenCode::SetHud => {
                 // `sethud <value>`.  HUD
@@ -2550,6 +2544,12 @@ fn is_command_start(code: TokenCode) -> bool {
             | TokenCode::End
             | TokenCode::Eof
             | TokenCode::DrawText
+            | TokenCode::UIOverlay
+            | TokenCode::UIText
+            | TokenCode::UIVisible
+            | TokenCode::UITexture
+            | TokenCode::UIMove
+            | TokenCode::UIColor
             | TokenCode::CameraFollowActor
             | TokenCode::CameraTrackActor
             | TokenCode::CameraTrackPoint

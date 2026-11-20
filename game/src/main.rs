@@ -51,6 +51,7 @@ mod shadow_lod;
 mod sizzle;
 mod statemachine;
 mod telemetry;
+mod ui_overlay;
 mod water;
 mod weapons;
 pub use filesystem::dave_vfs;
@@ -213,7 +214,14 @@ fn main() {
     // back cleanly when focus returns.  Keeps focused mode at full FPS.
     app.insert_resource(WinitSettings {
         focused_mode: UpdateMode::Continuous,
-        unfocused_mode: UpdateMode::reactive_low_power(std::time::Duration::from_millis(500)),
+        // Unattended captures (RB_SHOT / --padscript) need real-rate updates even
+        // in a background window: throttled, Time<Virtual> clamps each 500 ms
+        // frame to 250 ms and the script/screenshot clock runs at half speed.
+        unfocused_mode: if std::env::var_os("RB_SHOT").is_some() || args.iter().any(|a| a == "--padscript") {
+            UpdateMode::Continuous
+        } else {
+            UpdateMode::reactive_low_power(std::time::Duration::from_millis(500))
+        },
     });
 
     app.add_plugins(
@@ -252,6 +260,7 @@ fn main() {
     .add_plugins(ai::AiPlugin)
     .add_plugins(camera::CameraPlugin)
     .add_plugins(hud::HudPlugin)
+    .add_plugins(ui_overlay::UiOverlayPlugin)
     .add_plugins(mover::MoverPlugin)
     .add_plugins(fx_system::FxPlugin)
     .add_plugins(rbaudio::RbAudioPlugin)

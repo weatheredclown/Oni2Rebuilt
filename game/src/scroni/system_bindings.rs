@@ -193,6 +193,13 @@ pub fn scroni_sys_event_observer(
             scroni_text_state.current_x = x;
             scroni_text_state.current_y = y;
         }
+        // Handled by `crate::ui_overlay`'s own observer.
+        ScrOniSysEvent::UiOverlay(_)
+        | ScrOniSysEvent::UiText(..)
+        | ScrOniSysEvent::UiVisible(..)
+        | ScrOniSysEvent::UiTexture(..)
+        | ScrOniSysEvent::UiMove { .. }
+        | ScrOniSysEvent::UiColor { .. } => {}
         ScrOniSysEvent::DrawText(text) => {
             // Coordinate system is top-left based, so (0.5, 0.5) is center.
             let px = scroni_text_state.current_x * 100.0;

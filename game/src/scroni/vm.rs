@@ -362,6 +362,12 @@ pub enum SysRequest {
         save_point: i32,
     },
     DrawText(String),
+    UiOverlay(String),
+    UiText(String, String),
+    UiVisible(String, bool),
+    UiTexture(String, String),
+    UiMove { item: String, x: i32, y: i32, secs: f32 },
+    UiColor { item: String, rgba: [u8; 4], secs: f32 },
     At(f32, f32),
     MakeFx {
         script_entity: Entity,
@@ -611,6 +617,12 @@ pub enum ScrOniSysEvent {
         save_point: i32,
     },
     DrawText(String),
+    UiOverlay(String),
+    UiText(String, String),
+    UiVisible(String, bool),
+    UiTexture(String, String),
+    UiMove { item: String, x: i32, y: i32, secs: f32 },
+    UiColor { item: String, rgba: [u8; 4], secs: f32 },
     At(f32, f32),
     MakeFx {
         script_entity: Entity,
@@ -3260,6 +3272,16 @@ pub fn scroni_tick_system(
                 }
                 SysRequest::DrawText(text) => {
                     commands.trigger(ScrOniSysEvent::DrawText(text));
+                }
+                SysRequest::UiOverlay(page) => commands.trigger(ScrOniSysEvent::UiOverlay(page)),
+                SysRequest::UiText(item, text) => commands.trigger(ScrOniSysEvent::UiText(item, text)),
+                SysRequest::UiVisible(item, v) => commands.trigger(ScrOniSysEvent::UiVisible(item, v)),
+                SysRequest::UiTexture(item, tex) => commands.trigger(ScrOniSysEvent::UiTexture(item, tex)),
+                SysRequest::UiMove { item, x, y, secs } => {
+                    commands.trigger(ScrOniSysEvent::UiMove { item, x, y, secs })
+                }
+                SysRequest::UiColor { item, rgba, secs } => {
+                    commands.trigger(ScrOniSysEvent::UiColor { item, rgba, secs })
                 }
                 SysRequest::MakeFx {
                     script_entity,

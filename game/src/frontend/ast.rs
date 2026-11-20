@@ -86,6 +86,10 @@ pub enum PageKind {
         /// `MOVIE "<filename>"` — required (GetDelimiter).
         movie: String,
     },
+    /// `PAGE_OVERLAY` (rb addition, layout/<Name>/layout.ui) — items drawn
+    /// over live gameplay by the ScrOni `uioverlay` command; no input, no
+    /// pause.  See `crate::ui_overlay`.
+    PageOverlay,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -160,6 +164,11 @@ pub struct Rect2DProps {
     pub color: [u8; 4],
     /// `TEXTURE "<name>"` — optional.
     pub texture: Option<String>,
+    /// `MIRROR` (rb addition) — the texture flipped left to right: a
+    /// right-hand dialog portrait faces left (designers_guide ch. 27).
+    pub mirror: bool,
+    /// `CROSSFADE <secs>` (rb addition) — a texture change blends over secs.
+    pub crossfade: f32,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -178,6 +187,12 @@ pub struct Rect3DProps {
     pub blend_mode: i32,
     /// `TEXTURE "<name>"` — optional.
     pub texture: Option<String>,
+    /// `WORLD` (after BOTTOM_RIGHT) — lettering fixed to the anchor's frame
+    /// instead of a camera-facing billboard.
+    pub world: bool,
+    /// `NEAR <metres>` — drawn only while the player is this close to the
+    /// anchor.
+    pub near: Option<f32>,
 }
 
 /// `STRING_ID "<id>"` | `STRING_LEVEL_NAME`.  The second form maps to
@@ -186,6 +201,9 @@ pub struct Rect3DProps {
 pub enum StringSource {
     StringId(String),
     LevelName,
+    /// `TEXT "<text>" [FONT "<fonts/ name>"]` — the item's own text (rb
+    /// addition for level overlays; `uitext` replaces it).
+    Literal { text: String, font: Option<String> },
 }
 
 #[derive(Debug, Clone, Default)]

@@ -845,6 +845,46 @@ pub fn exec(ctx: &mut OpsCtx, stmt: &Stmt) -> bool {
             ctx.sys_request(SysRequest::At(x, y));
             true
         }
+        Stmt::UiOverlay(page) => {
+            let page = ctx.eval_string(page);
+            ctx.sys_request(SysRequest::UiOverlay(page));
+            true
+        }
+        Stmt::UiText(item, text) => {
+            let item = ctx.eval_string(item);
+            let text = ctx.eval_string(text);
+            ctx.sys_request(SysRequest::UiText(item, text));
+            true
+        }
+        Stmt::UiVisible(item, visible) => {
+            let item = ctx.eval_string(item);
+            let visible = ctx.eval_bool(visible);
+            ctx.sys_request(SysRequest::UiVisible(item, visible));
+            true
+        }
+        Stmt::UiTexture(item, texture) => {
+            let item = ctx.eval_string(item);
+            let texture = ctx.eval_string(texture);
+            ctx.sys_request(SysRequest::UiTexture(item, texture));
+            true
+        }
+        Stmt::UiMove { item, x, y, secs } => {
+            let item = ctx.eval_string(item);
+            // C++ DoUIMove: (int) of the float values.
+            let (x, y, secs) = (ctx.eval_float(x) as i32, ctx.eval_float(y) as i32, ctx.eval_float(secs));
+            ctx.sys_request(SysRequest::UiMove { item, x, y, secs });
+            true
+        }
+        Stmt::UiColor { item, rgba, secs } => {
+            let item = ctx.eval_string(item);
+            let mut c = [0u8; 4];
+            for (o, e) in c.iter_mut().zip(rgba.iter()) {
+                *o = ctx.eval_float(e).clamp(0.0, 255.0) as u8;
+            }
+            let secs = ctx.eval_float(secs);
+            ctx.sys_request(SysRequest::UiColor { item, rgba: c, secs });
+            true
+        }
         Stmt::DrawText(text_expr) => {
             let text = ctx.eval_string(text_expr);
             ctx.sys_request(SysRequest::DrawText(text));

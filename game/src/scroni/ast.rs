@@ -476,6 +476,19 @@ pub enum Stmt {
     At(Expr, Expr),
     /// `drawtext <expr>`
     DrawText(Expr),
+    /// `uioverlay <string page>` — show a PAGE_OVERLAY (`""` hides it).
+    UiOverlay(Expr),
+    /// `uitext <string item> <string text>` — replace an overlay item's text.
+    UiText(Expr, Expr),
+    /// `uivisible <string item> <bool>` — show / hide an overlay item.
+    UiVisible(Expr, Expr),
+    /// `uitexture <item> <texture>` — swap a 2D item's picture (rb dialog
+    /// portraits; designers_guide ch. 27).
+    UiTexture(Expr, Expr),
+    /// `uimove <item> <x> <y> <secs>` — ease a 2D item's top-left.
+    UiMove { item: Expr, x: Expr, y: Expr, secs: Expr },
+    /// `uicolor <item> <r> <g> <b> <a> <secs>` — blend a 2D item's colour.
+    UiColor { item: Expr, rgba: [Expr; 4], secs: Expr },
     /// `color R,G,B,A` — sets current debug-draw color.  Used by drawtext
     /// lines in debug/legacy scripts (e.g. `drawtext "..." at x,y color
     /// r,g,b,a`) where `at` and `color` are separate statements sharing
